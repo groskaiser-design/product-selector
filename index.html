@@ -4,10 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Выбор продуктов</title>
-    
-    <!-- Telegram Web App SDK -->
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    
     <style>
         * {
             margin: 0;
@@ -254,11 +250,11 @@
         .category-products {
             max-height: 0;
             overflow: hidden;
-            transition: max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            transition: max-height 0.5s ease-in-out;
         }
 
         .category-products.open {
-            max-height: 400px;
+            max-height: 2000px;
             overflow-y: auto;
         }
 
@@ -481,37 +477,31 @@
 
     <script>
         // ========================================
-        // TELEGRAM WEB APP INITIALIZATION
+        // ПОЛУЧЕНИЕ ТОКЕНА ИЗ URL
         // ========================================
-        const tg = window.Telegram.WebApp;
+        const urlParams = new URLSearchParams(window.location.search);
+        const token = urlParams.get('token');
 
-        // Расширяем приложение на весь экран
-        tg.expand();
+        let telegramId = '';
+        let username = '';
 
-        // ВАЖНО: получаем данные пользователя от Telegram
-        const telegramUser = tg.initDataUnsafe?.user || {};
-        let telegramId = telegramUser.id ? String(telegramUser.id) : '';
-        let username = telegramUser.username || telegramUser.first_name || 'Гость';
+        console.log('=== ПОЛУЧЕНИЕ ДАННЫХ ===');
+        console.log('Token:', token ? token.substring(0, 20) + '...' : 'отсутствует');
 
-        console.log('=== TELEGRAM WEB APP ===');
-        console.log('Telegram User:', telegramUser);
-        console.log('Telegram ID:', telegramId);
-        console.log('Username:', username);
-        console.log('Init Data:', tg.initData);
-
-        // Если нет Telegram данных - используем тестовые (для разработки)
-        if (!telegramId) {
-            console.warn('⚠️ Приложение должно открываться через Telegram Bot!');
-            console.warn('⚠️ Используем тестовые данные для разработки');
+        // Если токена нет - тестовый режим
+        if (!token) {
+            console.warn('⚠️ Токен отсутствует - тестовый режим');
             telegramId = '123456';
             username = 'TestUser';
+        } else {
+            console.log('✅ Токен получен, будет проверен сервером');
         }
 
         // ========================================
         // CONFIGURATION
         // ========================================
         const CONFIG = {
-            APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbwf4q9qZ9zUPoDFrmNl7cVsOgUmcA0BkkS0Sk-eupQt3ZG-3-oL3YjCDBcnyT8QPQEu/exec'
+            APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbyT5lxWKi0U8eXUnSikIY9MUb_pfWGKZTdVvS8XtiiCakmN9Cy7sDY8SMrT1wQfK4U8/exec'
         };
 
         let allProducts = [];
@@ -527,15 +517,14 @@
         // ========================================
         // UPDATE USER INFO
         // ========================================
-        document.getElementById('userInfo').textContent = `Пользователь: ${username}`;
+        document.getElementById('userInfo').textContent = `Пользователь: ${username || 'TestUser'}`;
 
         // ========================================
         // LOAD PRODUCTS
         // ========================================
         async function loadProducts() {
             try {
-                // Отправляем initData от Telegram для проверки подлинности
-                const url = `${CONFIG.APPS_SCRIPT_URL}?action=get_products&initData=${encodeURIComponent(tg.initData)}`;
+                const url = `${CONFIG.APPS_SCRIPT_URL}?action=get_products&token=${encodeURIComponent(token || '')}`;
                 
                 console.log('Загрузка продуктов...');
                 
@@ -559,10 +548,7 @@
                 
                 console.log(`✅ Загружено ${allProducts.length} продуктов`);
 
-                if (telegramId) {
-                    await loadUserData();
-                }
-
+                await loadUserData();
                 displayProducts();
 
             } catch (error) {
@@ -582,7 +568,7 @@
         // ========================================
         async function loadUserData() {
             try {
-                const url = `${CONFIG.APPS_SCRIPT_URL}?action=get_user_data&telegram_id=${telegramId}&initData=${encodeURIComponent(tg.initData)}`;
+                const url = `${CONFIG.APPS_SCRIPT_URL}?action=get_user_data&token=${encodeURIComponent(token || '')}`;
                 
                 console.log('Загрузка данных пользователя...');
                 
@@ -646,17 +632,18 @@
                 ).length;
                 
                 const isOpen = filter !== '';
+                const categoryId = 'category-' + Math.random().toString(36).substr(2, 9);
                 
                 html += `
                     <div class="category">
-                        <div class="category-header ${isOpen ? 'active' : ''}" onclick="toggleCategory(this)">
+                        <div class="category-header ${isOpen ? 'active' : ''}" onclick="toggleCategory('${categoryId}')">
                             <div class="category-title">
                                 <span>${categoryName}</span>
                                 <span class="category-count">${selectedInCategory}/${products.length}</span>
                             </div>
                             <span class="category-arrow">▼</span>
                         </div>
-                        <div class="category-products ${isOpen ? 'open' : ''}">
+                        <div class="category-products ${isOpen ? 'open' : ''}" id="${categoryId}">
                             ${products.map(product => {
                                 const productId = normalizeId(product.id);
                                 const isChecked = selectedProducts.has(productId);
@@ -684,12 +671,25 @@
         }
 
         // ========================================
-        // TOGGLE CATEGORY
+        // TOGGLE CATEGORY (ИСПРАВЛЕНО!)
         // ========================================
-        function toggleCategory(header) {
+        function toggleCategory(categoryId) {
+            const productsDiv = document.getElementById(categoryId);
+            const header = productsDiv.previousElementSibling;
+            
             header.classList.toggle('active');
-            const products = header.nextElementSibling;
-            products.classList.toggle('open');
+            productsDiv.classList.toggle('open');
+            
+            // ИСПРАВЛЕНИЕ БАГА: Пересчитываем высоту после открытия
+            if (productsDiv.classList.contains('open')) {
+                // Даём браузеру время на рендеринг
+                setTimeout(() => {
+                    const actualHeight = productsDiv.scrollHeight;
+                    productsDiv.style.maxHeight = actualHeight + 'px';
+                }, 10);
+            } else {
+                productsDiv.style.maxHeight = '0';
+            }
         }
 
         // ========================================
@@ -745,9 +745,7 @@
 
             try {
                 const productsString = Array.from(selectedProducts).join(',');
-                
-                // Отправляем с Telegram подписью вместо токена
-                const url = `${CONFIG.APPS_SCRIPT_URL}?action=save_user_data&telegram_id=${telegramId}&username=${encodeURIComponent(username)}&products=${encodeURIComponent(productsString)}&initData=${encodeURIComponent(tg.initData)}`;
+                const url = `${CONFIG.APPS_SCRIPT_URL}?action=save_user_data&products=${encodeURIComponent(productsString)}&token=${encodeURIComponent(token || '')}`;
                 
                 console.log('Сохранение данных...');
                 console.log('Сохраняем продукты:', productsString);
@@ -769,26 +767,13 @@
                     }, 3000);
 
                     console.log('✅ Данные сохранены');
-                    
-                    // Показываем уведомление в Telegram
-                    tg.showPopup({
-                        title: 'Успешно!',
-                        message: `Сохранено ${selectedProducts.size} продуктов`,
-                        buttons: [{type: 'ok'}]
-                    });
                 } else {
                     throw new Error('Не удалось сохранить данные');
                 }
 
             } catch (error) {
                 console.error('❌ Ошибка сохранения:', error);
-                
-                // Показываем ошибку в Telegram
-                tg.showPopup({
-                    title: 'Ошибка',
-                    message: error.message,
-                    buttons: [{type: 'ok'}]
-                });
+                alert('❌ Ошибка при сохранении: ' + error.message);
             } finally {
                 button.disabled = false;
                 button.textContent = '💾 Сохранить';
@@ -801,9 +786,6 @@
         window.addEventListener('DOMContentLoaded', () => {
             console.log('=== ЗАПУСК ПРИЛОЖЕНИЯ ===');
             loadProducts();
-            
-            // Сообщаем Telegram что приложение готово
-            tg.ready();
         });
     </script>
 </body>
