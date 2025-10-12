@@ -1,4 +1,17 @@
-body {
+<artifact identifier="product-selector-with-id-fixed" type="text/html" title="Выбор продуктов (исправлено)">
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Выбор продуктов</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+    body {
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         min-height: 100vh;
@@ -288,14 +301,429 @@ body {
         margin-bottom: 15px;
     }
 
-    /* Скрываем категории без совпадений при поиске */
     .category.hidden {
         display: none;
     }
 
-    /* Подсветка найденного текста */
     .highlight {
         background-color: yellow;
         font-weight: bold;
     }
 </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🛒 Выбор продуктов</h1>
+            <div class="user-info">
+                <span class="user-icon">👤</span>
+                <div class="user-details">
+                    <span class="user-name" id="username">Загрузка...</span>
+                    <span class="user-id" id="user-id">ID: ...</span>
+                </div>
+            </div>
+        </div>
+    <div class="search-container">
+        <input 
+            type="text" 
+            class="search-input" 
+            id="searchInput" 
+            placeholder="🔍 Поиск продуктов..."
+        >
+    </div>
+
+    <div id="app">
+        <div class="loading">
+            <div class="spinner"></div>
+            <div>Загрузка продуктов...</div>
+        </div>
+    </div>
+
+    <div class="footer">
+        <div class="selected-count">
+            Выбрано: <strong id="selectedCount">0</strong>
+        </div>
+        <button class="save-button" id="saveButton" onclick="saveUserData()">
+            💾 Сохранить выбор
+        </button>
+    </div>
+</div>
+
+<script>
+    // ========================================
+    // ПОЛУЧЕНИЕ ТОКЕНА ИЗ URL
+    // ========================================
+    const urlParams = new URLSearchParams(window.location.search);
+    const token = urlParams.get('token');
+
+    let telegramId = '';
+    let username = '';
+
+    console.log('=== ПОЛУЧЕНИЕ ДАННЫХ ===');
+    console.log('Token:', token ? token.substring(0, 20) + '...' : 'отсутствует');
+
+    if (!token) {
+        console.warn('⚠️ Токен отсутствует - тестовый режим');
+        telegramId = '123456';
+        username = 'TestUser';
+    } else {
+        console.log('✅ Токен получен, будет проверен сервером');
+    }
+
+    // ========================================
+    // CONFIGURATION
+    // ========================================
+    const CONFIG = {
+        APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbyT5lxWKi0U8eXUnSikIY9MUb_pfWGKZTdVvS8XtiiCakmN9Cy7sDY8SMrT1wQfK4U8/exec'
+    };
+
+    // ========================================
+    // STATE
+    // ========================================
+    let allProducts = [];
+    let selectedProducts = new Set();
+    let productsByCategory = {};
+
+    // ========================================
+    // ЗАГРУЗКА ПРОДУКТОВ
+    // ========================================
+    async function loadProducts() {
+        try {
+            console.log('=== ЗАПУСК ПРИЛОЖЕНИЯ ===');
+            
+            const url = `${CONFIG.APPS_SCRIPT_URL}?action=get_products&token=${encodeURIComponent(token || '')}`;
+            
+            console.log('Загружаю продукты...');
+            const response = await fetch(url);
+            
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
+            const data = await response.json();
+            
+            console.log('Ответ сервера:', data);
+            
+            if (!data.success) {
+                throw new Error(data.error || 'Неизвестная ошибка');
+            }
+            
+            allProducts = data.products || [];
+            console.log(`✅ Загружено ${allProducts.length} продуктов`);
+            
+            groupProductsByCategory();
+            await loadUserData();
+            renderProducts();
+            
+        } catch (error) {
+            console.error('❌ Ошибка загрузки:', error);
+            showError('Ошибка загрузки продуктов: ' + error.message);
+        }
+    }
+
+    // ========================================
+    // ЗАГРУЗКА ДАННЫХ ПОЛЬЗОВАТЕЛЯ
+    // ========================================
+    async function loadUserData() {
+        try {
+            const url = `${CONFIG.APPS_SCRIPT_URL}?action=get_user_data&token=${encodeURIComponent(token || '')}`;
+            
+            console.log('Загружаю данные пользователя...');
+            const response = await fetch(url);
+            
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
+            const data = await response.json();
+            
+            console.log('Данные пользователя:', data);
+            
+            if (data.success) {
+                telegramId = data.telegram_id || telegramId;
+                username = data.username || username || 'Пользователь';
+                
+                document.getElementById('username').textContent = username || 'Пользователь';
+                document.getElementById('user-id').textContent = `ID: ${telegramId}`;
+                
+                console.log('Telegram ID:', telegramId);
+                console.log('Username:', username);
+                
+                if (data.selected_products) {
+                    const productIds = data.selected_products.split(',').filter(id => id.trim());
+                    selectedProducts = new Set(productIds);
+                    console.log(`Загружено ${selectedProducts.size} выбранных продуктов`);
+                }
+            }
+            
+        } catch (error) {
+            console.error('Ошибка загрузки данных пользователя:', error);
+        }
+    }
+
+    // ========================================
+    // ГРУППИРОВКА ПО КАТЕГОРИЯМ
+    // ========================================
+    function groupProductsByCategory() {
+        productsByCategory = {};
+        
+        allProducts.forEach(product => {
+            const category = product.category || 'Без категории';
+            if (!productsByCategory[category]) {
+                productsByCategory[category] = [];
+            }
+            productsByCategory[category].push(product);
+        });
+        
+        console.log('Категорий:', Object.keys(productsByCategory).length);
+    }
+
+    // ========================================
+    // ПОДСВЕТКА ТЕКСТА ПРИ ПОИСКЕ
+    // ========================================
+    function highlightText(text, query) {
+        if (!query) return text;
+        
+        const regex = new RegExp(`(${query})`, 'gi');
+        return text.replace(regex, '<span class="highlight">$1</span>');
+    }
+
+    // ========================================
+    // ИКОНКИ КАТЕГОРИЙ
+    // ========================================
+    function getCategoryIcon(category) {
+        const icons = {
+            'Рыба': '🐟',
+            'Мясо': '🥩',
+            'Птица': '🍗',
+            'Морепродукты': '🦐',
+            'Молочные продукты': '🥛',
+            'Крупы, бобовые, макароны': '🍝',
+            'Корнеплоды': '🥕',
+            'Овощи': '🥬',
+            'Фрукты': '🍎',
+            'Без категории': '📦'
+        };
+        return icons[category] || '📦';
+    }
+
+    // ========================================
+    // ОТРИСОВКА
+    // ========================================
+    function renderProducts(searchQuery = '') {
+        const app = document.getElementById('app');
+        
+        if (allProducts.length === 0) {
+            app.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-state-icon">📦</div>
+                    <div>Продукты не найдены</div>
+                </div>
+            `;
+            return;
+        }
+        
+        const categories = Object.keys(productsByCategory).sort();
+        
+        let visibleCategoriesCount = 0;
+        
+        const html = `
+            <div class="categories">
+                ${categories.map(category => {
+                    const products = productsByCategory[category];
+                    
+                    let filteredProducts = products;
+                    if (searchQuery) {
+                        filteredProducts = products.filter(p => 
+                            p.name.toLowerCase().includes(searchQuery.toLowerCase())
+                        );
+                    }
+                    
+                    if (filteredProducts.length === 0) {
+                        return `<div class="category hidden" data-category="${category}"></div>`;
+                    }
+                    
+                    visibleCategoriesCount++;
+                    
+                    const selectedInCategory = filteredProducts.filter(p => 
+                        selectedProducts.has(p.id)
+                    ).length;
+                    
+                    return `
+                        <div class="category" data-category="${category}">
+                            <div class="category-header" onclick="toggleCategory('${category}')">
+                                <div class="category-title">
+                                    <span>${getCategoryIcon(category)}</span>
+                                    <span>${category}</span>
+                                </div>
+                                <div style="display: flex; align-items: center; gap: 10px;">
+                                    <span class="category-count">${selectedInCategory}/${filteredProducts.length}</span>
+                                    <span class="category-arrow">▼</span>
+                                </div>
+                            </div>
+                            <div class="category-products">
+                                ${filteredProducts.map(product => `
+                                    <div class="product-item ${selectedProducts.has(product.id) ? 'selected' : ''}" 
+                                         onclick="toggleProduct('${product.id}')">
+                                        <input type="checkbox" 
+                                               class="product-checkbox"
+                                               ${selectedProducts.has(product.id) ? 'checked' : ''}
+                                               onclick="event.stopPropagation(); toggleProduct('${product.id}')">
+                                        <span class="product-name">${highlightText(product.name, searchQuery)}</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    `;
+                }).join('')}
+            </div>
+        `;
+        
+        app.innerHTML = html;
+        
+        if (visibleCategoriesCount === 0 && searchQuery) {
+            app.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-state-icon">🔍</div>
+                    <div>Ничего не найдено по запросу "${searchQuery}"</div>
+                </div>
+            `;
+        }
+        
+        updateSelectedCount();
+    }
+
+    // ========================================
+    // ПЕРЕКЛЮЧЕНИЕ КАТЕГОРИИ
+    // ========================================
+    function toggleCategory(category) {
+        const categoryElement = document.querySelector(`[data-category="${category}"]`);
+        const productsDiv = categoryElement.querySelector('.category-products');
+        
+        categoryElement.classList.toggle('open');
+        productsDiv.classList.toggle('open');
+        
+        if (productsDiv.classList.contains('open')) {
+            const actualHeight = productsDiv.scrollHeight;
+            productsDiv.style.maxHeight = actualHeight + 'px';
+        } else {
+            productsDiv.style.maxHeight = '0';
+        }
+    }
+
+    // ========================================
+    // ПЕРЕКЛЮЧЕНИЕ ПРОДУКТА
+    // ========================================
+    function toggleProduct(productId) {
+        if (selectedProducts.has(productId)) {
+            selectedProducts.delete(productId);
+        } else {
+            selectedProducts.add(productId);
+        }
+        
+        const searchQuery = document.getElementById('searchInput').value;
+        renderProducts(searchQuery);
+    }
+
+    // ========================================
+    // ОБНОВЛЕНИЕ СЧЁТЧИКА
+    // ========================================
+    function updateSelectedCount() {
+        document.getElementById('selectedCount').textContent = selectedProducts.size;
+    }
+
+    // ========================================
+    // СОХРАНЕНИЕ
+    // ========================================
+    async function saveUserData() {
+        try {
+            const button = document.getElementById('saveButton');
+            button.disabled = true;
+            button.textContent = '💾 Сохранение...';
+            
+            const productsString = Array.from(selectedProducts).join(',');
+            const url = `${CONFIG.APPS_SCRIPT_URL}?action=save_user_data&products=${encodeURIComponent(productsString)}&token=${encodeURIComponent(token || '')}`;
+            
+            console.log('Сохраняю данные...');
+            console.log('Продукты:', productsString);
+            
+            const response = await fetch(url);
+            
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
+            const data = await response.json();
+            
+            console.log('Результат сохранения:', data);
+            
+            if (data.success) {
+                showSuccess('✅ Данные успешно сохранены!');
+                button.textContent = '✅ Сохранено!';
+                
+                setTimeout(() => {
+                    button.textContent = '💾 Сохранить выбор';
+                    button.disabled = false;
+                }, 2000);
+            } else {
+                throw new Error(data.error || 'Ошибка сохранения');
+            }
+            
+        } catch (error) {
+            console.error('❌ Ошибка сохранения:', error);
+            showError('Ошибка сохранения: ' + error.message);
+            
+            const button = document.getElementById('saveButton');
+            button.textContent = '💾 Сохранить выбор';
+            button.disabled = false;
+        }
+    }
+
+    // ========================================
+    // ПОИСК
+    // ========================================
+    document.addEventListener('DOMContentLoaded', () => {
+        const searchInput = document.getElementById('searchInput');
+        
+        searchInput.addEventListener('input', (e) => {
+            const searchQuery = e.target.value;
+            renderProducts(searchQuery);
+        });
+    });
+
+    // ========================================
+    // УВЕДОМЛЕНИЯ
+    // ========================================
+    function showError(message) {
+        const app = document.getElementById('app');
+        app.innerHTML = `<div class="error">${message}</div>`;
+    }
+
+    function showSuccess(message) {
+        const existingSuccess = document.querySelector('.success');
+        if (existingSuccess) {
+            existingSuccess.remove();
+        }
+        
+        const successDiv = document.createElement('div');
+        successDiv.className = 'success';
+        successDiv.textContent = message;
+        
+        document.querySelector('.container').insertBefore(
+            successDiv, 
+            document.querySelector('.footer')
+        );
+        
+        setTimeout(() => {
+            successDiv.remove();
+        }, 3000);
+    }
+
+    // ========================================
+    // ЗАПУСК
+    // ========================================
+    loadProducts();
+</script>
+</body>
+</html>
+</artifact>
