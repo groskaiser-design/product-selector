@@ -1,4 +1,4 @@
-<artifact identifier="product-selector-emoji-fixed" type="application/vnd.ant.code" language="html" title="index.html - С правильными названиями категорий">
+<artifact identifier="optimized-final-html" type="text/html" title="index.html - Оптимизированная финальная версия">
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -374,11 +374,11 @@
     // CONFIGURATION
     // ========================================
     const CONFIG = {
-        APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbyT5lxWKi0U8eXUnSikIY9MUb_pfWGKZTdVvS8XtiiCakmN9Cy7sDY8SMrT1wQfK4U8/exec'
+        APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbwhklbYUtZ45X-0AN2hG5-2Oa8Jpm-YqWoNM0Id30HEP7Pg5IAsPvX37lPUrqDA34ud/exec'
     };
 
     // ========================================
-    // ПОРЯДОК КАТЕГОРИЙ (С ЭМОДЗИ КАК В БАЗЕ!)
+    // ПОРЯДОК КАТЕГОРИЙ
     // ========================================
     const CATEGORY_ORDER = [
         '🐟 Рыба',
@@ -400,6 +400,15 @@
     let allProducts = [];
     let selectedProducts = new Set();
     let productsByCategory = {};
+
+    // ========================================
+    // ЗАЩИТА ОТ XSS - ЭКРАНИРОВАНИЕ HTML
+    // ========================================
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
 
     // ========================================
     // ЗАГРУЗКА ПРОДУКТОВ
@@ -431,10 +440,11 @@
             groupProductsByCategory();
             await loadUserData();
             renderProducts();
+            setupEventDelegation();
             
         } catch (error) {
             console.error('❌ Ошибка загрузки:', error);
-            showError('Ошибка загрузки продуктов: ' + error.message);
+            showError('Ошибка загрузки продуктов: ' + escapeHtml(error.message));
         }
     }
 
@@ -492,11 +502,10 @@
             productsByCategory[category].push(product);
         });
         
-        // СОРТИРУЕМ ПРОДУКТЫ ВНУТРИ КАЖДОЙ КАТЕГОРИИ ПО ID
         Object.keys(productsByCategory).forEach(category => {
             productsByCategory[category].sort((a, b) => {
-                const idA = parseInt(a.id) || 0;
-                const idB = parseInt(b.id) || 0;
+                const idA = parseInt(a.id, 10) || 0;
+                const idB = parseInt(b.id, 10) || 0;
                 return idA - idB;
             });
         });
@@ -509,10 +518,12 @@
     // ПОДСВЕТКА ТЕКСТА ПРИ ПОИСКЕ
     // ========================================
     function highlightText(text, query) {
-        if (!query) return text;
+        if (!query) return escapeHtml(text);
         
-        const regex = new RegExp(`(${query})`, 'gi');
-        return text.replace(regex, '<span class="highlight">$1</span>');
+        const escapedText = escapeHtml(text);
+        const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp(`(${escapedQuery})`, 'gi');
+        return escapedText.replace(regex, '<span class="highlight">$1</span>');
     }
 
     // ========================================
@@ -523,18 +534,13 @@
             const indexA = CATEGORY_ORDER.indexOf(a);
             const indexB = CATEGORY_ORDER.indexOf(b);
             
-            // Если обе категории в списке порядка
             if (indexA !== -1 && indexB !== -1) {
                 return indexA - indexB;
             }
             
-            // Если только A в списке - она идёт первой
             if (indexA !== -1) return -1;
-            
-            // Если только B в списке - она идёт первой
             if (indexB !== -1) return 1;
             
-            // Если обе не в списке - алфавитная сортировка
             return a.localeCompare(b, 'ru');
         });
     }
@@ -555,7 +561,6 @@
             return;
         }
         
-        // СОРТИРУЕМ КАТЕГОРИИ ПО ЗАДАННОМУ ПОРЯДКУ
         const categories = sortCategories(Object.keys(productsByCategory));
         
         let visibleCategoriesCount = 0;
@@ -573,7 +578,7 @@
                     }
                     
                     if (filteredProducts.length === 0) {
-                        return `<div class="category hidden" data-category="${category}"></div>`;
+                        return '';
                     }
                     
                     visibleCategoriesCount++;
@@ -582,11 +587,13 @@
                         selectedProducts.has(p.id)
                     ).length;
                     
+                    const escapedCategory = escapeHtml(category);
+                    
                     return `
-                        <div class="category" data-category="${category}">
-                            <div class="category-header" onclick="toggleCategory('${category}')">
+                        <div class="category" data-category="${escapedCategory}">
+                            <div class="category-header" data-action="toggle-category" data-category="${escapedCategory}">
                                 <div class="category-title">
-                                    <span>${category}</span>
+                                    <span>${escapedCategory}</span>
                                 </div>
                                 <div style="display: flex; align-items: center; gap: 10px;">
                                     <span class="category-count">${selectedInCategory}/${filteredProducts.length}</span>
@@ -594,16 +601,20 @@
                                 </div>
                             </div>
                             <div class="category-products">
-                                ${filteredProducts.map(product => `
+                                ${filteredProducts.map(product => {
+                                    const escapedId = escapeHtml(product.id);
+                                    return `
                                     <div class="product-item ${selectedProducts.has(product.id) ? 'selected' : ''}" 
-                                         onclick="toggleProduct('${product.id}')">
+                                         data-action="toggle-product"
+                                         data-product-id="${escapedId}">
                                         <input type="checkbox" 
                                                class="product-checkbox"
                                                ${selectedProducts.has(product.id) ? 'checked' : ''}
-                                               onclick="event.stopPropagation(); toggleProduct('${product.id}')">
+                                               data-action="toggle-product"
+                                               data-product-id="${escapedId}">
                                         <span class="product-name">${highlightText(product.name, searchQuery)}</span>
                                     </div>
-                                `).join('')}
+                                `}).join('')}
                             </div>
                         </div>
                     `;
@@ -617,7 +628,7 @@
             app.innerHTML = `
                 <div class="empty-state">
                     <div class="empty-state-icon">🔍</div>
-                    <div>Ничего не найдено по запросу "${searchQuery}"</div>
+                    <div>Ничего не найдено по запросу "${escapeHtml(searchQuery)}"</div>
                 </div>
             `;
         }
@@ -626,10 +637,54 @@
     }
 
     // ========================================
+    // EVENT DELEGATION - ОПТИМИЗИРОВАННАЯ ОБРАБОТКА СОБЫТИЙ
+    // ========================================
+    function setupEventDelegation() {
+        const app = document.getElementById('app');
+        
+        // Один обработчик на весь контейнер!
+        app.addEventListener('click', function(e) {
+            const target = e.target;
+            const action = target.dataset.action;
+            
+            // Обработка переключения категории
+            if (action === 'toggle-category' || target.closest('[data-action="toggle-category"]')) {
+                const categoryHeader = target.closest('[data-action="toggle-category"]');
+                if (categoryHeader) {
+                    const category = categoryHeader.dataset.category;
+                    toggleCategory(category);
+                }
+                return;
+            }
+            
+            // Обработка переключения продукта
+            if (action === 'toggle-product') {
+                e.stopPropagation();
+                const productId = target.dataset.productId;
+                if (productId) {
+                    toggleProduct(productId);
+                }
+                return;
+            }
+            
+            // Клик по строке продукта (не по чекбоксу)
+            const productItem = target.closest('.product-item');
+            if (productItem && !target.classList.contains('product-checkbox')) {
+                const productId = productItem.dataset.productId;
+                if (productId) {
+                    toggleProduct(productId);
+                }
+            }
+        });
+    }
+
+    // ========================================
     // ПЕРЕКЛЮЧЕНИЕ КАТЕГОРИИ
     // ========================================
     function toggleCategory(category) {
-        const categoryElement = document.querySelector(`[data-category="${category}"]`);
+        const categoryElement = document.querySelector(`[data-category="${category}"].category`);
+        if (!categoryElement) return;
+        
         const productsDiv = categoryElement.querySelector('.category-products');
         
         categoryElement.classList.toggle('open');
@@ -653,8 +708,55 @@
             selectedProducts.add(productId);
         }
         
-        const searchQuery = document.getElementById('searchInput').value;
-        renderProducts(searchQuery);
+        updateProductUI(productId);
+        updateSelectedCount();
+        updateCategoryCount(productId);
+    }
+
+    // ========================================
+    // ОБНОВЛЕНИЕ UI ПРОДУКТА
+    // ========================================
+    function updateProductUI(productId) {
+        const productItems = document.querySelectorAll(`[data-product-id="${productId}"]`);
+        const isSelected = selectedProducts.has(productId);
+        
+        productItems.forEach(item => {
+            if (item.classList.contains('product-item')) {
+                if (isSelected) {
+                    item.classList.add('selected');
+                } else {
+                    item.classList.remove('selected');
+                }
+            } else if (item.classList.contains('product-checkbox')) {
+                item.checked = isSelected;
+            }
+        });
+    }
+
+    // ========================================
+    // ОБНОВЛЕНИЕ СЧЁТЧИКА КАТЕГОРИИ
+    // ========================================
+    function updateCategoryCount(productId) {
+        // Находим категорию продукта
+        const product = allProducts.find(p => p.id === productId);
+        if (!product) return;
+        
+        const category = product.category || 'Без категории';
+        const products = productsByCategory[category];
+        if (!products) return;
+        
+        const selectedInCategory = products.filter(p => 
+            selectedProducts.has(p.id)
+        ).length;
+        
+        // Обновляем только счётчик этой категории
+        const categoryElement = document.querySelector(`[data-category="${escapeHtml(category)}"].category`);
+        if (categoryElement) {
+            const countElement = categoryElement.querySelector('.category-count');
+            if (countElement) {
+                countElement.textContent = `${selectedInCategory}/${products.length}`;
+            }
+        }
     }
 
     // ========================================
@@ -703,7 +805,7 @@
             
         } catch (error) {
             console.error('❌ Ошибка сохранения:', error);
-            showError('Ошибка сохранения: ' + error.message);
+            showError('Ошибка сохранения: ' + escapeHtml(error.message));
             
             const button = document.getElementById('saveButton');
             button.textContent = '💾 Сохранить выбор';
@@ -720,6 +822,7 @@
         searchInput.addEventListener('input', (e) => {
             const searchQuery = e.target.value;
             renderProducts(searchQuery);
+            // НЕ нужно вызывать setupEventDelegation() - он уже установлен один раз!
         });
     });
 
