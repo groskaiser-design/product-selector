@@ -185,12 +185,12 @@
         <div id="app">
             <div class="loading">
                 <div class="spinner"></div>
-                <div>Загрузка...</div>
+                <div>Загрузка продуктов...</div>
             </div>
         </div>
         <div class="footer">
             <div class="selected-count">Выбрано: <strong id="selectedCount">0</strong></div>
-            <button class="save-button" id="saveButton" onclick="saveUserData()">💾 Сохранить</button>
+            <button class="save-button" id="saveButton" onclick="saveUserData()">💾 Сохранить выбор</button>
         </div>
     </div>
 
@@ -203,7 +203,12 @@
             APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbxNNeMhr0n5XJQdWNbu-_G6DPQqlDESLpQ_CcF6yWE0XW-Vo143gAJAxBevkI99-OpD/exec'
         };
 
-        const CATEGORY_ORDER = ['🐟 Рыба', '🥩 Мясо', '🍗 Птица', '🦐 Морепродукты', '🥛 Молочные продукты', '🍝 Крупы, бобовые, макароны', '🥕 Корнеплоды', '🥬 Овощи', '🍎 Фрукты', '🥜 Орехи и семена', 'Без категории'];
+        const CATEGORY_ORDER = [
+            '🐟 Рыба', '🥩 Мясо', '🍗 Птица', '🦐 Морепродукты',
+            '🥛 Молочные продукты', '🍝 Крупы, бобовые, макароны',
+            '🥕 Корнеплоды', '🥬 Овощи', '🍎 Фрукты', '🥜 Орехи и семена',
+            'Без категории'
+        ];
 
         let allProducts = [];
         let selectedProducts = new Set();
@@ -220,33 +225,49 @@
 
         function escapeAttr(text) {
             if (!text) return '';
-            return String(text).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            return String(text)
+                .replace(/&/g, '&amp;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
         }
 
         async function initApp() {
             try {
-                console.log('Init app');
-
                 const response = await fetch(CONFIG.APPS_SCRIPT_URL, {
                     method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
                     body: JSON.stringify({
                         action: 'init',
                         initData: tg.initData
                     })
                 });
 
+                if (!response.ok) {
+                    throw new Error('HTTP ' + response.status);
+                }
+
                 const data = await response.json();
-                console.log('Response:', data);
 
-                if (!data.success) throw new Error(data.error || 'Error');
+                if (!data.success) {
+                    throw new Error(data.error || 'Ошибка сервера');
+                }
 
-                document.getElementById('userInfo').textContent = `👤 ${data.user.username} (ID: ${data.user.telegram_id})`;
+                document.getElementById('userInfo').textContent = 
+                    `👤 ${data.user.username} (ID: ${data.user.telegram_id})`;
 
                 allProducts = data.products;
                 allProducts.forEach(p => p.nameLower = p.name.toLowerCase());
 
                 if (data.user_data.selected_products) {
-                    selectedProducts = new Set(data.user_data.selected_products.split(',').map(id => id.trim()).filter(id => id));
+                    selectedProducts = new Set(
+                        data.user_data.selected_products.split(',')
+                            .map(id => id.trim())
+                            .filter(id => id)
+                    );
                 }
 
                 groupProductsByCategory();
@@ -255,7 +276,7 @@
 
             } catch (error) {
                 console.error('Error:', error);
-                showError('Ошибка: ' + error.message);
+                showError('Ошибка загрузки: ' + error.message);
             }
         }
 
@@ -263,11 +284,16 @@
             productsByCategory = {};
             allProducts.forEach(product => {
                 const category = product.category || 'Без категории';
-                if (!productsByCategory[category]) productsByCategory[category] = [];
+                if (!productsByCategory[category]) {
+                    productsByCategory[category] = [];
+                }
                 productsByCategory[category].push(product);
             });
+
             Object.keys(productsByCategory).forEach(category => {
-                productsByCategory[category].sort((a, b) => a.id.localeCompare(b.id, undefined, {numeric: true, sensitivity: 'base'}));
+                productsByCategory[category].sort((a, b) => 
+                    a.id.localeCompare(b.id, undefined, {numeric: true, sensitivity: 'base'})
+                );
             });
         }
 
@@ -286,37 +312,63 @@
             const app = document.getElementById('app');
             const categories = sortCategories(Object.keys(productsByCategory));
             const queryLower = searchQuery.toLowerCase();
+
             categoryIdToName = {};
             categoryNameToId = {};
 
-            const html = '<div class="categories">' + categories.map(category => {
-                const products = productsByCategory[category];
-                let filteredProducts = searchQuery ? products.filter(p => p.nameLower.includes(queryLower)) : products;
-                if (filteredProducts.length === 0) return '';
+            const html = `
+                <div class="categories">
+                    ${categories.map(category => {
+                        const products = productsByCategory[category];
+                        let filteredProducts = searchQuery 
+                            ? products.filter(p => p.nameLower.includes(queryLower))
+                            : products;
 
-                const selectedInCategory = filteredProducts.filter(p => selectedProducts.has(p.id)).length;
-                const categoryId = 'cat_' + encodeURIComponent(category).replace(/%/g, '_');
-                categoryIdToName[categoryId] = category;
-                categoryNameToId[category] = categoryId;
-                const allSelected = filteredProducts.every(p => selectedProducts.has(p.id));
+                        if (filteredProducts.length === 0) return '';
 
-                return '<div class="category ' + (searchQuery ? 'open' : '') + '" data-category-id="' + categoryId + '">' +
-                    '<div class="category-header" data-action="toggle-category" data-category-id="' + categoryId + '">' +
-                    '<div class="category-title">' + escapeHtml(category) + '</div>' +
-                    '<div style="display: flex; align-items: center; gap: 10px;">' +
-                    '<span class="category-count">' + selectedInCategory + '/' + filteredProducts.length + '</span>' +
-                    '<span class="category-arrow">▼</span></div></div>' +
-                    '<div class="category-products ' + (searchQuery ? 'open' : '') + '">' +
-                    '<div class="select-all-container">' +
-                    '<button class="select-all-btn" data-action="select-all" data-category-id="' + categoryId + '">' +
-                    (allSelected ? '✓ Снять все' : '+ Выбрать все') + '</button></div>' +
-                    filteredProducts.map(product => {
-                        const escapedId = escapeAttr(product.id);
-                        return '<div class="product-item ' + (selectedProducts.has(product.id) ? 'selected' : '') + '" data-product-id="' + escapedId + '">' +
-                            '<input type="checkbox" class="product-checkbox" ' + (selectedProducts.has(product.id) ? 'checked' : '') + ' data-product-id="' + escapedId + '">' +
-                            '<span class="product-name">' + escapeHtml(product.name) + '</span></div>';
-                    }).join('') + '</div></div>';
-            }).join('') + '</div>';
+                        const selectedInCategory = filteredProducts.filter(p => 
+                            selectedProducts.has(p.id)
+                        ).length;
+
+                        const categoryId = `cat_${encodeURIComponent(category).replace(/%/g, '_')}`;
+                        categoryIdToName[categoryId] = category;
+                        categoryNameToId[category] = categoryId;
+
+                        const allSelected = filteredProducts.every(p => selectedProducts.has(p.id));
+
+                        return `
+                            <div class="category ${searchQuery ? 'open' : ''}" data-category-id="${categoryId}">
+                                <div class="category-header" data-action="toggle-category" data-category-id="${categoryId}">
+                                    <div class="category-title">${escapeHtml(category)}</div>
+                                    <div style="display: flex; align-items: center; gap: 10px;">
+                                        <span class="category-count">${selectedInCategory}/${filteredProducts.length}</span>
+                                        <span class="category-arrow">▼</span>
+                                    </div>
+                                </div>
+                                <div class="category-products ${searchQuery ? 'open' : ''}">
+                                    <div class="select-all-container">
+                                        <button class="select-all-btn" data-action="select-all" data-category-id="${categoryId}">
+                                            ${allSelected ? '✓ Снять все' : '+ Выбрать все'}
+                                        </button>
+                                    </div>
+                                    ${filteredProducts.map(product => {
+                                        const escapedId = escapeAttr(product.id);
+                                        return `
+                                        <div class="product-item ${selectedProducts.has(product.id) ? 'selected' : ''}" 
+                                             data-product-id="${escapedId}">
+                                            <input type="checkbox" 
+                                                   class="product-checkbox"
+                                                   ${selectedProducts.has(product.id) ? 'checked' : ''}
+                                                   data-product-id="${escapedId}">
+                                            <span class="product-name">${escapeHtml(product.name)}</span>
+                                        </div>
+                                    `}).join('')}
+                                </div>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            `;
 
             app.innerHTML = html;
             updateSelectedCount();
@@ -324,40 +376,50 @@
 
         function setupEventDelegation() {
             const app = document.getElementById('app');
+
             app.addEventListener('click', function(e) {
                 const target = e.target;
+
                 if (target.dataset.action === 'select-all') {
                     e.stopPropagation();
                     const categoryId = target.dataset.categoryId;
                     if (categoryId) selectAllInCategory(categoryId);
                     return;
                 }
+
                 if (target.classList.contains('product-checkbox')) {
                     e.stopPropagation();
                     const productId = target.dataset.productId;
                     if (productId) toggleProduct(productId);
                     return;
                 }
+
                 const productItem = target.closest('.product-item');
                 if (productItem) {
                     const productId = productItem.dataset.productId;
                     if (productId) toggleProduct(productId);
                     return;
                 }
+
                 const categoryHeader = target.closest('[data-action="toggle-category"]');
                 if (categoryHeader) {
                     const categoryId = categoryHeader.dataset.categoryId;
                     if (categoryId) toggleCategory(categoryId);
                 }
             });
-            document.getElementById('searchInput').addEventListener('input', (e) => renderProducts(e.target.value));
+
+            document.getElementById('searchInput').addEventListener('input', (e) => {
+                renderProducts(e.target.value);
+            });
         }
 
         function toggleCategory(categoryId) {
-            const categoryElement = document.querySelector('.category[data-category-id="' + categoryId + '"]');
+            const categoryElement = document.querySelector(`.category[data-category-id="${categoryId}"]`);
             if (!categoryElement) return;
+
             const productsDiv = categoryElement.querySelector('.category-products');
             if (!productsDiv) return;
+
             categoryElement.classList.toggle('open');
             productsDiv.classList.toggle('open');
         }
@@ -365,14 +427,18 @@
         function selectAllInCategory(categoryId) {
             const categoryName = categoryIdToName[categoryId];
             if (!categoryName) return;
+
             const products = productsByCategory[categoryName];
             if (!products) return;
+
             const allSelected = products.every(p => selectedProducts.has(p.id));
+
             if (allSelected) {
                 products.forEach(p => selectedProducts.delete(p.id));
             } else {
                 products.forEach(p => selectedProducts.add(p.id));
             }
+
             products.forEach(p => updateProductUI(p.id));
             updateSelectedCount();
             updateCategoryCountByName(categoryName);
@@ -385,6 +451,7 @@
             } else {
                 selectedProducts.add(productId);
             }
+
             updateProductUI(productId);
             updateSelectedCount();
             updateCategoryCount(productId);
@@ -392,8 +459,9 @@
 
         function updateProductUI(productId) {
             const escapedId = escapeAttr(productId);
-            const productItems = document.querySelectorAll('[data-product-id="' + escapedId + '"]');
+            const productItems = document.querySelectorAll(`[data-product-id="${escapedId}"]`);
             const isSelected = selectedProducts.has(productId);
+
             productItems.forEach(item => {
                 if (item.classList.contains('product-item')) {
                     if (isSelected) {
@@ -416,22 +484,28 @@
         function updateCategoryCountByName(categoryName) {
             const products = productsByCategory[categoryName];
             if (!products) return;
-            const selectedInCategory = products.filter(p => selectedProducts.has(p.id)).length;
+
+            const selectedInCategory = products.filter(p => 
+                selectedProducts.has(p.id)
+            ).length;
+
             const categoryId = categoryNameToId[categoryName];
             if (!categoryId) return;
-            const categoryElement = document.querySelector('.category[data-category-id="' + categoryId + '"]');
+
+            const categoryElement = document.querySelector(`.category[data-category-id="${categoryId}"]`);
             if (categoryElement) {
                 const countElement = categoryElement.querySelector('.category-count');
                 if (countElement) {
-                    countElement.textContent = selectedInCategory + '/' + products.length;
+                    countElement.textContent = `${selectedInCategory}/${products.length}`;
                 }
+
                 const allSelected = products.every(p => selectedProducts.has(p.id));
                 updateSelectAllButton(categoryId, allSelected);
             }
         }
 
         function updateSelectAllButton(categoryId, allSelected) {
-            const button = document.querySelector('.select-all-btn[data-category-id="' + categoryId + '"]');
+            const button = document.querySelector(`.select-all-btn[data-category-id="${categoryId}"]`);
             if (button) {
                 button.textContent = allSelected ? '✓ Снять все' : '+ Выбрать все';
             }
@@ -451,6 +525,9 @@
 
                 const response = await fetch(CONFIG.APPS_SCRIPT_URL, {
                     method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
                     body: JSON.stringify({
                         action: 'save_user_data',
                         initData: tg.initData,
@@ -458,44 +535,58 @@
                     })
                 });
 
+                if (!response.ok) {
+                    throw new Error('HTTP ' + response.status);
+                }
+
                 const data = await response.json();
 
                 if (data.success) {
-                    showSuccess('✅ Сохранено!');
+                    showSuccess('✅ Данные успешно сохранены!');
                     button.textContent = '✅ Сохранено!';
+
                     setTimeout(() => {
-                        button.textContent = '💾 Сохранить';
+                        button.textContent = '💾 Сохранить выбор';
                         button.disabled = false;
                     }, 2000);
                 } else {
-                    throw new Error(data.error);
+                    throw new Error(data.error || 'Ошибка сохранения');
                 }
 
             } catch (error) {
-                console.error('Error:', error);
-                showError('Ошибка: ' + error.message);
+                console.error('Save error:', error);
+                showError('Ошибка сохранения: ' + error.message);
+
                 const button = document.getElementById('saveButton');
-                button.textContent = '💾 Сохранить';
+                button.textContent = '💾 Сохранить выбор';
                 button.disabled = false;
             }
         }
 
         function showError(message) {
             const app = document.getElementById('app');
-            app.innerHTML = '<div class="error">' + escapeHtml(message) + '</div>';
+            app.innerHTML = `<div class="error">${escapeHtml(message)}</div>`;
         }
 
         function showSuccess(message) {
             const existingSuccess = document.querySelector('.success');
-            if (existingSuccess) existingSuccess.remove();
+            if (existingSuccess) {
+                existingSuccess.remove();
+            }
+
             const successDiv = document.createElement('div');
             successDiv.className = 'success';
             successDiv.textContent = message;
+
             const container = document.querySelector('.container');
             const footer = document.querySelector('.footer');
+
             if (container && footer) {
                 container.insertBefore(successDiv, footer);
-                setTimeout(() => successDiv.remove(), 3000);
+
+                setTimeout(() => {
+                    successDiv.remove();
+                }, 3000);
             }
         }
 
