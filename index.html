@@ -423,6 +423,7 @@
     let selectedProducts = new Set();
     let productsByCategory = {};
     let categoryIdToName = {}; // Маппинг ID -> имя категории
+    let categoryNameToId = {}; // Маппинг имя -> ID (для производительности)
     
     // Кэш для highlightText
     let cachedRegex = null;
@@ -698,6 +699,7 @@
         
         // Очищаем старый маппинг
         categoryIdToName = {};
+        categoryNameToId = {};
         
         const html = `
             <div class="categories">
@@ -722,10 +724,12 @@
                     ).length;
                     
                     const escapedCategory = escapeAttr(category);
-                    const categoryIdSafe = `cat_${btoa(category).replace(/[^a-zA-Z0-9]/g, '_')}`;
+                    // Используем encodeURIComponent вместо btoa для поддержки Unicode
+                    const categoryIdSafe = `cat_${encodeURIComponent(category).replace(/%/g, '_')}`;
                     
-                    // Сохраняем маппинг
+                    // Сохраняем двусторонний маппинг для быстрого поиска
                     categoryIdToName[categoryIdSafe] = category;
+                    categoryNameToId[category] = categoryIdSafe;
                     
                     const allSelected = filteredProducts.every(p => selectedProducts.has(p.id));
                     
@@ -734,7 +738,7 @@
                             <div class="category-header" data-action="toggle-category" data-category-id="${categoryIdSafe}">
                                 <div class="category-title">
                                     <span>${escapeHtml(category)}</span>
-                                    <button class="select-all-btn" data-action="select-all" data-category-id="${categoryIdSafe}" onclick="event.stopPropagation()">
+                                    <button class="select-all-btn" data-action="select-all" data-category-id="${categoryIdSafe}">
                                         ${allSelected ? 'Снять все' : 'Выбрать все'}
                                     </button>
                                 </div>
@@ -964,10 +968,8 @@
             selectedProducts.has(p.id)
         ).length;
         
-        // Находим categoryId по имени
-        const categoryId = Object.keys(categoryIdToName).find(
-            id => categoryIdToName[id] === categoryName
-        );
+        // Быстрый поиск categoryId через прямой маппинг (O(1) вместо O(n))
+        const categoryId = categoryNameToId[categoryName];
         
         if (!categoryId) return;
         
