@@ -132,6 +132,27 @@
         font-size: 16px;
     }
 
+    .select-all-btn {
+        background: rgba(255,255,255,0.25);
+        border: none;
+        color: white;
+        padding: 6px 12px;
+        border-radius: 8px;
+        font-size: 12px;
+        cursor: pointer;
+        transition: all 0.2s;
+        font-weight: 600;
+    }
+
+    .select-all-btn:hover {
+        background: rgba(255,255,255,0.35);
+        transform: scale(1.05);
+    }
+
+    .select-all-btn:active {
+        transform: scale(0.95);
+    }
+
     .category-count {
         background: rgba(255,255,255,0.25);
         padding: 4px 12px;
@@ -401,6 +422,7 @@
     let allProducts = [];
     let selectedProducts = new Set();
     let productsByCategory = {};
+    let categoryIdToName = {}; // Маппинг ID -> имя категории
     
     // Кэш для highlightText
     let cachedRegex = null;
@@ -674,6 +696,9 @@
         let visibleCategoriesCount = 0;
         const queryLower = searchQuery.toLowerCase();
         
+        // Очищаем старый маппинг
+        categoryIdToName = {};
+        
         const html = `
             <div class="categories">
                 ${categories.map(category => {
@@ -697,13 +722,21 @@
                     ).length;
                     
                     const escapedCategory = escapeAttr(category);
-                    const categoryIdSafe = category.replace(/[^a-zA-Z0-9]/g, '_');
+                    const categoryIdSafe = `cat_${btoa(category).replace(/[^a-zA-Z0-9]/g, '_')}`;
+                    
+                    // Сохраняем маппинг
+                    categoryIdToName[categoryIdSafe] = category;
+                    
+                    const allSelected = filteredProducts.every(p => selectedProducts.has(p.id));
                     
                     return `
                         <div class="category ${searchQuery ? 'open' : ''}" data-category-id="${categoryIdSafe}">
                             <div class="category-header" data-action="toggle-category" data-category-id="${categoryIdSafe}">
                                 <div class="category-title">
                                     <span>${escapeHtml(category)}</span>
+                                    <button class="select-all-btn" data-action="select-all" data-category-id="${categoryIdSafe}" onclick="event.stopPropagation()">
+                                        ${allSelected ? 'Снять все' : 'Выбрать все'}
+                                    </button>
                                 </div>
                                 <div style="display: flex; align-items: center; gap: 10px;">
                                     <span class="category-count">${selectedInCategory}/${filteredProducts.length}</span>
@@ -754,6 +787,16 @@
         app.addEventListener('click', function(e) {
             const target = e.target;
             
+            // Обработка кнопки "Выбрать все"
+            if (target.dataset.action === 'select-all') {
+                e.stopPropagation();
+                const categoryId = target.dataset.categoryId;
+                if (categoryId) {
+                    selectAllInCategory(categoryId);
+                }
+                return;
+            }
+            
             // Обработка чекбокса
             if (target.classList.contains('product-checkbox')) {
                 e.stopPropagation();
@@ -790,10 +833,17 @@
     // ПЕРЕКЛЮЧЕНИЕ КАТЕГОРИИ (ИСПРАВЛЕНО)
     // ========================================
     function toggleCategory(categoryId) {
-        const categoryElement = document.querySelector(`[data-category-id="${categoryId}"].category`);
-        if (!categoryElement) return;
+        const categoryElement = document.querySelector(`.category[data-category-id="${categoryId}"]`);
+        if (!categoryElement) {
+            console.error('Категория не найдена:', categoryId);
+            return;
+        }
         
         const productsDiv = categoryElement.querySelector('.category-products');
+        if (!productsDiv) {
+            console.error('Продукты категории не найдены');
+            return;
+        }
         
         categoryElement.classList.toggle('open');
         productsDiv.classList.toggle('open');
@@ -803,6 +853,54 @@
             productsDiv.style.maxHeight = actualHeight + 'px';
         } else {
             productsDiv.style.maxHeight = '0';
+        }
+    }
+
+    // ========================================
+    // ВЫБРАТЬ ВСЕ В КАТЕГОРИИ
+    // ========================================
+    function selectAllInCategory(categoryId) {
+        const categoryName = categoryIdToName[categoryId];
+        if (!categoryName) {
+            console.error('Категория не найдена в маппинге:', categoryId);
+            return;
+        }
+        
+        const products = productsByCategory[categoryName];
+        if (!products) {
+            console.error('Продукты категории не найдены:', categoryName);
+            return;
+        }
+        
+        // Проверяем, все ли выбраны
+        const allSelected = products.every(p => selectedProducts.has(p.id));
+        
+        if (allSelected) {
+            // Снимаем выбор со всех
+            products.forEach(p => {
+                selectedProducts.delete(p.id);
+                updateProductUI(p.id);
+            });
+        } else {
+            // Выбираем все
+            products.forEach(p => {
+                selectedProducts.add(p.id);
+                updateProductUI(p.id);
+            });
+        }
+        
+        updateSelectedCount();
+        updateCategoryCountByName(categoryName);
+        updateSelectAllButton(categoryId, !allSelected);
+    }
+
+    // ========================================
+    // ОБНОВЛЕНИЕ КНОПКИ "ВЫБРАТЬ ВСЕ"
+    // ========================================
+    function updateSelectAllButton(categoryId, allSelected) {
+        const button = document.querySelector(`.select-all-btn[data-category-id="${categoryId}"]`);
+        if (button) {
+            button.textContent = allSelected ? 'Снять все' : 'Выбрать все';
         }
     }
 
@@ -855,21 +953,35 @@
         if (!product) return;
         
         const category = product.category || 'Без категории';
-        const products = productsByCategory[category];
+        updateCategoryCountByName(category);
+    }
+    
+    function updateCategoryCountByName(categoryName) {
+        const products = productsByCategory[categoryName];
         if (!products) return;
         
         const selectedInCategory = products.filter(p => 
             selectedProducts.has(p.id)
         ).length;
         
-        const categoryIdSafe = category.replace(/[^a-zA-Z0-9]/g, '_');
-        const categoryElement = document.querySelector(`[data-category-id="${categoryIdSafe}"].category`);
+        // Находим categoryId по имени
+        const categoryId = Object.keys(categoryIdToName).find(
+            id => categoryIdToName[id] === categoryName
+        );
+        
+        if (!categoryId) return;
+        
+        const categoryElement = document.querySelector(`.category[data-category-id="${categoryId}"]`);
         
         if (categoryElement) {
             const countElement = categoryElement.querySelector('.category-count');
             if (countElement) {
                 countElement.textContent = `${selectedInCategory}/${products.length}`;
             }
+            
+            // Обновляем текст кнопки
+            const allSelected = products.every(p => selectedProducts.has(p.id));
+            updateSelectAllButton(categoryId, allSelected);
         }
     }
 
