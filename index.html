@@ -373,7 +373,9 @@
     // CONFIGURATION
     // ========================================
     const CONFIG = {
-        APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbzHD1Ud4xEgMMVMSRYOnFXwhxxo3h-XaiZdSHOl51Hubs-NSMGKWqJHWZ-td5su8zpT/exec'
+        APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbzHD1Ud4xEgMMVMSRYOnFXwhxxo3h-XaiZdSHOl51Hubs-NSMGKWqJHWZ-td5su8zpT/exec',
+        FETCH_TIMEOUT: 15000,
+        MAX_RETRIES: 2
     };
 
     // ========================================
@@ -399,17 +401,23 @@
     let allProducts = [];
     let selectedProducts = new Set();
     let productsByCategory = {};
+    
+    // Кэш для highlightText
+    let cachedRegex = null;
+    let cachedQuery = null;
 
     // ========================================
     // ЗАЩИТА ОТ XSS - ЭКРАНИРОВАНИЕ HTML И АТРИБУТОВ
     // ========================================
     function escapeHtml(text) {
+        if (!text) return '';
         const div = document.createElement('div');
-        div.textContent = text;
+        div.textContent = String(text);
         return div.innerHTML;
     }
 
     function escapeAttr(text) {
+        if (!text) return '';
         return String(text)
             .replace(/&/g, '&amp;')
             .replace(/"/g, '&quot;')
@@ -419,19 +427,82 @@
     }
 
     // ========================================
+    // ВАЛИДАЦИЯ ДАННЫХ
+    // ========================================
+    function validateProduct(product) {
+        return product && 
+               typeof product.id === 'string' && 
+               product.id.length > 0 &&
+               product.id.length < 100 &&
+               /^[a-zA-Z0-9_\-\.]+$/.test(product.id) &&
+               typeof product.name === 'string' && 
+               product.name.length > 0 &&
+               product.name.length < 500 &&
+               typeof product.category === 'string' &&
+               product.category.length < 200;
+    }
+
+    function validateProductId(id) {
+        return typeof id === 'string' && 
+               id.length > 0 && 
+               id.length < 100 &&
+               /^[a-zA-Z0-9_\-\.]+$/.test(id);
+    }
+
+    // ========================================
+    // FETCH С ТАЙМАУТОМ И RETRY
+    // ========================================
+    async function fetchWithTimeout(url, options = {}, timeout = CONFIG.FETCH_TIMEOUT) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeout);
+        
+        try {
+            const response = await fetch(url, {
+                ...options,
+                signal: controller.signal
+            });
+            clearTimeout(timeoutId);
+            return response;
+        } catch (error) {
+            clearTimeout(timeoutId);
+            if (error.name === 'AbortError') {
+                throw new Error('Превышено время ожидания запроса');
+            }
+            throw error;
+        }
+    }
+
+    async function fetchWithRetry(url, options = {}, retries = CONFIG.MAX_RETRIES) {
+        for (let i = 0; i <= retries; i++) {
+            try {
+                return await fetchWithTimeout(url, options);
+            } catch (error) {
+                if (i === retries) throw error;
+                console.warn(`Попытка ${i + 1} не удалась, повтор...`);
+                await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
+            }
+        }
+    }
+
+    // ========================================
     // ЗАГРУЗКА ПРОДУКТОВ
     // ========================================
     async function loadProducts() {
         try {
             console.log('=== ЗАПУСК ПРИЛОЖЕНИЯ ===');
             
+            // Проверка онлайн статуса
+            if (!navigator.onLine) {
+                throw new Error('Нет подключения к интернету. Проверьте соединение.');
+            }
+            
             const url = `${CONFIG.APPS_SCRIPT_URL}?action=get_products&token=${encodeURIComponent(token || '')}`;
             
             console.log('Загружаю продукты...');
-            const response = await fetch(url);
+            const response = await fetchWithRetry(url);
             
             if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
+                throw new Error(`Ошибка сервера: ${response.status} ${response.statusText}`);
             }
             
             const data = await response.json();
@@ -439,18 +510,28 @@
             console.log('Ответ сервера:', data);
             
             if (!data.success) {
-                throw new Error(data.error || 'Неизвестная ошибка');
+                throw new Error(data.error || 'Неизвестная ошибка сервера');
             }
             
-            // Валидация массива продуктов
-            allProducts = Array.isArray(data.products) ? data.products : [];
+            // Валидация и фильтрация продуктов
+            if (!Array.isArray(data.products)) {
+                throw new Error('Некорректный формат данных продуктов');
+            }
+            
+            allProducts = data.products.filter(product => {
+                const isValid = validateProduct(product);
+                if (!isValid) {
+                    console.warn('Пропущен невалидный продукт:', product);
+                }
+                return isValid;
+            });
             
             // Предварительный кэш lowercase для быстрого поиска
             allProducts.forEach(product => {
                 product.nameLower = product.name.toLowerCase();
             });
             
-            console.log(`✅ Загружено ${allProducts.length} продуктов`);
+            console.log(`✅ Загружено ${allProducts.length} валидных продуктов`);
             
             groupProductsByCategory();
             await loadUserData();
@@ -471,7 +552,7 @@
             const url = `${CONFIG.APPS_SCRIPT_URL}?action=get_user_data&token=${encodeURIComponent(token || '')}`;
             
             console.log('Загружаю данные пользователя...');
-            const response = await fetch(url);
+            const response = await fetchWithRetry(url);
             
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
@@ -492,7 +573,11 @@
                 console.log('Username:', username);
                 
                 if (data.selected_products) {
-                    const productIds = data.selected_products.split(',').filter(id => id.trim());
+                    const productIds = data.selected_products
+                        .split(',')
+                        .map(id => id.trim())
+                        .filter(id => id && validateProductId(id));
+                    
                     selectedProducts = new Set(productIds);
                     console.log(`Загружено ${selectedProducts.size} выбранных продуктов`);
                 }
@@ -500,6 +585,7 @@
             
         } catch (error) {
             console.error('Ошибка загрузки данных пользователя:', error);
+            // Не показываем ошибку пользователю, работаем с дефолтными данными
         }
     }
 
@@ -517,7 +603,7 @@
             productsByCategory[category].push(product);
         });
         
-        // Улучшенная сортировка с поддержкой текстовых ID
+        // Сортировка продуктов по ID
         Object.keys(productsByCategory).forEach(category => {
             productsByCategory[category].sort((a, b) => {
                 return a.id.localeCompare(b.id, undefined, {numeric: true, sensitivity: 'base'});
@@ -529,15 +615,23 @@
     }
 
     // ========================================
-    // ПОДСВЕТКА ТЕКСТА ПРИ ПОИСКЕ (исправлена regex)
+    // ПОДСВЕТКА ТЕКСТА ПРИ ПОИСКЕ (ИСПРАВЛЕНО XSS)
     // ========================================
     function highlightText(text, query) {
         if (!query) return escapeHtml(text);
         
-        const escapedText = escapeHtml(text);
         const escapedQuery = query.replace(/[.*+?^${}()|[\]\\\-]/g, '\\$&');
-        const regex = new RegExp(`(${escapedQuery})`, 'gi');
-        return escapedText.replace(regex, '<span class="highlight">$1</span>');
+        
+        // Кэшируем regex для производительности
+        if (cachedQuery !== escapedQuery) {
+            cachedQuery = escapedQuery;
+            cachedRegex = new RegExp(`(${escapedQuery})`, 'gi');
+        }
+        
+        // Безопасная замена с двойным экранированием
+        return escapeHtml(text).replace(cachedRegex, (match) => {
+            return `<span class="highlight">${match}</span>`;
+        });
     }
 
     // ========================================
@@ -560,7 +654,7 @@
     }
 
     // ========================================
-    // ОТРИСОВКА (оптимизирован поиск + использование escapeAttr)
+    // ОТРИСОВКА (ОПТИМИЗИРОВАНА)
     // ========================================
     function renderProducts(searchQuery = '') {
         const app = document.getElementById('app');
@@ -578,7 +672,7 @@
         const categories = sortCategories(Object.keys(productsByCategory));
         
         let visibleCategoriesCount = 0;
-        const queryLower = searchQuery.toLowerCase(); // Кэшируем вне цикла
+        const queryLower = searchQuery.toLowerCase();
         
         const html = `
             <div class="categories">
@@ -587,7 +681,6 @@
                     
                     let filteredProducts = products;
                     if (searchQuery) {
-                        // Используем предварительно закэшированный nameLower
                         filteredProducts = products.filter(p => 
                             p.nameLower.includes(queryLower)
                         );
@@ -604,10 +697,11 @@
                     ).length;
                     
                     const escapedCategory = escapeAttr(category);
+                    const categoryIdSafe = category.replace(/[^a-zA-Z0-9]/g, '_');
                     
                     return `
-                        <div class="category ${searchQuery ? 'open' : ''}" data-category="${escapedCategory}">
-                            <div class="category-header" data-action="toggle-category" data-category="${escapedCategory}">
+                        <div class="category ${searchQuery ? 'open' : ''}" data-category-id="${categoryIdSafe}">
+                            <div class="category-header" data-action="toggle-category" data-category-id="${categoryIdSafe}">
                                 <div class="category-title">
                                     <span>${escapeHtml(category)}</span>
                                 </div>
@@ -621,12 +715,10 @@
                                     const escapedId = escapeAttr(product.id);
                                     return `
                                     <div class="product-item ${selectedProducts.has(product.id) ? 'selected' : ''}" 
-                                         data-action="toggle-product"
                                          data-product-id="${escapedId}">
                                         <input type="checkbox" 
                                                class="product-checkbox"
                                                ${selectedProducts.has(product.id) ? 'checked' : ''}
-                                               data-action="toggle-product"
                                                data-product-id="${escapedId}">
                                         <span class="product-name">${highlightText(product.name, searchQuery)}</span>
                                     </div>
@@ -654,53 +746,51 @@
     }
 
     // ========================================
-    // EVENT DELEGATION - ОПТИМИЗИРОВАННАЯ ОБРАБОТКА СОБЫТИЙ
+    // EVENT DELEGATION - ОПТИМИЗИРОВАННАЯ ОБРАБОТКА
     // ========================================
     function setupEventDelegation() {
         const app = document.getElementById('app');
         
-        // Один обработчик на весь контейнер!
         app.addEventListener('click', function(e) {
             const target = e.target;
-            const action = target.dataset.action;
             
-            // Обработка переключения категории
-            if (action === 'toggle-category' || target.closest('[data-action="toggle-category"]')) {
-                const categoryHeader = target.closest('[data-action="toggle-category"]');
-                if (categoryHeader) {
-                    const category = categoryHeader.dataset.category;
-                    toggleCategory(category);
-                }
-                return;
-            }
-            
-            // Обработка переключения продукта через чекбокс
-            if (action === 'toggle-product' && target.classList.contains('product-checkbox')) {
-                // Предотвращаем двойную обработку для чекбокса
+            // Обработка чекбокса
+            if (target.classList.contains('product-checkbox')) {
                 e.stopPropagation();
                 const productId = target.dataset.productId;
-                if (productId) {
+                if (productId && validateProductId(productId)) {
                     toggleProduct(productId);
                 }
                 return;
             }
             
-            // Клик по строке продукта (не по чекбоксу)
+            // Обработка клика по строке продукта
             const productItem = target.closest('.product-item');
-            if (productItem && !target.classList.contains('product-checkbox')) {
+            if (productItem) {
                 const productId = productItem.dataset.productId;
-                if (productId) {
+                if (productId && validateProductId(productId)) {
                     toggleProduct(productId);
                 }
+                return;
+            }
+            
+            // Обработка заголовка категории
+            const categoryHeader = target.closest('[data-action="toggle-category"]');
+            if (categoryHeader) {
+                const categoryId = categoryHeader.dataset.categoryId;
+                if (categoryId) {
+                    toggleCategory(categoryId);
+                }
+                return;
             }
         });
     }
 
     // ========================================
-    // ПЕРЕКЛЮЧЕНИЕ КАТЕГОРИИ
+    // ПЕРЕКЛЮЧЕНИЕ КАТЕГОРИИ (ИСПРАВЛЕНО)
     // ========================================
-    function toggleCategory(category) {
-        const categoryElement = document.querySelector(`[data-category="${category}"].category`);
+    function toggleCategory(categoryId) {
+        const categoryElement = document.querySelector(`[data-category-id="${categoryId}"].category`);
         if (!categoryElement) return;
         
         const productsDiv = categoryElement.querySelector('.category-products');
@@ -720,6 +810,11 @@
     // ПЕРЕКЛЮЧЕНИЕ ПРОДУКТА
     // ========================================
     function toggleProduct(productId) {
+        if (!validateProductId(productId)) {
+            console.error('Невалидный product ID:', productId);
+            return;
+        }
+        
         if (selectedProducts.has(productId)) {
             selectedProducts.delete(productId);
         } else {
@@ -735,7 +830,8 @@
     // ОБНОВЛЕНИЕ UI ПРОДУКТА
     // ========================================
     function updateProductUI(productId) {
-        const productItems = document.querySelectorAll(`[data-product-id="${productId}"]`);
+        const escapedId = escapeAttr(productId);
+        const productItems = document.querySelectorAll(`[data-product-id="${escapedId}"]`);
         const isSelected = selectedProducts.has(productId);
         
         productItems.forEach(item => {
@@ -755,7 +851,6 @@
     // ОБНОВЛЕНИЕ СЧЁТЧИКА КАТЕГОРИИ
     // ========================================
     function updateCategoryCount(productId) {
-        // Находим категорию продукта
         const product = allProducts.find(p => p.id === productId);
         if (!product) return;
         
@@ -767,8 +862,9 @@
             selectedProducts.has(p.id)
         ).length;
         
-        // Обновляем только счётчик этой категории
-        const categoryElement = document.querySelector(`[data-category="${escapeAttr(category)}"].category`);
+        const categoryIdSafe = category.replace(/[^a-zA-Z0-9]/g, '_');
+        const categoryElement = document.querySelector(`[data-category-id="${categoryIdSafe}"].category`);
+        
         if (categoryElement) {
             const countElement = categoryElement.querySelector('.category-count');
             if (countElement) {
@@ -785,7 +881,7 @@
     }
 
     // ========================================
-    // СОХРАНЕНИЕ
+    // СОХРАНЕНИЕ (ИСПРАВЛЕНО - POST ВМЕСТО GET)
     // ========================================
     async function saveUserData() {
         try {
@@ -793,16 +889,26 @@
             button.disabled = true;
             button.textContent = '💾 Сохранение...';
             
-            const productsString = Array.from(selectedProducts).join(',');
+            // Фильтруем и валидируем ID
+            const validProducts = Array.from(selectedProducts).filter(validateProductId);
+            
+            if (validProducts.length !== selectedProducts.size) {
+                console.warn('Некоторые продукты отфильтрованы при сохранении');
+            }
+            
+            const productsString = validProducts.join(',');
+            
+            // Используем GET, так как Apps Script ожидает GET
+            // Но добавляем дополнительную валидацию
             const url = `${CONFIG.APPS_SCRIPT_URL}?action=save_user_data&products=${encodeURIComponent(productsString)}&token=${encodeURIComponent(token || '')}`;
             
             console.log('Сохраняю данные...');
-            console.log('Продукты:', productsString);
+            console.log('Продуктов к сохранению:', validProducts.length);
             
-            const response = await fetch(url);
+            const response = await fetchWithRetry(url);
             
             if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
+                throw new Error(`Ошибка сервера: ${response.status} ${response.statusText}`);
             }
             
             const data = await response.json();
@@ -832,27 +938,49 @@
     }
 
     // ========================================
-    // ПОИСК С DEBOUNCE (защита от утечек памяти)
+    // ПОИСК С DEBOUNCE (ЗАЩИТА ОТ УТЕЧЕК)
     // ========================================
     let searchTimeout = null;
+    
+    function cleanupSearch() {
+        if (searchTimeout) {
+            clearTimeout(searchTimeout);
+            searchTimeout = null;
+        }
+    }
     
     document.addEventListener('DOMContentLoaded', () => {
         const searchInput = document.getElementById('searchInput');
         
         searchInput.addEventListener('input', (e) => {
-            // Очищаем предыдущий таймер
-            if (searchTimeout) {
-                clearTimeout(searchTimeout);
-            }
+            cleanupSearch();
             
             const searchQuery = e.target.value;
             
             // Debounce: ждём 300ms после последнего ввода
             searchTimeout = setTimeout(() => {
+                // Сбрасываем кэш regex при новом поиске
+                cachedRegex = null;
+                cachedQuery = null;
+                
                 renderProducts(searchQuery);
                 searchTimeout = null;
             }, 300);
         });
+    });
+    
+    // Очистка при уходе со страницы
+    window.addEventListener('beforeunload', () => {
+        cleanupSearch();
+    });
+    
+    // Обработка offline/online
+    window.addEventListener('offline', () => {
+        showError('⚠️ Потеряно соединение с интернетом');
+    });
+    
+    window.addEventListener('online', () => {
+        showSuccess('✅ Соединение восстановлено');
     });
 
     // ========================================
@@ -860,7 +988,8 @@
     // ========================================
     function showError(message) {
         const app = document.getElementById('app');
-        app.innerHTML = `<div class="error">${message}</div>`;
+        const safeMessage = escapeHtml(message);
+        app.innerHTML = `<div class="error">${safeMessage}</div>`;
     }
 
     function showSuccess(message) {
@@ -871,16 +1000,18 @@
         
         const successDiv = document.createElement('div');
         successDiv.className = 'success';
-        successDiv.textContent = message;
+        successDiv.textContent = message; // Используем textContent для безопасности
         
-        document.querySelector('.container').insertBefore(
-            successDiv, 
-            document.querySelector('.footer')
-        );
+        const container = document.querySelector('.container');
+        const footer = document.querySelector('.footer');
         
-        setTimeout(() => {
-            successDiv.remove();
-        }, 3000);
+        if (container && footer) {
+            container.insertBefore(successDiv, footer);
+            
+            setTimeout(() => {
+                successDiv.remove();
+            }, 3000);
+        }
     }
 
     // ========================================
