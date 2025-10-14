@@ -160,14 +160,19 @@
 
     <script>
         const CONFIG = {
-            APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbylcajySKNO21iNJ7RcdyOsD7B11c2qQHjnNq4zqNOhD4MWqfcQztv6S5Br9ib23Q15/exec'
+            APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbw5R088PDTnl8ta3X9_GAFh5NAwuC32Na4iNXdmWnCurcZ0mSlnIdWKfu4fRGPkvQKi/exec'
         };
 
-        const tg = window.Telegram.WebApp;
+        const tg = window.Telegram?.WebApp || { initData: '', expand: () => {} };
         const selectedProducts = new Set();
 
         async function initApp() {
             tg.expand();
+
+            if (!tg.initData) {
+                showError('Ошибка: Приложение запущено вне Telegram.');
+                return;
+            }
 
             try {
                 const response = await fetch(`${CONFIG.APPS_SCRIPT_URL}?action=init&initData=${encodeURIComponent(tg.initData)}`, {
@@ -176,7 +181,7 @@
                 });
 
                 if (!response.ok) {
-                    throw new Error('HTTP ' + response.status);
+                    throw new Error(`HTTP ${response.status}`);
                 }
 
                 const data = await response.json();
@@ -189,18 +194,22 @@
                 }
             } catch (error) {
                 console.error('Init error:', error);
-                showError('Ошибка загрузки: ' + error.message);
+                showError(`Ошибка загрузки: ${error.message}`);
             }
         }
 
         function renderApp(data) {
             const userInfo = document.getElementById('userInfo');
+            if (!data.user || !data.user.username || !data.user.telegram_id) {
+                userInfo.textContent = 'Пользователь не определен';
+                return;
+            }
             userInfo.textContent = `${data.user.username} (ID: ${data.user.telegram_id})`;
 
             const categoriesDiv = document.getElementById('categories');
             categoriesDiv.innerHTML = '';
 
-            const categories = groupByCategory(data.products);
+            const categories = groupByCategory(data.products || []);
 
             Object.entries(categories).forEach(([categoryName, products], index) => {
                 const categoryId = `cat-${index}`;
@@ -212,7 +221,7 @@
                 categoryDiv.innerHTML = `
                     <div class="category-header">
                         <span class="category-title">${escapeHtml(categoryName)}</span>
-                        <span class="category-count">${selectedInCategory}/${products.length}</span>
+                        <span class="category-count">${selectedInCategory}/${products.length || 0}</span>
                         <span class="category-arrow">▼</span>
                     </div>
                     <div class="select-all-container">
@@ -222,7 +231,7 @@
                         ${products.map(p => `
                             <div class="product-item" data-product-id="${p.id}">
                                 <input type="checkbox" class="product-checkbox" id="prod-${p.id}">
-                                <label class="product-label" for="prod-${p.id}">${escapeHtml(p.name)}</label>
+                                <label class="product-label" for="prod-${p.id}">${escapeHtml(p.name || '')}</label>
                             </div>
                         `).join('')}
                     </div>
@@ -231,7 +240,7 @@
                 categoriesDiv.appendChild(categoryDiv);
 
                 // Load saved selections
-                const savedProducts = data.user_data.selected_products.split(',').filter(Boolean);
+                const savedProducts = (data.user_data?.selected_products || '').split(',').filter(Boolean);
                 savedProducts.forEach(id => {
                     const checkbox = categoryDiv.querySelector(`#prod-${id}`);
                     if (checkbox) {
@@ -263,7 +272,7 @@
                     }
                     const id = item.dataset.productId;
                     const categoryName = item.closest('.category').querySelector('.category-title').textContent;
-                    const products = categories[categoryName];
+                    const products = categories[categoryName] || [];
                     if (selectedProducts.has(id)) {
                         selectedProducts.delete(id);
                     } else {
@@ -291,7 +300,7 @@
                         }
                     });
                     const categoryName = category.querySelector('.category-title').textContent;
-                    const products = categories[categoryName];
+                    const products = categories[categoryName] || [];
                     updateCategoryCount(categoryName, products);
                     updateSelectedCount();
                 });
@@ -309,7 +318,7 @@
         }
 
         function groupByCategory(products) {
-            return products.reduce((acc, p) => {
+            return (products || []).reduce((acc, p) => {
                 const cat = p.category || 'Без категории';
                 if (!acc[cat]) acc[cat] = [];
                 acc[cat].push(p);
@@ -318,16 +327,18 @@
         }
 
         function escapeHtml(text) {
-            return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+            return text ? text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;') : '';
         }
 
         function updateCategoryCount(categoryName, products) {
-            const selectedInCategory = products.filter(p => selectedProducts.has(p.id)).length;
-            const categoryId = [...document.querySelectorAll('.category')].find(cat => cat.querySelector('.category-title').textContent === categoryName).dataset.categoryId;
+            const selectedInCategory = (products || []).filter(p => selectedProducts.has(p.id)).length;
+            const categoryId = [...document.querySelectorAll('.category')].find(cat => cat.querySelector('.category-title').textContent === categoryName)?.dataset.categoryId || '';
             const countElement = document.querySelector(`.category[data-category-id="${categoryId}"] .category-count`);
-            countElement.textContent = `${selectedInCategory}/${products.length}`;
-            const allSelected = products.every(p => selectedProducts.has(p.id));
-            updateSelectAllButton(categoryId, allSelected);
+            if (countElement) {
+                countElement.textContent = `${selectedInCategory}/${products.length || 0}`;
+                const allSelected = (products || []).every(p => selectedProducts.has(p.id));
+                updateSelectAllButton(categoryId, allSelected);
+            }
         }
 
         function updateSelectAllButton(categoryId, allSelected) {
@@ -351,22 +362,20 @@
 
                 const productsString = Array.from(selectedProducts).join(',');
 
-                const url = CONFIG.APPS_SCRIPT_URL + 
-                    '?action=save_user_data' +
-                    '&initData=' + encodeURIComponent(tg.initData) +
-                    '&products=' + encodeURIComponent(productsString);
-
-                console.log('Saving to:', url.substring(0, 100) + '...');
-
-                const response = await fetch(url, {
-                    method: 'GET',
-                    cache: 'no-cache'
+                const response = await fetch(CONFIG.APPS_SCRIPT_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        action: 'save_user_data',
+                        initData: tg.initData,
+                        products: productsString
+                    })
                 });
 
                 console.log('Save response:', response.status);
 
                 if (!response.ok) {
-                    throw new Error('HTTP ' + response.status);
+                    throw new Error(`HTTP ${response.status}`);
                 }
 
                 const data = await response.json();
@@ -386,7 +395,7 @@
 
             } catch (error) {
                 console.error('Save error:', error);
-                showError('Ошибка сохранения: ' + error.message);
+                showError(`Ошибка сохранения: ${error.message}`);
 
                 const button = document.getElementById('saveButton');
                 button.textContent = '💾 Сохранить выбор';
@@ -395,8 +404,17 @@
         }
 
         function showError(message) {
-            const app = document.getElementById('app');
-            app.innerHTML = `<div class="error">${escapeHtml(message)}</div>`;
+            const container = document.querySelector('.container');
+            if (container) {
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'error';
+                errorDiv.textContent = escapeHtml(message);
+                container.insertBefore(errorDiv, container.firstChild);
+
+                setTimeout(() => {
+                    errorDiv.remove();
+                }, 5000);
+            }
         }
 
         function showSuccess(message) {
@@ -421,7 +439,12 @@
             }
         }
 
-        initApp();
+        // Запуск при загрузке
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initApp);
+        } else {
+            initApp();
+        }
     </script>
 </body>
 </html>
