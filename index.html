@@ -68,9 +68,27 @@
         }
         .category-header:hover { transform: translateX(5px); }
         .category-title { font-weight: 600; font-size: 16px; }
+        .category-count {
+            background: rgba(255,255,255,0.25);
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        .category-arrow { transition: transform 0.3s; font-size: 18px; margin-left: 10px; }
+        .category.open .category-arrow { transform: rotate(180deg); }
+        .category-products {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.4s ease-out;
+            background: white;
+        }
+        .category-products.open { max-height: 2000px; }
+        
+        /* ИСПРАВЛЕНО: Кнопка "Выбрать все" внутри раскрывающегося списка */
         .select-all-container {
             padding: 12px 20px;
-            background: #f8f9fa;
+            background: #f0f0f0;
             border-bottom: 2px solid #e0e0e0;
             display: flex;
             justify-content: center;
@@ -86,23 +104,10 @@
             font-weight: 600;
             width: 100%;
             max-width: 200px;
+            transition: all 0.2s;
         }
-        .category-count {
-            background: rgba(255,255,255,0.25);
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 13px;
-            font-weight: 600;
-        }
-        .category-arrow { transition: transform 0.3s; font-size: 18px; }
-        .category.open .category-arrow { transform: rotate(180deg); }
-        .category-products {
-            max-height: 0;
-            overflow: hidden;
-            transition: max-height 0.4s ease-out;
-            background: white;
-        }
-        .category-products.open { max-height: 2000px; }
+        .select-all-btn:hover { transform: scale(1.02); }
+        
         .product-item {
             display: flex;
             align-items: center;
@@ -112,34 +117,63 @@
             transition: all 0.2s;
         }
         .product-item:hover { background: #f8f9fa; padding-left: 24px; }
-        .product-checkbox { margin-right: 15px; }
-        .product-label { flex: 1; font-size: 15px; }
+        .product-checkbox { margin-right: 15px; width: 20px; height: 20px; cursor: pointer; }
+        .product-label { flex: 1; font-size: 15px; cursor: pointer; user-select: none; }
+        
+        /* ИСПРАВЛЕНО: Footer на двух строках */
         .footer {
             padding: 20px;
             border-top: 1px solid #eee;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
+            background: #fafafa;
         }
         .selected-count {
             font-size: 16px;
             color: #333;
+            text-align: center;
+            margin-bottom: 12px;
+            font-weight: 500;
         }
         .save-button {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             border: none;
             color: white;
-            padding: 15px 30px;
+            padding: 16px;
             border-radius: 12px;
             font-size: 16px;
             font-weight: 600;
             cursor: pointer;
             transition: all 0.3s;
+            width: 100%;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
         }
-        .save-button:hover { transform: scale(1.05); }
-        .save-button:disabled { opacity: 0.5; cursor: not-allowed; }
-        .error { padding: 20px; background: #ffcccc; color: #cc0000; text-align: center; }
-        .success { padding: 10px; background: #ccffcc; color: #006600; text-align: center; margin: 10px 20px; border-radius: 10px; }
+        .save-button:hover { 
+            transform: translateY(-2px); 
+            box-shadow: 0 6px 16px rgba(102, 126, 234, 0.4);
+        }
+        .save-button:active { transform: translateY(0); }
+        .save-button:disabled { 
+            opacity: 0.6; 
+            cursor: not-allowed; 
+            transform: none;
+        }
+        
+        .error { 
+            padding: 16px 20px; 
+            background: #ffebee; 
+            color: #c62828; 
+            text-align: center;
+            font-size: 14px;
+            border-bottom: 3px solid #ef5350;
+        }
+        .success { 
+            padding: 16px 20px; 
+            background: #e8f5e9; 
+            color: #2e7d32; 
+            text-align: center; 
+            margin: 0;
+            font-size: 14px;
+            border-bottom: 3px solid #66bb6a;
+        }
     </style>
 </head>
 <body>
@@ -149,12 +183,12 @@
             <div class="user-info" id="userInfo">Загрузка...</div>
         </div>
         <div class="search-container">
-            <input type="text" id="searchInput" class="search-input" placeholder="Поиск продуктов...">
+            <input type="text" id="searchInput" class="search-input" placeholder="🔍 Поиск продуктов...">
         </div>
         <div class="categories" id="categories"></div>
         <div class="footer">
-            <span class="selected-count">Выбрано: <span id="selectedCount">0</span></span>
-            <button id="saveButton" class="save-button">💾 Сохранить выбор</button>
+            <div class="selected-count">Выбрано: <strong><span id="selectedCount">0</span></strong></div>
+            <button id="saveButton" class="save-button">💾 Сохранить</button>
         </div>
     </div>
 
@@ -218,16 +252,20 @@
                 const categoryDiv = document.createElement('div');
                 categoryDiv.className = 'category';
                 categoryDiv.dataset.categoryId = categoryId;
+                
+                // ИСПРАВЛЕНО: Кнопка внутри раскрывающегося списка
                 categoryDiv.innerHTML = `
                     <div class="category-header">
                         <span class="category-title">${escapeHtml(categoryName)}</span>
-                        <span class="category-count">${selectedInCategory}/${products.length || 0}</span>
-                        <span class="category-arrow">▼</span>
-                    </div>
-                    <div class="select-all-container">
-                        <button class="select-all-btn" data-category-id="${categoryId}">+ Выбрать все</button>
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <span class="category-count">${selectedInCategory}/${products.length || 0}</span>
+                            <span class="category-arrow">▼</span>
+                        </div>
                     </div>
                     <div class="category-products">
+                        <div class="select-all-container">
+                            <button class="select-all-btn" data-category-id="${categoryId}">+ Выбрать все</button>
+                        </div>
                         ${products.map(p => `
                             <div class="product-item" data-product-id="${p.id}">
                                 <input type="checkbox" class="product-checkbox" id="prod-${p.id}">
@@ -284,7 +322,8 @@
             });
 
             document.querySelectorAll('.select-all-btn').forEach(btn => {
-                btn.addEventListener('click', () => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation(); // Предотвращаем закрытие категории
                     const categoryId = btn.dataset.categoryId;
                     const category = document.querySelector(`.category[data-category-id="${categoryId}"]`);
                     const productsDiv = category.querySelector('.category-products');
@@ -308,9 +347,16 @@
 
             document.getElementById('searchInput').addEventListener('input', (e) => {
                 const searchTerm = e.target.value.toLowerCase();
-                document.querySelectorAll('.product-item').forEach(item => {
-                    const name = item.querySelector('.product-label').textContent.toLowerCase();
-                    item.style.display = name.includes(searchTerm) ? 'flex' : 'none';
+                document.querySelectorAll('.category').forEach(category => {
+                    let hasVisibleProducts = false;
+                    category.querySelectorAll('.product-item').forEach(item => {
+                        const name = item.querySelector('.product-label').textContent.toLowerCase();
+                        const isVisible = name.includes(searchTerm);
+                        item.style.display = isVisible ? 'flex' : 'none';
+                        if (isVisible) hasVisibleProducts = true;
+                    });
+                    // Скрываем категорию если нет совпадений
+                    category.style.display = hasVisibleProducts || searchTerm === '' ? 'block' : 'none';
                 });
             });
 
@@ -358,21 +404,22 @@
                 
                 const button = document.getElementById('saveButton');
                 button.disabled = true;
-                button.textContent = '💾 Сохранение...';
+                button.textContent = '⏳ Сохранение...';
 
                 const productsString = Array.from(selectedProducts).join(',');
 
-                const payload = {
-                    action: 'save_user_data',
-                    initData: tg.initData,
-                    products: productsString
-                };
-                console.log('Sending payload:', payload);
+                // ИСПРАВЛЕНО: Используем GET с параметрами вместо POST для обхода CORS
+                const url = new URL(CONFIG.APPS_SCRIPT_URL);
+                url.searchParams.append('action', 'save_user_data');
+                url.searchParams.append('initData', tg.initData);
+                url.searchParams.append('products', productsString);
 
-                const response = await fetch(CONFIG.APPS_SCRIPT_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
+                console.log('Sending request to:', url.toString().substring(0, 100) + '...');
+                console.log('Products:', productsString);
+
+                const response = await fetch(url.toString(), {
+                    method: 'GET',
+                    cache: 'no-cache'
                 });
 
                 console.log('Save response status:', response.status);
@@ -381,10 +428,10 @@
 
                 if (data.status === 'SUCCESS' && data.success) {
                     showSuccess('✅ Данные успешно сохранены!');
-                    button.textContent = '✅ Сохранено!';
+                    button.textContent = '✅ Сохранено';
 
                     setTimeout(() => {
-                        button.textContent = '💾 Сохранить выбор';
+                        button.textContent = '💾 Сохранить';
                         button.disabled = false;
                     }, 2000);
                 } else {
@@ -396,7 +443,7 @@
                 showError(`Ошибка сохранения: ${error.message}`);
 
                 const button = document.getElementById('saveButton');
-                button.textContent = '💾 Сохранить выбор';
+                button.textContent = '💾 Сохранить';
                 button.disabled = false;
             }
         }
@@ -404,9 +451,12 @@
         function showError(message) {
             const container = document.querySelector('.container');
             if (container) {
+                const existingError = document.querySelector('.error');
+                if (existingError) existingError.remove();
+                
                 const errorDiv = document.createElement('div');
                 errorDiv.className = 'error';
-                errorDiv.textContent = escapeHtml(message);
+                errorDiv.textContent = message;
                 container.insertBefore(errorDiv, container.firstChild);
 
                 setTimeout(() => {
@@ -417,19 +467,17 @@
 
         function showSuccess(message) {
             const existingSuccess = document.querySelector('.success');
-            if (existingSuccess) {
-                existingSuccess.remove();
-            }
+            if (existingSuccess) existingSuccess.remove();
 
             const successDiv = document.createElement('div');
             successDiv.className = 'success';
             successDiv.textContent = message;
 
             const container = document.querySelector('.container');
-            const footer = document.querySelector('.footer');
+            const header = document.querySelector('.header');
 
-            if (container && footer) {
-                container.insertBefore(successDiv, footer);
+            if (container && header) {
+                header.insertAdjacentElement('afterend', successDiv);
 
                 setTimeout(() => {
                     successDiv.remove();
