@@ -246,6 +246,13 @@
             categoriesDiv.innerHTML = '';
 
             const categories = groupByCategory(data.products || []);
+            
+            // Загружаем сохранённые продукты один раз
+            const savedProducts = (data.user_data?.selected_products || '').split(',').filter(Boolean);
+            savedProducts.forEach(id => selectedProducts.add(id));
+
+            // ОПТИМИЗАЦИЯ: Используем DocumentFragment для batch DOM операций
+            const fragment = document.createDocumentFragment();
 
             Object.entries(categories).forEach(([categoryName, products], index) => {
                 const categoryId = `cat-${index}`;
@@ -254,8 +261,12 @@
                 const categoryDiv = document.createElement('div');
                 categoryDiv.className = 'category';
                 categoryDiv.dataset.categoryId = categoryId;
+                categoryDiv.dataset.categoryName = categoryName;
                 
-                // ИСПРАВЛЕНО: Кнопка внутри раскрывающегося списка
+                // Сохраняем данные продуктов в data-атрибут для ленивой загрузки
+                categoryDiv.dataset.products = JSON.stringify(products);
+                categoryDiv.dataset.rendered = 'false';
+                
                 categoryDiv.innerHTML = `
                     <div class="category-header">
                         <span class="category-title">${escapeHtml(categoryName)}</span>
@@ -265,115 +276,168 @@
                         </div>
                     </div>
                     <div class="category-products">
-                        <div class="select-all-container">
-                            <button class="select-all-btn" data-category-id="${categoryId}">+ Выбрать все</button>
-                        </div>
-                        ${products.map(p => `
-                            <div class="product-item" data-product-id="${p.id}">
-                                <input type="checkbox" class="product-checkbox" id="prod-${p.id}">
-                                <label class="product-label" for="prod-${p.id}">${escapeHtml(p.name || '')}</label>
-                            </div>
-                        `).join('')}
+                        <!-- Контент загрузится при открытии -->
                     </div>
                 `;
 
-                categoriesDiv.appendChild(categoryDiv);
-
-                // Load saved selections
-                const savedProducts = (data.user_data?.selected_products || '').split(',').filter(Boolean);
-                savedProducts.forEach(id => {
-                    const checkbox = categoryDiv.querySelector(`#prod-${id}`);
-                    if (checkbox) {
-                        checkbox.checked = true;
-                        selectedProducts.add(id);
-                    }
-                });
-
-                updateCategoryCount(categoryName, products);
+                fragment.appendChild(categoryDiv);
             });
+
+            // Добавляем все категории за один раз
+            categoriesDiv.appendChild(fragment);
 
             updateSelectedCount();
 
-            // Event listeners
-            document.querySelectorAll('.category-header').forEach(header => {
-                header.addEventListener('click', () => {
-                    const category = header.parentElement;
-                    const productsDiv = category.querySelector('.category-products');
-                    
-                    // Переключаем состояние
-                    const isOpening = !category.classList.contains('open');
-                    category.classList.toggle('open');
-                    productsDiv.classList.toggle('open');
-                    
-                    // Для плавной анимации: устанавливаем реальную высоту контента
-                    if (isOpening) {
-                        const realHeight = productsDiv.scrollHeight;
-                        productsDiv.style.maxHeight = realHeight + 'px';
-                    } else {
-                        productsDiv.style.maxHeight = '0';
-                    }
-                });
-            });
+            // ОПТИМИЗАЦИЯ: Event Delegation - один обработчик на весь контейнер
+            categoriesDiv.addEventListener('click', handleCategoryClick);
 
-            document.querySelectorAll('.product-item').forEach(item => {
-                item.addEventListener('click', (e) => {
-                    if (e.target.tagName !== 'INPUT') {
-                        const checkbox = item.querySelector('.product-checkbox');
-                        checkbox.checked = !checkbox.checked;
-                    }
-                    const id = item.dataset.productId;
-                    const categoryName = item.closest('.category').querySelector('.category-title').textContent;
-                    const products = categories[categoryName] || [];
-                    if (selectedProducts.has(id)) {
-                        selectedProducts.delete(id);
-                    } else {
-                        selectedProducts.add(id);
-                    }
-                    updateCategoryCount(categoryName, products);
-                    updateSelectedCount();
-                });
-            });
-
-            document.querySelectorAll('.select-all-btn').forEach(btn => {
-                btn.addEventListener('click', (e) => {
-                    e.stopPropagation(); // Предотвращаем закрытие категории
-                    const categoryId = btn.dataset.categoryId;
-                    const category = document.querySelector(`.category[data-category-id="${categoryId}"]`);
-                    const productsDiv = category.querySelector('.category-products');
-                    const checkboxes = productsDiv.querySelectorAll('.product-checkbox');
-                    const allSelected = Array.from(checkboxes).every(cb => cb.checked);
-                    checkboxes.forEach(cb => {
-                        cb.checked = !allSelected;
-                        const id = cb.id.replace('prod-', '');
-                        if (cb.checked) {
-                            selectedProducts.add(id);
-                        } else {
-                            selectedProducts.delete(id);
-                        }
-                    });
-                    const categoryName = category.querySelector('.category-title').textContent;
-                    const products = categories[categoryName] || [];
-                    updateCategoryCount(categoryName, products);
-                    updateSelectedCount();
-                });
-            });
-
+            // ОПТИМИЗАЦИЯ: Debounce для поиска
+            let searchTimeout;
             document.getElementById('searchInput').addEventListener('input', (e) => {
-                const searchTerm = e.target.value.toLowerCase();
-                document.querySelectorAll('.category').forEach(category => {
-                    let hasVisibleProducts = false;
-                    category.querySelectorAll('.product-item').forEach(item => {
-                        const name = item.querySelector('.product-label').textContent.toLowerCase();
-                        const isVisible = name.includes(searchTerm);
-                        item.style.display = isVisible ? 'flex' : 'none';
-                        if (isVisible) hasVisibleProducts = true;
-                    });
-                    // Скрываем категорию если нет совпадений
-                    category.style.display = hasVisibleProducts || searchTerm === '' ? 'block' : 'none';
-                });
+                clearTimeout(searchTimeout);
+                searchTimeout = setTimeout(() => handleSearch(e.target.value, categories), 300);
             });
 
             document.getElementById('saveButton').addEventListener('click', saveUserData);
+        }
+
+        // ОПТИМИЗАЦИЯ: Единый обработчик событий (Event Delegation)
+        function handleCategoryClick(e) {
+            const target = e.target;
+            
+            // Клик по заголовку категории
+            if (target.closest('.category-header')) {
+                const header = target.closest('.category-header');
+                const category = header.parentElement;
+                const productsDiv = category.querySelector('.category-products');
+                
+                const isOpening = !category.classList.contains('open');
+                
+                // Ленивая загрузка: рендерим продукты только при первом открытии
+                if (isOpening && category.dataset.rendered === 'false') {
+                    renderCategoryProducts(category);
+                }
+                
+                category.classList.toggle('open');
+                productsDiv.classList.toggle('open');
+                
+                if (isOpening) {
+                    const realHeight = productsDiv.scrollHeight;
+                    productsDiv.style.maxHeight = realHeight + 'px';
+                } else {
+                    productsDiv.style.maxHeight = '0';
+                }
+                return;
+            }
+            
+            // Клик по кнопке "Выбрать все"
+            if (target.classList.contains('select-all-btn')) {
+                e.stopPropagation();
+                handleSelectAll(target);
+                return;
+            }
+            
+            // Клик по продукту
+            const productItem = target.closest('.product-item');
+            if (productItem) {
+                handleProductClick(productItem, target);
+                return;
+            }
+        }
+
+        // Ленивый рендеринг продуктов категории
+        function renderCategoryProducts(category) {
+            const products = JSON.parse(category.dataset.products);
+            const categoryId = category.dataset.categoryId;
+            const productsDiv = category.querySelector('.category-products');
+            
+            const html = `
+                <div class="select-all-container">
+                    <button class="select-all-btn" data-category-id="${categoryId}">+ Выбрать все</button>
+                </div>
+                ${products.map(p => `
+                    <div class="product-item" data-product-id="${p.id}">
+                        <input type="checkbox" class="product-checkbox" id="prod-${p.id}" ${selectedProducts.has(p.id) ? 'checked' : ''}>
+                        <label class="product-label" for="prod-${p.id}">${escapeHtml(p.name || '')}</label>
+                    </div>
+                `).join('')}
+            `;
+            
+            productsDiv.innerHTML = html;
+            category.dataset.rendered = 'true';
+            
+            updateCategoryCount(category.dataset.categoryName, products);
+        }
+
+        function handleSelectAll(button) {
+            const categoryId = button.dataset.categoryId;
+            const category = document.querySelector(`.category[data-category-id="${categoryId}"]`);
+            const products = JSON.parse(category.dataset.products);
+            const productsDiv = category.querySelector('.category-products');
+            const checkboxes = productsDiv.querySelectorAll('.product-checkbox');
+            const allSelected = Array.from(checkboxes).every(cb => cb.checked);
+            
+            checkboxes.forEach(cb => {
+                cb.checked = !allSelected;
+                const id = cb.id.replace('prod-', '');
+                if (cb.checked) {
+                    selectedProducts.add(id);
+                } else {
+                    selectedProducts.delete(id);
+                }
+            });
+            
+            updateCategoryCount(category.dataset.categoryName, products);
+            updateSelectedCount();
+        }
+
+        function handleProductClick(item, target) {
+            if (target.tagName !== 'INPUT') {
+                const checkbox = item.querySelector('.product-checkbox');
+                checkbox.checked = !checkbox.checked;
+            }
+            
+            const id = item.dataset.productId;
+            const category = item.closest('.category');
+            const products = JSON.parse(category.dataset.products);
+            
+            if (selectedProducts.has(id)) {
+                selectedProducts.delete(id);
+            } else {
+                selectedProducts.add(id);
+            }
+            
+            updateCategoryCount(category.dataset.categoryName, products);
+            updateSelectedCount();
+        }
+
+        // ОПТИМИЗАЦИЯ: Debounced поиск
+        function handleSearch(searchTerm, categories) {
+            searchTerm = searchTerm.toLowerCase();
+            
+            document.querySelectorAll('.category').forEach(category => {
+                const categoryName = category.dataset.categoryName;
+                const products = JSON.parse(category.dataset.products);
+                
+                // Фильтруем продукты по имени
+                const matchingProducts = products.filter(p => 
+                    (p.name || '').toLowerCase().includes(searchTerm)
+                );
+                
+                if (matchingProducts.length > 0 || searchTerm === '') {
+                    category.style.display = 'block';
+                    
+                    // Если категория открыта и уже отрендерена, фильтруем продукты
+                    if (category.dataset.rendered === 'true') {
+                        category.querySelectorAll('.product-item').forEach(item => {
+                            const name = item.querySelector('.product-label').textContent.toLowerCase();
+                            item.style.display = name.includes(searchTerm) ? 'flex' : 'none';
+                        });
+                    }
+                } else {
+                    category.style.display = 'none';
+                }
+            });
         }
 
         function groupByCategory(products) {
