@@ -83,11 +83,8 @@
             transition: max-height 0.4s ease-out;
             background: white;
         }
-        .category-products.open { 
-            overflow-y: auto; /* Скролл если контента много */
-        }
+        .category-products.open { overflow-y: auto; }
         
-        /* ИСПРАВЛЕНО: Кнопка "Выбрать все" внутри раскрывающегося списка */
         .select-all-container {
             padding: 12px 20px;
             background: #f0f0f0;
@@ -122,7 +119,6 @@
         .product-checkbox { margin-right: 15px; width: 20px; height: 20px; cursor: pointer; }
         .product-label { flex: 1; font-size: 15px; cursor: pointer; user-select: none; }
         
-        /* ИСПРАВЛЕНО: Footer на двух строках */
         .footer {
             padding: 20px;
             border-top: 1px solid #eee;
@@ -201,6 +197,7 @@
 
         const tg = window.Telegram?.WebApp || { initData: '', expand: () => {} };
         const selectedProducts = new Set();
+        let allCategories = {}; // Хранилище всех категорий с продуктами
 
         async function initApp() {
             tg.expand();
@@ -242,13 +239,8 @@
             }
             userInfo.textContent = `${data.user.username} (ID: ${data.user.telegram_id})`;
 
-            const categoriesDiv = document.getElementById('categories');
-            categoriesDiv.innerHTML = '';
-
-            const categories = groupByCategory(data.products || []);
-            
-            // ИСПРАВЛЕНО: Загружаем сохранённые продукты ПЕРЕД рендерингом
-            selectedProducts.clear(); // Очищаем перед загрузкой
+            // Загружаем сохранённые продукты из базы
+            selectedProducts.clear();
             const savedProductsString = data.user_data?.selected_products || '';
             console.log('Loading saved products:', savedProductsString);
             
@@ -256,19 +248,54 @@
                 const savedProductsArray = savedProductsString.split(',').filter(Boolean);
                 console.log('Parsed saved products:', savedProductsArray.length, 'items');
                 savedProductsArray.forEach(id => {
-                    selectedProducts.add(id.trim()); // Добавляем trim на случай пробелов
+                    selectedProducts.add(id.trim());
                 });
             }
             
             console.log('Total selected products in Set:', selectedProducts.size);
 
-            // ОПТИМИЗАЦИЯ: Используем DocumentFragment для batch DOM операций
+            // Группируем продукты по категориям
+            allCategories = groupByCategory(data.products || []);
+            
+            // Рендерим категории
+            renderCategories();
+
+            // Обновляем общий счётчик
+            updateTotalSelectedCount();
+
+            // Event Delegation для категорий
+            const categoriesDiv = document.getElementById('categories');
+            categoriesDiv.addEventListener('click', handleCategoryClick);
+
+            // Debounced поиск
+            let searchTimeout;
+            document.getElementById('searchInput').addEventListener('input', (e) => {
+                clearTimeout(searchTimeout);
+                searchTimeout = setTimeout(() => handleSearch(e.target.value), 300);
+            });
+
+            document.getElementById('saveButton').addEventListener('click', saveUserData);
+        }
+
+        function groupByCategory(products) {
+            return (products || []).reduce((acc, p) => {
+                const cat = p.category || 'Без категории';
+                if (!acc[cat]) acc[cat] = [];
+                acc[cat].push(p);
+                return acc;
+            }, {});
+        }
+
+        function renderCategories() {
+            const categoriesDiv = document.getElementById('categories');
+            categoriesDiv.innerHTML = '';
+
             const fragment = document.createDocumentFragment();
 
-            Object.entries(categories).forEach(([categoryName, products], index) => {
+            Object.entries(allCategories).forEach(([categoryName, products], index) => {
                 const categoryId = `cat-${index}`;
                 
-                // Подсчёт выбранных продуктов
+                // ВАЖНО: Подсчитываем выбранные продукты ДО рендеринга из selectedProducts Set
                 const selectedInCategory = products.filter(p => selectedProducts.has(p.id)).length;
                 console.log(`Category "${categoryName}": ${selectedInCategory}/${products.length} selected`);
 
@@ -276,46 +303,29 @@
                 categoryDiv.className = 'category';
                 categoryDiv.dataset.categoryId = categoryId;
                 categoryDiv.dataset.categoryName = categoryName;
-                
-                // Сохраняем данные продуктов в data-атрибут для ленивой загрузки
                 categoryDiv.dataset.products = JSON.stringify(products);
                 categoryDiv.dataset.rendered = 'false';
+                categoryDiv.dataset.selectedCount = selectedInCategory; // Сохраняем для быстрого доступа
                 
                 categoryDiv.innerHTML = `
                     <div class="category-header">
                         <span class="category-title">${escapeHtml(categoryName)}</span>
                         <div style="display: flex; align-items: center; gap: 10px;">
-                            <span class="category-count">${selectedInCategory}/${products.length || 0}</span>
+                            <span class="category-count">${selectedInCategory}/${products.length}</span>
                             <span class="category-arrow">▼</span>
                         </div>
                     </div>
                     <div class="category-products">
-                        <!-- Контент загрузится при открытии -->
+                        <!-- Lazy loading: контент загрузится при открытии -->
                     </div>
                 `;
 
                 fragment.appendChild(categoryDiv);
             });
 
-            // Добавляем все категории за один раз
             categoriesDiv.appendChild(fragment);
-
-            updateSelectedCount();
-
-            // ОПТИМИЗАЦИЯ: Event Delegation - один обработчик на весь контейнер
-            categoriesDiv.addEventListener('click', handleCategoryClick);
-
-            // ОПТИМИЗАЦИЯ: Debounce для поиска
-            let searchTimeout;
-            document.getElementById('searchInput').addEventListener('input', (e) => {
-                clearTimeout(searchTimeout);
-                searchTimeout = setTimeout(() => handleSearch(e.target.value, categories), 300);
-            });
-
-            document.getElementById('saveButton').addEventListener('click', saveUserData);
         }
 
-        // ОПТИМИЗАЦИЯ: Единый обработчик событий (Event Delegation)
         function handleCategoryClick(e) {
             const target = e.target;
             
@@ -327,7 +337,7 @@
                 
                 const isOpening = !category.classList.contains('open');
                 
-                // Ленивая загрузка: рендерим продукты только при первом открытии
+                // Lazy loading: рендерим продукты только при первом открытии
                 if (isOpening && category.dataset.rendered === 'false') {
                     renderCategoryProducts(category);
                 }
@@ -336,8 +346,7 @@
                 productsDiv.classList.toggle('open');
                 
                 if (isOpening) {
-                    const realHeight = productsDiv.scrollHeight;
-                    productsDiv.style.maxHeight = realHeight + 'px';
+                    productsDiv.style.maxHeight = productsDiv.scrollHeight + 'px';
                 } else {
                     productsDiv.style.maxHeight = '0';
                 }
@@ -359,16 +368,19 @@
             }
         }
 
-        // Ленивый рендеринг продуктов категории
         function renderCategoryProducts(category) {
             const products = JSON.parse(category.dataset.products);
             const categoryId = category.dataset.categoryId;
             const productsDiv = category.querySelector('.category-products');
             
-            // ИСПРАВЛЕНО: Проверяем selectedProducts при рендеринге
+            // ВАЖНО: Проверяем selectedProducts.has() при рендеринге каждого чекбокса
+            const allSelected = products.every(p => selectedProducts.has(p.id));
+            
             const html = `
                 <div class="select-all-container">
-                    <button class="select-all-btn" data-category-id="${categoryId}">+ Выбрать все</button>
+                    <button class="select-all-btn" data-category-id="${categoryId}">
+                        ${allSelected ? '✓ Снять все' : '+ Выбрать все'}
+                    </button>
                 </div>
                 ${products.map(p => `
                     <div class="product-item" data-product-id="${p.id}">
@@ -380,9 +392,6 @@
             
             productsDiv.innerHTML = html;
             category.dataset.rendered = 'true';
-            
-            // ВАЖНО: Обновляем счётчик сразу после рендеринга
-            updateCategoryCount(category.dataset.categoryName, products);
         }
 
         function handleSelectAll(button) {
@@ -391,8 +400,10 @@
             const products = JSON.parse(category.dataset.products);
             const productsDiv = category.querySelector('.category-products');
             const checkboxes = productsDiv.querySelectorAll('.product-checkbox');
+            
             const allSelected = Array.from(checkboxes).every(cb => cb.checked);
             
+            // Переключаем все чекбоксы
             checkboxes.forEach(cb => {
                 cb.checked = !allSelected;
                 const id = cb.id.replace('prod-', '');
@@ -403,33 +414,60 @@
                 }
             });
             
-            updateCategoryCount(category.dataset.categoryName, products);
-            updateSelectedCount();
+            // Обновляем UI
+            updateCategoryCounter(category, products);
+            updateTotalSelectedCount();
+            button.textContent = allSelected ? '+ Выбрать все' : '✓ Снять все';
         }
 
         function handleProductClick(item, target) {
+            // Если кликнули не по чекбоксу, переключаем его
             if (target.tagName !== 'INPUT') {
                 const checkbox = item.querySelector('.product-checkbox');
                 checkbox.checked = !checkbox.checked;
             }
             
             const id = item.dataset.productId;
+            const checkbox = item.querySelector('.product-checkbox');
             const category = item.closest('.category');
             const products = JSON.parse(category.dataset.products);
             
-            if (selectedProducts.has(id)) {
-                selectedProducts.delete(id);
-            } else {
+            // Обновляем Set
+            if (checkbox.checked) {
                 selectedProducts.add(id);
+            } else {
+                selectedProducts.delete(id);
             }
             
-            updateCategoryCount(category.dataset.categoryName, products);
-            updateSelectedCount();
+            // Обновляем счётчики
+            updateCategoryCounter(category, products);
+            updateTotalSelectedCount();
+            
+            // Обновляем кнопку "Выбрать все"
+            const allSelected = products.every(p => selectedProducts.has(p.id));
+            const categoryId = category.dataset.categoryId;
+            const button = document.querySelector(`.select-all-btn[data-category-id="${categoryId}"]`);
+            if (button) {
+                button.textContent = allSelected ? '✓ Снять все' : '+ Выбрать все';
+            }
         }
 
-        // ОПТИМИЗАЦИЯ: Debounced поиск
-        function handleSearch(searchTerm, categories) {
-            searchTerm = searchTerm.toLowerCase();
+        function updateCategoryCounter(category, products) {
+            const selectedInCategory = products.filter(p => selectedProducts.has(p.id)).length;
+            category.dataset.selectedCount = selectedInCategory;
+            
+            const countElement = category.querySelector('.category-count');
+            if (countElement) {
+                countElement.textContent = `${selectedInCategory}/${products.length}`;
+            }
+        }
+
+        function updateTotalSelectedCount() {
+            document.getElementById('selectedCount').textContent = selectedProducts.size;
+        }
+
+        function handleSearch(searchTerm) {
+            searchTerm = searchTerm.toLowerCase().trim();
             
             document.querySelectorAll('.category').forEach(category => {
                 const categoryName = category.dataset.categoryName;
@@ -443,7 +481,7 @@
                 if (matchingProducts.length > 0 || searchTerm === '') {
                     category.style.display = 'block';
                     
-                    // Если категория открыта и уже отрендерена, фильтруем продукты
+                    // Если категория уже отрендерена, фильтруем видимые продукты
                     if (category.dataset.rendered === 'true') {
                         category.querySelectorAll('.product-item').forEach(item => {
                             const name = item.querySelector('.product-label').textContent.toLowerCase();
@@ -456,44 +494,18 @@
             });
         }
 
-        function groupByCategory(products) {
-            return (products || []).reduce((acc, p) => {
-                const cat = p.category || 'Без категории';
-                if (!acc[cat]) acc[cat] = [];
-                acc[cat].push(p);
-                return acc;
-            }, {});
-        }
-
         function escapeHtml(text) {
-            return text ? text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;') : '';
-        }
-
-        function updateCategoryCount(categoryName, products) {
-            const selectedInCategory = (products || []).filter(p => selectedProducts.has(p.id)).length;
-            const categoryId = [...document.querySelectorAll('.category')].find(cat => cat.querySelector('.category-title').textContent === categoryName)?.dataset.categoryId || '';
-            const countElement = document.querySelector(`.category[data-category-id="${categoryId}"] .category-count`);
-            if (countElement) {
-                countElement.textContent = `${selectedInCategory}/${products.length || 0}`;
-                const allSelected = (products || []).every(p => selectedProducts.has(p.id));
-                updateSelectAllButton(categoryId, allSelected);
-            }
-        }
-
-        function updateSelectAllButton(categoryId, allSelected) {
-            const button = document.querySelector(`.select-all-btn[data-category-id="${categoryId}"]`);
-            if (button) {
-                button.textContent = allSelected ? '✓ Снять все' : '+ Выбрать все';
-            }
-        }
-
-        function updateSelectedCount() {
-            document.getElementById('selectedCount').textContent = selectedProducts.size;
+            if (!text) return '';
+            return text.replace(/&/g, '&amp;')
+                      .replace(/</g, '&lt;')
+                      .replace(/>/g, '&gt;')
+                      .replace(/"/g, '&quot;')
+                      .replace(/'/g, '&#039;');
         }
 
         async function saveUserData() {
             try {
-                console.log('Saving...');
+                console.log('Saving products...');
                 
                 const button = document.getElementById('saveButton');
                 button.disabled = true;
@@ -501,14 +513,13 @@
 
                 const productsString = Array.from(selectedProducts).join(',');
 
-                // ИСПРАВЛЕНО: Используем GET с параметрами вместо POST для обхода CORS
                 const url = new URL(CONFIG.APPS_SCRIPT_URL);
                 url.searchParams.append('action', 'save_user_data');
                 url.searchParams.append('initData', tg.initData);
                 url.searchParams.append('products', productsString);
 
-                console.log('Sending request to:', url.toString().substring(0, 100) + '...');
-                console.log('Products:', productsString);
+                console.log('Sending request...');
+                console.log('Products to save:', productsString);
 
                 const response = await fetch(url.toString(), {
                     method: 'GET',
