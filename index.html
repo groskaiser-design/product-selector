@@ -49,12 +49,27 @@
             border-color: #667eea;
             box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
         }
+        .loading-indicator {
+            text-align: center;
+            padding: 20px;
+            color: #667eea;
+            font-weight: 600;
+            display: none;
+        }
+        .loading-indicator.active {
+            display: block;
+        }
         .categories { max-height: 500px; overflow-y: auto; padding: 10px; }
         .category {
             margin-bottom: 10px;
             border-radius: 12px;
             overflow: hidden;
             background: #f8f9fa;
+            opacity: 0;
+            animation: fadeIn 0.3s forwards;
+        }
+        @keyframes fadeIn {
+            to { opacity: 1; }
         }
         .category-header {
             display: flex;
@@ -183,6 +198,7 @@
         <div class="search-container">
             <input type="text" id="searchInput" class="search-input" placeholder="🔍 Поиск продуктов...">
         </div>
+        <div class="loading-indicator" id="loadingIndicator">⏳ Загрузка категорий...</div>
         <div class="categories" id="categories"></div>
         <div class="footer">
             <div class="selected-count">Выбрано: <strong><span id="selectedCount">0</span></strong></div>
@@ -192,12 +208,14 @@
 
     <script>
         const CONFIG = {
-            APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbwF70C5No1fplAYWqV_hMoX4cxGYzvy8JDNaO2ss0QGT2UNiZCv3OdD4lCHHz6tLYWn/exec'
+            APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbwF70C5No1fplAYWqV_hMoX4cxGYzvy8JDNaO2ss0QGT2UNiZCv3OdD4lCHHz6tLYWn/exec',
+            CATEGORY_LOAD_DELAY: 50 // мс между загрузкой категорий
         };
 
         const tg = window.Telegram?.WebApp || { initData: '', expand: () => {} };
         const selectedProducts = new Set();
-        let allCategories = {}; // Хранилище всех категорий с продуктами
+        let allCategories = {};
+        let userData = null;
 
         async function initApp() {
             tg.expand();
@@ -220,8 +238,8 @@
                 const data = await response.json();
 
                 if (data.status === 'SUCCESS' && data.success) {
-                    console.log('Data received:', data);
-                    renderApp(data);
+                    console.log('Data received successfully');
+                    await renderApp(data);
                 } else {
                     showError(data.error || 'Ошибка загрузки');
                 }
@@ -231,7 +249,8 @@
             }
         }
 
-        function renderApp(data) {
+        async function renderApp(data) {
+            // Устанавливаем информацию о пользователе
             const userInfo = document.getElementById('userInfo');
             if (!data.user || !data.user.username || !data.user.telegram_id) {
                 userInfo.textContent = 'Пользователь не определен';
@@ -242,39 +261,33 @@
             // Загружаем сохранённые продукты из базы
             selectedProducts.clear();
             const savedProductsString = data.user_data?.selected_products || '';
-            console.log('Loading saved products:', savedProductsString);
+            console.log('Saved products count:', savedProductsString ? savedProductsString.split(',').length : 0);
             
             if (savedProductsString) {
-                const savedProductsArray = savedProductsString.split(',').filter(Boolean);
-                console.log('Parsed saved products:', savedProductsArray.length, 'items');
-                savedProductsArray.forEach(id => {
-                    selectedProducts.add(id.trim());
+                savedProductsString.split(',').forEach(id => {
+                    if (id.trim()) {
+                        selectedProducts.add(id.trim());
+                    }
                 });
             }
             
-            console.log('Total selected products in Set:', selectedProducts.size);
+            console.log('Loaded selected products:', selectedProducts.size);
+
+            // Сохраняем данные пользователя
+            userData = data.user_data;
 
             // Группируем продукты по категориям
             allCategories = groupByCategory(data.products || []);
-            
-            // Рендерим категории
-            renderCategories();
+            console.log('Total categories:', Object.keys(allCategories).length);
+
+            // ПОСЛЕДОВАТЕЛЬНАЯ ЗАГРУЗКА: рендерим категории одну за другой
+            await renderCategoriesSequentially();
+
+            // Настраиваем обработчики событий
+            setupEventHandlers();
 
             // Обновляем общий счётчик
             updateTotalSelectedCount();
-
-            // Event Delegation для категорий
-            const categoriesDiv = document.getElementById('categories');
-            categoriesDiv.addEventListener('click', handleCategoryClick);
-
-            // Debounced поиск
-            let searchTimeout;
-            document.getElementById('searchInput').addEventListener('input', (e) => {
-                clearTimeout(searchTimeout);
-                searchTimeout = setTimeout(() => handleSearch(e.target.value), 300);
-            });
-
-            document.getElementById('saveButton').addEventListener('click', saveUserData);
         }
 
         function groupByCategory(products) {
@@ -286,44 +299,82 @@
             }, {});
         }
 
-        function renderCategories() {
+        async function renderCategoriesSequentially() {
             const categoriesDiv = document.getElementById('categories');
+            const loadingIndicator = document.getElementById('loadingIndicator');
+            
             categoriesDiv.innerHTML = '';
+            loadingIndicator.classList.add('active');
 
-            const fragment = document.createDocumentFragment();
-
-            Object.entries(allCategories).forEach(([categoryName, products], index) => {
-                const categoryId = `cat-${index}`;
+            const categoryEntries = Object.entries(allCategories);
+            
+            // Рендерим категории последовательно с небольшой задержкой
+            for (let index = 0; index < categoryEntries.length; index++) {
+                const [categoryName, products] = categoryEntries[index];
                 
-                // ВАЖНО: Подсчитываем выбранные продукты ДО рендеринга из selectedProducts Set
-                const selectedInCategory = products.filter(p => selectedProducts.has(p.id)).length;
-                console.log(`Category "${categoryName}": ${selectedInCategory}/${products.length} selected`);
-
-                const categoryDiv = document.createElement('div');
-                categoryDiv.className = 'category';
-                categoryDiv.dataset.categoryId = categoryId;
-                categoryDiv.dataset.categoryName = categoryName;
-                categoryDiv.dataset.products = JSON.stringify(products);
-                categoryDiv.dataset.rendered = 'false';
-                categoryDiv.dataset.selectedCount = selectedInCategory; // Сохраняем для быстрого доступа
+                await renderSingleCategory(categoryName, products, index);
                 
-                categoryDiv.innerHTML = `
-                    <div class="category-header">
-                        <span class="category-title">${escapeHtml(categoryName)}</span>
-                        <div style="display: flex; align-items: center; gap: 10px;">
-                            <span class="category-count">${selectedInCategory}/${products.length}</span>
-                            <span class="category-arrow">▼</span>
-                        </div>
-                    </div>
-                    <div class="category-products">
-                        <!-- Lazy loading: контент загрузится при открытии -->
-                    </div>
-                `;
+                // Обновляем индикатор загрузки
+                loadingIndicator.textContent = `⏳ Загрузка ${index + 1}/${categoryEntries.length}...`;
+                
+                // Небольшая задержка для плавности (можно убрать для максимальной скорости)
+                if (index < categoryEntries.length - 1) {
+                    await sleep(CONFIG.CATEGORY_LOAD_DELAY);
+                }
+            }
 
-                fragment.appendChild(categoryDiv);
+            loadingIndicator.classList.remove('active');
+            console.log('All categories loaded successfully');
+        }
+
+        async function renderSingleCategory(categoryName, products, index) {
+            const categoriesDiv = document.getElementById('categories');
+            const categoryId = `cat-${index}`;
+            
+            // Подсчитываем выбранные продукты
+            const selectedInCategory = products.filter(p => selectedProducts.has(p.id)).length;
+            
+            console.log(`Loading category "${categoryName}": ${selectedInCategory}/${products.length} selected`);
+
+            const categoryDiv = document.createElement('div');
+            categoryDiv.className = 'category';
+            categoryDiv.dataset.categoryId = categoryId;
+            categoryDiv.dataset.categoryName = categoryName;
+            categoryDiv.dataset.products = JSON.stringify(products);
+            categoryDiv.dataset.rendered = 'false';
+            categoryDiv.dataset.selectedCount = selectedInCategory;
+            
+            categoryDiv.innerHTML = `
+                <div class="category-header">
+                    <span class="category-title">${escapeHtml(categoryName)}</span>
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <span class="category-count">${selectedInCategory}/${products.length}</span>
+                        <span class="category-arrow">▼</span>
+                    </div>
+                </div>
+                <div class="category-products">
+                    <!-- Lazy loading: контент загрузится при открытии -->
+                </div>
+            `;
+
+            categoriesDiv.appendChild(categoryDiv);
+        }
+
+        function setupEventHandlers() {
+            const categoriesDiv = document.getElementById('categories');
+            
+            // Event Delegation для категорий
+            categoriesDiv.addEventListener('click', handleCategoryClick);
+
+            // Debounced поиск
+            let searchTimeout;
+            document.getElementById('searchInput').addEventListener('input', (e) => {
+                clearTimeout(searchTimeout);
+                searchTimeout = setTimeout(() => handleSearch(e.target.value), 300);
             });
 
-            categoriesDiv.appendChild(fragment);
+            // Кнопка сохранения
+            document.getElementById('saveButton').addEventListener('click', saveUserData);
         }
 
         function handleCategoryClick(e) {
@@ -373,7 +424,6 @@
             const categoryId = category.dataset.categoryId;
             const productsDiv = category.querySelector('.category-products');
             
-            // ВАЖНО: Проверяем selectedProducts.has() при рендеринге каждого чекбокса
             const allSelected = products.every(p => selectedProducts.has(p.id));
             
             const html = `
@@ -403,7 +453,6 @@
             
             const allSelected = Array.from(checkboxes).every(cb => cb.checked);
             
-            // Переключаем все чекбоксы
             checkboxes.forEach(cb => {
                 cb.checked = !allSelected;
                 const id = cb.id.replace('prod-', '');
@@ -414,14 +463,12 @@
                 }
             });
             
-            // Обновляем UI
             updateCategoryCounter(category, products);
             updateTotalSelectedCount();
             button.textContent = allSelected ? '+ Выбрать все' : '✓ Снять все';
         }
 
         function handleProductClick(item, target) {
-            // Если кликнули не по чекбоксу, переключаем его
             if (target.tagName !== 'INPUT') {
                 const checkbox = item.querySelector('.product-checkbox');
                 checkbox.checked = !checkbox.checked;
@@ -432,18 +479,15 @@
             const category = item.closest('.category');
             const products = JSON.parse(category.dataset.products);
             
-            // Обновляем Set
             if (checkbox.checked) {
                 selectedProducts.add(id);
             } else {
                 selectedProducts.delete(id);
             }
             
-            // Обновляем счётчики
             updateCategoryCounter(category, products);
             updateTotalSelectedCount();
             
-            // Обновляем кнопку "Выбрать все"
             const allSelected = products.every(p => selectedProducts.has(p.id));
             const categoryId = category.dataset.categoryId;
             const button = document.querySelector(`.select-all-btn[data-category-id="${categoryId}"]`);
@@ -470,10 +514,8 @@
             searchTerm = searchTerm.toLowerCase().trim();
             
             document.querySelectorAll('.category').forEach(category => {
-                const categoryName = category.dataset.categoryName;
                 const products = JSON.parse(category.dataset.products);
                 
-                // Фильтруем продукты по имени
                 const matchingProducts = products.filter(p => 
                     (p.name || '').toLowerCase().includes(searchTerm)
                 );
@@ -481,7 +523,6 @@
                 if (matchingProducts.length > 0 || searchTerm === '') {
                     category.style.display = 'block';
                     
-                    // Если категория уже отрендерена, фильтруем видимые продукты
                     if (category.dataset.rendered === 'true') {
                         category.querySelectorAll('.product-item').forEach(item => {
                             const name = item.querySelector('.product-label').textContent.toLowerCase();
@@ -503,6 +544,10 @@
                       .replace(/'/g, '&#039;');
         }
 
+        function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
         async function saveUserData() {
             try {
                 console.log('Saving products...');
@@ -518,17 +563,14 @@
                 url.searchParams.append('initData', tg.initData);
                 url.searchParams.append('products', productsString);
 
-                console.log('Sending request...');
-                console.log('Products to save:', productsString);
+                console.log('Saving', selectedProducts.size, 'products');
 
                 const response = await fetch(url.toString(), {
                     method: 'GET',
                     cache: 'no-cache'
                 });
 
-                console.log('Save response status:', response.status);
                 const data = await response.json();
-                console.log('Save response data:', data);
 
                 if (data.status === 'SUCCESS' && data.success) {
                     showSuccess('✅ Данные успешно сохранены!');
