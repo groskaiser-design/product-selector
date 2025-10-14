@@ -111,404 +111,223 @@
             cursor: pointer;
             transition: all 0.2s;
         }
-        .product-item:hover { background: #f8f9fa; padding-left: 25px; }
-        .product-checkbox {
-            width: 22px;
-            height: 22px;
-            margin-right: 12px;
-            cursor: pointer;
-            accent-color: #667eea;
+        .product-item:hover { background: #f8f9fa; padding-left: 24px; }
+        .product-checkbox { margin-right: 15px; }
+        .product-label { flex: 1; font-size: 15px; }
+        .footer {
+            padding: 20px;
+            border-top: 1px solid #eee;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
         }
-        .product-name { flex: 1; font-size: 15px; color: #333; }
-        .product-item.selected { background: #f0f4ff; }
-        .footer { padding: 20px; background: #f8f9fa; border-top: 1px solid #eee; }
         .selected-count {
-            text-align: center;
-            margin-bottom: 15px;
             font-size: 16px;
-            color: #666;
+            color: #333;
         }
-        .selected-count strong { color: #667eea; font-size: 24px; }
         .save-button {
-            width: 100%;
-            padding: 16px;
-            font-size: 18px;
-            font-weight: 600;
-            color: white;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             border: none;
+            color: white;
+            padding: 15px 30px;
             border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
             cursor: pointer;
-            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+            transition: all 0.3s;
         }
-        .loading { text-align: center; padding: 40px 20px; color: #666; }
-        .spinner {
-            border: 3px solid #f3f3f3;
-            border-top: 3px solid #667eea;
-            border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            animation: spin 1s linear infinite;
-            margin: 0 auto 15px;
-        }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-        .error {
-            background: #fee;
-            color: #c33;
-            padding: 15px;
-            border-radius: 8px;
-            margin: 20px;
-            text-align: center;
-        }
-        .success {
-            background: #efe;
-            color: #3c3;
-            padding: 15px;
-            border-radius: 8px;
-            margin: 20px;
-            text-align: center;
-        }
+        .save-button:hover { transform: scale(1.05); }
+        .save-button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .error { padding: 20px; background: #ffcccc; color: #cc0000; text-align: center; }
+        .success { padding: 10px; background: #ccffcc; color: #006600; text-align: center; margin: 10px 20px; border-radius: 10px; }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>🛒 Выбор продуктов</h1>
+            <h1>Выбор продуктов</h1>
             <div class="user-info" id="userInfo">Загрузка...</div>
         </div>
         <div class="search-container">
-            <input type="text" class="search-input" id="searchInput" placeholder="🔍 Поиск продуктов...">
+            <input type="text" id="searchInput" class="search-input" placeholder="Поиск продуктов...">
         </div>
-        <div id="app">
-            <div class="loading">
-                <div class="spinner"></div>
-                <div>Загрузка продуктов...</div>
-            </div>
-        </div>
+        <div class="categories" id="categories"></div>
         <div class="footer">
-            <div class="selected-count">Выбрано: <strong id="selectedCount">0</strong></div>
-            <button class="save-button" id="saveButton" onclick="saveUserData()">💾 Сохранить выбор</button>
+            <span class="selected-count">Выбрано: <span id="selectedCount">0</span></span>
+            <button id="saveButton" class="save-button">💾 Сохранить выбор</button>
         </div>
     </div>
 
     <script>
-        const tg = window.Telegram.WebApp;
-        tg.ready();
-        tg.expand();
-
         const CONFIG = {
-            APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbwN8OZcMlfVwW_mYqrRYde8jwJNfTrQTaiMC4V4He5aax4-7SIQvEW5gxshKi-BgVQj/exec'
+            APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbzeihKAKa0yJxXe16VP3hb7BzYiVTpbyl46uWX-qH6Vkpx2Zp6WWshg4MlrDCPvy6I/exec'
         };
 
-        const CATEGORY_ORDER = [
-            '🐟 Рыба', '🥩 Мясо', '🍗 Птица', '🦐 Морепродукты',
-            '🥛 Молочные продукты', '🍝 Крупы, бобовые, макароны',
-            '🥕 Корнеплоды', '🥬 Овощи', '🍎 Фрукты', '🥜 Орехи и семена',
-            'Без категории'
-        ];
-
-        let allProducts = [];
-        let selectedProducts = new Set();
-        let productsByCategory = {};
-        let categoryIdToName = {};
-        let categoryNameToId = {};
-
-        function escapeHtml(text) {
-            if (!text) return '';
-            const div = document.createElement('div');
-            div.textContent = String(text);
-            return div.innerHTML;
-        }
-
-        function escapeAttr(text) {
-            if (!text) return '';
-            return String(text)
-                .replace(/&/g, '&amp;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#39;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;');
-        }
+        const tg = window.Telegram.WebApp;
+        const selectedProducts = new Set();
 
         async function initApp() {
+            tg.expand();
+
             try {
-                console.log('Init app...');
-                
-                const url = CONFIG.APPS_SCRIPT_URL + 
-                    '?action=init' +
-                    '&initData=' + encodeURIComponent(tg.initData);
-
-                console.log('Fetching:', url.substring(0, 100) + '...');
-
-                const response = await fetch(url, {
+                const response = await fetch(`${CONFIG.APPS_SCRIPT_URL}?action=init&initData=${encodeURIComponent(tg.initData)}`, {
                     method: 'GET',
                     cache: 'no-cache'
                 });
-
-                console.log('Response status:', response.status);
 
                 if (!response.ok) {
                     throw new Error('HTTP ' + response.status);
                 }
 
                 const data = await response.json();
-                console.log('Data received:', data);
 
-                if (!data.success && data.error) {
-                    throw new Error(data.error);
+                if (data.success) {
+                    console.log('Data received:', data);
+                    renderApp(data);
+                } else {
+                    showError(data.error || 'Ошибка загрузки');
                 }
-
-                document.getElementById('userInfo').textContent = 
-                    `👤 ${data.user.username} (ID: ${data.user.telegram_id})`;
-
-                allProducts = data.products || [];
-                allProducts.forEach(p => p.nameLower = p.name.toLowerCase());
-
-                if (data.user_data && data.user_data.selected_products) {
-                    selectedProducts = new Set(
-                        data.user_data.selected_products.split(',')
-                            .map(id => id.trim())
-                            .filter(id => id)
-                    );
-                }
-
-                groupProductsByCategory();
-                renderProducts();
-                setupEventDelegation();
-
-                console.log('Init complete');
-
             } catch (error) {
                 console.error('Init error:', error);
                 showError('Ошибка загрузки: ' + error.message);
             }
         }
 
-        function groupProductsByCategory() {
-            productsByCategory = {};
-            allProducts.forEach(product => {
-                const category = product.category || 'Без категории';
-                if (!productsByCategory[category]) {
-                    productsByCategory[category] = [];
-                }
-                productsByCategory[category].push(product);
-            });
+        function renderApp(data) {
+            const userInfo = document.getElementById('userInfo');
+            userInfo.textContent = `${data.user.username} (ID: ${data.user.telegram_id})`;
 
-            Object.keys(productsByCategory).forEach(category => {
-                productsByCategory[category].sort((a, b) => 
-                    a.id.localeCompare(b.id, undefined, {numeric: true, sensitivity: 'base'})
-                );
-            });
-        }
+            const categoriesDiv = document.getElementById('categories');
+            categoriesDiv.innerHTML = '';
 
-        function sortCategories(categories) {
-            return categories.sort((a, b) => {
-                const indexA = CATEGORY_ORDER.indexOf(a);
-                const indexB = CATEGORY_ORDER.indexOf(b);
-                if (indexA !== -1 && indexB !== -1) return indexA - indexB;
-                if (indexA !== -1) return -1;
-                if (indexB !== -1) return 1;
-                return a.localeCompare(b, 'ru');
-            });
-        }
+            const categories = groupByCategory(data.products);
 
-        function renderProducts(searchQuery = '') {
-            const app = document.getElementById('app');
-            const categories = sortCategories(Object.keys(productsByCategory));
-            const queryLower = searchQuery.toLowerCase();
+            Object.entries(categories).forEach(([categoryName, products], index) => {
+                const categoryId = `cat-${index}`;
+                const selectedInCategory = products.filter(p => selectedProducts.has(p.id)).length;
 
-            categoryIdToName = {};
-            categoryNameToId = {};
-
-            const html = `
-                <div class="categories">
-                    ${categories.map(category => {
-                        const products = productsByCategory[category];
-                        let filteredProducts = searchQuery 
-                            ? products.filter(p => p.nameLower.includes(queryLower))
-                            : products;
-
-                        if (filteredProducts.length === 0) return '';
-
-                        const selectedInCategory = filteredProducts.filter(p => 
-                            selectedProducts.has(p.id)
-                        ).length;
-
-                        const categoryId = `cat_${encodeURIComponent(category).replace(/%/g, '_')}`;
-                        categoryIdToName[categoryId] = category;
-                        categoryNameToId[category] = categoryId;
-
-                        const allSelected = filteredProducts.every(p => selectedProducts.has(p.id));
-
-                        return `
-                            <div class="category ${searchQuery ? 'open' : ''}" data-category-id="${categoryId}">
-                                <div class="category-header" data-action="toggle-category" data-category-id="${categoryId}">
-                                    <div class="category-title">${escapeHtml(category)}</div>
-                                    <div style="display: flex; align-items: center; gap: 10px;">
-                                        <span class="category-count">${selectedInCategory}/${filteredProducts.length}</span>
-                                        <span class="category-arrow">▼</span>
-                                    </div>
-                                </div>
-                                <div class="category-products ${searchQuery ? 'open' : ''}">
-                                    <div class="select-all-container">
-                                        <button class="select-all-btn" data-action="select-all" data-category-id="${categoryId}">
-                                            ${allSelected ? '✓ Снять все' : '+ Выбрать все'}
-                                        </button>
-                                    </div>
-                                    ${filteredProducts.map(product => {
-                                        const escapedId = escapeAttr(product.id);
-                                        return `
-                                        <div class="product-item ${selectedProducts.has(product.id) ? 'selected' : ''}" 
-                                             data-product-id="${escapedId}">
-                                            <input type="checkbox" 
-                                                   class="product-checkbox"
-                                                   ${selectedProducts.has(product.id) ? 'checked' : ''}
-                                                   data-product-id="${escapedId}">
-                                            <span class="product-name">${escapeHtml(product.name)}</span>
-                                        </div>
-                                    `}).join('')}
-                                </div>
+                const categoryDiv = document.createElement('div');
+                categoryDiv.className = 'category';
+                categoryDiv.dataset.categoryId = categoryId;
+                categoryDiv.innerHTML = `
+                    <div class="category-header">
+                        <span class="category-title">${escapeHtml(categoryName)}</span>
+                        <span class="category-count">${selectedInCategory}/${products.length}</span>
+                        <span class="category-arrow">▼</span>
+                    </div>
+                    <div class="select-all-container">
+                        <button class="select-all-btn" data-category-id="${categoryId}">+ Выбрать все</button>
+                    </div>
+                    <div class="category-products">
+                        ${products.map(p => `
+                            <div class="product-item" data-product-id="${p.id}">
+                                <input type="checkbox" class="product-checkbox" id="prod-${p.id}">
+                                <label class="product-label" for="prod-${p.id}">${escapeHtml(p.name)}</label>
                             </div>
-                        `;
-                    }).join('')}
-                </div>
-            `;
+                        `).join('')}
+                    </div>
+                `;
 
-            app.innerHTML = html;
+                categoriesDiv.appendChild(categoryDiv);
+
+                // Load saved selections
+                const savedProducts = data.user_data.selected_products.split(',').filter(Boolean);
+                savedProducts.forEach(id => {
+                    const checkbox = categoryDiv.querySelector(`#prod-${id}`);
+                    if (checkbox) {
+                        checkbox.checked = true;
+                        selectedProducts.add(id);
+                    }
+                });
+
+                updateCategoryCount(categoryName, products);
+            });
+
             updateSelectedCount();
-        }
 
-        function setupEventDelegation() {
-            const app = document.getElementById('app');
+            // Event listeners
+            document.querySelectorAll('.category-header').forEach(header => {
+                header.addEventListener('click', () => {
+                    const category = header.parentElement;
+                    category.classList.toggle('open');
+                    const productsDiv = category.querySelector('.category-products');
+                    productsDiv.classList.toggle('open');
+                });
+            });
 
-            app.addEventListener('click', function(e) {
-                const target = e.target;
+            document.querySelectorAll('.product-item').forEach(item => {
+                item.addEventListener('click', (e) => {
+                    if (e.target.tagName !== 'INPUT') {
+                        const checkbox = item.querySelector('.product-checkbox');
+                        checkbox.checked = !checkbox.checked;
+                    }
+                    const id = item.dataset.productId;
+                    const categoryName = item.closest('.category').querySelector('.category-title').textContent;
+                    const products = categories[categoryName];
+                    if (selectedProducts.has(id)) {
+                        selectedProducts.delete(id);
+                    } else {
+                        selectedProducts.add(id);
+                    }
+                    updateCategoryCount(categoryName, products);
+                    updateSelectedCount();
+                });
+            });
 
-                if (target.dataset.action === 'select-all') {
-                    e.stopPropagation();
-                    const categoryId = target.dataset.categoryId;
-                    if (categoryId) selectAllInCategory(categoryId);
-                    return;
-                }
-
-                if (target.classList.contains('product-checkbox')) {
-                    e.stopPropagation();
-                    const productId = target.dataset.productId;
-                    if (productId) toggleProduct(productId);
-                    return;
-                }
-
-                const productItem = target.closest('.product-item');
-                if (productItem) {
-                    const productId = productItem.dataset.productId;
-                    if (productId) toggleProduct(productId);
-                    return;
-                }
-
-                const categoryHeader = target.closest('[data-action="toggle-category"]');
-                if (categoryHeader) {
-                    const categoryId = categoryHeader.dataset.categoryId;
-                    if (categoryId) toggleCategory(categoryId);
-                }
+            document.querySelectorAll('.select-all-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const categoryId = btn.dataset.categoryId;
+                    const category = document.querySelector(`.category[data-category-id="${categoryId}"]`);
+                    const productsDiv = category.querySelector('.category-products');
+                    const checkboxes = productsDiv.querySelectorAll('.product-checkbox');
+                    const allSelected = Array.from(checkboxes).every(cb => cb.checked);
+                    checkboxes.forEach(cb => {
+                        cb.checked = !allSelected;
+                        const id = cb.id.replace('prod-', '');
+                        if (cb.checked) {
+                            selectedProducts.add(id);
+                        } else {
+                            selectedProducts.delete(id);
+                        }
+                    });
+                    const categoryName = category.querySelector('.category-title').textContent;
+                    const products = categories[categoryName];
+                    updateCategoryCount(categoryName, products);
+                    updateSelectedCount();
+                });
             });
 
             document.getElementById('searchInput').addEventListener('input', (e) => {
-                renderProducts(e.target.value);
+                const searchTerm = e.target.value.toLowerCase();
+                document.querySelectorAll('.product-item').forEach(item => {
+                    const name = item.querySelector('.product-label').textContent.toLowerCase();
+                    item.style.display = name.includes(searchTerm) ? 'flex' : 'none';
+                });
             });
+
+            document.getElementById('saveButton').addEventListener('click', saveUserData);
         }
 
-        function toggleCategory(categoryId) {
-            const categoryElement = document.querySelector(`.category[data-category-id="${categoryId}"]`);
-            if (!categoryElement) return;
-
-            const productsDiv = categoryElement.querySelector('.category-products');
-            if (!productsDiv) return;
-
-            categoryElement.classList.toggle('open');
-            productsDiv.classList.toggle('open');
+        function groupByCategory(products) {
+            return products.reduce((acc, p) => {
+                const cat = p.category || 'Без категории';
+                if (!acc[cat]) acc[cat] = [];
+                acc[cat].push(p);
+                return acc;
+            }, {});
         }
 
-        function selectAllInCategory(categoryId) {
-            const categoryName = categoryIdToName[categoryId];
-            if (!categoryName) return;
+        function escapeHtml(text) {
+            return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+        }
 
-            const products = productsByCategory[categoryName];
-            if (!products) return;
-
+        function updateCategoryCount(categoryName, products) {
+            const selectedInCategory = products.filter(p => selectedProducts.has(p.id)).length;
+            const categoryId = [...document.querySelectorAll('.category')].find(cat => cat.querySelector('.category-title').textContent === categoryName).dataset.categoryId;
+            const countElement = document.querySelector(`.category[data-category-id="${categoryId}"] .category-count`);
+            countElement.textContent = `${selectedInCategory}/${products.length}`;
             const allSelected = products.every(p => selectedProducts.has(p.id));
-
-            if (allSelected) {
-                products.forEach(p => selectedProducts.delete(p.id));
-            } else {
-                products.forEach(p => selectedProducts.add(p.id));
-            }
-
-            products.forEach(p => updateProductUI(p.id));
-            updateSelectedCount();
-            updateCategoryCountByName(categoryName);
-            updateSelectAllButton(categoryId, !allSelected);
-        }
-
-        function toggleProduct(productId) {
-            if (selectedProducts.has(productId)) {
-                selectedProducts.delete(productId);
-            } else {
-                selectedProducts.add(productId);
-            }
-
-            updateProductUI(productId);
-            updateSelectedCount();
-            updateCategoryCount(productId);
-        }
-
-        function updateProductUI(productId) {
-            const escapedId = escapeAttr(productId);
-            const productItems = document.querySelectorAll(`[data-product-id="${escapedId}"]`);
-            const isSelected = selectedProducts.has(productId);
-
-            productItems.forEach(item => {
-                if (item.classList.contains('product-item')) {
-                    if (isSelected) {
-                        item.classList.add('selected');
-                    } else {
-                        item.classList.remove('selected');
-                    }
-                } else if (item.classList.contains('product-checkbox')) {
-                    item.checked = isSelected;
-                }
-            });
-        }
-
-        function updateCategoryCount(productId) {
-            const product = allProducts.find(p => p.id === productId);
-            if (!product) return;
-            updateCategoryCountByName(product.category || 'Без категории');
-        }
-
-        function updateCategoryCountByName(categoryName) {
-            const products = productsByCategory[categoryName];
-            if (!products) return;
-
-            const selectedInCategory = products.filter(p => 
-                selectedProducts.has(p.id)
-            ).length;
-
-            const categoryId = categoryNameToId[categoryName];
-            if (!categoryId) return;
-
-            const categoryElement = document.querySelector(`.category[data-category-id="${categoryId}"]`);
-            if (categoryElement) {
-                const countElement = categoryElement.querySelector('.category-count');
-                if (countElement) {
-                    countElement.textContent = `${selectedInCategory}/${products.length}`;
-                }
-
-                const allSelected = products.every(p => selectedProducts.has(p.id));
-                updateSelectAllButton(categoryId, allSelected);
-            }
+            updateSelectAllButton(categoryId, allSelected);
         }
 
         function updateSelectAllButton(categoryId, allSelected) {
@@ -532,16 +351,14 @@
 
                 const productsString = Array.from(selectedProducts).join(',');
 
-                const url = CONFIG.APPS_SCRIPT_URL + 
-                    '?action=save_user_data' +
-                    '&initData=' + encodeURIComponent(tg.initData) +
-                    '&products=' + encodeURIComponent(productsString);
-
-                console.log('Saving to:', url.substring(0, 100) + '...');
-
-                const response = await fetch(url, {
-                    method: 'GET',
-                    cache: 'no-cache'
+                const response = await fetch(CONFIG.APPS_SCRIPT_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        action: 'save_user_data',
+                        initData: tg.initData,
+                        products: productsString
+                    })
                 });
 
                 console.log('Save response:', response.status);
@@ -604,17 +421,5 @@
 
         initApp();
     </script>
-<script>
-  setTimeout(() => {
-    if (window.Telegram?.WebApp?.initData) {
-      fetch(`${CONFIG.APPS_SCRIPT_URL}?action=init&initData=${encodeURIComponent(window.Telegram.WebApp.initData)}`)
-        .then(response => response.json())
-        .then(data => console.log(data))
-        .catch(error => console.log('Fetch error:', error));
-    } else {
-      alert('No initData. Check bot setup.');
-    }
-  }, 1000);
-</script>
 </body>
 </html>
