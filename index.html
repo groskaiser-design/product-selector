@@ -240,15 +240,22 @@
                 if (data.status === 'SUCCESS' && data.success) {
                     console.log('=== DATA RECEIVED ===');
                     console.log('Total products in response:', data.products ? data.products.length : 0);
-                    console.log('Saved products string length:', data.user_data?.selected_products?.length || 0);
-                    console.log('Saved products preview:', data.user_data?.selected_products?.substring(0, 200) || 'empty');
+                    
+                    const savedProductsString = data.user_data?.selected_products || '';
+                    console.log('Saved products string length:', savedProductsString.length);
+                    console.log('FULL saved products string:', savedProductsString); // ВЕСЬ ПОЛНЫЙ ТЕКСТ
                     
                     // ПРОВЕРКА: Считаем ID в строке
-                    if (data.user_data?.selected_products) {
-                        const savedIds = data.user_data.selected_products.split(',').filter(Boolean);
+                    if (savedProductsString) {
+                        const savedIds = savedProductsString.split(',').filter(Boolean);
                         console.log('Saved IDs count:', savedIds.length);
                         console.log('First 10 saved IDs:', savedIds.slice(0, 10));
                         console.log('Last 10 saved IDs:', savedIds.slice(-10));
+                        
+                        // Проверяем, обрезана ли строка
+                        if (savedProductsString.length > 0 && !savedProductsString.endsWith(',') && savedIds.length < 493) {
+                            console.warn('⚠️ STRING MAY BE TRUNCATED! Expected ~493 IDs, got', savedIds.length);
+                        }
                     }
                     
                     await renderApp(data);
@@ -586,20 +593,26 @@
                 button.textContent = '⏳ Сохранение...';
 
                 const productsString = Array.from(selectedProducts).join(',');
+                
+                console.log('Products to save:', selectedProducts.size);
+                console.log('String length:', productsString.length);
 
-                const url = new URL(CONFIG.APPS_SCRIPT_URL);
-                url.searchParams.append('action', 'save_user_data');
-                url.searchParams.append('initData', tg.initData);
-                url.searchParams.append('products', productsString);
+                // ИСПРАВЛЕНО: Используем POST вместо GET для больших данных
+                const formData = new FormData();
+                formData.append('action', 'save_user_data');
+                formData.append('initData', tg.initData);
+                formData.append('products', productsString);
 
-                console.log('Saving', selectedProducts.size, 'products');
+                console.log('Sending POST request...');
 
-                const response = await fetch(url.toString(), {
-                    method: 'GET',
-                    cache: 'no-cache'
+                const response = await fetch(CONFIG.APPS_SCRIPT_URL, {
+                    method: 'POST',
+                    body: formData
                 });
 
+                console.log('Save response status:', response.status);
                 const data = await response.json();
+                console.log('Save response data:', data);
 
                 if (data.status === 'SUCCESS' && data.success) {
                     showSuccess('✅ Данные успешно сохранены!');
