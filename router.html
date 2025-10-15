@@ -206,7 +206,7 @@
 
 <script>
   /* ====== КОНФИГ ====== */
-  const LOG_URL  = 'https://script.google.com/macros/s/AKfycbwjr46AxfzHMgOtRxeV_9gD6XOJae_tcU2pmMF1yMVOFG3SarKLtfpOVawRX6-SV5cxvw/exec'; // <= вставь свой URL логгера (Super-Simple Logger)
+  const LOG_URL  = 'https://script.google.com/macros/s/AKfycbwjr46AxfzHMgOtRxeV_9gD6XOJae_tcU2pmMF1yMVOFG3SarKLtfpOVawRX6-SV5cxvw/exec'; // <= URL твоего логгера (GAS)
   const ICON_BASE = 'https://groskaiser-design.github.io/icons/';
 
   const ICONS = {
@@ -231,30 +231,66 @@
   };
   try{tg.ready();tg.expand();}catch(e){}
 
-  /* ====== ПРОСТОЕ ЛОГИРОВАНИЕ (по событию) ====== */
+  /* ====== ПРОСТОЕ ЛОГИРОВАНИЕ с тройным фолбэком ====== */
+  function baseUser(){
+    const u = (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) || {};
+    return {
+      user_id:  u.id || '',
+      username: ((u.first_name||'') + (u.last_name ? ' '+u.last_name : '') || u.username || '').trim()
+    };
+  }
+
+  function pixelFallback(body){
+    try{
+      const q = new URLSearchParams({
+        action:'log',
+        module: body.module || 'router',
+        page: body.page || (location.pathname.split('/').pop()||'router.html'),
+        event: body.event || '',
+        user_id: body.user_id || '',
+        username: body.username || '',
+        client_ts: body.client_ts || new Date().toISOString(),
+        payload: btoa(unescape(encodeURIComponent(JSON.stringify(body.payload||{}))))
+      }).toString();
+      const img = new Image();
+      img.src = LOG_URL + '?' + q + '&_t=' + Date.now();
+    }catch(_){}
+  }
+
   function logEvent(event, payload){
     try{
       if(!LOG_URL) return;
-      const u = (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) || {};
       const body = {
         action:   'log',
         module:   'router',
         page:     (location.pathname.split('/').pop() || 'router.html'),
         event:    String(event||''),
-        user_id:  u.id || '',
-        username: ((u.first_name||'') + (u.last_name ? ' '+u.last_name : '') || u.username || '').trim(),
+        ...baseUser(),
         payload:  payload || {},
         client_ts: new Date().toISOString()
       };
       const json = JSON.stringify(body);
-      // sendBeacon если доступен (фон), иначе fetch с keepalive
-      if (navigator.sendBeacon){
-        const blob = new Blob([json], {type:'application/json'});
-        navigator.sendBeacon(LOG_URL, blob);
-      } else {
-        fetch(LOG_URL, {method:'POST', headers:{'Content-Type':'application/json'}, body: json, keepalive:true})
-          .catch(()=>{});
-      }
+
+      // 1) fetch POST no-cors
+      fetch(LOG_URL, {
+        method:'POST',
+        // no-cors — чтобы не блокировалось CORS-политикой; на стороне GAS тело всё равно придёт
+        mode:'no-cors',
+        keepalive:true,
+        // без заголовков — браузер разрешит отправку даже в no-cors
+        body: json
+      }).catch(()=>{
+        // 2) sendBeacon
+        try{
+          if (navigator.sendBeacon){
+            const blob = new Blob([json], {type:'application/json'});
+            if (navigator.sendBeacon(LOG_URL, blob)) return;
+          }
+        }catch(_){}
+        // 3) пиксель GET
+        pixelFallback(body);
+      });
+
     }catch(_){}
   }
 
@@ -305,14 +341,12 @@
 
   function toast(msg){var t=document.getElementById('toast');t.textContent=msg;t.style.opacity='1';setTimeout(function(){t.style.opacity='0';},1200);}
 
-  /* ====== Ripple (одинарный везде) ====== */
+  /* ====== Ripple (одинарный) ====== */
   function rippleIn(target, e){
     try{
       var host = (target.closest && target.closest('.icon')) || (target.querySelector && target.querySelector('.icon')) || null;
       if(!host){ return; }
-      // удаляем прежнюю волну, чтобы не дублировалась
-      const prev = host.querySelector('.r');
-      if (prev) prev.remove();
+      const prev = host.querySelector('.r'); if (prev) prev.remove();
       var r=document.createElement('span'); r.className='r';
       var b=host.getBoundingClientRect();
       var pt = (e.touches && e.touches[0]) ? e.touches[0] : e;
@@ -322,7 +356,6 @@
     }catch(_){}
   }
 
-  // Нормализованный тап (без двойных событий)
   function bindTap(el, handler){
     let lastTouch = 0;
     if (window.PointerEvent){
@@ -336,7 +369,7 @@
     }
   }
 
-  /* ====== Логика меню/плиток ====== */
+  /* ====== Меню/плитки ====== */
   (function(){
     var grid=document.getElementById('gridB');
     var start=document.getElementById('startB');
@@ -385,11 +418,12 @@
       });
     });
 
-    // событие входа в приложение
+    // стартовые события для проверки
     logEvent('app_open', {});
+    logEvent('ping', {version:'router-logger-v3'});
   })();
 
-  // лог технических ошибок
+  // тех.ошибки
   window.addEventListener('error', function(e){
     logEvent('js_error', { message: e.message, file: e.filename, line: e.lineno, col: e.colno });
   });
