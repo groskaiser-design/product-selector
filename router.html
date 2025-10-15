@@ -219,7 +219,7 @@
 
 <script>
   /* === БАЗА ДЛЯ ИКОНОК (GitHub Pages) === */
-  const ICON_BASE = 'https://groskaiser-design.github.io/icons/'; // ← при необходимости поменяй
+  const ICON_BASE = 'https://groskaiser-design.github.io/icons/';
 
   const ICONS = {
     manual:       'question.svg',
@@ -288,7 +288,7 @@
 
   function toast(msg){var t=document.getElementById('toast');t.textContent=msg;t.style.opacity='1';setTimeout(function(){t.style.opacity='0';},1400);}
 
-  // Универсальный ripple — всегда в .icon, одинаковый для всех
+  // Единая волна (один раз) + единая обработка нажатия
   function rippleIn(target, e){
     try{
       var host = (target.closest && target.closest('.icon')) || (target.querySelector && target.querySelector('.icon')) || null;
@@ -300,6 +300,21 @@
       host.appendChild(r);
       r.addEventListener('animationend',function(){ if(r&&r.parentNode){ r.parentNode.removeChild(r);} },false);
     }catch(_){}
+  }
+
+  // Универсальная привязка «тапа» без двойных событий (touch+click)
+  function bindTap(el, handler){
+    let lastTouch = 0;
+    if (window.PointerEvent){
+      el.addEventListener('pointerdown', function(e){
+        // только ЛКМ на мыши или любой тач/перо
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
+        handler(e);
+      });
+    } else {
+      el.addEventListener('touchstart', function(e){ lastTouch = Date.now(); handler(e); }, {passive:true});
+      el.addEventListener('click', function(e){ if (Date.now() - lastTouch < 500) return; handler(e); });
+    }
   }
 
   (function(){
@@ -319,35 +334,33 @@
       try{ tg.BackButton.hide(); if(backHandler){ tg.BackButton.onClick(function(){}); backHandler=null; } }catch(_){}
     }
 
-    // «Старт» — сначала ripple, затем (через 90мс) открыть/закрыть
-    function onStartTap(e){
+    // Старт — единый тап: волна + toggle меню
+    bindTap(start, function(e){
       rippleIn(e.target, e);
-      setTimeout(function(){ opened?closeMenu():openMenu(); }, 90);
-    }
-    start.addEventListener('touchstart', onStartTap, {passive:true});
-    start.addEventListener('click', onStartTap);
+      (opened ? closeMenu : openMenu)();
+    });
 
-    // Кнопки разворота — ripple и переход через 90мс
+    // Кнопки разворота — волна + закрыть меню + переход
     function goAfterRipple(url, e){
-      e.stopPropagation();
       rippleIn(e.target, e);
+      if (opened) closeMenu();
       setTimeout(function(){ window.location.href=url; }, 90);
     }
-    btnProducts.addEventListener('touchstart', function(e){ goAfterRipple('products.html', e); }, {passive:true});
-    btnProducts.addEventListener('click', function(e){ goAfterRipple('products.html', e); });
-
-    btnKbju.addEventListener('touchstart', function(e){ goAfterRipple('kbju.html', e); }, {passive:true});
-    btnKbju.addEventListener('click', function(e){ goAfterRipple('kbju.html', e); });
+    bindTap(btnProducts, function(e){ e.stopPropagation(); goAfterRipple('products.html', e); });
+    bindTap(btnKbju,     function(e){ e.stopPropagation(); goAfterRipple('kbju.html', e); });
 
     // Закрытие по тапу вне
-    backdrop.addEventListener('click',function(){ closeMenu(); });
+    bindTap(backdrop, function(){ closeMenu(); });
     document.addEventListener('keydown',function(e){ if(e.key==='Escape'){ closeMenu(); } });
 
-    // Остальные плитки — ripple + заглушка
+    // Остальные плитки — волна; если меню раскрыто — просто закрываем его
     var tiles=document.querySelectorAll('.tile[data-module]');
     tiles.forEach(function(t){
-      t.addEventListener('touchstart',function(ev){ rippleIn(ev.target, ev); },{passive:true});
-      t.addEventListener('click',function(ev){ rippleIn(ev.target, ev); toast('Раздел в разработке'); });
+      bindTap(t, function(ev){
+        rippleIn(ev.target, ev);
+        if (opened){ closeMenu(); return; }
+        toast('Раздел в разработке');
+      });
     });
   })();
 </script>
