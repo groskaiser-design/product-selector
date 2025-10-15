@@ -9,18 +9,18 @@
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; scrollbar-gutter: stable both-edges; }
 
-    /* 1) РАСТЯГИВАЕМ ФОН ГРАДИЕНТА НА ВЕСЬ ДОКУМЕНТ */
+    /* фон на весь документ */
     html {
       min-height: 100%;
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
       background-repeat: no-repeat;
-      background-attachment: fixed;  /* безопасно для Telegram WebView и Android; на iOS ок с градиентом */
-      background-size: cover;        /* растягиваем под любую высоту */
+      background-attachment: fixed;
+      background-size: cover;
     }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
       min-height: 100%;
-      background: transparent;       /* фон перенесён на html, чтобы не “обрезался” */
+      background: transparent;
       padding: 20px 20px 140px 20px;
       color: #222;
     }
@@ -57,6 +57,7 @@
     /* Categories */
     .categories { padding: 12px 18px; padding-bottom: var(--bottom-inset, 180px); }
     .category { margin-bottom: 12px; border-radius: 12px; background: #f7f8fb; }
+
     .category-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; cursor: pointer; background: linear-gradient(135deg, #667eea, #764ba2); color: #fff; border-radius: 12px; }
     .category.open .category-header { border-radius: 12px 12px 0 0; }
     .category-title { font-weight: 600; font-size: 16px; }
@@ -66,13 +67,15 @@
     .category.open .category-arrow { transform: rotate(-135deg); }
 
     .category-products { max-height: 0; overflow: hidden; transition: max-height .32s ease; background: #fff; border-radius: 0 0 12px 12px; }
+
     .select-all-container { padding: 12px 16px; background: #f0f2f5; border-bottom: 1px solid #e8e8e8; display: flex; justify-content: center; }
     .select-all-btn { background: linear-gradient(135deg, #667eea, #764ba2); border: none; color: #fff; padding: 10px 22px; border-radius: 10px; font-size: 14px; cursor: pointer; font-weight: 700; width: 100%; max-width: 220px; }
 
-    .product-item { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid #f0f0f0; cursor: pointer; }
+    /* важные изменения: кликабельность только у чекбокса */
+    .product-item { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid #f0f0f0; cursor: default; }
     .product-item:last-child { border-bottom: 0; }
-    .product-checkbox { width: 20px; height: 20px; }
-    .product-label { flex: 1; font-size: 15px; cursor: pointer; }
+    .product-checkbox { width: 20px; height: 20px; cursor: pointer; }
+    .product-label { flex: 1; font-size: 15px; cursor: default; user-select: none; }
 
     /* Save button */
     .save-button-container { position: fixed; left: 0; right: 0; bottom: 60px; padding: 12px 20px; background: #fff; border-top: 1px solid #eee; z-index: 100; }
@@ -119,7 +122,6 @@
 
     <div class="search-container">
       <div class="search-wrap">
-        <!-- 2) ОБНОВЛЁН ПЛЕЙСХОЛДЕР -->
         <input id="searchInput" class="search-input" type="text" placeholder="Поиск продуктов." autocomplete="off" disabled />
         <button id="searchClear" class="search-clear" aria-label="Очистить">×</button>
       </div>
@@ -161,7 +163,7 @@
     </div>
   </div>
 
-  <!-- Элегантный прелоадер -->
+  <!-- Прелоадер -->
   <div class="global-loader" id="globalLoader">
     <div class="loader-card">
       <div class="ring"></div>
@@ -240,7 +242,17 @@
     }
 
     function bindHandlers(){
-      document.getElementById('categories').addEventListener('click', onCategoriesClick);
+      const catsEl = document.getElementById('categories');
+
+      // раскрытие/сворачивание и кнопка «выбрать все»
+      catsEl.addEventListener('click', onCategoriesClick);
+
+      // ВАЖНО: выбор только по чекбоксу — слушаем change на чекбоксах
+      catsEl.addEventListener('change', (e)=>{
+        if(e.target && e.target.classList.contains('product-checkbox')){
+          handleCheckboxChange(e.target);
+        }
+      });
 
       let t=null; searchInput.addEventListener('input', e=>{
         clearTimeout(t);
@@ -251,14 +263,11 @@
         }, 180);
       });
 
-      // 3) СКРЫТИЕ КЛАВИАТУРЫ ПРИ НАЖАТИИ НА КРЕСТИК
       searchClear.addEventListener('click', ()=>{
         searchInput.value='';
         currentQuery='';
         searchClear.classList.remove('visible');
         applySearch();
-
-        // надёжное закрытие клавиатуры на мобильных: blur + кратковременное disable
         searchInput.blur();
         const wasDisabled = searchInput.disabled;
         searchInput.disabled = true;
@@ -292,11 +301,7 @@
       const selectAll = e.target.closest('.select-all-btn');
       if(selectAll){ e.stopPropagation(); handleSelectAll(selectAll); return; }
 
-      const item = e.target.closest('.product-item');
-      if(item && !e.target.matches('input[type="checkbox"]')){
-        toggleItem(item);
-        return;
-      }
+      // ВАЖНО: удалили обработчик клика по .product-item — теперь строка/название не влияет
     }
 
     function renderCategoryProducts(cat){
@@ -312,10 +317,18 @@
         ${filtered.length ? filtered.map(p=>`
           <div class="product-item" data-product-id="${p.id}">
             <input id="prod-${p.id}" type="checkbox" class="product-checkbox" ${selectedProducts.has(p.id)?'checked':''} />
-            <label for="prod-${p.id}" class="product-label">${escapeHtml(p.name)}</label>
+            <span class="product-label">${escapeHtml(p.name)}</span>
           </div>
         `).join('') : `<div style="padding:14px 16px; color:#667085;">Нет совпадений</div>`}
       `;
+    }
+
+    function handleCheckboxChange(cb){
+      const id = cb.id.replace('prod-','');
+      if(cb.checked) selectedProducts.add(id); else selectedProducts.delete(id);
+      const cat = cb.closest('.category');
+      if(cat) updateCategoryCount(cat);
+      updateTotalSelected();
     }
 
     function handleSelectAll(btn){
@@ -324,20 +337,10 @@
       const boxes = panel.querySelectorAll('.product-checkbox');
       const allChecked = boxes.length>0 && Array.from(boxes).every(cb=>cb.checked);
       boxes.forEach(cb=>{
-        cb.checked = !allChecked; const id=cb.id.replace('prod-','');
-        if(cb.checked) selectedProducts.add(id); else selectedProducts.delete(id);
+        cb.checked = !allChecked;
+        handleCheckboxChange(cb); // централизовано обновляет selectedProducts и счётчики
       });
-      updateCategoryCount(cat);
-      updateTotalSelected();
       btn.textContent = allChecked ? '+ Выбрать все' : '✓ Снять все';
-    }
-
-    function toggleItem(item){
-      const cb = item.querySelector('.product-checkbox');
-      cb.checked = !cb.checked; const id = item.dataset.productId;
-      if(cb.checked) selectedProducts.add(id); else selectedProducts.delete(id);
-      updateCategoryCount(item.closest('.category'));
-      updateTotalSelected();
     }
 
     function updateCategoryCount(cat){
