@@ -205,8 +205,8 @@
   <div id="toast" style="position:fixed;left:50%;bottom:86px;transform:translateX(-50%);background:rgba(0,0,0,.82);color:#fff;padding:10px 14px;border-radius:10px;font-weight:700;z-index:1000;opacity:0;transition:opacity .2s"></div>
 
 <script>
-  /* ====== КОНФИГ ЛОГИРОВАНИЯ ====== */
-  const LOG_URL = 'https://script.google.com/macros/s/AKfycbzYw35KW74G-LbsfCTWk7QooaPrWNIYxoMAPG7jQlm1v6jX5qBlm7DHobZ51ZAvtcilCQ/exec'; // <= замените здесь на URL логгера
+  /* ====== КОНФИГ ====== */
+  const LOG_URL  = 'https://script.google.com/macros/s/AKfycbwjr46AxfzHMgOtRxeV_9gD6XOJae_tcU2pmMF1yMVOFG3SarKLtfpOVawRX6-SV5cxvw/exec'; // <= вставь свой URL логгера (Super-Simple Logger)
   const ICON_BASE = 'https://groskaiser-design.github.io/icons/';
 
   const ICONS = {
@@ -231,66 +231,32 @@
   };
   try{tg.ready();tg.expand();}catch(e){}
 
-  /* ====== ЛОГГЕР ====== */
-  const SESSION_ID = (crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now()+'-'+Math.random().toString(16).slice(2));
-  const QUEUE = [];
-  let SENDING = false;
-
-  function enrich(payload){
-    const u = (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) || {};
-    return Object.assign({
-      action: 'log',
-      timestamp: new Date().toISOString(),
-      session_id: SESSION_ID,
-      telegram_id: u.id || '',
-      username: (u.first_name||'') + (u.last_name?(' '+u.last_name):'') || (u.username||''),
-      path: location.pathname,
-      referrer: document.referrer || '',
-      ua: navigator.userAgent,
-      screen: (window.screen ? (screen.width+'x'+screen.height) : ''),
-      dpi: (window.devicePixelRatio||1),
-      lang: navigator.language||''
-    }, payload);
-  }
-
-  function sendNow(batch){
-    if(!LOG_URL) return Promise.resolve();
+  /* ====== ПРОСТОЕ ЛОГИРОВАНИЕ (по событию) ====== */
+  function logEvent(event, payload){
     try{
-      const blob = new Blob([JSON.stringify(batch)], {type:'application/json'});
+      if(!LOG_URL) return;
+      const u = (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) || {};
+      const body = {
+        action:   'log',
+        module:   'router',
+        page:     (location.pathname.split('/').pop() || 'router.html'),
+        event:    String(event||''),
+        user_id:  u.id || '',
+        username: ((u.first_name||'') + (u.last_name ? ' '+u.last_name : '') || u.username || '').trim(),
+        payload:  payload || {},
+        client_ts: new Date().toISOString()
+      };
+      const json = JSON.stringify(body);
+      // sendBeacon если доступен (фон), иначе fetch с keepalive
       if (navigator.sendBeacon){
+        const blob = new Blob([json], {type:'application/json'});
         navigator.sendBeacon(LOG_URL, blob);
-        return Promise.resolve();
+      } else {
+        fetch(LOG_URL, {method:'POST', headers:{'Content-Type':'application/json'}, body: json, keepalive:true})
+          .catch(()=>{});
       }
-      return fetch(LOG_URL, {method:'POST', body: JSON.stringify(batch), headers:{'Content-Type':'application/json'}, keepalive:true}).then(()=>{});
-    }catch(e){
-      return Promise.resolve(); // не ломаем UX
-    }
-  }
-
-  function flush(){
-    if (SENDING || QUEUE.length===0) return;
-    SENDING = true;
-    const batch = QUEUE.splice(0, Math.min(QUEUE.length, 50));
-    sendNow(batch).finally(()=>{ SENDING=false; if(QUEUE.length) setTimeout(flush,100); });
-  }
-
-  function logEvent(event, meta){
-    try{
-      QUEUE.push(enrich({ event, meta: meta||{} }));
-      if (QUEUE.length >= 5) flush();
     }catch(_){}
   }
-
-  window.addEventListener('beforeunload', ()=>{ if(QUEUE.length){ try{ sendNow(QUEUE.splice(0, QUEUE.length)); }catch(_){}}});
-  document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='hidden' && QUEUE.length){ try{ sendNow(QUEUE.splice(0, QUEUE.length)); }catch(_){}}});
-
-  // глобальный перехват ошибок
-  window.addEventListener('error', function(e){
-    logEvent('js_error', { message: e.message, file: e.filename, line: e.lineno, col: e.colno });
-  });
-  window.addEventListener('unhandledrejection', function(e){
-    logEvent('promise_rejection', { reason: (e.reason && (e.reason.stack || e.reason.message)) || String(e.reason) });
-  });
 
   /* ====== ИКОНКИ ====== */
   (function attachIcons(){
@@ -313,7 +279,7 @@
     });
   })();
 
-  /* ====== Профиль пользователя ====== */
+  /* ====== Профиль ====== */
   (function(){
     try{
       var u=(tg&&tg.initDataUnsafe&&tg.initDataUnsafe.user)?tg.initDataUnsafe.user:null;
@@ -339,20 +305,24 @@
 
   function toast(msg){var t=document.getElementById('toast');t.textContent=msg;t.style.opacity='1';setTimeout(function(){t.style.opacity='0';},1200);}
 
-  /* ====== Ripple & Tap ====== */
+  /* ====== Ripple (одинарный везде) ====== */
   function rippleIn(target, e){
     try{
       var host = (target.closest && target.closest('.icon')) || (target.querySelector && target.querySelector('.icon')) || null;
       if(!host){ return; }
+      // удаляем прежнюю волну, чтобы не дублировалась
+      const prev = host.querySelector('.r');
+      if (prev) prev.remove();
       var r=document.createElement('span'); r.className='r';
       var b=host.getBoundingClientRect();
       var pt = (e.touches && e.touches[0]) ? e.touches[0] : e;
       r.style.left=(pt.clientX-b.left)+'px'; r.style.top=(pt.clientY-b.top)+'px';
       host.appendChild(r);
-      r.addEventListener('animationend',function(){ if(r&&r.parentNode){ r.parentNode.removeChild(r);} },false);
+      r.addEventListener('animationend',function(){ r.remove(); },false);
     }catch(_){}
   }
 
+  // Нормализованный тап (без двойных событий)
   function bindTap(el, handler){
     let lastTouch = 0;
     if (window.PointerEvent){
@@ -415,9 +385,17 @@
       });
     });
 
-    // первое событие — открытие приложения
+    // событие входа в приложение
     logEvent('app_open', {});
   })();
+
+  // лог технических ошибок
+  window.addEventListener('error', function(e){
+    logEvent('js_error', { message: e.message, file: e.filename, line: e.lineno, col: e.colno });
+  });
+  window.addEventListener('unhandledrejection', function(e){
+    logEvent('promise_rejection', { reason: (e.reason && (e.reason.stack || e.reason.message)) || String(e.reason) });
+  });
 </script>
 </body>
 </html>
