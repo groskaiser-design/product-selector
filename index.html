@@ -1,488 +1,350 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Выбор продуктов</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        html, body { height: 100%; scrollbar-gutter: stable both-edges; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            padding: 20px 20px 120px 20px; /* низ — под фикс. кнопку сохранения */
-        }
-        .container {
-            max-width: 600px;
-            margin: 0 auto 20px;
-            background: white;
-            border-radius: 20px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            overflow: hidden;
-        }
-        .header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 16px 20px; /* компактнее */
-            text-align: center;
-            position: relative;
-        }
-        .header h1 { 
-            font-size: 18px; 
-            margin-bottom: 6px;
-            display: inline-block;
-            margin-right: 10px;
-            font-weight: 800;
-            letter-spacing: .2px;
-        }
-        .info-button {
-            position: absolute;
-            top: 14px;
-            right: 14px;
-            width: 28px;
-            height: 28px;
-            border-radius: 50%;
-            border: 2px solid white;
-            background: rgba(255,255,255,.15);
-            color: white;
-            font-size: 16px;
-            font-weight: 800;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: background .2s, transform .2s;
-        }
-        .info-button:hover { background: rgba(255,255,255,0.25); transform: scale(1.05); }
-        .user-info { /* тех. инфо спрятана, чтобы не мешала шапке */ display:none; }
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Выбор продуктов</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; scrollbar-gutter: stable both-edges; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 20px 20px 140px 20px; /* отступ снизу под фикс-кнопку и нижнее меню */
+      color: #222;
+    }
 
-        .search-container { padding: 16px 20px; border-bottom: 1px solid #eee; }
-        .search-input {
-            width: 100%;
-            padding: 14px 16px;
-            font-size: 16px;
-            border: 2px solid #e0e0e0;
-            border-radius: 12px;
-            transition: border-color .2s, box-shadow .2s;
-            caret-color: #667eea;
-        }
-        .search-input::placeholder { color: #98a2b3; }
-        .search-input:focus {
-            outline: none;
-            border-color: #667eea;
-            box-shadow: 0 0 0 3px rgba(102,126,234,.12);
-        }
+    .container {
+      max-width: 600px;
+      margin: 0 auto 20px;
+      background: #fff;
+      border-radius: 20px;
+      box-shadow: 0 20px 60px rgba(0,0,0,.28);
+      overflow: visible; /* ВАЖНО: ничего не обрезаем, чтобы вся страница скроллилась */
+    }
 
-        .loading-indicator { text-align: center; padding: 16px 20px; color: #667eea; font-weight: 600; display: none; }
-        .loading-indicator.active { display: block; }
+    /* --- Header --- */
+    .header { position: relative; background: linear-gradient(135deg, #667eea, #764ba2); color: #fff; padding: 14px 18px; text-align: center; }
+    .header h1 { font-size: 18px; font-weight: 800; letter-spacing: .2px; }
 
-        /* Список категорий теперь идёт в общем потоке — поиск скроллится вместе с ним */
-        .categories { padding: 10px 20px; }
+    /* ВОПРОС — без круга */
+    .info-button { position: absolute; top: 6px; right: 6px; width: 44px; height: 44px; background: transparent; border: none; color: #fff; font-size: 28px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+    .info-button:focus-visible { outline: 2px solid rgba(255,255,255,.9); outline-offset: 2px; }
 
-        .category { margin-bottom: 10px; border-radius: 12px; overflow: visible; background: #f8f9fa; }
-        .category-header { border-radius: 12px; }
-        .category.open .category-header { border-radius: 12px 12px 0 0; }
-        .category-products { border-radius: 0 0 12px 12px; overflow: hidden; }
+    /* Тех.инфо скрыта, но остаётся для прелоадеров/уведомлений */
+    .user-info { display: none; }
 
-        .category-header {
-            display: flex; align-items: center; justify-content: space-between;
-            padding: 15px 20px; cursor: pointer;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white; transition: background .2s; /* убрал горизонтальный сдвиг */
-        }
-        /* БЫЛО: .category-header:hover { transform: translateX(5px); } — удалено, чтобы шапка не "ездила" */
-        .category-title { font-weight: 600; font-size: 16px; }
-        .category-count { background: rgba(255,255,255,0.25); padding: 4px 12px; border-radius: 20px; font-size: 13px; font-weight: 700; }
-        .category-arrow { width: 8px; height: 8px; border: solid white; border-width: 0 2px 2px 0; transform: rotate(45deg); transition: transform .3s; margin-left: 10px; }
-        .category.open .category-arrow { transform: rotate(-135deg); }
+    /* --- Search --- */
+    .search-container { padding: 14px 18px; border-bottom: 1px solid #eee; }
+    .search-input { width: 100%; padding: 14px 16px; font-size: 16px; border: 2px solid #e0e0e0; border-radius: 12px; transition: border-color .2s, box-shadow .2s; caret-color: #667eea; }
+    .search-input::placeholder { color: #98a2b3; }
+    .search-input:focus { outline: none; border-color: #667eea; box-shadow: 0 0 0 3px rgba(102,126,234,.12); }
 
-        .category-products { max-height: 0; overflow: hidden; transition: max-height .4s ease-out; background: white; }
-        .category-products.open { overflow-y: auto; }
-        
-        .select-all-container { padding: 12px 20px; background: #f0f0f0; border-bottom: 2px solid #e0e0e0; display: flex; justify-content: center; }
-        .select-all-btn { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border: none; color: white; padding: 10px 24px; border-radius: 10px; font-size: 14px; cursor: pointer; font-weight: 700; width: 100%; max-width: 220px; transition: transform .15s; }
-        .select-all-btn:hover { transform: translateY(-1px); }
-        
-        .product-item { display: flex; align-items: center; padding: 12px 20px; border-bottom: 1px solid #f0f0f0; cursor: pointer; }
-        .product-item:hover { background: #f8f9fa; }
-        .product-checkbox { margin-right: 15px; width: 20px; height: 20px; cursor: pointer; }
-        .product-label { flex: 1; font-size: 15px; cursor: pointer; user-select: none; }
-        
-        .save-button-container { position: fixed; bottom: 60px; left: 0; right: 0; padding: 12px 20px; background: white; border-top: 1px solid #eee; z-index: 100; }
-        .save-button-wrapper { max-width: 600px; margin: 0 auto; }
-        .selected-count { font-size: 14px; color: #333; text-align: center; margin-bottom: 10px; font-weight: 600; }
-        .save-button { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border: none; color: white; padding: 12px; border-radius: 12px; font-size: 14px; font-weight: 700; cursor: pointer; transition: transform .15s, box-shadow .15s; width: 100%; box-shadow: 0 4px 12px rgba(102,126,234,.3); }
-        .save-button:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(102,126,234,.4); }
-        .save-button:disabled { opacity: .6; cursor: not-allowed; transform: none; }
-        
-        .footer-nav { position: fixed; bottom: 0; left: 0; right: 0; height: 60px; background: white; border-top: 1px solid #e0e0e0; display: flex; align-items: center; justify-content: space-around; z-index: 101; }
-        .nav-item { flex: 1; display: flex; align-items: center; justify-content: center; height: 100%; cursor: pointer; transition: opacity .2s; opacity: .35; }
-        .nav-item.active { opacity: 1; }
-        .nav-item:not(.active):hover { opacity: .55; }
-        .nav-icon-home { width: 28px; height: 28px; color:#98a2b3; }
-        .nav-icon-home svg { width: 100%; height: 100%; stroke: currentColor; fill: none; stroke-width: 2; }
-        .nav-item.active .nav-icon-home { color: #667eea; }
-        
-        .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.5); backdrop-filter: blur(8px); display: none; align-items: center; justify-content: center; z-index: 1000; padding: 20px; }
-        .modal-overlay.active { display: flex; }
-        .modal-content { background: white; border-radius: 20px; padding: 30px; max-width: 500px; width: 100%; max-height: 80vh; overflow-y: auto; position: relative; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
-        .modal-close { position: absolute; top: 12px; right: 12px; width: 32px; height: 32px; border-radius: 50%; background: #f0f0f0; border: none; cursor: pointer; display: grid; place-items: center; font-size: 20px; color: #555; transition: transform .15s, background .15s; }
-        .modal-close:hover { background: #e9e9e9; transform: scale(1.06); }
-        .modal-title { font-size: 18px; font-weight: 800; margin-bottom: 14px; color: #333; padding-right: 40px; }
-        .modal-text { font-size: 15px; line-height: 1.7; color: #333; white-space: pre-wrap; text-align: left; }
-        .modal-loading { text-align: center; padding: 16px; color: #667eea; }
-        
-        .error { padding: 16px 20px; background: #ffebee; color: #c62828; text-align: center; font-size: 14px; border-bottom: 3px solid #ef5350; }
-        .success { padding: 16px 20px; background: #e8f5e9; color: #2e7d32; text-align: center; margin: 0; font-size: 14px; border-bottom: 3px solid #66bb6a; }
-    </style>
+    .loading-indicator { text-align: center; padding: 16px 18px; color: #667eea; font-weight: 600; display: none; }
+    .loading-indicator.active { display: block; }
+
+    /* --- Categories --- */
+    .categories { padding: 12px 18px; }
+    .category { margin-bottom: 12px; border-radius: 12px; background: #f7f8fb; }
+
+    .category-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; cursor: pointer; background: linear-gradient(135deg, #667eea, #764ba2); color: #fff; border-radius: 12px; }
+    .category.open .category-header { border-radius: 12px 12px 0 0; }
+    .category-title { font-weight: 600; font-size: 16px; }
+    .category-count { background: rgba(255,255,255,.25); padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+    .category-arrow { width: 8px; height: 8px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); transition: transform .25s; margin-left: 8px; }
+    .category.open .category-arrow { transform: rotate(-135deg); }
+
+    /* Панель товаров: без автоскролла внутри, только анимация высоты, затем auto */
+    .category-products { max-height: 0; overflow: hidden; transition: max-height .32s ease; background: #fff; border-radius: 0 0 12px 12px; }
+
+    .select-all-container { padding: 12px 16px; background: #f0f2f5; border-bottom: 1px solid #e8e8e8; display: flex; justify-content: center; }
+    .select-all-btn { background: linear-gradient(135deg, #667eea, #764ba2); border: none; color: #fff; padding: 10px 22px; border-radius: 10px; font-size: 14px; cursor: pointer; font-weight: 700; width: 100%; max-width: 220px; }
+
+    .product-item { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid #f0f0f0; }
+    .product-item:last-child { border-bottom: 0; }
+    .product-checkbox { width: 20px; height: 20px; }
+    .product-label { flex: 1; font-size: 15px; }
+
+    /* --- Save button (fixed) --- */
+    .save-button-container { position: fixed; left: 0; right: 0; bottom: 60px; padding: 12px 20px; background: #fff; border-top: 1px solid #eee; z-index: 100; }
+    .save-button-wrapper { max-width: 600px; margin: 0 auto; }
+    .selected-count { text-align: center; margin-bottom: 10px; font-weight: 700; }
+    .save-button { width: 100%; padding: 12px; border-radius: 12px; border: none; cursor: pointer; font-weight: 700; font-size: 15px; color: #fff; background: linear-gradient(135deg, #667eea, #764ba2); box-shadow: 0 4px 12px rgba(102,126,234,.3); }
+    .save-button:disabled { opacity: .6; cursor: not-allowed; }
+
+    /* --- Bottom nav --- */
+    .footer-nav { position: fixed; left: 0; right: 0; bottom: 0; height: 60px; background: #fff; border-top: 1px solid #e0e0e0; display: flex; align-items: center; justify-content: space-around; z-index: 101; }
+    .nav-item { flex: 1; display: flex; align-items: center; justify-content: center; height: 100%; }
+    .nav-icon-home { width: 28px; height: 28px; color: #667eea; }
+    .nav-icon-home svg { width: 100%; height: 100%; stroke: currentColor; fill: none; stroke-width: 2; }
+
+    /* --- Modal --- */
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.5); backdrop-filter: blur(6px); display: none; align-items: center; justify-content: center; z-index: 1000; padding: 20px; }
+    .modal-overlay.active { display: flex; }
+    .modal-content { background: #fff; border-radius: 16px; padding: 20px 16px; max-width: 560px; width: 100%; max-height: 80vh; overflow: hidden; position: relative; box-shadow: 0 20px 60px rgba(0,0,0,.35); }
+    .modal-title { font-size: 18px; font-weight: 800; margin-bottom: 10px; color: #333; padding-right: 40px; }
+    .modal-body { overflow: auto; max-height: calc(80vh - 64px); padding-right: 6px; }
+    .modal-text { font-size: 15px; line-height: 1.7; color: #333; white-space: pre-wrap; }
+
+    /* Close: без круга, С АНИМАЦИЕЙ вращения при клике */
+    .modal-close { position: absolute; top: 8px; right: 8px; width: 44px; height: 44px; background: transparent; border: none; color: #444; font-size: 28px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; transform-origin: 50% 50%; }
+    .modal-close.spin { animation: spin 420ms linear 1; }
+
+    /* --- Глобальный прелоадер --- */
+    .global-loader { position: fixed; inset: 0; background: rgba(255,255,255,.92); display: none; align-items: center; justify-content: center; flex-direction: column; gap: 12px; z-index: 2000; }
+    .global-loader.active { display: flex; }
+    .spinner { width: 44px; height: 44px; border: 4px solid #e5e7eb; border-top-color: #667eea; border-radius: 50%; animation: spin 1s linear infinite; }
+    .loader-text { color: #4b5563; font-weight: 600; }
+
+    @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+    .error { padding: 12px 16px; background: #ffebee; color: #c62828; text-align: center; font-size: 14px; border-bottom: 3px solid #ef5350; }
+    .success { padding: 12px 16px; background: #e8f5e9; color: #2e7d32; text-align: center; font-size: 14px; border-bottom: 3px solid #66bb6a; }
+  </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <h1>Выбор продуктов</h1>
-            <button class="info-button" id="infoButton" aria-label="Инструкция">?</button>
-            <div class="user-info" id="userInfo">Загрузка...</div>
-        </div>
-        <div class="search-container">
-            <input type="text" id="searchInput" class="search-input" placeholder="🔍 Поиск продуктов..." autocomplete="off">
-        </div>
-        <div class="loading-indicator" id="loadingIndicator">⏳ Загрузка категорий...</div>
-        <div class="categories" id="categories"></div>
+  <div class="container">
+    <div class="header">
+      <h1>Выбор продуктов</h1>
+      <button class="info-button" id="infoButton" aria-label="Инструкция">?</button>
+      <div class="user-info" id="userInfo"></div>
     </div>
 
-    <div class="save-button-container">
-        <div class="save-button-wrapper">
-            <div class="selected-count">Выбрано: <strong><span id="selectedCount">0</span></strong></div>
-            <button id="saveButton" class="save-button" disabled>💾 Сохранить</button>
-        </div>
+    <div class="search-container">
+      <input id="searchInput" class="search-input" type="text" placeholder="Поиск продуктов (например, яблоки)..." autocomplete="off" disabled />
     </div>
 
-    <div class="footer-nav">
-        <div class="nav-item"></div>
-        <div class="nav-item"></div>
-        <div class="nav-item active" id="navHome">
-            <div class="nav-icon-home">
-                <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M3 9.5L12 2.5L21 9.5V20.5C21 21.0523 20.5523 21.5 20 21.5H4C3.44772 21.5 3 21.0523 3 20.5V9.5Z"/>
-                    <path d="M9 21.5V12.5H15V21.5"/>
-                </svg>
+    <div id="loadingIndicator" class="loading-indicator">Загрузка...</div>
+    <div id="categories" class="categories"></div>
+  </div>
+
+  <div class="save-button-container">
+    <div class="save-button-wrapper">
+      <div class="selected-count">Выбрано: <strong><span id="selectedCount">0</span></strong></div>
+      <button id="saveButton" class="save-button" disabled>💾 Сохранить</button>
+    </div>
+  </div>
+
+  <div class="footer-nav">
+    <div class="nav-item"></div>
+    <div class="nav-item"></div>
+    <div class="nav-item" id="navHome">
+      <div class="nav-icon-home">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path d="M3 9.5L12 2.5L21 9.5V20.5C21 21.0523 20.5523 21.5 20 21.5H4C3.44772 21.5 3 21.0523 3 20.5V9.5Z"/>
+          <path d="M9 21.5V12.5H15V21.5"/>
+        </svg>
+      </div>
+    </div>
+    <div class="nav-item"></div>
+    <div class="nav-item"></div>
+  </div>
+
+  <div class="modal-overlay" id="modalOverlay">
+    <div class="modal-content">
+      <button class="modal-close" id="modalClose" aria-label="Закрыть">×</button>
+      <div class="modal-title">Инструкция</div>
+      <div class="modal-body">
+        <div class="modal-text" id="modalText"><div class="modal-loading">⏳ Загрузка инструкции...</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Глобальный прелоадер -->
+  <div class="global-loader" id="globalLoader">
+    <div class="spinner"></div>
+    <div class="loader-text" id="loaderText">Загрузка данных…</div>
+  </div>
+
+  <script>
+    const CONFIG = { APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbxOJTIJ74ADNnwqjo-jTB5o80JBHI3LyZWGCefos4dJibThb8KUJ1avBieFaggSz_99/exec' };
+    const tg = window.Telegram?.WebApp || { initData: '', expand: () => {} };
+
+    const selectedProducts = new Set();
+    let allCategories = {}; // {categoryName: [{id,name,category}]}
+    let manualCache = null, manualCacheTime = 0; const MANUAL_CACHE_DURATION = 5*60*1000;
+    let currentQuery = '';
+
+    // --- Loader helpers ---
+    const loaderEl = document.getElementById('globalLoader');
+    const loaderTextEl = document.getElementById('loaderText');
+    function showLoader(text){ if(text) loaderTextEl.textContent = text; loaderEl.classList.add('active'); }
+    function hideLoader(){ loaderEl.classList.remove('active'); }
+
+    // --- Init ---
+    if(document.readyState === 'loading'){ document.addEventListener('DOMContentLoaded', initApp); } else { initApp(); }
+
+    async function initApp(){
+      try{ tg.expand?.(); }catch(e){}
+      showLoader('Загрузка данных…');
+      try{
+        const res = await fetch(`${CONFIG.APPS_SCRIPT_URL}?action=init&initData=${encodeURIComponent(tg.initData||'')}`, {cache:'no-cache'});
+        if(!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const products = data.products || [];
+        (data.user_data?.selected_products||'').split(',').filter(Boolean).forEach(id=>selectedProducts.add(String(id)));
+        allCategories = groupByCategory(products);
+        renderCategories();
+        bindHandlers();
+        updateTotalSelected();
+        document.getElementById('searchInput').disabled = false;
+      }catch(err){ showError('Ошибка загрузки: '+err.message); }
+      finally{ hideLoader(); }
+    }
+
+    function groupByCategory(list){
+      return (list||[]).reduce((acc,p)=>{ const cat=p.category||'Без категории'; (acc[cat] ||= []).push({id:String(p.id), name:p.name, category:cat}); return acc; },{});
+    }
+
+    function renderCategories(){
+      const wrap = document.getElementById('categories');
+      wrap.innerHTML = '';
+      Object.entries(allCategories).forEach(([cat, items], idx)=>{
+        const selectedInCat = items.filter(p=>selectedProducts.has(p.id)).length;
+        const el = document.createElement('div'); el.className='category'; el.dataset.categoryId = 'cat-'+idx; el.dataset.products = JSON.stringify(items);
+        el.innerHTML = `
+          <div class="category-header">
+            <span class="category-title">${escapeHtml(cat)}</span>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span class="category-count">${selectedInCat}/${items.length}</span>
+              <div class="category-arrow"></div>
             </div>
+          </div>
+          <div class="category-products"></div>
+        `;
+        wrap.appendChild(el);
+      });
+    }
+
+    function bindHandlers(){
+      document.getElementById('categories').addEventListener('click', onCategoriesClick);
+      const searchInput = document.getElementById('searchInput');
+      let t=null; searchInput.addEventListener('input', e=>{ clearTimeout(t); t=setTimeout(()=>{ currentQuery = (e.target.value||'').trim().toLowerCase(); applySearch(); }, 220); });
+      document.getElementById('saveButton').addEventListener('click', onSave);
+      document.getElementById('infoButton').addEventListener('click', showManual);
+      const closeBtn = document.getElementById('modalClose');
+      closeBtn.addEventListener('click', ()=>{ closeBtn.classList.add('spin'); setTimeout(()=>closeBtn.classList.remove('spin'), 420); document.getElementById('modalOverlay').classList.remove('active'); });
+      document.getElementById('modalOverlay').addEventListener('click', (e)=>{ if(e.target===e.currentTarget) e.currentTarget.classList.remove('active'); });
+    }
+
+    function onCategoriesClick(e){
+      const header = e.target.closest('.category-header');
+      if(header){
+        const cat = header.parentElement; const panel = cat.querySelector('.category-products');
+        const opening = !cat.classList.contains('open');
+        if(opening){
+          renderCategoryProducts(cat); // рендер с учётом currentQuery
+          cat.classList.add('open');
+          panel.style.maxHeight = panel.scrollHeight + 'px';
+          panel.addEventListener('transitionend', function te(){ panel.style.maxHeight = 'none'; panel.removeEventListener('transitionend', te); }, {once:true});
+        }else{
+          panel.style.maxHeight = panel.scrollHeight + 'px';
+          requestAnimationFrame(()=>{ panel.style.maxHeight = '0px'; });
+          panel.addEventListener('transitionend', function te(){ cat.classList.remove('open'); panel.innerHTML=''; panel.style.maxHeight = '0px'; panel.removeEventListener('transitionend', te); }, {once:true});
+        }
+        return;
+      }
+
+      const selectAll = e.target.closest('.select-all-btn');
+      if(selectAll){ e.stopPropagation(); handleSelectAll(selectAll); return; }
+
+      const item = e.target.closest('.product-item');
+      if(item){ toggleItem(item); return; }
+    }
+
+    function renderCategoryProducts(cat){
+      const panel = cat.querySelector('.category-products');
+      const products = JSON.parse(cat.dataset.products||'[]');
+      const filtered = currentQuery ? products.filter(p => (p.name||'').toLowerCase().includes(currentQuery)) : products;
+      const allSelected = filtered.length>0 && filtered.every(p=>selectedProducts.has(p.id));
+
+      panel.innerHTML = `
+        <div class="select-all-container">
+          <button class="select-all-btn" data-category-id="${cat.dataset.categoryId}">${allSelected? '✓ Снять все' : '+ Выбрать все'}</button>
         </div>
-        <div class="nav-item"></div>
-        <div class="nav-item"></div>
-    </div>
+        ${filtered.length ? filtered.map(p=>`
+          <div class="product-item" data-product-id="${p.id}">
+            <input id="prod-${p.id}" type="checkbox" class="product-checkbox" ${selectedProducts.has(p.id)?'checked':''} />
+            <label for="prod-${p.id}" class="product-label">${escapeHtml(p.name)}</label>
+          </div>
+        `).join('') : `<div style="padding:14px 16px; color:#667085;">Нет совпадений</div>`}
+      `;
+    }
 
-    <div class="modal-overlay" id="modalOverlay">
-        <div class="modal-content">
-            <button class="modal-close" id="modalClose" aria-label="Закрыть">×</button>
-            <div class="modal-title">Инструкция</div>
-            <div class="modal-text" id="modalText">
-                <div class="modal-loading">⏳ Загрузка инструкции...</div>
-            </div>
-        </div>
-    </div>
+    function handleSelectAll(btn){
+      const cat = document.querySelector(`.category[data-category-id="${btn.dataset.categoryId}"]`);
+      const panel = cat.querySelector('.category-products');
+      const boxes = panel.querySelectorAll('.product-checkbox');
+      const allChecked = boxes.length>0 && Array.from(boxes).every(cb=>cb.checked);
+      boxes.forEach(cb=>{ cb.checked = !allChecked; const id=cb.id.replace('prod-',''); if(cb.checked) selectedProducts.add(id); else selectedProducts.delete(id); });
+      updateCategoryCount(cat);
+      updateTotalSelected();
+      btn.textContent = allChecked ? '+ Выбрать все' : '✓ Снять все';
+    }
 
-    <script>
-        const CONFIG = {
-            APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbxOJTIJ74ADNnwqjo-jTB5o80JBHI3LyZWGCefos4dJibThb8KUJ1avBieFaggSz_99/exec'
-        };
+    function toggleItem(item){
+      const cb = item.querySelector('.product-checkbox');
+      cb.checked = !cb.checked; const id = item.dataset.productId;
+      if(cb.checked) selectedProducts.add(id); else selectedProducts.delete(id);
+      updateCategoryCount(item.closest('.category'));
+      updateTotalSelected();
+    }
 
-        const tg = window.Telegram?.WebApp || { initData: '', expand: () => {} };
-        const selectedProducts = new Set();
-        let allCategories = {};
-        let userData = null;
-        let manualCache = null;
-        let manualCacheTime = 0;
-        const MANUAL_CACHE_DURATION = 5 * 60 * 1000; // 5 минут
+    function updateCategoryCount(cat){
+      const products = JSON.parse(cat.dataset.products||'[]');
+      const count = products.filter(p=>selectedProducts.has(p.id)).length;
+      const total = products.length;
+      cat.querySelector('.category-count').textContent = `${count}/${total}`;
+      const panel = cat.querySelector('.category-products');
+      const btn = panel.querySelector('.select-all-btn');
+      if(btn){
+        const visibleBoxes = panel.querySelectorAll('.product-checkbox');
+        const allChecked = visibleBoxes.length>0 && Array.from(visibleBoxes).every(cb=>cb.checked);
+        btn.textContent = allChecked ? '✓ Снять все' : '+ Выбрать все';
+      }
+    }
 
-        async function initApp() {
-            try { tg.expand(); } catch(e) {}
+    function applySearch(){
+      const cats = document.querySelectorAll('.category');
+      cats.forEach(cat=>{
+        const products = JSON.parse(cat.dataset.products||'[]');
+        const hasMatch = !currentQuery || products.some(p => (p.name||'').toLowerCase().includes(currentQuery));
+        cat.style.display = hasMatch ? '' : 'none';
+        if(cat.classList.contains('open')){ renderCategoryProducts(cat); }
+      });
+    }
 
-            if (!tg.initData) {
-                showError('Ошибка: Приложение запущено вне Telegram.');
-                return;
-            }
+    async function onSave(){
+      const btn = document.getElementById('saveButton');
+      btn.disabled = true; btn.textContent = 'Сохранение…';
+      try{
+        const ids = Array.from(selectedProducts).join(',');
+        const res = await fetch(`${CONFIG.APPS_SCRIPT_URL}?action=save&initData=${encodeURIComponent(tg.initData||'')}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ selected_products: ids })});
+        const data = await res.json();
+        if(data?.ok || (data.status==='SUCCESS' && data.success)){ showSuccess('Сохранено'); btn.textContent = '✅ Сохранено'; setTimeout(()=>btn.textContent='💾 Сохранить',1200); }
+        else throw new Error(data?.error||'Ошибка сохранения');
+      }catch(err){ showError('Ошибка: '+err.message); btn.textContent='💾 Сохранить'; }
+      finally{ btn.disabled = selectedProducts.size===0; }
+    }
 
-            try {
-                const response = await fetch(`${CONFIG.APPS_SCRIPT_URL}?action=init&initData=${encodeURIComponent(tg.initData)}`, { method: 'GET', cache: 'no-cache' });
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                const data = await response.json();
-                if (data.status === 'SUCCESS' && data.success) {
-                    await renderApp(data);
-                } else {
-                    showError(data.error || 'Ошибка загрузки');
-                }
-            } catch (error) {
-                console.error('Init error:', error);
-                showError(`Ошибка загрузки: ${error.message}`);
-            }
-        }
+    async function showManual(){
+      const overlay = document.getElementById('modalOverlay'); const textEl = document.getElementById('modalText'); overlay.classList.add('active');
+      const now = Date.now();
+      if(manualCache && (now - manualCacheTime < MANUAL_CACHE_DURATION)){ textEl.textContent = manualCache; return; }
+      textEl.innerHTML = '<div class="modal-loading">⏳ Загрузка инструкции...</div>';
+      try{
+        const res = await fetch(`${CONFIG.APPS_SCRIPT_URL}?action=get_manual&initData=${encodeURIComponent(tg.initData||'')}`);
+        let manual; try{ const j = await res.json(); manual = j.manual || j.text || JSON.stringify(j,null,2); }catch{ manual = await res.text(); }
+        manualCache = manual; manualCacheTime = now; textEl.textContent = manual;
+      }catch(err){ textEl.innerHTML = `<span style="color:#c62828">Не удалось загрузить: ${escapeHtml(err.message)}</span>`; }
+    }
 
-        async function renderApp(data) {
-            const userInfo = document.getElementById('userInfo');
-            if (data.user?.username && data.user?.telegram_id) {
-                userInfo.textContent = `${data.user.username} (ID: ${data.user.telegram_id})`;
-            }
-
-            selectedProducts.clear();
-            const savedProductsString = data.user_data?.selected_products || '';
-            if (savedProductsString) {
-                savedProductsString.split(',').filter(Boolean).forEach(id => selectedProducts.add(id.trim()));
-            }
-
-            userData = data.user_data;
-            allCategories = groupByCategory(data.products || []);
-            renderCategoriesLazy();
-            setupEventHandlers();
-            updateTotalSelectedCount();
-            document.getElementById('saveButton').disabled = selectedProducts.size === 0;
-        }
-
-        function groupByCategory(products) {
-            return (products || []).reduce((acc, p) => {
-                const cat = p.category || 'Без категории';
-                (acc[cat] ||= []).push(p);
-                return acc;
-            }, {});
-        }
-
-        function renderCategoriesLazy() {
-            const categoriesDiv = document.getElementById('categories');
-            categoriesDiv.innerHTML = '';
-            Object.entries(allCategories).forEach(([categoryName, products], index) => {
-                renderSingleCategory(categoryName, products, index);
-            });
-        }
-
-        function renderSingleCategory(categoryName, products, index) {
-            const categoriesDiv = document.getElementById('categories');
-            const categoryId = `cat-${index}`;
-            const selectedInCategory = products.filter(p => selectedProducts.has(p.id)).length;
-
-            const categoryDiv = document.createElement('div');
-            categoryDiv.className = 'category';
-            categoryDiv.dataset.categoryId = categoryId;
-            categoryDiv.dataset.categoryName = categoryName;
-            categoryDiv.dataset.products = JSON.stringify(products);
-            categoryDiv.dataset.rendered = 'false';
-            categoryDiv.dataset.selectedCount = selectedInCategory;
-            
-            categoryDiv.innerHTML = `
-                <div class="category-header">
-                    <span class="category-title">${escapeHtml(categoryName)}</span>
-                    <div style="display:flex;align-items:center;gap:10px;">
-                        <span class="category-count">${selectedInCategory}/${products.length}</span>
-                        <div class="category-arrow"></div>
-                    </div>
-                </div>
-                <div class="category-products"></div>
-            `;
-
-            categoriesDiv.appendChild(categoryDiv);
-        }
-
-        function setupEventHandlers() {
-            const categoriesDiv = document.getElementById('categories');
-            categoriesDiv.addEventListener('click', handleCategoryClick);
-
-            let searchTimeout;
-            document.getElementById('searchInput').addEventListener('input', (e) => {
-                clearTimeout(searchTimeout);
-                searchTimeout = setTimeout(() => handleSearch(e.target.value), 250);
-            });
-
-            document.getElementById('saveButton').addEventListener('click', saveUserData);
-            document.getElementById('infoButton').addEventListener('click', showManual);
-            document.getElementById('modalClose').addEventListener('click', hideManual);
-            document.getElementById('modalOverlay').addEventListener('click', (e) => { if (e.target === e.currentTarget) hideManual(); });
-        }
-
-        function handleCategoryClick(e) {
-            const header = e.target.closest('.category-header');
-            if (header) {
-                const category = header.parentElement;
-                const productsDiv = category.querySelector('.category-products');
-                const isOpening = !category.classList.contains('open');
-
-                if (isOpening && category.dataset.rendered === 'false') {
-                    renderCategoryProducts(category);
-                }
-
-                category.classList.toggle('open');
-                productsDiv.classList.toggle('open');
-                productsDiv.style.maxHeight = isOpening ? productsDiv.scrollHeight + 'px' : '0';
-                return;
-            }
-
-            const selectAllBtn = e.target.closest('.select-all-btn');
-            if (selectAllBtn) { e.stopPropagation(); handleSelectAll(selectAllBtn); return; }
-
-            const productItem = e.target.closest('.product-item');
-            if (productItem) { handleProductClick(productItem, e.target); return; }
-        }
-
-        function renderCategoryProducts(category) {
-            const products = JSON.parse(category.dataset.products);
-            const categoryId = category.dataset.categoryId;
-            const productsDiv = category.querySelector('.category-products');
-            const allSelected = products.every(p => selectedProducts.has(p.id));
-
-            const html = `
-                <div class="select-all-container">
-                    <button class="select-all-btn" data-category-id="${categoryId}">${allSelected ? '✓ Снять все' : '+ Выбрать все'}</button>
-                </div>
-                ${products.map(p => `
-                    <div class="product-item" data-product-id="${p.id}">
-                        <input type="checkbox" class="product-checkbox" id="prod-${p.id}" ${selectedProducts.has(p.id) ? 'checked' : ''}>
-                        <label class="product-label" for="prod-${p.id}">${escapeHtml(p.name || '')}</label>
-                    </div>
-                `).join('')}
-            `;
-            productsDiv.innerHTML = html;
-            category.dataset.rendered = 'true';
-        }
-
-        function handleSelectAll(button) {
-            const category = document.querySelector(`.category[data-category-id="${button.dataset.categoryId}"]`);
-            const products = JSON.parse(category.dataset.products);
-            const productsDiv = category.querySelector('.category-products');
-            const checkboxes = productsDiv.querySelectorAll('.product-checkbox');
-            const allSelected = Array.from(checkboxes).every(cb => cb.checked);
-
-            checkboxes.forEach(cb => {
-                cb.checked = !allSelected;
-                const id = cb.id.replace('prod-','');
-                if (cb.checked) selectedProducts.add(id); else selectedProducts.delete(id);
-            });
-
-            updateCategoryCounter(category, products);
-            updateTotalSelectedCount();
-            button.textContent = allSelected ? '+ Выбрать все' : '✓ Снять все';
-        }
-
-        function handleProductClick(item, target) {
-            if (target.tagName !== 'INPUT') {
-                const checkbox = item.querySelector('.product-checkbox');
-                checkbox.checked = !checkbox.checked;
-            }
-            const id = item.dataset.productId;
-            const checkbox = item.querySelector('.product-checkbox');
-            const category = item.closest('.category');
-            const products = JSON.parse(category.dataset.products);
-
-            if (checkbox.checked) selectedProducts.add(id); else selectedProducts.delete(id);
-
-            updateCategoryCounter(category, products);
-            updateTotalSelectedCount();
-
-            const allSelected = products.every(p => selectedProducts.has(p.id));
-            const button = category.querySelector('.select-all-btn');
-            if (button) button.textContent = allSelected ? '✓ Снять все' : '+ Выбрать все';
-        }
-
-        function updateCategoryCounter(category, products) {
-            const selectedInCategory = products.filter(p => selectedProducts.has(p.id)).length;
-            category.dataset.selectedCount = selectedInCategory;
-            const countElement = category.querySelector('.category-count');
-            if (countElement) countElement.textContent = `${selectedInCategory}/${products.length}`;
-        }
-
-        function updateTotalSelectedCount() { document.getElementById('selectedCount').textContent = selectedProducts.size; }
-
-        function handleSearch(searchTerm) {
-            const q = (searchTerm || '').toLowerCase().trim();
-            document.querySelectorAll('.category').forEach(category => {
-                const products = JSON.parse(category.dataset.products || '[]');
-                const match = q === '' || products.some(p => (p.name||'').toLowerCase().includes(q));
-                category.style.display = match ? '' : 'none';
-                if (category.dataset.rendered === 'true') {
-                    category.querySelectorAll('.product-item').forEach(item => {
-                        const name = item.querySelector('.product-label').textContent.toLowerCase();
-                        item.style.display = name.includes(q) ? 'flex' : 'none';
-                    });
-                }
-            });
-        }
-
-        async function showManual() {
-            const modal = document.getElementById('modalOverlay');
-            const modalText = document.getElementById('modalText');
-            modal.classList.add('active');
-
-            const now = Date.now();
-            if (manualCache && (now - manualCacheTime < MANUAL_CACHE_DURATION)) {
-                modalText.innerHTML = `<div style="white-space: pre-wrap;">${escapeHtml(manualCache)}</div>`;
-                return;
-            }
-
-            modalText.innerHTML = '<div class="modal-loading">⏳ Загрузка инструкции...</div>';
-            try {
-                const response = await fetch(`${CONFIG.APPS_SCRIPT_URL}?action=get_manual&initData=${encodeURIComponent(tg.initData)}`, { method: 'GET', cache: 'no-cache' });
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                const data = await response.json().catch(()=>null);
-                if (data?.status === 'SUCCESS' && data.manual) {
-                    manualCache = data.manual; manualCacheTime = Date.now();
-                    modalText.innerHTML = `<div style="white-space: pre-wrap;">${escapeHtml(data.manual)}</div>`;
-                } else {
-                    // Фолбэк — вдруг вернулся просто текст
-                    const text = await response.text();
-                    manualCache = text; manualCacheTime = Date.now();
-                    modalText.innerHTML = `<div style="white-space: pre-wrap;">${escapeHtml(text)}</div>`;
-                }
-            } catch (error) {
-                console.error('Manual loading error:', error);
-                modalText.innerHTML = `<div style="color:#c62828;">Ошибка загрузки инструкции: ${escapeHtml(error.message)}</div>`;
-            }
-        }
-        function hideManual() { document.getElementById('modalOverlay').classList.remove('active'); }
-
-        function escapeHtml(text) {
-            if (!text) return '';
-            return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
-        }
-
-        async function saveUserData() {
-            try {
-                const button = document.getElementById('saveButton');
-                button.disabled = true; button.textContent = '⏳ Сохранение...';
-                const productsString = Array.from(selectedProducts).join(',');
-                const formData = new FormData();
-                formData.append('action', 'save_user_data');
-                formData.append('initData', tg.initData);
-                formData.append('products', productsString);
-                const response = await fetch(CONFIG.APPS_SCRIPT_URL, { method: 'POST', body: formData });
-                const data = await response.json();
-                if (data.status === 'SUCCESS' && data.success) {
-                    showSuccess('✅ Данные успешно сохранены!');
-                    button.textContent = '✅ Сохранено';
-                    setTimeout(() => { button.textContent = '💾 Сохранить'; button.disabled = selectedProducts.size === 0; }, 1500);
-                } else { throw new Error(data.error || 'Ошибка сохранения'); }
-            } catch (error) {
-                console.error('Save error:', error);
-                showError(`Ошибка сохранения: ${error.message}`);
-                const button = document.getElementById('saveButton');
-                button.textContent = '💾 Сохранить';
-                button.disabled = selectedProducts.size === 0;
-            }
-        }
-
-        function showError(message) {
-            const container = document.querySelector('.container');
-            if (!container) return;
-            const existing = document.querySelector('.error'); if (existing) existing.remove();
-            const el = document.createElement('div'); el.className = 'error'; el.textContent = message; container.insertBefore(el, container.firstChild); setTimeout(()=>el.remove(), 5000);
-        }
-        function showSuccess(message) {
-            const container = document.querySelector('.container');
-            const header = document.querySelector('.header');
-            if (!container || !header) return;
-            const existing = document.querySelector('.success'); if (existing) existing.remove();
-            const el = document.createElement('div'); el.className = 'success'; el.textContent = message; header.insertAdjacentElement('afterend', el); setTimeout(()=>el.remove(), 3000);
-        }
-
-        if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', initApp); } else { initApp(); }
-    </script>
+    function updateTotalSelected(){ document.getElementById('selectedCount').textContent = selectedProducts.size; document.getElementById('saveButton').disabled = selectedProducts.size===0; }
+    function showError(msg){ const c=document.querySelector('.container'); const ex=c.querySelector('.error'); if(ex) ex.remove(); const el=document.createElement('div'); el.className='error'; el.textContent=msg; c.insertBefore(el,c.firstChild); setTimeout(()=>el.remove(),5000); }
+    function showSuccess(msg){ const c=document.querySelector('.container'); const ex=c.querySelector('.success'); if(ex) ex.remove(); const el=document.createElement('div'); el.className='success'; el.textContent=msg; c.insertBefore(el,c.firstChild.nextSibling); setTimeout(()=>el.remove(),3000); }
+    const escapeHtml = s => (s||'').replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[m]));
+  </script>
 </body>
 </html>
