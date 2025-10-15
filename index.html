@@ -109,6 +109,13 @@
     function showLoader(){ loaderEl.classList.add('active'); }
     function hideLoader(){ loaderEl.classList.remove('active'); }
 
+    function updateBottomInset(){
+      const saveH = document.querySelector('.save-button-container')?.offsetHeight || 0;
+      const footH = document.querySelector('.footer-nav')?.offsetHeight || 0;
+      const inset = saveH + footH + 16; // запас
+      document.documentElement.style.setProperty('--bottom-inset', inset + 'px');
+    }
+
     if(document.readyState === 'loading'){ document.addEventListener('DOMContentLoaded', initApp); } else { initApp(); }
 
     async function initApp(){
@@ -123,6 +130,8 @@
         bindHandlers();
         updateTotalSelected();
         searchInput.disabled = false;
+        updateBottomInset();
+        window.addEventListener('resize', updateBottomInset);
       }catch(err){ alert('Ошибка загрузки: '+err.message); }
       finally{ hideLoader(); }
     }
@@ -137,7 +146,12 @@
       Object.entries(allCategories).forEach(([cat, items], i)=>{
         const selectedInCat = items.filter(p=>selectedProducts.has(String(p.id))).length;
         const el = document.createElement('div'); el.className='category'; el.dataset.products = JSON.stringify(items);
-        el.innerHTML = `<div class='category-header'><span>${cat}</span><span>${selectedInCat}/${items.length}</span></div><div class='category-products'></div>`;
+        el.innerHTML = `
+          <div class='category-header'>
+            <span class='category-title'>${escapeHtml(cat)}</span>
+            <span class='category-count'>${selectedInCat}/${items.length}</span>
+          </div>
+          <div class='category-products'></div>`;
         wrap.appendChild(el);
       });
     }
@@ -153,7 +167,13 @@
         searchClear.classList.toggle('visible', val.length>0);
         currentQuery=val;applySearch();
       });
-      searchClear.addEventListener('click',()=>{searchInput.value='';searchClear.classList.remove('visible');currentQuery='';applySearch();});
+      searchClear.addEventListener('click',()=>{
+        searchInput.value='';
+        searchInput.focus();
+        searchClear.classList.remove('visible');
+        currentQuery='';
+        applySearch();
+      });
 
       document.getElementById('saveButton').addEventListener('click', onSave);
     }
@@ -161,40 +181,116 @@
     function toggleCategory(cat){
       const open=cat.classList.toggle('open');
       const panel=cat.querySelector('.category-products');
-      if(open){renderCategoryProducts(cat);panel.style.maxHeight=panel.scrollHeight+'px';setTimeout(()=>panel.style.maxHeight='none',300);}else{panel.innerHTML='';panel.style.maxHeight='0';}
+      if(open){
+        renderCategoryProducts(cat);
+        panel.style.maxHeight=panel.scrollHeight+'px';
+        setTimeout(()=>panel.style.maxHeight='none',300);
+      }else{
+        panel.innerHTML='';
+        panel.style.maxHeight='0';
+      }
     }
 
     function renderCategoryProducts(cat){
       const panel=cat.querySelector('.category-products');
       const products=JSON.parse(cat.dataset.products);
-      const filtered=currentQuery?products.filter(p=>p.name.toLowerCase().includes(currentQuery)):products;
-      panel.innerHTML=filtered.map(p=>`<div class='product-item'><input type='checkbox' data-id='${p.id}' ${selectedProducts.has(String(p.id))?'checked':''}/> ${p.name}</div>`).join('');
-      panel.querySelectorAll('input').forEach(i=>i.addEventListener('change',()=>{const id=i.dataset.id;if(i.checked)selectedProducts.add(id);else selectedProducts.delete(id);updateTotalSelected();}));
+      const filtered=currentQuery?products.filter(p=> (p.name||'').toLowerCase().includes(currentQuery)):products;
+      const html = filtered.map(p=>`<div class='product-item'>
+          <input type='checkbox' data-id='${p.id}' ${selectedProducts.has(String(p.id))?'checked':''}/>
+          <label>${escapeHtml(p.name||'')}</label>
+        </div>`).join('');
+      panel.innerHTML = html || `<div style='padding:14px 16px; color:#667085;'>Нет совпадений</div>`;
+      panel.querySelectorAll("input[type='checkbox']").forEach(i=>i.addEventListener('change',()=>{
+        const id=i.dataset.id;
+        if(i.checked)selectedProducts.add(id);else selectedProducts.delete(id);
+        updateTotalSelected();
+        updateCategoryHeaderCount(cat);
+      }));
+    }
+
+    function updateCategoryHeaderCount(cat){
+      const products = JSON.parse(cat.dataset.products);
+      const sel = products.filter(p=>selectedProducts.has(String(p.id))).length;
+      const total = products.length;
+      const el = cat.querySelector('.category-count');
+      if(el) el.textContent = `${sel}/${total}`;
     }
 
     function applySearch(){
       const cats=document.querySelectorAll('.category');
       cats.forEach(cat=>{
         const prods=JSON.parse(cat.dataset.products);
-        const hasMatch=prods.some(p=>p.name.toLowerCase().includes(currentQuery));
+        const hasMatch=prods.some(p=> (p.name||'').toLowerCase().includes(currentQuery));
         cat.style.display=hasMatch||!currentQuery?'':'none';
-        if(hasMatch&&currentQuery){if(!cat.classList.contains('open'))cat.classList.add('open');renderCategoryProducts(cat);}else if(!currentQuery){cat.classList.remove('open');cat.querySelector('.category-products').innerHTML='';}
+        const panel = cat.querySelector('.category-products');
+        if(currentQuery){
+          if(hasMatch){
+            // раскрываем все категории, где есть совпадения
+            if(!cat.classList.contains('open')) cat.classList.add('open');
+            renderCategoryProducts(cat);
+            panel.style.maxHeight='none'; // без анимации в режиме поиска
+          } else {
+            cat.classList.remove('open');
+            panel.innerHTML='';
+            panel.style.maxHeight='0';
+          }
+        } else {
+          // чистый режим — убираем автосостояния
+          cat.classList.remove('open');
+          panel.innerHTML='';
+          panel.style.maxHeight='0';
+        }
       });
     }
 
     async function onSave(){
       const btn=document.getElementById('saveButton');
+      if(selectedProducts.size===0){ return; }
       btn.disabled=true;btn.textContent='Сохранение...';
+      const ids=[...selectedProducts].join(',');
+      const initData = tg?.initData || '';
       try{
-        const ids=[...selectedProducts].join(',');
-        const res=await fetch(`${CONFIG.APPS_SCRIPT_URL}?action=save&initData=${encodeURIComponent(tg.initData||'')}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({selected_products:ids})});
-        const data=await res.json();
-        if(data.ok||data.success){btn.textContent='✅ Сохранено';setTimeout(()=>btn.textContent='💾 Сохранить',1200);}else throw new Error(data.error||'Ошибка сохранения');
-      }catch(e){alert('Ошибка: '+e.message);btn.textContent='💾 Сохранить';}
-      finally{btn.disabled=false;}
+        // Попытка №1: JSON (новый эндпоинт action=save)
+        let res = await fetch(`${CONFIG.APPS_SCRIPT_URL}?action=save&initData=${encodeURIComponent(initData)}`,{
+          method:'POST',
+          headers:{'Content-Type':'application/json','X-Telegram-Init-Data': initData},
+          body: JSON.stringify({ selected_products: ids })
+        });
+        let data = null; try{ data = await res.json(); }catch{}
+
+        // Успех нового варианта
+        if(res.ok && (data?.ok || data?.success || data?.status==='SUCCESS')){
+          btn.textContent='✅ Сохранено'; setTimeout(()=>btn.textContent='💾 Сохранить',1100); return;
+        }
+
+        // Попытка №2: совместимость — FormData (старый эндпоинт action=save_user_data)
+        const fd = new FormData();
+        fd.append('action','save_user_data');
+        fd.append('initData', initData);
+        fd.append('products', ids);
+        res = await fetch(`${CONFIG.APPS_SCRIPT_URL}`,{ method:'POST', body: fd, headers:{'X-Telegram-Init-Data': initData} });
+        try{ data = await res.json(); }catch{}
+        if(res.ok && (data?.ok || data?.success || data?.status==='SUCCESS')){
+          btn.textContent='✅ Сохранено'; setTimeout(()=>btn.textContent='💾 Сохранить',1100); return;
+        }
+
+        // Если обе схемы не сработали — читаем текст и бросаем ошибку
+        const text = data?.error || (await res.text().catch(()=>'')) || 'Не удалось сохранить';
+        throw new Error(text);
+      }catch(e){
+        alert('Ошибка сохранения: '+ e.message);
+        btn.textContent='💾 Сохранить';
+      }finally{
+        btn.disabled = selectedProducts.size===0;
+      }
     }
 
-    function updateTotalSelected(){document.getElementById('selectedCount').textContent=selectedProducts.size;document.getElementById('saveButton').disabled=selectedProducts.size===0;}
+    function updateTotalSelected(){
+      document.getElementById('selectedCount').textContent=selectedProducts.size;
+      document.getElementById('saveButton').disabled=selectedProducts.size===0;
+    }
+
+    const escapeHtml = s => (s||'').replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
   </script>
 </body>
 </html>
