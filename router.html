@@ -19,7 +19,6 @@
 
   *{margin:0;padding:0;box-sizing:border-box}
   html,body{height:100%;scrollbar-gutter:stable both-edges}
-  /* убираем серую вспышку на Android/WebKit */
   html, body, button, .tile, .icon { -webkit-tap-highlight-color: transparent; }
   button { background: transparent; border: 0; }
 
@@ -33,7 +32,6 @@
   }
   .container{max-width:520px;margin:0 auto}
 
-  /* ===== Профиль ===== */
   .profile-card{
     background:rgba(255,255,255,.15);
     backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
@@ -58,7 +56,6 @@
   .profile-id{margin-top:6px;font-size:12px;display:inline-block;color:rgba(255,255,255,.9);
     background:rgba(255,255,255,.14);padding:4px 8px;border-radius:8px}
 
-  /* ===== Сетка плиток ===== */
   .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--tile-gap);position:relative}
   .tile{position:relative;text-align:center;cursor:pointer;overflow:visible;
     transition:transform .18s ease, filter .22s ease, opacity .22s ease}
@@ -78,14 +75,12 @@
   .label{font-size:12px;font-weight:700;color:#fff;text-shadow:0 2px 4px rgba(0,0,0,.25)}
   .tile:active .icon{transform:scale(.92)}
 
-  /* Hover (десктоп) — только наведённая плитка */
   .grid .tile:hover > .icon-wrap > .icon{
     transform:translateY(-6px) scale(1.04);
     box-shadow:0 14px 28px rgba(0,0,0,.18),inset 0 1px 0 rgba(255,255,255,.6),0 0 22px rgba(102,126,234,.35)
   }
   .grid .tile:hover > .icon-wrap > .icon-bg{opacity:1;transform:scale(1.05)}
 
-  /* Ripple */
   .r{
     position:absolute;width:12px;height:12px;border-radius:999px;background:rgba(255,255,255,.35);
     left:0;top:0;transform:translate(-50%,-50%) scale(0);pointer-events:none;filter:blur(1px);
@@ -93,7 +88,6 @@
   }
   @keyframes rr{to{transform:translate(-50%,-50%) scale(var(--ripple-scale));opacity:0}}
 
-  /* ==== Arc Menu для «Старт» ==== */
   #startB{z-index:3}
   .spawn{
     position:absolute;left:50%;top:50%;width:90px;height:104px;
@@ -108,18 +102,15 @@
   .open-b .spawn.s2{opacity:1;transform:translate(-50%,-50%) rotate(24deg) translate(var(--spawn-distance)) rotate(-24deg)}
   .open-b #startB > .icon-wrap > .icon{transform:scale(.9)}
 
-  /* Блюр всего, кроме стартовой плитки */
   .grid.focus .tile{filter:blur(2px) saturate(.85);opacity:.18;transform:translateY(8px)}
   .grid.focus #startB{filter:none;opacity:1;transform:none}
 
-  /* Невидимый backdrop для закрытия по тапу вне */
   .backdrop{position:fixed;inset:0;display:none}
   .backdrop.show{display:block}
 </style>
 </head>
 <body>
   <div class="container">
-    <!-- Профиль -->
     <div class="profile-card">
       <div class="profile-header">
         <div class="profile-photo" id="userPhoto">A</div>
@@ -130,9 +121,7 @@
       </div>
     </div>
 
-    <!-- Сетка -->
     <div class="grid" id="gridB">
-      <!-- Инструкция -->
       <div class="tile" data-module="manual">
         <div class="icon-wrap"><div class="icon-bg"></div>
           <div class="icon"><img class="icon-img" id="ico-manual" alt="Инструкция"></div>
@@ -140,14 +129,12 @@
         <div class="label">Инструкция</div>
       </div>
 
-      <!-- Старт -->
       <div class="tile" id="startB">
         <div class="icon-wrap"><div class="icon-bg"></div>
           <div class="icon"><img class="icon-img" id="ico-start" alt="Старт"></div>
         </div>
         <div class="label">Старт</div>
 
-        <!-- Разворот -->
         <button class="spawn s1" id="btnProducts" aria-label="Выбор продуктов">
           <div class="icon-wrap"><div class="icon-bg"></div>
             <div class="icon"><img class="icon-img" id="ico-products" alt="Выбор продуктов"></div>
@@ -218,7 +205,8 @@
   <div id="toast" style="position:fixed;left:50%;bottom:86px;transform:translateX(-50%);background:rgba(0,0,0,.82);color:#fff;padding:10px 14px;border-radius:10px;font-weight:700;z-index:1000;opacity:0;transition:opacity .2s"></div>
 
 <script>
-  /* === БАЗА ДЛЯ ИКОНОК (GitHub Pages) === */
+  /* ====== КОНФИГ ЛОГИРОВАНИЯ ====== */
+  const LOG_URL = 'PASTE_YOUR_APPS_SCRIPT_WEBAPP_URL_HERE'; // <= замените здесь на URL логгера
   const ICON_BASE = 'https://groskaiser-design.github.io/icons/';
 
   const ICONS = {
@@ -235,15 +223,76 @@
     subscription: 'rub.svg'
   };
 
-  /* Телеграм окружение */
+  /* Telegram env */
   var tg=(window.Telegram&&window.Telegram.WebApp)?window.Telegram.WebApp:{
     initData:'',initDataUnsafe:{},ready:function(){},expand:function(){},
     BackButton:{show:function(){},hide:function(){},onClick:function(){}},
-    HapticFeedback:{impactOccurred:function(){}},showAlert:function(m){alert(m)}
+    HapticFeedback:{impactOccurred:function(){}},showAlert:function(m){console.log(m)}
   };
   try{tg.ready();tg.expand();}catch(e){}
 
-  /* Проставляем src для иконок */
+  /* ====== ЛОГГЕР ====== */
+  const SESSION_ID = (crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now()+'-'+Math.random().toString(16).slice(2));
+  const QUEUE = [];
+  let SENDING = false;
+
+  function enrich(payload){
+    const u = (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) || {};
+    return Object.assign({
+      action: 'log',
+      timestamp: new Date().toISOString(),
+      session_id: SESSION_ID,
+      telegram_id: u.id || '',
+      username: (u.first_name||'') + (u.last_name?(' '+u.last_name):'') || (u.username||''),
+      path: location.pathname,
+      referrer: document.referrer || '',
+      ua: navigator.userAgent,
+      screen: (window.screen ? (screen.width+'x'+screen.height) : ''),
+      dpi: (window.devicePixelRatio||1),
+      lang: navigator.language||''
+    }, payload);
+  }
+
+  function sendNow(batch){
+    if(!LOG_URL) return Promise.resolve();
+    try{
+      const blob = new Blob([JSON.stringify(batch)], {type:'application/json'});
+      if (navigator.sendBeacon){
+        navigator.sendBeacon(LOG_URL, blob);
+        return Promise.resolve();
+      }
+      return fetch(LOG_URL, {method:'POST', body: JSON.stringify(batch), headers:{'Content-Type':'application/json'}, keepalive:true}).then(()=>{});
+    }catch(e){
+      return Promise.resolve(); // не ломаем UX
+    }
+  }
+
+  function flush(){
+    if (SENDING || QUEUE.length===0) return;
+    SENDING = true;
+    const batch = QUEUE.splice(0, Math.min(QUEUE.length, 50));
+    sendNow(batch).finally(()=>{ SENDING=false; if(QUEUE.length) setTimeout(flush,100); });
+  }
+
+  function logEvent(event, meta){
+    try{
+      QUEUE.push(enrich({ event, meta: meta||{} }));
+      if (QUEUE.length >= 5) flush();
+    }catch(_){}
+  }
+
+  window.addEventListener('beforeunload', ()=>{ if(QUEUE.length){ try{ sendNow(QUEUE.splice(0, QUEUE.length)); }catch(_){}}});
+  document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='hidden' && QUEUE.length){ try{ sendNow(QUEUE.splice(0, QUEUE.length)); }catch(_){}}});
+
+  // глобальный перехват ошибок
+  window.addEventListener('error', function(e){
+    logEvent('js_error', { message: e.message, file: e.filename, line: e.lineno, col: e.colno });
+  });
+  window.addEventListener('unhandledrejection', function(e){
+    logEvent('promise_rejection', { reason: (e.reason && (e.reason.stack || e.reason.message)) || String(e.reason) });
+  });
+
+  /* ====== ИКОНКИ ====== */
   (function attachIcons(){
     const map = [
       ['ico-manual',       ICONS.manual],
@@ -264,7 +313,7 @@
     });
   })();
 
-  // Пользователь + аватар
+  /* ====== Профиль пользователя ====== */
   (function(){
     try{
       var u=(tg&&tg.initDataUnsafe&&tg.initDataUnsafe.user)?tg.initDataUnsafe.user:null;
@@ -280,15 +329,17 @@
         } else {
           photoEl.textContent=(full.charAt(0)||'A').toUpperCase();
         }
+        logEvent('profile_loaded', { has_photo: !!u.photo_url });
       } else {
         nameEl.textContent='Александр Петров'; idEl.textContent='ID: 123456789'; photoEl.textContent='А';
+        logEvent('profile_loaded_demo', {});
       }
     }catch(e){}
   })();
 
-  function toast(msg){var t=document.getElementById('toast');t.textContent=msg;t.style.opacity='1';setTimeout(function(){t.style.opacity='0';},1400);}
+  function toast(msg){var t=document.getElementById('toast');t.textContent=msg;t.style.opacity='1';setTimeout(function(){t.style.opacity='0';},1200);}
 
-  // Единая волна (один раз) + единая обработка нажатия
+  /* ====== Ripple & Tap ====== */
   function rippleIn(target, e){
     try{
       var host = (target.closest && target.closest('.icon')) || (target.querySelector && target.querySelector('.icon')) || null;
@@ -302,12 +353,10 @@
     }catch(_){}
   }
 
-  // Универсальная привязка «тапа» без двойных событий (touch+click)
   function bindTap(el, handler){
     let lastTouch = 0;
     if (window.PointerEvent){
       el.addEventListener('pointerdown', function(e){
-        // только ЛКМ на мыши или любой тач/перо
         if (e.pointerType === 'mouse' && e.button !== 0) return;
         handler(e);
       });
@@ -317,6 +366,7 @@
     }
   }
 
+  /* ====== Логика меню/плиток ====== */
   (function(){
     var grid=document.getElementById('gridB');
     var start=document.getElementById('startB');
@@ -327,41 +377,46 @@
 
     function openMenu(){ if(opened) return; opened=true;
       start.classList.add('open-b'); grid.classList.add('focus'); backdrop.classList.add('show');
+      logEvent('menu_open', {});
       try{ tg.BackButton.show(); if(tg.BackButton.onClick){ backHandler=function(){ closeMenu(); }; tg.BackButton.onClick(backHandler);} }catch(_){}
     }
     function closeMenu(){ if(!opened) return; opened=false;
       start.classList.remove('open-b'); grid.classList.remove('focus'); backdrop.classList.remove('show');
+      logEvent('menu_close', {});
       try{ tg.BackButton.hide(); if(backHandler){ tg.BackButton.onClick(function(){}); backHandler=null; } }catch(_){}
     }
 
-    // Старт — единый тап: волна + toggle меню
     bindTap(start, function(e){
       rippleIn(e.target, e);
+      logEvent('start_tap', { was_opened: opened });
       (opened ? closeMenu : openMenu)();
     });
 
-    // Кнопки разворота — волна + закрыть меню + переход
-    function goAfterRipple(url, e){
+    function goAfterRipple(url, name, e){
       rippleIn(e.target, e);
+      logEvent('spawn_tap', { target: name, was_opened: opened });
       if (opened) closeMenu();
-      setTimeout(function(){ window.location.href=url; }, 90);
+      setTimeout(function(){ logEvent('navigate', { to: url }); window.location.href=url; }, 90);
     }
-    bindTap(btnProducts, function(e){ e.stopPropagation(); goAfterRipple('products.html', e); });
-    bindTap(btnKbju,     function(e){ e.stopPropagation(); goAfterRipple('kbju.html', e); });
+    bindTap(btnProducts, function(e){ e.stopPropagation(); goAfterRipple('products.html', 'products', e); });
+    bindTap(btnKbju,     function(e){ e.stopPropagation(); goAfterRipple('kbju.html',     'kbju',     e); });
 
-    // Закрытие по тапу вне
-    bindTap(backdrop, function(){ closeMenu(); });
-    document.addEventListener('keydown',function(e){ if(e.key==='Escape'){ closeMenu(); } });
+    bindTap(backdrop, function(){ logEvent('backdrop_tap', {}); closeMenu(); });
+    document.addEventListener('keydown',function(e){ if(e.key==='Escape'){ logEvent('press_escape', {}); closeMenu(); } });
 
-    // Остальные плитки — волна; если меню раскрыто — просто закрываем его
     var tiles=document.querySelectorAll('.tile[data-module]');
     tiles.forEach(function(t){
+      const mod = t.getAttribute('data-module');
       bindTap(t, function(ev){
         rippleIn(ev.target, ev);
+        logEvent('tile_tap', { module: mod, was_opened: opened });
         if (opened){ closeMenu(); return; }
         toast('Раздел в разработке');
       });
     });
+
+    // первое событие — открытие приложения
+    logEvent('app_open', {});
   })();
 </script>
 </body>
