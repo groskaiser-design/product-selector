@@ -107,6 +107,29 @@
 
   .backdrop{position:fixed;inset:0;display:none}
   .backdrop.show{display:block}
+
+  /* ===== Инструкция (модалка + слайды) ===== */
+  .manual-overlay{position:fixed;inset:0;display:none;align-items:center;justify-content:center;
+    background:rgba(0,0,0,.45);backdrop-filter:blur(6px);z-index:1000;padding:20px}
+  .manual-overlay.show{display:flex}
+  .manual{position:relative;width:min(520px,92vw);max-height:86vh;background:#fff;border-radius:16px;
+    box-shadow:0 22px 60px rgba(0,0,0,.35);overflow:hidden;display:flex;flex-direction:column}
+  .manual-header{padding:12px 16px 8px;border-bottom:1px solid #eee;display:flex;align-items:center;justify-content:space-between}
+  .manual-title{font-weight:800;font-size:16px;color:#333}
+  .manual-close{border:none;background:transparent;font-size:28px;line-height:1;padding:6px;cursor:pointer;color:#555}
+  .manual-body{position:relative;overflow:hidden;height: calc(86vh - 56px - 44px);}
+  .slides{display:flex;transition:transform .28s ease;height:100%}
+  .slide{flex:0 0 100%;overflow:auto;padding:14px 16px 18px}
+  .slide h3{margin:2px 0 10px;font-size:18px;color:#222}
+  .slide .img-wrap{margin:6px 0 10px}
+  .slide .img-wrap img{width:100%;height:auto;display:block;border-radius:10px}
+  .slide p{white-space:pre-wrap;line-height:1.6;color:#333}
+  .manual-footer{display:flex;align-items:center;justify-content:center;gap:8px;padding:10px}
+  .dot{width:8px;height:8px;border-radius:999px;background:#d1d5db}
+  .dot.active{background:#6366f1}
+  .nav-arrows{position:absolute;inset:0;display:flex;align-items:center;justify-content:space-between;pointer-events:none}
+  .nav-arrows button{pointer-events:auto;border:none;background:rgba(0,0,0,.08);color:#333;font-size:20px;width:40px;height:40px;border-radius:999px;margin:0 8px;cursor:pointer}
+  .nav-arrows button:active{transform:scale(.96)}
 </style>
 </head>
 <body>
@@ -204,23 +227,33 @@
   <div class="backdrop" id="backdrop"></div>
   <div id="toast" style="position:fixed;left:50%;bottom:86px;transform:translateX(-50%);background:rgba(0,0,0,.82);color:#fff;padding:10px 14px;border-radius:10px;font-weight:700;z-index:1000;opacity:0;transition:opacity .2s"></div>
 
+  <!-- POPUP – Инструкция -->
+  <div class="manual-overlay" id="manualOverlay" aria-hidden="true">
+    <div class="manual" role="dialog" aria-modal="true" aria-labelledby="manualTitle">
+      <div class="manual-header">
+        <div class="manual-title" id="manualTitle">Инструкция</div>
+        <button class="manual-close" id="manualClose" aria-label="Закрыть">×</button>
+      </div>
+      <div class="manual-body">
+        <div class="slides" id="slides"></div>
+        <div class="nav-arrows">
+          <button id="prevBtn" aria-label="Назад">‹</button>
+          <button id="nextBtn" aria-label="Вперёд">›</button>
+        </div>
+      </div>
+      <div class="manual-footer" id="dots"></div>
+    </div>
+  </div>
+
 <script>
   /* ====== КОНФИГ ====== */
-  const LOG_URL  = 'https://script.google.com/macros/s/AKfycbwjr46AxfzHMgOtRxeV_9gD6XOJae_tcU2pmMF1yMVOFG3SarKLtfpOVawRX6-SV5cxvw/exec'; // <= URL твоего логгера (GAS)
+  const LOG_URL  = 'https://script.google.com/macros/s/AKfycbyEnCccIX5bvMxELrm8ntUiT5FnqzhqbOlCsmD3xgKVjQ7AkpirCPK4eQosvWD_10KfTA/exec'; // <= URL твоего логгера
   const ICON_BASE = 'https://groskaiser-design.github.io/icons/';
 
   const ICONS = {
-    manual:       'question.svg',
-    start:        'play.svg',
-    products:     'cart.svg',
-    kbju:         'clipboard.svg',
-    measurements: 'scales.svg',
-    menu:         'menu.svg',
-    diary:        'diary.svg',
-    ai:           'ai.svg',
-    analytics:    'analytics.svg',
-    profile:      'profile.svg',
-    subscription: 'rub.svg'
+    manual:'question.svg', start:'play.svg', products:'cart.svg', kbju:'clipboard.svg',
+    measurements:'scales.svg', menu:'menu.svg', diary:'diary.svg', ai:'ai.svg',
+    analytics:'analytics.svg', profile:'profile.svg', subscription:'rub.svg'
   };
 
   /* Telegram env */
@@ -231,7 +264,7 @@
   };
   try{tg.ready();tg.expand();}catch(e){}
 
-  /* ====== ПРОСТОЕ ЛОГИРОВАНИЕ с тройным фолбэком ====== */
+  /* ====== ПРОСТОЕ ЛОГИРОВАНИЕ (с пиксель-фолбэком) ====== */
   function baseUser(){
     const u = (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) || {};
     return {
@@ -239,7 +272,6 @@
       username: ((u.first_name||'') + (u.last_name ? ' '+u.last_name : '') || u.username || '').trim()
     };
   }
-
   function pixelFallback(body){
     try{
       const q = new URLSearchParams({
@@ -256,41 +288,26 @@
       img.src = LOG_URL + '?' + q + '&_t=' + Date.now();
     }catch(_){}
   }
-
   function logEvent(event, payload){
     try{
       if(!LOG_URL) return;
       const body = {
-        action:   'log',
-        module:   'router',
-        page:     (location.pathname.split('/').pop() || 'router.html'),
-        event:    String(event||''),
-        ...baseUser(),
-        payload:  payload || {},
-        client_ts: new Date().toISOString()
+        action:'log', module:'router',
+        page:(location.pathname.split('/').pop()||'router.html'),
+        event:String(event||''), ...baseUser(),
+        payload:payload||{}, client_ts:new Date().toISOString()
       };
       const json = JSON.stringify(body);
-
-      // 1) fetch POST no-cors
-      fetch(LOG_URL, {
-        method:'POST',
-        // no-cors — чтобы не блокировалось CORS-политикой; на стороне GAS тело всё равно придёт
-        mode:'no-cors',
-        keepalive:true,
-        // без заголовков — браузер разрешит отправку даже в no-cors
-        body: json
-      }).catch(()=>{
-        // 2) sendBeacon
-        try{
-          if (navigator.sendBeacon){
-            const blob = new Blob([json], {type:'application/json'});
-            if (navigator.sendBeacon(LOG_URL, blob)) return;
-          }
-        }catch(_){}
-        // 3) пиксель GET
-        pixelFallback(body);
-      });
-
+      fetch(LOG_URL,{method:'POST',mode:'no-cors',keepalive:true,body:json})
+        .catch(()=>{
+          try{
+            if(navigator.sendBeacon){
+              const blob=new Blob([json],{type:'application/json'});
+              if(navigator.sendBeacon(LOG_URL, blob)) return;
+            }
+          }catch(_){}
+          pixelFallback(body);
+        });
     }catch(_){}
   }
 
@@ -369,7 +386,7 @@
     }
   }
 
-  /* ====== Меню/плитки ====== */
+  /* ====== Меню/плитки + Инструкция ====== */
   (function(){
     var grid=document.getElementById('gridB');
     var start=document.getElementById('startB');
@@ -410,6 +427,7 @@
     var tiles=document.querySelectorAll('.tile[data-module]');
     tiles.forEach(function(t){
       const mod = t.getAttribute('data-module');
+      if(mod==='manual') return; // для Инструкции отдельная логика ниже
       bindTap(t, function(ev){
         rippleIn(ev.target, ev);
         logEvent('tile_tap', { module: mod, was_opened: opened });
@@ -417,6 +435,82 @@
         toast('Раздел в разработке');
       });
     });
+
+    // === Инструкция ===
+    const manualTile = document.querySelector('.tile[data-module="manual"]');
+    const overlay = document.getElementById('manualOverlay');
+    const slidesEl = document.getElementById('slides');
+    const dotsEl   = document.getElementById('dots');
+    const closeBtn = document.getElementById('manualClose');
+    const prevBtn  = document.getElementById('prevBtn');
+    const nextBtn  = document.getElementById('nextBtn');
+
+    let slidesCache = null;
+    let cur = 0;
+
+    function escapeHtml(s){ return (s||'').replace(/[&<>\"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]||m)); }
+
+    function renderSlides(slides){
+      slidesEl.innerHTML=''; dotsEl.innerHTML='';
+      slides.forEach((s,i)=>{
+        const card = document.createElement('div'); card.className='slide';
+        const parts=[];
+        if (s.title) parts.push(`<h3>${escapeHtml(s.title)}</h3>`);
+        if (s.image) parts.push(`<div class="img-wrap"><img src="${s.image}" alt=""></div>`);
+        if (s.text)  parts.push(`<p class="slide-text">${s.text}</p>`); // HTML разрешён
+        if (!parts.length) parts.push(`<p style="color:#6B7280">Пустой слайд #${i+1}</p>`);
+        card.innerHTML = parts.join('');
+        slidesEl.appendChild(card);
+
+        const dot=document.createElement('div'); dot.className='dot'; if(i===0) dot.classList.add('active');
+        dot.addEventListener('click',()=>goTo(i)); dotsEl.appendChild(dot);
+      });
+      cur=0; applyTransform(); logEvent('manual_slide_view',{index:0});
+    }
+    function applyTransform(){
+      slidesEl.style.transform = `translateX(${-100*cur}%)`;
+      Array.from(dotsEl.children).forEach((d,i)=>d.classList.toggle('active', i===cur));
+    }
+    function goTo(n){ if(!slidesCache) return; const max=slidesCache.length; const old=cur; cur=Math.max(0,Math.min(max-1,n)); if(cur!==old){ applyTransform(); logEvent('manual_slide_view',{index:cur}); } }
+    function next(){ if(!slidesCache) return; if(cur<slidesCache.length-1){ cur++; applyTransform(); logEvent('manual_next',{index:cur}); } }
+    function prev(){ if(!slidesCache) return; if(cur>0){ cur--; applyTransform(); logEvent('manual_prev',{index:cur}); } }
+
+    function openManual(){
+      if (opened) closeMenu();
+      overlay.classList.add('show'); overlay.setAttribute('aria-hidden','false');
+      logEvent('manual_open',{});
+      if (slidesCache){ renderSlides(slidesCache); return; }
+      fetch(`${LOG_URL}?action=get_manual`, {cache:'no-cache'})
+        .then(r=>r.json()).then(j=>{
+          const slides = (j && j.ok && Array.isArray(j.slides)) ? j.slides : [];
+          slidesCache = slides.length ? slides.slice(0,50) :
+            [{title:'Инструкция недоступна', text:'Добавьте контент в лист "Manual" файла Router Logger.'}];
+          renderSlides(slidesCache);
+        }).catch(err=>{
+          slidesCache = [{title:'Ошибка', text:escapeHtml(String(err))}];
+          renderSlides(slidesCache);
+        });
+    }
+    function closeManual(){
+      overlay.classList.remove('show'); overlay.setAttribute('aria-hidden','true'); logEvent('manual_close',{index:cur});
+    }
+
+    // жесты/клавиатура
+    let touchX=null;
+    slidesEl.addEventListener('touchstart', e=>{ touchX=e.touches[0].clientX; }, {passive:true});
+    slidesEl.addEventListener('touchmove', e=>{ if(touchX==null) return; const dx=e.touches[0].clientX-touchX; if(Math.abs(dx)>40){ dx<0?next():prev(); touchX=null; } }, {passive:true});
+    slidesEl.addEventListener('touchend', ()=>{ touchX=null; });
+    document.addEventListener('keydown', e=>{
+      if (!overlay.classList.contains('show')) return;
+      if (e.key==='ArrowRight') next();
+      if (e.key==='ArrowLeft')  prev();
+      if (e.key==='Escape')     closeManual();
+    });
+
+    bindTap(closeBtn, ()=>closeManual());
+    bindTap(prevBtn,  e=>{ e.stopPropagation(); prev(); });
+    bindTap(nextBtn,  e=>{ e.stopPropagation(); next(); });
+    bindTap(manualTile, e=>{ rippleIn(e.target,e); openManual(); });
 
     // стартовые события для проверки
     logEvent('app_open', {});
