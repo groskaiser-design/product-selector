@@ -58,13 +58,16 @@
   .label{font-size:12px;font-weight:700;color:#fff;text-shadow:0 2px 4px rgba(0,0,0,.25)}
   .tile:active .icon{transform:scale(.92)}
 
-  /* Hover (для десктопа) */
-  .tile:hover .icon{transform:translateY(-6px) scale(1.04);box-shadow:0 14px 28px rgba(0,0,0,.18),inset 0 1px 0 rgba(255,255,255,.6),0 0 24px rgba(102,126,234,.35)}
-  .tile:hover .icon-bg{opacity:1;transform:scale(1.05)}
+  /* Hover (только на наведённой плитке) */
+  .grid .tile:hover > .icon-wrap > .icon{
+    transform:translateY(-6px) scale(1.04);
+    box-shadow:0 14px 28px rgba(0,0,0,.18),inset 0 1px 0 rgba(255,255,255,.6),0 0 24px rgba(102,126,234,.35)
+  }
+  .grid .tile:hover > .icon-wrap > .icon-bg{opacity:1;transform:scale(1.05)}
   .spawn:hover .icon{transform:translateY(-4px) scale(1.03)}
   .spawn:hover .icon-bg{opacity:1;transform:scale(1.05)}
 
-  /* Ripple — фиксированный радиус (как раньше) */
+  /* Ripple — фиксированный радиус */
   .tile .r{
     position:absolute;width:12px;height:12px;border-radius:999px;background:rgba(255,255,255,.35);
     left:0;top:0;transform:translate(-50%,-50%) scale(0);pointer-events:none;filter:blur(1px);
@@ -77,8 +80,7 @@
   .spawn{
     position:absolute;left:50%;top:50%;width:90px;height:106px;
     transform:translate(-50%,-50%) rotate(0) translate(0) rotate(0);
-    opacity:0;pointer-events:none;
-    background:transparent;border:0;padding:0;appearance:none;-webkit-appearance:none
+    opacity:0;pointer-events:none;background:transparent;border:0;padding:0;appearance:none;-webkit-appearance:none
   }
   .spawn:focus{outline:none}
   .spawn .icon-wrap{width:72px;height:72px}
@@ -88,11 +90,16 @@
   .open-b .spawn{pointer-events:auto}
   .open-b .spawn.s1{opacity:1;transform:translate(-50%,-50%) rotate(-24deg) translate(148px) rotate(24deg)}
   .open-b .spawn.s2{opacity:1;transform:translate(-50%,-50%) rotate(24deg) translate(148px) rotate(-24deg)}
-  .open-b .icon{transform:scale(.9)}
+  /* уменьшаем только центральную иконку «Старт», не затрагивая остальные */
+  .open-b #startB > .icon-wrap > .icon{transform:scale(.9)}
 
   /* Блюрим всё, кроме стартовой плитки */
   .grid.focus .tile{filter:blur(2px) saturate(.85);opacity:.18;transform:translateY(8px)}
   .grid.focus #startB{filter:none;opacity:1;transform:none}
+
+  /* Невидимый backdrop для закрытия по тапу вне */
+  .backdrop{position:fixed;inset:0;display:none}
+  .backdrop.show{display:block}
 
   /* Футер */
   .footer{
@@ -148,7 +155,12 @@
         <button class="spawn s1" id="btnProducts" aria-label="Выбор продуктов">
           <div class="icon-wrap"><div class="icon-bg"></div>
             <div class="icon">
-              <svg viewBox="0 0 24 24"><path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/><path d="M7 2v20"/></svg>
+              <!-- тележка -->
+              <svg viewBox="0 0 24 24">
+                <circle cx="9" cy="21" r="1.5"/>
+                <circle cx="17" cy="21" r="1.5"/>
+                <path d="M3 3h2l2.2 10.4a2 2 0 0 0 2 1.6h7.6a2 2 0 0 0 2-1.5l1.2-5.5H6.1"/>
+              </svg>
             </div>
           </div>
           <div class="label">Выбор продуктов</div>
@@ -157,7 +169,10 @@
         <button class="spawn s2" id="btnKbju" aria-label="Анкета для КБЖУ">
           <div class="icon-wrap"><div class="icon-bg"></div>
             <div class="icon">
-              <svg viewBox="0 0 24 24"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+              <svg viewBox="0 0 24 24">
+                <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/>
+                <polyline points="14 2 14 8 20 8"/>
+              </svg>
             </div>
           </div>
           <div class="label">Анкета КБЖУ</div>
@@ -218,6 +233,9 @@
     </div>
   </div>
 
+  <!-- невидимая зона для закрытия по тапу вне -->
+  <div class="backdrop" id="backdrop"></div>
+
   <div class="footer">
     <div class="nav active">🏠<span style="font-size:11px">Главная</span></div>
     <div class="nav">📈<span style="font-size:11px">Активность</span></div>
@@ -229,8 +247,8 @@
 
 <script>
   // Настройки
-  var BLUR_HEADER = false;     // true — блюрить карточку профиля при раскрытии
-  var DEMO_PREVIEW = true;     // в проде поставить false (включает реальные переходы)
+  var BLUR_HEADER = false; // блюрить профиль при раскрытии
+  var DEMO_PREVIEW = true; // в проде = false
 
   // Telegram API fallback (ES5)
   var tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : {
@@ -265,9 +283,7 @@
       var b=el.getBoundingClientRect();
       r.style.left=(e.clientX-b.left)+'px'; r.style.top=(e.clientY-b.top)+'px';
       el.appendChild(r);
-      r.addEventListener('animationend', function(){
-        if(r&&r.parentNode){ r.parentNode.removeChild(r); }
-      }, false);
+      r.addEventListener('animationend', function(){ if(r&&r.parentNode){ r.parentNode.removeChild(r); } }, false);
     }catch(_){}
   }
 
@@ -276,27 +292,27 @@
     var t=document.getElementById('toast'); t.textContent=msg; t.style.opacity='1';
     setTimeout(function(){ t.style.opacity='0'; },1600);
   }
-
   function go(url){
     try{ if(tg.HapticFeedback && tg.HapticFeedback.impactOccurred) tg.HapticFeedback.impactOccurred('medium'); }catch(_){}
     if(DEMO_PREVIEW){ toast('В демо файлы не подключены. Откроется '+url); return; }
     window.location.href=url;
   }
 
-  // Открыть/закрыть ветку Start + блюр остальных
+  // Открыть/закрыть ветку Start + backdrop
   (function(){
     var grid=document.getElementById('gridB');
     var start=document.getElementById('startB');
     var btnProducts=document.getElementById('btnProducts');
     var btnKbju=document.getElementById('btnKbju');
-    var opened=false;
-    var backHandler=null;
+    var backdrop=document.getElementById('backdrop');
+    var opened=false, backHandler=null;
 
     function openMenu(){
       if(opened) return;
       opened=true;
       start.classList.add('open-b');
       grid.classList.add('focus');
+      backdrop.classList.add('show');
       if(BLUR_HEADER){ document.body.classList.add('dim-header'); }
       try{
         tg.BackButton.show();
@@ -306,12 +322,12 @@
         }
       }catch(_){}
     }
-
     function closeMenu(){
       if(!opened) return;
       opened=false;
       start.classList.remove('open-b');
       grid.classList.remove('focus');
+      backdrop.classList.remove('show');
       document.body.classList.remove('dim-header');
       try{
         tg.BackButton.hide();
@@ -319,25 +335,21 @@
       }catch(_){}
     }
 
-    start.addEventListener('click', function(e){
-      ripple(start,e);
-      if(opened) closeMenu(); else openMenu();
-    });
-
+    start.addEventListener('click', function(e){ ripple(start,e); opened?closeMenu():openMenu(); });
     btnProducts.addEventListener('click', function(e){ e.stopPropagation(); go('products.html'); });
     btnKbju.addEventListener('click', function(e){ e.stopPropagation(); go('kbju.html'); });
 
+    // клик по «вне» — закрыть
+    backdrop.addEventListener('click', function(){ closeMenu(); });
+
     // Закрытие по Esc (в вебе)
-    document.addEventListener('keydown', function(e){
-      if(e.key==='Escape'){ closeMenu(); }
-    });
+    document.addEventListener('keydown', function(e){ if(e.key==='Escape'){ closeMenu(); } });
   })();
 
   // Заглушки на остальные иконки
   (function(){
     var tiles=document.querySelectorAll('.tile[data-module]');
-    var i;
-    for(i=0;i<tiles.length;i++){
+    for(var i=0;i<tiles.length;i++){
       tiles[i].addEventListener('click', function(){ toast('Раздел в разработке'); });
     }
   })();
