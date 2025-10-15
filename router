@@ -4,7 +4,6 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Router — Start Menu (A/B/C)</title>
-<!-- В проде этот скрипт нужен, локально он безопасно зафолбэчится -->
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
@@ -17,6 +16,8 @@
     color:#111;
   }
   .container{max-width:520px;margin:0 auto}
+
+  .error-bar{position:fixed;left:0;right:0;top:0;z-index:9999;background:#fee2e2;color:#b91c1c;padding:8px 12px;font:600 12px/1.4 system-ui,Segoe UI,Roboto,Arial;display:none;white-space:pre-wrap}
 
   /* Профиль */
   .profile-card{
@@ -58,7 +59,7 @@
     animation:rr .6s ease-out forwards}
   @keyframes rr{to{transform:translate(-50%,-50%) scale(22);opacity:0}}
 
-  /* --- Variant A: Speed Dial --- */
+  /* Variant A: Speed Dial */
   .dial{position:absolute;left:50%;top:42%;transform:translate(-50%,-50%);pointer-events:none}
   .dial button{position:absolute;left:0;top:0;transform:translate(-50%,-50%);opacity:0;
     pointer-events:auto;transition:transform .28s cubic-bezier(.2,.8,.2,1),opacity .18s ease}
@@ -70,7 +71,7 @@
   .open-a .dial .b2{opacity:1;transform:translate(-50%,-50%) translate(110px,-88px)}
   .open-a .icon{transform:scale(.9)}
 
-  /* --- Variant B: Arc Menu --- */
+  /* Variant B: Arc Menu */
   .arc{position:absolute;left:50%;top:50%;width:0;height:0;pointer-events:none}
   .arc .chip{position:absolute;left:0;top:0;transform:translate(-50%,-50%) rotate(0) translate(0) rotate(0);
     opacity:0;pointer-events:auto;transition:transform .28s cubic-bezier(.2,.8,.2,1),opacity .18s ease}
@@ -82,7 +83,7 @@
   .open-b .arc .c2{opacity:1;transform:translate(-50%,-50%) rotate(25deg) translate(150px) rotate(-25deg)}
   .open-b .icon{transform:scale(.9)}
 
-  /* --- Variant C: Glass Popover --- */
+  /* Variant C: Glass Popover */
   .popover{position:absolute;left:50%;top:0;transform:translate(-50%,-8px) scale(.92);opacity:0;pointer-events:none;
     background:rgba(255,255,255,.2);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
     border:1px solid rgba(255,255,255,.45);border-radius:16px;padding:12px;box-shadow:0 18px 42px rgba(0,0,0,.28);
@@ -91,10 +92,9 @@
   .open-c .popover{opacity:1;transform:translate(-50%,-12px) scale(1);pointer-events:auto}
   .open-c .icon{transform:scale(.9)}
 
-  /* Затемнение остальных в демонстрации (не обязательно для продакшена) */
+  /* Затемнение остальных в демонстрации */
   .grid.dim .tile.dimmed{filter:blur(1px) saturate(.85);opacity:.18;transform:translateY(12px);transition:all .22s ease}
 
-  /* Футер (заглушка) */
   .footer{position:fixed;left:0;right:0;bottom:0;height:66px;background:rgba(255,255,255,.95);
     backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border-top:1px solid rgba(0,0,0,.06);
     display:flex;align-items:center;justify-content:space-around;box-shadow:0 -6px 20px rgba(0,0,0,.1)}
@@ -103,6 +103,8 @@
 </style>
 </head>
 <body>
+  <div class="error-bar" id="errorBar"></div>
+
   <div class="container">
     <!-- Профиль -->
     <div class="profile-card">
@@ -115,7 +117,7 @@
       </div>
     </div>
 
-    <!-- Сетка модулей (для демо по 3 плитки на вариант) -->
+    <!-- Вариант A -->
     <div class="grid" id="gridA">
       <div class="tile start" id="startA">
         <div class="icon-wrap">
@@ -134,6 +136,7 @@
 
     <br/>
 
+    <!-- Вариант B -->
     <div class="grid" id="gridB">
       <div class="tile start" id="startB">
         <div class="icon-wrap"><div class="icon-bg"></div>
@@ -151,6 +154,7 @@
 
     <br/>
 
+    <!-- Вариант C -->
     <div class="grid" id="gridC">
       <div class="tile start" id="startC">
         <div class="icon-wrap"><div class="icon-bg"></div>
@@ -177,70 +181,103 @@
   </div>
 
 <script>
-  // Безопасный фолбэк Telegram API
-  const tg = window.Telegram?.WebApp || {
-    initData:'', initDataUnsafe:{}, ready:()=>{}, expand:()=>{},
-    BackButton:{show:()=>{}, hide:()=>{}, onClick:()=>{}},
-    HapticFeedback:{impactOccurred:()=>{}}, showAlert:m=>alert(m)
-  };
-  tg.ready(); tg.expand();
-
-  // Подставляем данные пользователя
+  // ===== Отладка: показать ошибки на странице =====
   (function(){
-    const u = tg.initDataUnsafe?.user;
-    const name = document.getElementById('userName');
-    const id = document.getElementById('userId');
-    const photo = document.getElementById('userPhoto');
-    if(u){
-      const full=[u.first_name,u.last_name].filter(Boolean).join(' ')||'Пользователь';
-      name.textContent=full; id.textContent='ID: '+(u.id||'---');
-      if(u.photo_url){ const img=new Image(); img.src=u.photo_url; img.alt=full; photo.textContent=''; photo.appendChild(img); }
-      else photo.textContent=full.charAt(0).toUpperCase();
-    } else {
-      name.textContent='Александр Петров'; id.textContent='ID: 123456789'; photo.textContent='А';
+    var bar = document.getElementById('errorBar');
+    function show(err){
+      try{
+        bar.style.display='block';
+        bar.textContent = 'JS Error: ' + err.message + (err.filename? ('\\n' + err.filename + ':' + err.lineno + ':' + err.colno) : '') +
+                          (err.error && err.error.stack ? ('\\n' + err.error.stack) : '');
+      }catch(_){}
     }
+    window.addEventListener('error', function(e){ show(e); });
+    window.addEventListener('unhandledrejection', function(e){ show({message:String(e.reason)}); });
   })();
 
-  // ripple
-  function ripple(el,e){
-    const r=document.createElement('span'); r.className='r';
-    const b=el.getBoundingClientRect();
-    r.style.left=(e.clientX-b.left)+'px'; r.style.top=(e.clientY-b.top)+'px';
-    el.appendChild(r); r.addEventListener('animationend',()=>r.remove(),{once:true});
+  // ===== Безопасный fallback Telegram API (без опциональной цепочки) =====
+  var tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : {
+    initData:'', initDataUnsafe:{}, ready:function(){}, expand:function(){},
+    BackButton:{show:function(){}, hide:function(){}, onClick:function(){}},
+    HapticFeedback:{impactOccurred:function(){}}, showAlert:function(m){ alert(m); }
+  };
+  try { tg.ready(); tg.expand(); } catch(_){}
+
+  // ===== Данные пользователя =====
+  (function(){
+    try {
+      var u = (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) ? tg.initDataUnsafe.user : null;
+      var nameEl = document.getElementById('userName');
+      var idEl = document.getElementById('userId');
+      var photoEl = document.getElementById('userPhoto');
+      if (u) {
+        var full = ((u.first_name||'') + ' ' + (u.last_name||'')).trim() || 'Пользователь';
+        nameEl.textContent = full;
+        idEl.textContent = 'ID: ' + (u.id || '---');
+        if (u.photo_url) {
+          var img = new Image();
+          img.src = u.photo_url; img.alt = full;
+          photoEl.textContent = '';
+          photoEl.appendChild(img);
+        } else {
+          photoEl.textContent = (full.charAt(0) || 'A').toUpperCase();
+        }
+      } else {
+        nameEl.textContent = 'Александр Петров';
+        idEl.textContent = 'ID: 123456789';
+        photoEl.textContent = 'А';
+      }
+    } catch(e){}
+  })();
+
+  // ===== ripple =====
+  function ripple(el, e){
+    try {
+      var r=document.createElement('span'); r.className='r';
+      var b=el.getBoundingClientRect();
+      r.style.left=(e.clientX-b.left)+'px'; r.style.top=(e.clientY-b.top)+'px';
+      el.appendChild(r); r.addEventListener('animationend',function(){ r.remove(); }, {once:true});
+    } catch(_){}
   }
 
-  // универсальный тогглер варианта
+  // ===== универсальный тогглер =====
   function toggleVariant(rootId, cls){
-    const grid=document.getElementById(rootId);
-    const start=grid.querySelector('.start');
-    const open=start.classList.toggle(cls);
-    grid.classList.toggle('dim',open);
+    var grid=document.getElementById(rootId);
+    var start=grid.querySelector('.start');
+    var open=!start.classList.contains(cls);
+    if(open){ start.classList.add(cls); grid.classList.add('dim'); }
+    else { start.classList.remove(cls); grid.classList.remove('dim'); }
   }
 
-  // навешиваем обработчики
-  document.getElementById('startA').addEventListener('click',e=>{ripple(e.currentTarget,e);toggleVariant('gridA','open-a');});
-  document.getElementById('startB').addEventListener('click',e=>{ripple(e.currentTarget,e);toggleVariant('gridB','open-b');});
-  document.getElementById('startC').addEventListener('click',e=>{ripple(e.currentTarget,e);toggleVariant('gridC','open-c');});
+  // ===== обработчики =====
+  document.getElementById('startA').addEventListener('click',function(e){ ripple(e.currentTarget,e); toggleVariant('gridA','open-a'); });
+  document.getElementById('startB').addEventListener('click',function(e){ ripple(e.currentTarget,e); toggleVariant('gridB','open-b'); });
+  document.getElementById('startC').addEventListener('click',function(e){ ripple(e.currentTarget,e); toggleVariant('gridC','open-c'); });
 
-  // переходы (в демо ведём на фиктивные страницы; в проде — на ваши файлы)
-  const go = (url)=>{ try{tg.HapticFeedback.impactOccurred('medium')}catch(_){ } window.location.href=url; };
-  document.getElementById('aProducts').addEventListener('click',()=>go('products.html'));
-  document.getElementById('aKbju').addEventListener('click',()=>go('kbju.html'));
-  document.getElementById('bProducts').addEventListener('click',()=>go('products.html'));
-  document.getElementById('bKbju').addEventListener('click',()=>go('kbju.html'));
-  document.getElementById('cProducts').addEventListener('click',()=>go('products.html'));
-  document.getElementById('cKbju').addEventListener('click',()=>go('kbju.html'));
+  // Навигация (в предпросмотре — только тост, чтобы не ловить ERR_FILE_NOT_FOUND)
+  var DEMO_PREVIEW = true; // В проде поставим false
+  function toast(msg){
+    var t=document.getElementById('toast');
+    if(!t){ t=document.createElement('div'); t.id='toast';
+      t.style.cssText='position:fixed;left:50%;bottom:86px;transform:translateX(-50%);background:rgba(0,0,0,.8);color:#fff;padding:10px 14px;border-radius:10px;font-weight:700;z-index:1000;opacity:0;transition:opacity .2s';
+      document.body.appendChild(t);
+    }
+    t.textContent=msg; t.style.opacity='1'; setTimeout(function(){ t.style.opacity='0'; },1600);
+  }
+  function go(url){
+    try{ if(tg && tg.HapticFeedback && tg.HapticFeedback.impactOccurred) tg.HapticFeedback.impactOccurred('medium'); }catch(_){}
+    if(DEMO_PREVIEW){ toast('В демо файлы не подключены. В бою откроется '+url); return; }
+    window.location.href=url;
+  }
+  document.getElementById('aProducts').addEventListener('click',function(){ go('products.html'); });
+  document.getElementById('aKbju').addEventListener('click',function(){ go('kbju.html'); });
+  document.getElementById('bProducts').addEventListener('click',function(){ go('products.html'); });
+  document.getElementById('bKbju').addEventListener('click',function(){ go('kbju.html'); });
+  document.getElementById('cProducts').addEventListener('click',function(){ go('products.html'); });
+  document.getElementById('cKbju').addEventListener('click',function(){ go('kbju.html'); });
 
-  // выбор варианта через ?mode=a|b|c (по умолчанию c)
-  (function selectByQuery(){
-    const params=new URLSearchParams(location.search);
-    const m=(params.get('mode')||'c').toLowerCase();
-    const map={a:['gridA','open-a'],b:['gridB','open-b'],c:['gridC','open-c']};
-    const pair=map[m]||map.c;
-    toggleVariant(pair[0], pair[1]); // раскрыть выбранный вариант
-    // прокрутка к выбранному
-    document.getElementById(pair[0]).scrollIntoView({behavior:'instant',block:'start'});
-  })();
+  // По умолчанию раскроем вариант C (самый спокойный)
+  toggleVariant('gridC','open-c');
 </script>
 </body>
 </html>
