@@ -14,13 +14,13 @@
       min-height: 100%;
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
       background-repeat: no-repeat;
-      background-attachment: fixed;  /* безопасно для Telegram WebView и Android; на iOS ок с градиентом */
-      background-size: cover;        /* растягиваем под любую высоту */
+      background-attachment: fixed;
+      background-size: cover;
     }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
       min-height: 100%;
-      background: transparent;       /* фон перенесён на html, чтобы не “обрезался” */
+      background: transparent;
       padding: 20px 20px 140px 20px;
       color: #222;
     }
@@ -119,7 +119,6 @@
 
     <div class="search-container">
       <div class="search-wrap">
-        <!-- 2) ОБНОВЛЁН ПЛЕЙСХОЛДЕР -->
         <input id="searchInput" class="search-input" type="text" placeholder="Поиск продуктов." autocomplete="off" disabled />
         <button id="searchClear" class="search-clear" aria-label="Очистить">×</button>
       </div>
@@ -143,7 +142,7 @@
       <div class="nav-icon-home">
         <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
           <path d="M3 9.5L12 2.5L21 9.5V20.5C21 21.0523 20.5523 21.5 20 21.5H4C3.44772 21.5 3 21.0523 3 20.5V9.5Z"/>
-          <path d="M9 21.5V12.5H15V21.5"/>
+          <path d="M9 21.5V12.5H15В21.5"/>
         </svg>
       </div>
     </div>
@@ -240,7 +239,11 @@
     }
 
     function bindHandlers(){
-      document.getElementById('categories').addEventListener('click', onCategoriesClick);
+      const catsEl = document.getElementById('categories');
+      catsEl.addEventListener('click', onCategoriesClick);
+
+      // ✅ новый: обновляем Set при прямом клике по чекбоксу
+      catsEl.addEventListener('change', onCheckboxChange);
 
       let t=null; searchInput.addEventListener('input', e=>{
         clearTimeout(t);
@@ -251,14 +254,11 @@
         }, 180);
       });
 
-      // 3) СКРЫТИЕ КЛАВИАТУРЫ ПРИ НАЖАТИИ НА КРЕСТИК
       searchClear.addEventListener('click', ()=>{
         searchInput.value='';
         currentQuery='';
         searchClear.classList.remove('visible');
         applySearch();
-
-        // надёжное закрытие клавиатуры на мобильных: blur + кратковременное disable
         searchInput.blur();
         const wasDisabled = searchInput.disabled;
         searchInput.disabled = true;
@@ -272,6 +272,7 @@
       document.getElementById('modalOverlay').addEventListener('click', (e)=>{ if(e.target===e.currentTarget) e.currentTarget.classList.remove('active'); });
     }
 
+    // ✅ единая логика: клик по строке «жмёт» чекбокс → сработает onCheckboxChange
     function onCategoriesClick(e){
       const header = e.target.closest('.category-header');
       if(header){
@@ -293,10 +294,24 @@
       if(selectAll){ e.stopPropagation(); handleSelectAll(selectAll); return; }
 
       const item = e.target.closest('.product-item');
-      if(item && !e.target.matches('input[type="checkbox"]')){
-        toggleItem(item);
+      if(item){
+        if(!e.target.matches('input.product-checkbox')){
+          const cb = item.querySelector('.product-checkbox');
+          if(cb){ cb.click(); }
+        }
         return;
       }
+    }
+
+    // ✅ обработчик изменения чекбоксов: поддерживает клик по чекбоксу и по строке/лейблу
+    function onCheckboxChange(e){
+      const cb = e.target;
+      if(!cb.classList.contains('product-checkbox')) return;
+      const id = cb.id.replace('prod-','');
+      if(cb.checked) selectedProducts.add(id); else selectedProducts.delete(id);
+      const cat = cb.closest('.category');
+      updateCategoryCount(cat);
+      updateTotalSelected();
     }
 
     function renderCategoryProducts(cat){
@@ -332,13 +347,14 @@
       btn.textContent = allChecked ? '+ Выбрать все' : '✓ Снять все';
     }
 
+    /* toggleItem оставлен, но больше не используется — логику заменили на cb.click() + onCheckboxChange
     function toggleItem(item){
       const cb = item.querySelector('.product-checkbox');
       cb.checked = !cb.checked; const id = item.dataset.productId;
       if(cb.checked) selectedProducts.add(id); else selectedProducts.delete(id);
       updateCategoryCount(item.closest('.category'));
       updateTotalSelected();
-    }
+    } */
 
     function updateCategoryCount(cat){
       const products = JSON.parse(cat.dataset.products||'[]');
