@@ -68,7 +68,7 @@
     .product-item { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid #f0f0f0; }
     .product-item:last-child { border-bottom: 0; }
     .product-checkbox { width: 20px; height: 20px; }
-    .product-label { flex: 1; font-size: 15px; /* делаем метку некликабельной */ pointer-events: none; }
+    .product-label { flex: 1; font-size: 15px; pointer-events: none; }
 
     .save-button-container { position: fixed; left: 0; right: 0; bottom: 60px; padding: 12px 20px; background: #fff; border-top: 1px solid #eee; z-index: 100; }
     .save-button-wrapper { max-width: 600px; margin: 0 auto; }
@@ -148,6 +148,7 @@
     let allCategories = {};
     let manualCache = null, manualCacheTime = 0; const MANUAL_CACHE_DURATION = 5*60*1000;
     let currentQuery = '';
+    let handlersBound = false; // ← защита от двойной привязки
 
     const loaderEl = document.getElementById('globalLoader');
     const loaderTextEl = document.getElementById('loaderText');
@@ -168,6 +169,9 @@
 
     async function initApp(){
       try{ tg.expand?.(); }catch(e){}
+      // 🔧 1) СНАЧАЛА ПРИВЯЖЕМ ОБРАБОТЧИКИ, чтобы UI жил даже при ошибке загрузки
+      bindHandlers();
+
       showLoader('Загрузка данных…');
       try{
         const res = await fetch(`${CONFIG.APPS_SCRIPT_URL}?action=init&initData=${encodeURIComponent(tg.initData||'')}`, {cache:'no-cache'});
@@ -177,13 +181,15 @@
         (data.user_data?.selected_products||'').split(',').filter(Boolean).forEach(id=>selectedProducts.add(String(id)));
         allCategories = groupByCategory(products);
         renderCategories();
-        bindHandlers();
         updateTotalSelected();
         searchInput.disabled = false;
         updateBottomInset();
         window.addEventListener('resize', updateBottomInset);
-      }catch(err){ showError('Ошибка загрузки: '+err.message); }
-      finally{ hideLoader(); }
+      }catch(err){
+        showError('Ошибка загрузки: '+err.message);
+      } finally {
+        hideLoader();
+      }
     }
 
     function groupByCategory(list){
@@ -211,8 +217,11 @@
     }
 
     function bindHandlers(){
+      if(handlersBound) return; // не дублируем
+      handlersBound = true;
+
       const catsEl = document.getElementById('categories');
-      // клики: только для заголовков категории и кнопки «выбрать все»
+      // клики: только заголовки/кнопка «выбрать все»
       catsEl.addEventListener('click', onCategoriesClick);
       // выбор продукта: только по чекбоксу
       catsEl.addEventListener('change', onCheckboxChange);
@@ -263,8 +272,7 @@
 
       const selectAll = e.target.closest('.select-all-btn');
       if(selectAll){ e.stopPropagation(); handleSelectAll(selectAll); return; }
-
-      // клики по .product-item или по label игнорируются — выбор только по чекбоксу
+      // клики по товарам/label игнорируем — выбор только по чекбоксу
     }
 
     function onCheckboxChange(e){
@@ -387,20 +395,31 @@
     }
 
     async function showManual(){
-      const overlay = document.getElementById('modalOverlay'); const textEl = document.getElementById('modalText'); overlay.classList.add('active');
+      const overlay = document.getElementById('modalOverlay');
+      const textEl = document.getElementById('modalText');
+      overlay.classList.add('active');
+
       const now = Date.now();
-      if(manualCache && (now - manualCacheTime < MANUAL_CACHE_DURATION)){ textEl.textContent = manualCache; return; }
+      if(manualCache && (now - manualCacheTime < MANUAL_CACHE_DURATION)){
+        textEl.textContent = manualCache; 
+        return;
+      }
       textEl.innerHTML = '<div class="modal-loading">⏳ Загрузка инструкции...</div>';
       try{
         const res = await fetch(`${CONFIG.APPS_SCRIPT_URL}?action=get_manual&initData=${encodeURIComponent(tg.initData||'')}`);
-        let manual; try{ const j = await res.json(); manual = j.manual || j.text || JSON.stringify(j,null,2); }catch{ manual = await res.text(); }
-        manualCache = manual; manualCacheTime = now; textEl.textContent = manual;
-      }catch(err){ textEl.innerHTML = `<span style="color:#c62828">Не удалось загрузить: ${escapeHtml(err.message)}</span>`; }
+        let manual; 
+        try{ const j = await res.json(); manual = j.manual || j.text || JSON.stringify(j,null,2); }
+        catch{ manual = await res.text(); }
+        manualCache = manual; manualCacheTime = now; 
+        textEl.textContent = manual;
+      }catch(err){
+        textEl.innerHTML = `<span style="color:#c62828">Не удалось загрузить: ${escapeHtml(err.message)}</span>`;
+      }
     }
 
     function updateTotalSelected(){ document.getElementById('selectedCount').textContent = selectedProducts.size; document.getElementById('saveButton').disabled = selectedProducts.size===0; }
-    function showError(msg){ const c=document.querySelector('.container'); const ex=c.querySelector('.error'); if(ex) ex.remove(); const el=document.createElement('div'); el.className='error'; el.textContent=msg; c.insertBefore(el,c.firstChild); setTimeout(()=>ел.remove(),5000); }
-    function showSuccess(msg){ const c=document.querySelector('.container'); const ex=c.querySelector('.success'); if(ex) ex.remove(); const el=document.createElement('div'); el.className='success'; el.textContent=msg; c.insertBefore(el,c.firstChild.nextSibling); setTimeout(()=>el.remove(),3000); }
+    function showError(msg){ const c=document.querySelector('.container'); const ex=c.querySelector('.error'); if(ex) ex.remove(); const el=document.createElement('div'); el.className='error'; el.textContent=msg; c.insertBefore(el,c.firstChild); setTimeout(()=>el.remove(),5000); }
+    function showSuccess(msg){ const c=document.querySelector('.container'); const ex=c.querySelector('.success'); if(ex) ex.remove(); const el=document.createElement('div'); el.className='success'; el.textContent=msg; c.insertBefore(el,c.firstChild.nextSibling); setTimeout(()=>ел.remove(),3000); }
     const escapeHtml = s => (s||'').replace(/[&<>\"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[m]));
   </script>
 </body>
