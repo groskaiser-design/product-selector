@@ -247,7 +247,7 @@
 
 <script>
   /* ====== КОНФИГ ====== */
-  const LOG_URL  = 'https://script.google.com/macros/s/AKfycbyEnCccIX5bvMxELrm8ntUiT5FnqzhqbOlCsmD3xgKVjQ7AkpirCPK4eQosvWD_10KfTA/exec'; // <= URL твоего логгера
+  const LOG_URL  = 'https://script.google.com/macros/s/AKfycbyEnCccIX5bvMxELrm8ntUiT5FnqzhqbOlCsmD3xgKVjQ7AkpirCPK4eQosvWD_10KfTA/exec'; // твой GAS
   const ICON_BASE = 'https://groskaiser-design.github.io/icons/';
 
   const ICONS = {
@@ -264,7 +264,7 @@
   };
   try{tg.ready();tg.expand();}catch(e){}
 
-  /* ====== ПРОСТОЕ ЛОГИРОВАНИЕ (с пиксель-фолбэком) ====== */
+  /* ====== ЛОГИ (c поддержкой sheet) ====== */
   function baseUser(){
     const u = (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) || {};
     return {
@@ -282,32 +282,47 @@
         user_id: body.user_id || '',
         username: body.username || '',
         client_ts: body.client_ts || new Date().toISOString(),
+        sheet: body.sheet || '',
         payload: btoa(unescape(encodeURIComponent(JSON.stringify(body.payload||{}))))
       }).toString();
       const img = new Image();
       img.src = LOG_URL + '?' + q + '&_t=' + Date.now();
     }catch(_){}
   }
+  function _sendLog(body){
+    const json = JSON.stringify(body);
+    fetch(LOG_URL,{method:'POST',mode:'no-cors',keepalive:true,body:json}).catch(()=>{
+      try{
+        if(navigator.sendBeacon){
+          const blob=new Blob([json],{type:'application/json'});
+          if(navigator.sendBeacon(LOG_URL, blob)) return;
+        }
+      }catch(_){}
+      pixelFallback(body);
+    });
+  }
   function logEvent(event, payload){
     try{
-      if(!LOG_URL) return;
       const body = {
         action:'log', module:'router',
         page:(location.pathname.split('/').pop()||'router.html'),
         event:String(event||''), ...baseUser(),
         payload:payload||{}, client_ts:new Date().toISOString()
       };
-      const json = JSON.stringify(body);
-      fetch(LOG_URL,{method:'POST',mode:'no-cors',keepalive:true,body:json})
-        .catch(()=>{
-          try{
-            if(navigator.sendBeacon){
-              const blob=new Blob([json],{type:'application/json'});
-              if(navigator.sendBeacon(LOG_URL, blob)) return;
-            }
-          }catch(_){}
-          pixelFallback(body);
-        });
+      _sendLog(body);
+    }catch(_){}
+  }
+  // Специально для мануала — в лист Log_Simple
+  function logManual(event, payload){
+    try{
+      const body = {
+        action:'log', module:'router',
+        page:(location.pathname.split('/').pop()||'router.html'),
+        event:String(event||''), ...baseUser(),
+        payload:payload||{}, client_ts:new Date().toISOString(),
+        sheet:'Log_Simple'
+      };
+      _sendLog(body);
     }catch(_){}
   }
 
@@ -427,7 +442,7 @@
     var tiles=document.querySelectorAll('.tile[data-module]');
     tiles.forEach(function(t){
       const mod = t.getAttribute('data-module');
-      if(mod==='manual') return; // для Инструкции отдельная логика ниже
+      if(mod==='manual') return; // для Инструкции — отдельная логика ниже
       bindTap(t, function(ev){
         rippleIn(ev.target, ev);
         logEvent('tile_tap', { module: mod, was_opened: opened });
@@ -465,20 +480,20 @@
         const dot=document.createElement('div'); dot.className='dot'; if(i===0) dot.classList.add('active');
         dot.addEventListener('click',()=>goTo(i)); dotsEl.appendChild(dot);
       });
-      cur=0; applyTransform(); logEvent('manual_slide_view',{index:0});
+      cur=0; applyTransform(); logManual('manual_slide_view',{index:0});
     }
     function applyTransform(){
       slidesEl.style.transform = `translateX(${-100*cur}%)`;
       Array.from(dotsEl.children).forEach((d,i)=>d.classList.toggle('active', i===cur));
     }
-    function goTo(n){ if(!slidesCache) return; const max=slidesCache.length; const old=cur; cur=Math.max(0,Math.min(max-1,n)); if(cur!==old){ applyTransform(); logEvent('manual_slide_view',{index:cur}); } }
-    function next(){ if(!slidesCache) return; if(cur<slidesCache.length-1){ cur++; applyTransform(); logEvent('manual_next',{index:cur}); } }
-    function prev(){ if(!slidesCache) return; if(cur>0){ cur--; applyTransform(); logEvent('manual_prev',{index:cur}); } }
+    function goTo(n){ if(!slidesCache) return; const max=slidesCache.length; const old=cur; cur=Math.max(0,Math.min(max-1,n)); if(cur!==old){ applyTransform(); logManual('manual_slide_view',{index:cur}); } }
+    function next(){ if(!slidesCache) return; if(cur<slidesCache.length-1){ cur++; applyTransform(); logManual('manual_next',{index:cur}); } }
+    function prev(){ if(!slidesCache) return; if(cur>0){ cur--; applyTransform(); logManual('manual_prev',{index:cur}); } }
 
     function openManual(){
       if (opened) closeMenu();
       overlay.classList.add('show'); overlay.setAttribute('aria-hidden','false');
-      logEvent('manual_open',{});
+      logManual('manual_open',{});
       if (slidesCache){ renderSlides(slidesCache); return; }
       fetch(`${LOG_URL}?action=get_manual`, {cache:'no-cache'})
         .then(r=>r.json()).then(j=>{
@@ -492,7 +507,8 @@
         });
     }
     function closeManual(){
-      overlay.classList.remove('show'); overlay.setAttribute('aria-hidden','true'); logEvent('manual_close',{index:cur});
+      overlay.classList.remove('show'); overlay.setAttribute('aria-hidden','true');
+      logManual('manual_close',{index:cur});
     }
 
     // жесты/клавиатура
