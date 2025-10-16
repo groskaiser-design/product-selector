@@ -95,6 +95,7 @@ function buildWheel(fieldEl, initial){
   const max = +fieldEl.dataset.max;
   const minInt = Math.floor(min);
   const maxInt = Math.floor(max);
+  const intRange = maxInt - minInt; // FIX: длина диапазона индексов
 
   const intCol = fieldEl.querySelector('.col-int');
   const fracCol = fieldEl.querySelector('.col-frac');
@@ -128,14 +129,16 @@ function buildWheel(fieldEl, initial){
   function setValue(v){
     const clamped = clamp(+v, min, max);
     const rounded = Math.round(clamped * 10) / 10;  // до десятых
-    const i = Math.trunc(rounded);
-    let f = Math.round((rounded - i) * 10);
-    if (i === maxInt) f = 0;                         // у максимума дроби нет
+    const iVal = Math.trunc(rounded);
+    let f = Math.round((rounded - iVal) * 10);
+    if (iVal === maxInt) f = 0;                      // у максимума дроби нет
+
+    const iIdx = iVal - minInt;                      // FIX: значение → индекс
 
     isProgrammatic = true;
-    setScrollInstant(intCol, i);
+    setScrollInstant(intCol, iIdx);                  // индекс
     setScrollInstant(fracCol, f);
-    fracCol.style.opacity = (i===maxInt)?0.5:1;
+    fracCol.style.opacity = (iVal===maxInt)?0.5:1;
     markActive(intCol); markActive(fracCol);
     requestAnimationFrame(()=>{ isProgrammatic = false; });
   }
@@ -147,14 +150,16 @@ function buildWheel(fieldEl, initial){
     clearTimeout(snapTimer);
     snapTimer = setTimeout(()=>{
       if (isProgrammatic) return;
-      let i = clamp(nearestIndex(intCol), minInt, maxInt);
+
+      let iIdx = clamp(nearestIndex(intCol), 0, intRange); // FIX: ограничиваем индекс
       let f = clamp(nearestIndex(fracCol), 0, 9);
-      if (i === maxInt) f = 0;
+      const iVal = minInt + iIdx;                           // индекс → значение
+      if (iVal === maxInt) f = 0;
 
       isProgrammatic = true;
-      setScrollInstant(intCol, i);
+      setScrollInstant(intCol, iIdx);
       setScrollInstant(fracCol, f);
-      fracCol.style.opacity = (i===maxInt)?0.5:1;
+      fracCol.style.opacity = (iVal===maxInt)?0.5:1;
       markActive(intCol); markActive(fracCol);
       requestAnimationFrame(()=>{ isProgrammatic = false; });
     }, 80);
@@ -174,10 +179,11 @@ function buildWheel(fieldEl, initial){
   return {
     setValue,
     get value(){
-      const i = clamp(nearestIndex(intCol), minInt, maxInt);
+      const iIdx = clamp(nearestIndex(intCol), 0, intRange); // FIX: берём индекс
       let f = clamp(nearestIndex(fracCol), 0, 9);
-      if (i === maxInt) f = 0;
-      return +(i + f/10).toFixed(1);
+      const iVal = minInt + iIdx;                            // индекс → значение
+      if (iVal === maxInt) f = 0;
+      return +(iVal + f/10).toFixed(1);
     },
     setDisabled
   };
@@ -246,7 +252,7 @@ for (const cfg of FIELDS){
   const h = document.createElement('div');
   h.className = 'help';
   h.textContent = cfg.unit==='кг' ? 'кг и десятые доли' :
-                  cfg.unit==='см' ? 'сантиметры и миллиметры' : 'проценты с десятыми';
+                  cfg.unit==='см' ? 'сантиметры и десятые' : 'проценты с десятыми';
   f.appendChild(h);
 
   fieldsWrap.appendChild(f);
