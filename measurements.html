@@ -100,14 +100,27 @@
     transition: transform .08s ease, box-shadow .12s ease, filter .12s ease;
     -webkit-tap-highlight-color:transparent;
     touch-action: manipulation;
+    will-change: transform, box-shadow, filter;
   }
   .btn:active{
     transform:translateY(1px) scale(.98);
     box-shadow:0 6px 16px rgba(237,47,98,.35), inset 0 1px 0 rgba(255,255,255,.4);
     filter:saturate(.95);
   }
+  /* FIX: явная микропульсация на нажатие (видно даже при быстром тапе) */
+  @keyframes btnPress {
+    0%   { transform: translateY(0) scale(1);   box-shadow:0 12px 26px rgba(237,47,98,.35), inset 0 1px 0 rgba(255,255,255,.4); }
+    50%  { transform: translateY(1px) scale(.98); box-shadow:0 6px 16px rgba(237,47,98,.35), inset 0 1px 0 rgba(255,255,255,.4); }
+    100% { transform: translateY(0) scale(1);   box-shadow:0 12px 26px rgba(237,47,98,.35), inset 0 1px 0 rgba(255,255,255,.4); }
+  }
+  .btn.pressed { animation: btnPress .18s ease; }
+
   .btn:focus-visible{outline:2px solid rgba(255,255,255,.7); outline-offset:2px; border-radius:16px}
-  @media (prefers-reduced-motion: reduce){ .btn{ transition:none; } .btn:active{ transform:none; filter:none; } }
+  @media (prefers-reduced-motion: reduce){
+    .btn{ transition:none; }
+    .btn:active{ transform:none; filter:none; }
+    .btn.pressed{ animation:none; }
+  }
   .disabled{opacity:.4;filter:saturate(.6)}
 </style>
 </head>
@@ -168,13 +181,29 @@
   </div>
 
 <script>
-/* ===== Telegram Mini App boot ===== */
+/* ===== Telegram Mini App boot + BackButton (FIX) ===== */
 (function initTMA(){
   const tg = window.Telegram?.WebApp;
   if (!tg) return;
   try { tg.ready(); } catch(e){}
   try { tg.expand(); } catch(e){}
   try { tg.setHeaderColor('secondary_bg_color'); } catch(e){}
+
+  // FIX: включаем BackButton вместо "Закрыть"
+  try {
+    tg.BackButton.show();
+    tg.onEvent('backButtonClicked', () => {
+      const measuresSec = document.getElementById('sec-measures');
+      const measuresHeader = document.querySelector('[data-toggle="sec-measures"]');
+      if (measuresSec && !measuresSec.classList.contains('collapsed')) {
+        measuresSec.classList.add('collapsed');
+        if (measuresHeader) measuresHeader.setAttribute('aria-expanded','false');
+        return;
+      }
+      // если всё свернуто — выходим из мини-приложения
+      tg.close();
+    });
+  } catch(e){}
 })();
 
 /* ===== КОНСТАНТЫ ХРАНИЛИЩА ===== */
@@ -183,7 +212,7 @@ const LS_KEY_DRAFT = 'measurements:draft';  // { ts, data }
 
 /* ===== СЕТЬ / БЭКЕНД ===== */
 const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbwwr4M2Z6ZB8GyNgPl97LrGsU_OFCHWPF8gEJ5PZNNzpDmW6VKnI24emwGzT6Snp0Dd0A/exec'; // ← ваш URL деплоя Web App
-const APP_VERSION = '1.0.4';
+const APP_VERSION = '1.0.5';
 
 async function callBackend(action, extra = {}) {
   const base = {
@@ -255,6 +284,8 @@ function toggleSectionByHeader(h){
   if (id === 'sec-measures' && !willBeCollapsed && !fieldsWrap._observed){
     observeFields();
     fieldsWrap._observed = true;
+    // FIX: после раскрытия — выравниваем все уже созданные колёса
+    requestAnimationFrame(realignAllWheels);
   }
 }
 document.querySelectorAll('.section-h').forEach(h=>{
@@ -398,8 +429,26 @@ function buildWheel(fieldEl, initial){
     dispatchChange();
   }
 
+  // FIX: сверхнадёжная инициализация после раскладки
   const initVal = (typeof initial==='number') ? initial : (min + (max - min) / 2);
-  requestAnimationFrame(()=>requestAnimationFrame(()=>setValue(initVal)));
+  (function robustInit(){
+    const apply = ()=>{
+      setValue(initVal);
+      // если по какой-то причине оказались не на init — повторим мягко
+      setTimeout(()=>{ if (Math.abs(api.value - initVal) > 0.09) setValue(initVal); }, 120);
+    };
+    if (intCol.clientHeight === 0 || fracCol.clientHeight === 0){
+      let tries = 0;
+      const tick = ()=>{
+        if ((intCol.clientHeight>0 && fracCol.clientHeight>0) || tries>16) apply();
+        else { tries++; requestAnimationFrame(tick); }
+      };
+      requestAnimationFrame(tick);
+    } else {
+      // подстрахуемся двойным rAF
+      requestAnimationFrame(()=>requestAnimationFrame(apply));
+    }
+  })();
 
   const api = {
     setValue,
@@ -507,6 +556,16 @@ function ensureWheel(fieldEl, cfg){
   return w;
 }
 
+// FIX: мягкое выравнивание всех уже созданных колёс (на случай смены ориентации/шрифта/темы)
+function realignAllWheels(){
+  for (const k in wheels){
+    const w = wheels[k];
+    if (!w) continue;
+    const v = w.value;
+    w.setValue(v);
+  }
+}
+
 for (const cfg of FIELDS){
   const f = document.createElement('div');
   f.className = 'field';
@@ -572,7 +631,7 @@ if (!document.getElementById('sec-measures').classList.contains('collapsed')){
   observeFields(); fieldsWrap._observed = true;
 }
 
-/* ===== ЧЕРНОВИК (автосохранение офлайн до нажатия "Сохранить") ===== */
+/* ===== ЧЕРНОВИК (автосохранение офлайн) ===== */
 let draftTimer=null;
 function scheduleDraftSave(){
   clearTimeout(draftTimer);
@@ -619,13 +678,21 @@ window.addEventListener('beforeunload', ()=>{ try{ saveDraft(); }catch(e){} });
         if (wheels[k] && typeof res.last.data[k] === 'number') wheels[k].setValue(res.last.data[k]);
         if (wheels[k] && res.last.data[k] === null) wheels[k].setDisabled(true);
       }
+      // FIX: выравниваем после подстановки серверных значений
+      requestAnimationFrame(realignAllWheels);
     }
   }catch(e){ /* оффлайн — ок */ }
 })();
 
 /* ===== СОХРАНЕНИЕ ===== */
-document.getElementById('saveBtn').addEventListener('click', async ()=>{
+const saveBtn = document.getElementById('saveBtn');
+// FIX: явная визуальная обратная связь нажатия
+saveBtn.addEventListener('pointerdown', ()=> saveBtn.classList.add('pressed'));
+['pointerup','pointercancel','pointerleave'].forEach(ev=> saveBtn.addEventListener(ev, ()=> saveBtn.classList.remove('pressed')));
+
+saveBtn.addEventListener('click', async ()=>{
   try{ window.Telegram?.WebApp?.HapticFeedback?.impactOccurred('light'); }catch(e){}
+  saveBtn.classList.add('pressed'); setTimeout(()=>saveBtn.classList.remove('pressed'), 180);
 
   const data = collectCurrentData(true);
 
@@ -637,8 +704,8 @@ document.getElementById('saveBtn').addEventListener('click', async ()=>{
   const extra = {
     tz,
     save_id: (crypto?.randomUUID ? crypto.randomUUID() : String(clientTs)),
-    client_ts: clientTs,          // дозапись даты/времени клиента
-    client_day_local: dayLocal,   // дозапись локального дня клиента
+    client_ts: clientTs,
+    client_day_local: dayLocal,
     data
   };
 
