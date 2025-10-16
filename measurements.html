@@ -62,7 +62,6 @@
   .option.active{ color:#fff; opacity:1; text-shadow:0 1px 0 rgba(0,0,0,.2); }
   .sep{display:flex;align-items:center;justify-content:center;width:10px;color:#e5e7eb;font-weight:800}
 
-  /* опциональность для % жира */
   .optline{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:8px}
   .optline input{width:18px;height:18px}
 
@@ -85,14 +84,13 @@
   </div>
 
 <script>
-/* ===== утилиты ===== */
 const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
 const rowH = 36, pad = 4;
 
-/* ===== конструктор duo-wheel поля ===== */
-function buildWheel(fieldEl, initial, opts={}){
+function buildWheel(fieldEl, initial){
   const min = +fieldEl.dataset.min;
   const max = +fieldEl.dataset.max;
+  const maxInt = Math.floor(max);                // FIX: используем дальше
 
   const intCol = fieldEl.querySelector('.col-int');
   const fracCol = fieldEl.querySelector('.col-frac');
@@ -106,7 +104,7 @@ function buildWheel(fieldEl, initial, opts={}){
     col.innerHTML=''; col.appendChild(frag);
   }
 
-  fillCol(intCol, Math.floor(min), Math.floor(max));
+  fillCol(intCol, Math.floor(min), maxInt);
   fillCol(fracCol, 0, 9);
 
   function nearestIndex(col){
@@ -125,17 +123,23 @@ function buildWheel(fieldEl, initial, opts={}){
     const val = clamp(+v, min, max);
     const i = Math.trunc(val);
     let f = Math.round((val - i) * 10);
-    if (i===Math.floor(max)) f = 0;
+    if (i===maxInt) f = 0;
     scrollToIndex(intCol, i, instant);
     scrollToIndex(fracCol, f, instant);
     markActive(intCol); markActive(fracCol);
   }
+
   let snapTimer=null;
   function onScrollEnd(){
     clearTimeout(snapTimer);
     snapTimer = setTimeout(()=>{
-      scrollToIndex(intCol, clamp(nearestIndex(intCol), Math.floor(min), Math.floor(max)), true);
-      scrollToIndex(fracCol, clamp(nearestIndex(fracCol), 0, 9), true);
+      const i = clamp(nearestIndex(intCol), Math.floor(min), maxInt);
+      scrollToIndex(intCol, i, true);
+
+      let f = clamp(nearestIndex(fracCol), 0, 9);
+      if (i === maxInt) f = 0;                  // FIX: у максимума дробная часть = 0
+      scrollToIndex(fracCol, f, true);
+
       markActive(intCol); markActive(fracCol);
     }, 80);
   }
@@ -144,26 +148,26 @@ function buildWheel(fieldEl, initial, opts={}){
     markActive(col);
   });
 
-  // API для отключения (только для %жира)
   function setDisabled(dis){
     fieldEl.classList.toggle('disabled', dis);
     [intCol, fracCol].forEach(c=>c.style.pointerEvents = dis ? 'none':'auto');
   }
 
-const initVal = initial ?? (min + (max - min) / 2);
-requestAnimationFrame(()=>requestAnimationFrame(()=>setValue(initVal, true)));
+  const initVal = initial ?? (min + (max - min) / 2);
+  requestAnimationFrame(()=>requestAnimationFrame(()=>setValue(initVal, true)));
+
   return {
     setValue,
     get value(){
-      const i = clamp(nearestIndex(intCol), Math.floor(min), Math.floor(max));
-      const f = clamp(nearestIndex(fracCol), 0, 9);
+      const i = clamp(nearestIndex(intCol), Math.floor(min), maxInt);
+      let f = clamp(nearestIndex(fracCol), 0, 9);
+      if (i === maxInt) f = 0;                  // FIX: соблюдаем правило и здесь
       return +(i + f/10).toFixed(1);
     },
     setDisabled
   };
 }
 
-/* ===== конфиг анкеты ===== */
 const FIELDS = [
   { key:'weight', label:'Вес', unit:'кг', min:40, max:250, initial:70.0 },
   { key:'height', label:'Рост', unit:'см', min:120, max:230, initial:160.0 },
@@ -186,10 +190,8 @@ const FIELDS = [
   { key:'ankle',   label:'Обхват лодыжки',  unit:'см', min:15, max:35, initial:22 },
 ];
 
-
-/* ===== генерация формы ===== */
 const fieldsWrap = document.getElementById('fields');
-const wheels = {}; // key -> wheel API
+const wheels = {};
 
 for (const cfg of FIELDS){
   const f = document.createElement('div');
@@ -219,7 +221,6 @@ for (const cfg of FIELDS){
     f.appendChild(opt);
   }
 
-  // подсказка
   const h = document.createElement('div');
   h.className = 'help';
   h.textContent = cfg.unit==='кг' ? 'кг и десятые доли' :
@@ -233,13 +234,10 @@ for (const cfg of FIELDS){
 
   if (cfg.optional){
     const cb = f.querySelector('#opt_'+cfg.key);
-    cb.addEventListener('change', ()=>{
-      wheel.setDisabled(cb.checked);
-    });
+    cb.addEventListener('change', ()=> wheel.setDisabled(cb.checked));
   }
 }
 
-/* ===== сохранение (заглушка) ===== */
 document.getElementById('saveBtn').addEventListener('click', ()=>{
   const data = {};
   for (const cfg of FIELDS){
