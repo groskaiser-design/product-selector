@@ -132,6 +132,7 @@
     -webkit-overflow-scrolling:touch; scrollbar-gutter:stable;
   }
 
+  /* системные скроллбары */
   .slide::-webkit-scrollbar{width:8px}
   .slide::-webkit-scrollbar-thumb{background:#c5c9d2;border-radius:8px}
   .slide::-webkit-scrollbar-track{background:transparent}
@@ -145,6 +146,22 @@
   .manual-footer{display:flex;align-items:center;justify-content:center;gap:8px;padding:10px}
   .dot{width:8px;height:8px;border-radius:999px;background:#d1d5db;cursor:pointer}
   .dot.active{background:#6366f1}
+
+  /* ===== Прелоадер ===== */
+  .manual-loader{
+    position:absolute; inset:0;
+    display:none; align-items:center; justify-content:center;
+    background:#fff; /* как на продуктах — поверх контента в модалке */
+    gap:10px;
+  }
+  .manual-loader.show{display:flex}
+  .spinner{
+    width:28px; height:28px; border-radius:999px;
+    border:3px solid #e5e7eb; border-top-color:#6366f1;
+    animation:spin 0.8s linear infinite;
+  }
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .loading-text{font-weight:700;color:#4b5563}
 </style>
 </head>
 <body>
@@ -250,6 +267,11 @@
         <button class="manual-close" id="manualClose" aria-label="Закрыть">×</button>
       </div>
       <div class="manual-body">
+        <!-- Прелоадер внутри модалки -->
+        <div class="manual-loader" id="manualLoader">
+          <div class="spinner"></div>
+          <div class="loading-text">Загрузка…</div>
+        </div>
         <div class="slides" id="slides"></div>
       </div>
       <div class="manual-footer" id="dots"></div>
@@ -275,7 +297,7 @@
   };
   try{tg.ready();tg.expand();}catch(e){}
 
-  /* ====== ЛОГИ ====== */
+  /* ====== ЛОГИ (в один лист: events) ====== */
   function baseUser(){
     const u = (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) || {};
     return {
@@ -299,7 +321,6 @@
       img.src = LOG_URL + '?' + q + '&_t=' + Date.now();
     }catch(_){}
   }
-
   function _sendLog(body){
     try{
       if(navigator.sendBeacon){
@@ -309,7 +330,6 @@
     }catch(_){}
     pixelFallback(body);
   }
-
   function logEvent(event, payload){
     try{
       const body = {
@@ -321,11 +341,7 @@
       _sendLog(body);
     }catch(_){}
   }
-
-  // Инструкция пишет в тот же лист, что и все остальные события (events)
-  function logManual(event, payload){
-    logEvent(event, payload);
-  }
+  function logManual(event, payload){ logEvent(event, payload); }
 
   /* ====== ИКОНКИ ====== */
   (function attachIcons(){
@@ -458,9 +474,21 @@
     const slidesEl = document.getElementById('slides');
     const dotsEl   = document.getElementById('dots');
     const closeBtn = document.getElementById('manualClose');
+    const loaderEl = document.getElementById('manualLoader');
 
     let slidesCache = null;
     let cur = 0;
+
+    const showManualLoader = () => {
+      loaderEl.classList.add('show');
+      slidesEl.style.visibility = 'hidden';
+      dotsEl.style.visibility = 'hidden';
+    };
+    const hideManualLoader = () => {
+      loaderEl.classList.remove('show');
+      slidesEl.style.visibility = '';
+      dotsEl.style.visibility = '';
+    };
 
     function escapeHtml(s){ return (s||'').replace(/[&<>\"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]||m)); }
 
@@ -480,6 +508,7 @@
         dot.addEventListener('click',()=>goTo(i)); dotsEl.appendChild(dot);
       });
       cur=0; applyTransform(); logManual('manual_slide_view',{index:0});
+      hideManualLoader();
     }
     function applyTransform(){
       slidesEl.style.transform = `translateX(${-100*cur}%)`;
@@ -493,7 +522,12 @@
       if (opened) closeMenu();
       overlay.classList.add('show'); overlay.setAttribute('aria-hidden','false');
       logManual('manual_open',{});
-      if (slidesCache){ renderSlides(slidesCache); return; }
+
+      showManualLoader();
+      if (slidesCache){
+        renderSlides(slidesCache);
+        return;
+      }
       fetch(`${LOG_URL}?action=get_manual`, {cache:'no-cache'})
         .then(r=>r.json()).then(j=>{
           const slides = (j && j.ok && Array.isArray(j.slides)) ? j.slides : [];
@@ -529,7 +563,7 @@
     bindTap(closeBtn, ()=>closeManual());
     bindTap(manualTile, e=>{ rippleIn(e.target,e); openManual(); });
 
-    // стартовые события для проверки
+    // стартовые события
     logEvent('app_open', {});
     logEvent('ping', {version:'router-logger-v3'});
   })();
