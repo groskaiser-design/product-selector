@@ -206,7 +206,6 @@ function toggleSectionByHeader(h){
   const sec = document.getElementById(id);
   const willBeCollapsed = sec.classList.toggle('collapsed');
   h.setAttribute('aria-expanded', String(!willBeCollapsed));
-  // при первом раскрытии "Замеры" — запускаем ленивую инициализацию
   if (id === 'sec-measures' && !willBeCollapsed && !fieldsWrap._observed){
     observeFields();
     fieldsWrap._observed = true;
@@ -275,7 +274,7 @@ function buildWheel(fieldEl, initial){
   let disabled = false; // локальное состояние disable
 
   function applyFracLock(iVal){
-    if (disabled) return; // когда поле выключено — ничего не трогаем
+    if (disabled) return;
     const lock = (iVal === maxInt);
     fracCol.style.pointerEvents = lock ? 'none' : 'auto';
     fracCol.style.opacity = lock ? 0.5 : 1;
@@ -348,7 +347,6 @@ function buildWheel(fieldEl, initial){
     duo.setAttribute('aria-disabled', String(dis));
     [intCol, fracCol].forEach(c=>c.style.pointerEvents = dis ? 'none':'auto');
     if (!dis){
-      // при повторной активации восстановим корректный lock дробной части
       const iIdx = clamp(nearestIndex(intCol), 0, intRange);
       const iVal = minInt + iIdx;
       applyFracLock(iVal);
@@ -569,11 +567,25 @@ window.addEventListener('beforeunload', ()=>{ try{ saveDraft(); }catch(e){} });
 /* ===== СОХРАНЕНИЕ ===== */
 document.getElementById('saveBtn').addEventListener('click', ()=>{
   try{ window.Telegram?.WebApp?.HapticFeedback?.impactOccurred('light'); }catch(e){}
+
   const data = collectCurrentData(true);
   const payload = { ts: Date.now(), data };
+
+  // 1) сохраняем и чистим черновик
   writeJSON(LS_KEY_LAST, payload);
   removeKey(LS_KEY_DRAFT);
-  document.getElementById('lastTime').textContent = 'Последний замер: ' + (new Intl.DateTimeFormat('ru-RU', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'})).format(new Date(payload.ts));
+
+  // 2) обновляем бейдж времени и базовые значения для ленивых колёс
+  document.getElementById('lastTime').textContent = 'Последний замер: ' + fmt(payload.ts);
+  Object.assign(baseData, data);
+
+  // 3) сворачиваем блок «Замеры» и обновляем aria
+  const measuresSec = document.getElementById('sec-measures');
+  const measuresHeader = document.querySelector('[data-toggle="sec-measures"]');
+  if (measuresSec) measuresSec.classList.add('collapsed');
+  if (measuresHeader) measuresHeader.setAttribute('aria-expanded','false');
+
+  // 4) демонстрационный алерт (как и было)
   alert('Сохраняем:\n' + JSON.stringify(data, null, 2));
 });
 </script>
