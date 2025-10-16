@@ -4,6 +4,8 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Замеры — анкета (двойные колёса)</title>
+<!-- P1: Хаптика Telegram (не мешает вне WebApp) -->
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
   :root{
     --bg: linear-gradient(135deg,#667eea 0%,#764ba2 100%);
@@ -12,6 +14,8 @@
     --border: rgba(255,255,255,.28);
     --shadow: 0 8px 28px rgba(0,0,0,.18);
     --okA:#34d399; --okB:#10b981;
+    /* P0: единый источник высоты строки для JS и CSS */
+    --row: 36px;
   }
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%}
@@ -68,7 +72,7 @@
   }
   .duo::after{
     content:""; position:absolute; left:4px; right:4px; top:50%;
-    height:36px; transform:translateY(-50%);
+    height:var(--row); transform:translateY(-50%);
     background:rgba(255,255,255,.14); border:1px solid rgba(255,255,255,.35);
     border-radius:10px; pointer-events:none;
   }
@@ -81,7 +85,8 @@
   }
   .col::-webkit-scrollbar{display:none}
   .option{
-    height:36px; display:flex; align-items:center; justify-content:center;
+    height:var(--row);
+    display:flex; align-items:center; justify-content:center;
     font-weight:900; font-size:18px; color:#eef2ff; opacity:.55; scroll-snap-align:center;
   }
   .option.active{ color:#fff; opacity:1; text-shadow:0 1px 0 rgba(0,0,0,.2); }
@@ -91,24 +96,35 @@
   .optline input{width:18px;height:18px}
 
   /* === Кнопка и панель сохранения === */
-  .savebar{display:flex;justify-content:center;padding:12px;border-top:1px solid rgba(255,255,255,.14)} /* ⇐ центрируем */
+  .savebar{
+    display:flex;justify-content:center;padding:12px;
+    border-top:1px solid rgba(255,255,255,.14);
+    /* P1: безопасная зона iOS */
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+  }
   .btn{
     min-width:160px;padding:12px 16px;border:0;border-radius:14px;
-    background:#ED2F62;             /* ⇐ новый цвет */
+    background:#ED2F62;
     color:#fff;font-weight:900;
     box-shadow:0 12px 26px rgba(237,47,98,.35), inset 0 1px 0 rgba(255,255,255,.4);
-    transition: transform .08s ease, box-shadow .12s ease, filter .12s ease; /* ⇐ анимация */
+    transition: transform .08s ease, box-shadow .12s ease, filter .12s ease;
     -webkit-tap-highlight-color:transparent;
   }
   .btn:active{
-    transform:translateY(1px) scale(.98);           /* ⇐ эффект нажатия */
+    transform:translateY(1px) scale(.98);
     box-shadow:0 6px 16px rgba(237,47,98,.35), inset 0 1px 0 rgba(255,255,255,.4);
     filter:saturate(.95);
   }
   .btn:focus-visible{outline:2px solid rgba(255,255,255,.7); outline-offset:2px; border-radius:16px}
 
+  /* P1: уважение prefers-reduced-motion */
+  @media (prefers-reduced-motion: reduce){
+    .btn{ transition:none; }
+    .btn:active{ transform:none; filter:none; }
+  }
+
   /* отключаем ТОЛЬКО колесо (а не весь .field) */
-  .disabled{opacity:.4;filter:saturate(.6)}  /* класс остаётся, но будем вешать его на .duo */
+  .disabled{opacity:.4;filter:saturate(.6)}
 </style>
 </head>
 <body>
@@ -122,8 +138,11 @@
 
 <script>
 /* ===== utils ===== */
+/* P0: читаем высоту строки из CSS-переменной, чтобы не расходиться с версткой */
+const ROW_VAR = getComputedStyle(document.documentElement).getPropertyValue('--row').trim();
+const rowH = ROW_VAR.endsWith('px') ? parseFloat(ROW_VAR) : (parseFloat(ROW_VAR) || 36);
+const pad = 4;
 const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
-const rowH = 36, pad = 4;
 
 /* ===== duo-wheel ===== */
 function buildWheel(fieldEl, initial){
@@ -135,7 +154,7 @@ function buildWheel(fieldEl, initial){
 
   const intCol = fieldEl.querySelector('.col-int');
   const fracCol = fieldEl.querySelector('.col-frac');
-  const duo = fieldEl.querySelector('.duo'); // ⇐ понадобится для локального disable
+  const duo = fieldEl.querySelector('.duo');
 
   const opt = t => { const d=document.createElement('div'); d.className='option'; d.textContent=t; return d; };
   function fillCol(col, from, to){
@@ -153,7 +172,13 @@ function buildWheel(fieldEl, initial){
 
   const markActive = col => {
     const idx = nearestIndex(col);
-    Array.from(col.children).forEach((el,i)=>el.classList.toggle('active', i===idx+pad));
+    const children = col.children;
+    const activeIdx = idx + pad;
+    for (let i=0; i<children.length; i++){
+      const el = children[i];
+      // только два переключения классов (предыдущий/текущий) не храним — простая версия
+      el.classList.toggle('active', i===activeIdx);
+    }
   };
 
   const setScrollInstant = (col, idx) => {
@@ -162,6 +187,15 @@ function buildWheel(fieldEl, initial){
   };
 
   let isProgrammatic = false;
+  let rafInt = 0, rafFrac = 0;
+  let snapTimer=null;
+  const supportsScrollEnd = 'onscrollend' in window;
+
+  function applyFracLock(iVal){
+    const lock = (iVal === maxInt);
+    fracCol.style.pointerEvents = lock ? 'none' : 'auto';       // P0: блокируем ввод
+    fracCol.style.opacity = lock ? 0.5 : 1;
+  }
 
   function setValue(v){
     const clamped = clamp(+v, min, max);
@@ -175,39 +209,55 @@ function buildWheel(fieldEl, initial){
     isProgrammatic = true;
     setScrollInstant(intCol, iIdx);
     setScrollInstant(fracCol, f);
-    fracCol.style.opacity = (iVal===maxInt)?0.5:1;
+    applyFracLock(iVal);
     markActive(intCol); markActive(fracCol);
     requestAnimationFrame(()=>{ isProgrammatic = false; });
   }
 
-  let snapTimer=null;
-  function onScroll(){
+  function snapNow(){
     if (isProgrammatic) return;
-    markActive(this);
-    clearTimeout(snapTimer);
-    snapTimer = setTimeout(()=>{
-      if (isProgrammatic) return;
+    let iIdx = clamp(nearestIndex(intCol), 0, intRange);
+    let f = clamp(nearestIndex(fracCol), 0, 9);
+    const iVal = minInt + iIdx;
+    if (iVal === maxInt) f = 0;
 
-      let iIdx = clamp(nearestIndex(intCol), 0, intRange);
-      let f = clamp(nearestIndex(fracCol), 0, 9);
-      const iVal = minInt + iIdx;
-      if (iVal === maxInt) f = 0;
-
-      isProgrammatic = true;
-      setScrollInstant(intCol, iIdx);
-      setScrollInstant(fracCol, f);
-      fracCol.style.opacity = (iVal===maxInt)?0.5:1;
-      markActive(intCol); markActive(fracCol);
-      requestAnimationFrame(()=>{ isProgrammatic = false; });
-    }, 80);
+    isProgrammatic = true;
+    setScrollInstant(intCol, iIdx);
+    setScrollInstant(fracCol, f);
+    applyFracLock(iVal);
+    markActive(intCol); markActive(fracCol);
+    requestAnimationFrame(()=>{ isProgrammatic = false; });
   }
-  intCol.addEventListener('scroll', onScroll, {passive:true});
-  fracCol.addEventListener('scroll', onScroll, {passive:true});
+
+  function onScrollInt(){
+    if (isProgrammatic) return;
+    if (rafInt) cancelAnimationFrame(rafInt);
+    rafInt = requestAnimationFrame(()=>markActive(intCol));
+    scheduleSnap();
+  }
+  function onScrollFrac(){
+    if (isProgrammatic) return;
+    if (rafFrac) cancelAnimationFrame(rafFrac);
+    rafFrac = requestAnimationFrame(()=>markActive(fracCol));
+    scheduleSnap();
+  }
+
+  function scheduleSnap(){
+    if (supportsScrollEnd) return; // будет отдельное событие
+    clearTimeout(snapTimer);
+    snapTimer = setTimeout(snapNow, 80);
+  }
+
+  intCol.addEventListener('scroll', onScrollInt, {passive:true});
+  fracCol.addEventListener('scroll', onScrollFrac, {passive:true});
+  if (supportsScrollEnd){
+    intCol.addEventListener('scrollend', snapNow, {passive:true});
+    fracCol.addEventListener('scrollend', snapNow, {passive:true});
+  }
 
   function setDisabled(dis){
-    duo.classList.toggle('disabled', dis);                 // ⇐ класс только на колесо
-    [intCol, fracCol].forEach(c=>c.style.pointerEvents = dis ? 'none':'auto'); // ⇐ колесо неактивно
-    // чекбокс и подпись остаются интерактивными и без приглушения
+    duo.classList.toggle('disabled', dis);
+    [intCol, fracCol].forEach(c=>c.style.pointerEvents = dis ? 'none':'auto');
   }
 
   const initVal = (typeof initial==='number') ? initial : (min + (max - min) / 2);
@@ -222,7 +272,17 @@ function buildWheel(fieldEl, initial){
       if (iVal === maxInt) f = 0;
       return +(iVal + f/10).toFixed(1);
     },
-    setDisabled
+    setDisabled,
+    /* P2: возможность корректного размонтирования (если понадобится) */
+    destroy(){
+      clearTimeout(snapTimer);
+      intCol.removeEventListener('scroll', onScrollInt);
+      fracCol.removeEventListener('scroll', onScrollFrac);
+      if (supportsScrollEnd){
+        intCol.removeEventListener('scrollend', snapNow);
+        fracCol.removeEventListener('scrollend', snapNow);
+      }
+    }
   };
 }
 
@@ -254,9 +314,23 @@ const FIELDS = [
   { key:'ankle',   label:'Обхват лодыжки',  unit:'см', min:15, max:35, initial:22 },
 ];
 
-/* ===== render ===== */
+/* ===== render (P0: ленивая инициализация) ===== */
 const fieldsWrap = document.getElementById('fields');
-const wheels = {};
+const wheels = {};               // публичный доступ по ключу
+const wheelMap = new WeakMap();  // приватное хранение по DOM-элементу
+
+function ensureWheel(fieldEl, cfg){
+  let w = wheelMap.get(fieldEl);
+  if (!w){
+    w = buildWheel(fieldEl, cfg.initial);
+    wheelMap.set(fieldEl, w);
+    wheels[cfg.key] = w;
+    // если чекбокс уже кликнули до инициализации — применим состояние
+    const cb = fieldEl.querySelector('#opt_'+cfg.key);
+    if (cb && cb.checked) w.setDisabled(true);
+  }
+  return w;
+}
 
 for (const cfg of FIELDS){
   const f = document.createElement('div');
@@ -294,24 +368,63 @@ for (const cfg of FIELDS){
 
   fieldsWrap.appendChild(f);
 
-  const wheel = buildWheel(f, cfg.initial);
-  wheels[cfg.key] = wheel;
-
   if (cfg.optional){
     const cb = f.querySelector('#opt_'+cfg.key);
-    cb.addEventListener('change', ()=> wheel.setDisabled(cb.checked));
+    cb.addEventListener('change', ()=>{
+      const wheel = ensureWheel(f, cfg); // инициализируем при первом взаимодействии
+      wheel.setDisabled(cb.checked);
+    });
+  }
+}
+
+/* Lazy init: инициализируем то, что во вьюпорте, остальное — при входе */
+const allFields = Array.from(fieldsWrap.querySelectorAll('.field'));
+const canObserve = 'IntersectionObserver' in window;
+if (canObserve){
+  const io = new IntersectionObserver((entries)=>{
+    for (const e of entries){
+      if (e.isIntersecting){
+        const f = e.target;
+        const key = f.dataset.key;
+        const cfg = FIELDS.find(x=>x.key===key);
+        ensureWheel(f, cfg);
+        io.unobserve(f);
+      }
+    }
+  }, {root:null, rootMargin:'100px 0px', threshold:0});
+  for (const f of allFields){
+    // если уже в зоне видимости — инициализируем сразу
+    const rect = f.getBoundingClientRect();
+    if (rect.top < (window.innerHeight + 100) && rect.bottom > -100){
+      const key = f.dataset.key;
+      const cfg = FIELDS.find(x=>x.key===key);
+      ensureWheel(f, cfg);
+    } else {
+      io.observe(f);
+    }
+  }
+} else {
+  // Фолбэк: инициализируем сразу все
+  for (const f of allFields){
+    const key = f.dataset.key;
+    const cfg = FIELDS.find(x=>x.key===key);
+    ensureWheel(f, cfg);
   }
 }
 
 /* ===== save (stub) ===== */
 document.getElementById('saveBtn').addEventListener('click', ()=>{
+  // P1: лёгкая хаптика в Telegram
+  try{ window.Telegram?.WebApp?.HapticFeedback?.impactOccurred('light'); }catch(e){}
+
   const data = {};
   for (const cfg of FIELDS){
+    const wheel = wheels[cfg.key] || ensureWheel(document.querySelector(`.field[data-key="${cfg.key}"]`), cfg);
     if (cfg.optional){
       const cb = document.getElementById('opt_'+cfg.key);
-      data[cfg.key] = cb && cb.checked ? null : wheels[cfg.key].value;
+      data[cfg.key] = cb && cb.checked ? null : wheel.value;
     } else {
-      data[cfg.key] = wheels[cfg.key].value;
+      data[cfg.key] = wheel.value;
     }
   }
   alert('Сохраняем:\n' + JSON.stringify(data, null, 2));
