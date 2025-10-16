@@ -101,6 +101,7 @@
     box-shadow:0 12px 26px rgba(237,47,98,.35), inset 0 1px 0 rgba(255,255,255,.4);
     transition: transform .08s ease, box-shadow .12s ease, filter .12s ease;
     -webkit-tap-highlight-color:transparent;
+    touch-action: manipulation; /* ускоряет на мобилах */
   }
   .btn:active{
     transform:translateY(1px) scale(.98);
@@ -123,7 +124,7 @@
 
     <!-- Блок 1: Замеры (по умолчанию свернут) -->
     <section class="section collapsed" id="sec-measures">
-      <div class="section-h" data-toggle="sec-measures">
+      <div class="section-h" data-toggle="sec-measures" role="button" tabindex="0" aria-controls="sec-measures" aria-expanded="false">
         <h2>Замеры</h2>
         <div class="meta" id="lastTime">Последний замер: нет данных</div>
         <div class="toggle" aria-hidden="true">
@@ -140,7 +141,7 @@
 
     <!-- Блок 2: Аналитика (развернут) -->
     <section class="section" id="sec-analytics">
-      <div class="section-h" data-toggle="sec-analytics">
+      <div class="section-h" data-toggle="sec-analytics" role="button" tabindex="0" aria-controls="sec-analytics" aria-expanded="true">
         <h2>Аналитика</h2>
         <div class="toggle" aria-hidden="true">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
@@ -157,7 +158,7 @@
 
     <!-- Блок 3: Комментарий ИИ (развернут) -->
     <section class="section" id="sec-ai">
-      <div class="section-h" data-toggle="sec-ai">
+      <div class="section-h" data-toggle="sec-ai" role="button" tabindex="0" aria-controls="sec-ai" aria-expanded="true">
         <h2>Комментарий ИИ</h2>
         <div class="toggle" aria-hidden="true">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
@@ -195,12 +196,31 @@ function readJSON(key, fallback=null){ try{ const v = localStorage.getItem(key);
 function writeJSON(key, obj){ try{ localStorage.setItem(key, JSON.stringify(obj)); }catch(e){} }
 function removeKey(key){ try{ localStorage.removeItem(key); }catch(e){} }
 
-/* ===== АККОРДЕОН ===== */
+/* ===== АККОРДЕОН (a11y + клавиатура) ===== */
+function setAriaExpanded(h){
+  const sec = document.getElementById(h.getAttribute('data-toggle'));
+  h.setAttribute('aria-expanded', String(!sec.classList.contains('collapsed')));
+}
+function toggleSectionByHeader(h){
+  const id = h.getAttribute('data-toggle');
+  const sec = document.getElementById(id);
+  const willBeCollapsed = sec.classList.toggle('collapsed');
+  h.setAttribute('aria-expanded', String(!willBeCollapsed));
+  // при первом раскрытии "Замеры" — запускаем ленивую инициализацию
+  if (id === 'sec-measures' && !willBeCollapsed && !fieldsWrap._observed){
+    observeFields();
+    fieldsWrap._observed = true;
+  }
+}
 document.querySelectorAll('.section-h').forEach(h=>{
-  h.addEventListener('click', ()=>{
-    const id = h.getAttribute('data-toggle');
-    const sec = document.getElementById(id);
-    sec.classList.toggle('collapsed');
+  if (!h.hasAttribute('role')) h.setAttribute('role','button');
+  if (!h.hasAttribute('tabindex')) h.setAttribute('tabindex','0');
+  if (!h.hasAttribute('aria-controls')) h.setAttribute('aria-controls', h.getAttribute('data-toggle'));
+  setAriaExpanded(h);
+
+  h.addEventListener('click', ()=>toggleSectionByHeader(h));
+  h.addEventListener('keydown', (e)=>{
+    if (e.key==='Enter' || e.key===' ') { e.preventDefault(); toggleSectionByHeader(h); }
   });
 });
 
@@ -231,14 +251,17 @@ function buildWheel(fieldEl, initial){
   const nearestIndex = col =>
     Math.round((col.scrollTop + (col.clientHeight-rowH)/2)/rowH) - pad;
 
-  const markActive = col => {
-    const idx = nearestIndex(col);
-    const children = col.children;
-    const activeIdx = idx + pad;
-    for (let i=0; i<children.length; i++){
-      children[i].classList.toggle('active', i===activeIdx);
-    }
-  };
+  /* Оптимизированный markActive: меняем класс только у двух элементов */
+  const lastActiveIdx = new WeakMap(); // col -> idx
+  function markActive(col){
+    const idx = nearestIndex(col) + pad;
+    const prev = lastActiveIdx.get(col);
+    if (prev === idx) return;
+    if (typeof prev === 'number' && col.children[prev]) col.children[prev].classList.remove('active');
+    const el = col.children[idx];
+    if (el) el.classList.add('active');
+    lastActiveIdx.set(col, idx);
+  }
 
   const setScrollInstant = (col, idx) => {
     const top = (idx + pad) * rowH - (col.clientHeight-rowH)/2;
@@ -322,6 +345,7 @@ function buildWheel(fieldEl, initial){
   function setDisabled(dis){
     disabled = dis;
     duo.classList.toggle('disabled', dis);
+    duo.setAttribute('aria-disabled', String(dis));
     [intCol, fracCol].forEach(c=>c.style.pointerEvents = dis ? 'none':'auto');
     if (!dis){
       // при повторной активации восстановим корректный lock дробной части
@@ -501,12 +525,8 @@ function observeFields(){
     }
   }
 }
-document.querySelector('[data-toggle="sec-measures"]').addEventListener('click', ()=>{
-  if (!fieldsWrap._observed){
-    observeFields();
-    fieldsWrap._observed = true;
-  }
-}, {once:true});
+
+/* Если секция изначально развёрнута (у нас — свернута), всё равно проверим */
 if (!document.getElementById('sec-measures').classList.contains('collapsed')){
   observeFields(); fieldsWrap._observed = true;
 }
@@ -540,6 +560,12 @@ function saveDraft(){
 }
 document.addEventListener('wheelchange', scheduleDraftSave);
 
+/* Надёжный финальный сейв при уходе/сворачивании вкладки */
+document.addEventListener('visibilitychange', ()=>{
+  if (document.visibilityState === 'hidden') { try{ saveDraft(); }catch(e){} }
+});
+window.addEventListener('beforeunload', ()=>{ try{ saveDraft(); }catch(e){} });
+
 /* ===== СОХРАНЕНИЕ ===== */
 document.getElementById('saveBtn').addEventListener('click', ()=>{
   try{ window.Telegram?.WebApp?.HapticFeedback?.impactOccurred('light'); }catch(e){}
@@ -547,7 +573,7 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
   const payload = { ts: Date.now(), data };
   writeJSON(LS_KEY_LAST, payload);
   removeKey(LS_KEY_DRAFT);
-  document.getElementById('lastTime').textContent = 'Последний замер: ' + fmt(payload.ts);
+  document.getElementById('lastTime').textContent = 'Последний замер: ' + (new Intl.DateTimeFormat('ru-RU', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'})).format(new Date(payload.ts));
   alert('Сохраняем:\n' + JSON.stringify(data, null, 2));
 });
 </script>
