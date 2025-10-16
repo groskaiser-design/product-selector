@@ -50,6 +50,7 @@
   }
   .col{
     flex:0 0 92px; height:180px; overflow:auto; -webkit-overflow-scrolling:touch;
+    overscroll-behavior: contain;
     scrollbar-width:none; scroll-snap-type: y mandatory;
     mask-image: linear-gradient(180deg, transparent, #000 18%, #000 82%, transparent);
     -webkit-mask-image: linear-gradient(180deg, transparent, #000 18%, #000 82%, transparent);
@@ -84,13 +85,16 @@
   </div>
 
 <script>
+/* utils */
 const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
 const rowH = 36, pad = 4;
 
+/* duo-wheel */
 function buildWheel(fieldEl, initial){
   const min = +fieldEl.dataset.min;
   const max = +fieldEl.dataset.max;
-  const maxInt = Math.floor(max);                // FIX: используем дальше
+  const minInt = Math.floor(min);
+  const maxInt = Math.floor(max);
 
   const intCol = fieldEl.querySelector('.col-int');
   const fracCol = fieldEl.querySelector('.col-frac');
@@ -104,7 +108,7 @@ function buildWheel(fieldEl, initial){
     col.innerHTML=''; col.appendChild(frag);
   }
 
-  fillCol(intCol, Math.floor(min), maxInt);
+  fillCol(intCol, minInt, maxInt);
   fillCol(fracCol, 0, 9);
 
   function nearestIndex(col){
@@ -119,13 +123,19 @@ function buildWheel(fieldEl, initial){
     const top = (idx + pad) * rowH - (col.clientHeight-rowH)/2;
     col.scrollTo({top, behavior: instant?'auto':'smooth'});
   }
+
   function setValue(v, instant=false){
-    const val = clamp(+v, min, max);
-    const i = Math.trunc(val);
-    let f = Math.round((val - i) * 10);
-    if (i===maxInt) f = 0;
+    const clamped = clamp(+v, min, max);
+    const rounded = Math.round(clamped * 10) / 10;   // строго к десятым
+    const i = Math.trunc(rounded);
+    let f = Math.round((rounded - i) * 10);
+
+    if (i === maxInt) f = 0;                          // на максимуме дробей нет
+
     scrollToIndex(intCol, i, instant);
     scrollToIndex(fracCol, f, instant);
+
+    fracCol.style.opacity = (i === maxInt) ? 0.5 : 1; // визуальная подсказка
     markActive(intCol); markActive(fracCol);
   }
 
@@ -133,13 +143,14 @@ function buildWheel(fieldEl, initial){
   function onScrollEnd(){
     clearTimeout(snapTimer);
     snapTimer = setTimeout(()=>{
-      const i = clamp(nearestIndex(intCol), Math.floor(min), maxInt);
+      const i = clamp(nearestIndex(intCol), minInt, maxInt);
       scrollToIndex(intCol, i, true);
 
       let f = clamp(nearestIndex(fracCol), 0, 9);
-      if (i === maxInt) f = 0;                  // FIX: у максимума дробная часть = 0
+      if (i === maxInt) f = 0;
       scrollToIndex(fracCol, f, true);
 
+      fracCol.style.opacity = (i === maxInt) ? 0.5 : 1;
       markActive(intCol); markActive(fracCol);
     }, 80);
   }
@@ -153,43 +164,55 @@ function buildWheel(fieldEl, initial){
     [intCol, fracCol].forEach(c=>c.style.pointerEvents = dis ? 'none':'auto');
   }
 
-  const initVal = initial ?? (min + (max - min) / 2);
-  requestAnimationFrame(()=>requestAnimationFrame(()=>setValue(initVal, true)));
+  const initVal = (typeof initial==='number') ? initial : (min + (max - min) / 2);
+  const kick = () => setValue(initVal, true);
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{
+    kick();
+    setTimeout(kick, 0);
+  }));
 
   return {
     setValue,
     get value(){
-      const i = clamp(nearestIndex(intCol), Math.floor(min), maxInt);
+      const i = clamp(nearestIndex(intCol), minInt, maxInt);
       let f = clamp(nearestIndex(fracCol), 0, 9);
-      if (i === maxInt) f = 0;                  // FIX: соблюдаем правило и здесь
+      if (i === maxInt) f = 0;
       return +(i + f/10).toFixed(1);
     },
     setDisabled
   };
 }
 
+/* config */
 const FIELDS = [
   { key:'weight', label:'Вес', unit:'кг', min:40, max:250, initial:70.0 },
   { key:'height', label:'Рост', unit:'см', min:120, max:230, initial:160.0 },
+
   { key:'fat',    label:'% жира', unit:'%',  min:3,  max:60,  initial:20.0, optional:true },
+
   { key:'neck',   label:'Шея', unit:'см', min:20, max:70, initial:38 },
   { key:'shoulders',label:'Плечи обхват', unit:'см', min:60, max:180, initial:90.0 },
   { key:'chest',  label:'Грудь', unit:'см', min:60, max:160, initial:100 },
   { key:'waist',  label:'Талия', unit:'см', min:40, max:160, initial:70 },
+
   { key:'bicep_l_rel', label:'Бицепс Л (расслаб.)', unit:'см', min:15, max:70, initial:31 },
   { key:'bicep_r_rel', label:'Бицепс П (расслаб.)', unit:'см', min:15, max:70, initial:31 },
   { key:'bicep_l_flex',label:'Бицепс Л (напряж.)',  unit:'см', min:15, max:70, initial:31 },
   { key:'bicep_r_flex',label:'Бицепс П (напряж.)',  unit:'см', min:15, max:70, initial:31 },
+
   { key:'thigh_l', label:'Бедро Л', unit:'см', min:30, max:100, initial:50 },
   { key:'thigh_r', label:'Бедро П', unit:'см', min:30, max:100, initial:50 },
+
   { key:'calf_l',  label:'Икра Л', unit:'см', min:25, max:70, initial:35 },
   { key:'calf_r',  label:'Икра П', unit:'см', min:25, max:70, initial:35 },
+
   { key:'hips',    label:'Ягодицы', unit:'см', min:70, max:160, initial:90 },
   { key:'wrist',   label:'Обхват запястья', unit:'см', min:10, max:30, initial:17 },
   { key:'knee',    label:'Обхват колена',   unit:'см', min:25, max:60, initial:36 },
   { key:'ankle',   label:'Обхват лодыжки',  unit:'см', min:15, max:35, initial:22 },
 ];
 
+/* render */
 const fieldsWrap = document.getElementById('fields');
 const wheels = {};
 
@@ -238,6 +261,7 @@ for (const cfg of FIELDS){
   }
 }
 
+/* save (stub) */
 document.getElementById('saveBtn').addEventListener('click', ()=>{
   const data = {};
   for (const cfg of FIELDS){
