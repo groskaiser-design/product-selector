@@ -189,6 +189,14 @@
   try { tg.ready(); } catch(e){}
   try { tg.expand(); } catch(e){}
   try { tg.setHeaderColor('secondary_bg_color'); } catch(e){}
+  // Показ и обработчик системной кнопки «Назад»
+  try {
+    tg.BackButton?.show();
+    tg.BackButton?.onClick(() => {
+      if (history.length > 1) history.back();
+      else tg.close();
+    });
+  } catch(e){}
 })();
 
 /* ===== КОНСТАНТЫ ХРАНИЛИЩА ===== */
@@ -197,7 +205,12 @@ const SS_KEY_DRAFT = 'measurements:sessionDraft';          // черновик �
 
 /* ===== СЕТЬ / БЭКЕНД ===== */
 const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbwwr4M2Z6ZB8GyNgPl97LrGsU_OFCHWPF8gEJ5PZNNzpDmW6VKnI24emwGzT6Snp0Dd0A/exec';
-const APP_VERSION = '1.0.9';
+const APP_VERSION = '1.0.10';
+
+// Тип навигации: 'navigate' | 'reload' | 'back_forward' (BFCache)
+const navEntry = performance?.getEntriesByType?.('navigation')?.[0];
+const NAV_TYPE = navEntry?.type || 'navigate';
+const IS_BFCACHE = NAV_TYPE === 'back_forward';
 
 /* ===== УТИЛИТЫ ===== */
 const ROW_VAR = getComputedStyle(document.documentElement).getPropertyValue('--row').trim();
@@ -246,8 +259,8 @@ async function callBackend(action, extra = {}) {
   try{
     const r = await fetch(BACKEND_URL + '?' + qs.toString(), { cache:'no-cache' });
     const tx = await r.text();
-    try{ return JSON.parse(tx); }catch(_){}
-  }catch(_){}
+    try{ return JSON.parse(tx); }catch(_){ }
+  }catch(_){ }
 
   // 2) Fallback POST text/plain (iOS)
   try{
@@ -659,15 +672,38 @@ document.addEventListener('wheelchange', (e)=>{
   touchDraft();
 });
 
-/* ===== ПОДЪЕМ ИЗ БД (если нет активного «грязного» черновика) ===== */
-async function fetchAndApplyFromBackend(){
+/* ===== Применение данных к UI + Ре-гидратация из локального источника ===== */
+function applyDataToUI(data = {}){
+  let touched = false;
+  for (const { key } of FIELDS){
+    const v = Object.prototype.hasOwnProperty.call(data, key) ? data[key] : undefined;
+    if (typeof v === 'undefined') continue;
+    baseData[key] = v;
+    const w = wheels[key];
+    if (w){
+      if (v === null) { w.setDisabled(true, /*programmatic*/true); }
+      else { w.setDisabled(false, /*programmatic*/true); w.setValue(v); }
+      touched = true;
+    }
+  }
+  return touched;
+}
+function rehydrateFromLocal(){
+  const sd = readSessionJSON(SS_KEY_DRAFT);
+  const lastLocal = readJSON(LS_KEY_LAST);
+  const src = (sd?.dirty && sd.data) ? sd.data : (lastLocal?.data || {});
+  applyDataToUI(src);
+}
+
+/* ===== ПОДЪЕМ ИЗ БД (с опцией force для navigate/reload) ===== */
+async function fetchAndApplyFromBackend({ force = false } = {}){
   try{
     const res = await callBackend('init');
     if (res && res.ok && res.last){
       const tsMs = Date.parse(res.last.ts_iso);
 
       const sd = readSessionJSON(SS_KEY_DRAFT);
-      if (sd?.dirty === true) return; // пользователь что-то крутил — не трогаем
+      if (sd?.dirty === true && !force) return; // пользователь что-то крутил — не трогаем
 
       // если в sessionStorage лежит «тихий» черновик, совпадающий с пришедшими данными — удаляем его
       if (sd && !sd.dirty && equalData(sd.data||{}, res.last.data||{})){
@@ -684,23 +720,27 @@ async function fetchAndApplyFromBackend(){
         if (baseData[k] !== v){ baseData[k] = v; changed = true; }
       }
       if (changed){
-        for (const k of Object.keys(res.last.data || {})){
-          const w = wheels[k];
-          const v = res.last.data[k];
-          if (!w) continue;
-          if (v === null){ w.setDisabled(true, /*programmatic*/true); }
-          else if (typeof v === 'number' && Math.abs(w.value - v) > 1e-9){ w.setValue(v); }
-        }
+        applyDataToUI(res.last.data);
       }
     }
   }catch(e){}
 }
-fetchAndApplyFromBackend();
-window.addEventListener('pageshow', ()=>{ const sd=readSessionJSON(SS_KEY_DRAFT); if (!(sd?.dirty)) fetchAndApplyFromBackend(); });
+
+// На свежем заходе/перезагрузке форсируем данные БД; при back/forward (BFCache) — бережно
+fetchAndApplyFromBackend({ force: !IS_BFCACHE });
+
+// Восстановление UI и синхронизация при возврате/активации вкладки
+window.addEventListener('pageshow', (e)=>{
+  rehydrateFromLocal();
+  const comingFromBFCache = e.persisted || IS_BFCACHE;
+  fetchAndApplyFromBackend({ force: !comingFromBFCache });
+});
+
 document.addEventListener('visibilitychange', ()=>{
   if (document.visibilityState === 'visible'){
+    rehydrateFromLocal();
     const sd=readSessionJSON(SS_KEY_DRAFT);
-    if (!(sd?.dirty)) fetchAndApplyFromBackend();
+    if (!(sd?.dirty)) fetchAndApplyFromBackend({ force:false });
   }
 });
 
