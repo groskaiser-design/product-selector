@@ -197,7 +197,7 @@ const SS_KEY_DRAFT = 'measurements:sessionDraft';          // черновик �
 
 /* ===== СЕТЬ / БЭКЕНД ===== */
 const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbwwr4M2Z6ZB8GyNgPl97LrGsU_OFCHWPF8gEJ5PZNNzpDmW6VKnI24emwGzT6Snp0Dd0A/exec';
-const APP_VERSION = '1.0.7';
+const APP_VERSION = '1.0.8';
 
 /* ===== УТИЛИТЫ ===== */
 const ROW_VAR = getComputedStyle(document.documentElement).getPropertyValue('--row').trim();
@@ -205,7 +205,9 @@ const rowH = ROW_VAR.endsWith('px') ? parseFloat(ROW_VAR) : (parseFloat(ROW_VAR)
 const pad = 4;
 const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
 
-const DTF = new Intl.DateTimeFormat('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
+const DTF = new Intl.DateTimeFormat('ru-RU', {
+  day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'
+});
 const fmt = ts => (!ts ? 'нет данных' : DTF.format(new Date(ts)));
 
 function readJSON(key, fallback=null){ try{ const v=localStorage.getItem(key); return v?JSON.parse(v):fallback; }catch(e){ return fallback; } }
@@ -256,7 +258,6 @@ function toggleSectionByHeader(h){
   const willBeCollapsed = sec.classList.toggle('collapsed');
   h.setAttribute('aria-expanded', String(!willBeCollapsed));
   if (id === 'sec-measures' && !willBeCollapsed){
-    // Ленивая инициализация колес при первом раскрытии
     if (typeof fieldsWrap !== 'undefined' && !fieldsWrap._observed){
       observeFields();
       fieldsWrap._observed = true;
@@ -347,7 +348,9 @@ function buildWheel(fieldEl, initial){
 
   function dispatchChange(){
     const v = api.value;
-    document.dispatchEvent(new CustomEvent('wheelchange', { detail:{ key, value: v }}));
+    document.dispatchEvent(new CustomEvent('wheelchange', {
+      detail:{ key, value: v, programmatic: isProgrammatic }
+    }));
   }
 
   function setValue(v){
@@ -358,14 +361,14 @@ function buildWheel(fieldEl, initial){
     if (iVal === maxInt) f = 0;
     const iIdx = iVal - minInt;
 
-    isProgrammatic = true;
+    const prev = isProgrammatic; isProgrammatic = true;
     withNoSnap(()=>{
       setScrollInstant(intCol, iIdx);
       setScrollInstant(fracCol, f);
     });
     applyFracLock(iVal);
     markActive(intCol); markActive(fracCol);
-    requestAnimationFrame(()=>{ isProgrammatic = false; dispatchChange(); });
+    requestAnimationFrame(()=>{ isProgrammatic = prev; dispatchChange(); });
   }
 
   function snapNow(){
@@ -375,12 +378,12 @@ function buildWheel(fieldEl, initial){
     const iVal = minInt + iIdx;
     if (iVal === maxInt) f = 0;
 
-    isProgrammatic = true;
+    const prev = isProgrammatic; isProgrammatic = true;
     setScrollInstant(intCol, iIdx);
     setScrollInstant(fracCol, f);
     applyFracLock(iVal);
     markActive(intCol); markActive(fracCol);
-    requestAnimationFrame(()=>{ isProgrammatic = false; dispatchChange(); });
+    requestAnimationFrame(()=>{ isProgrammatic = prev; dispatchChange(); });
   }
 
   function onScrollInt(){
@@ -408,7 +411,8 @@ function buildWheel(fieldEl, initial){
     fracCol.addEventListener('scrollend', snapNow, {passive:true});
   }
 
-  function setDisabled(dis){
+  function setDisabled(dis, programmatic=false){
+    const prev = isProgrammatic; if (programmatic) isProgrammatic = true;
     disabled = dis;
     duo.classList.toggle('disabled', dis);
     duo.setAttribute('aria-disabled', String(dis));
@@ -419,6 +423,7 @@ function buildWheel(fieldEl, initial){
       applyFracLock(iVal);
     }
     dispatchChange();
+    isProgrammatic = prev;
   }
 
   const initVal = (typeof initial==='number') ? initial : (min + (max - min) / 2);
@@ -475,7 +480,7 @@ const FIELDS = [
   { key:'ankle',   label:'Обхват лодыжки',  unit:'см', min:15, max:35, initial:22 },
 ];
 
-/* ===== Быстрый доступ к конфигу ===== */
+/* Быстрый доступ к конфигу */
 const CFG = Object.fromEntries(FIELDS.map(f=>[f.key, f]));
 
 /* ===== ИСХОДНОЕ СОСТОЯНИЕ: last + sessionDraft ===== */
@@ -522,7 +527,7 @@ function ensureWheel(fieldEl, cfg){
       }
       const isNull = baseData[cfg.key] === null;
       cb.checked = !!isNull;
-      if (isNull){ w.setDisabled(true); }
+      if (isNull){ w.setDisabled(true, /*programmatic*/true); }
       if (!cb._bound){
         cb.addEventListener('change', ()=>{ w.setDisabled(cb.checked); touchDraft(); });
         cb._bound = true;
@@ -619,18 +624,23 @@ function touchDraft(){
   clearTimeout(draftTimer);
   draftTimer = setTimeout(()=>{
     const obj = { ts: Date.now(), data: collectCurrentData(false) };
+    sessionDraft = obj;
     writeSessionJSON(SS_KEY_DRAFT, obj);
   }, 150);
 }
-document.addEventListener('wheelchange', touchDraft);
+
+/* только пользовательские изменения создают черновик */
+document.addEventListener('wheelchange', (e)=>{
+  if (e?.detail?.programmatic) return;
+  touchDraft();
+});
 
 /* ===== ПОДЪЕМ ИЗ БД (если нет активного черновика) ===== */
 async function fetchAndApplyFromBackend(){
   try{
     const res = await callBackend('init');
     if (res && res.ok && res.last){
-      // если появился черновик — не перетираем UI
-      if (readSessionJSON(SS_KEY_DRAFT)) return;
+      if (readSessionJSON(SS_KEY_DRAFT)) return; // есть черновик — не перетираем UI
 
       const tsMs = Date.parse(res.last.ts_iso);
       document.getElementById('lastTime').textContent = 'Последний замер: ' + fmt(tsMs);
@@ -646,7 +656,7 @@ async function fetchAndApplyFromBackend(){
           const w = wheels[k];
           const v = res.last.data[k];
           if (!w) continue;
-          if (v === null){ w.setDisabled(true); }
+          if (v === null){ w.setDisabled(true, /*programmatic*/true); }
           else if (typeof v === 'number' && Math.abs(w.value - v) > 1e-9){ w.setValue(v); }
         }
       }
@@ -697,12 +707,10 @@ document.getElementById('saveBtn').addEventListener('click', async ()=>{
     data
   };
 
-  // локальный кеш "last"
   writeJSON(LS_KEY_LAST, { ts: clientTs, data });
   document.getElementById('lastTime').textContent = 'Последний замер: ' + fmt(clientTs);
   Object.assign(baseData, data);
 
-  // UI: лоадер
   setSavingState(true);
   try { tg?.MainButton?.showProgress?.(); } catch(e){}
 
@@ -712,8 +720,10 @@ document.getElementById('saveBtn').addEventListener('click', async ()=>{
       const serverTs = Date.parse(res.ts_iso);
       writeJSON(LS_KEY_LAST, { ts: serverTs, data });
       document.getElementById('lastTime').textContent = 'Последний замер: ' + fmt(serverTs);
+
       // очистка черновика сеанса
       removeSessionKey(SS_KEY_DRAFT);
+      sessionDraft = null;
 
       // свернуть раздел "Замеры"
       const measuresSec = document.getElementById('sec-measures');
