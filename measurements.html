@@ -181,7 +181,7 @@
   </div>
 
 <script>
-/* ===== Telegram Mini App boot + BackButton (FIX) ===== */
+/* ===== Telegram Mini App boot + BackButton (HOME) ===== */
 (function initTMA(){
   const tg = window.Telegram?.WebApp;
   if (!tg) return;
@@ -189,21 +189,21 @@
   try { tg.expand(); } catch(e){}
   try { tg.setHeaderColor('secondary_bg_color'); } catch(e){}
 
-  // URL главной страницы приложения (в том же webview)
+  // Домашняя страница приложения в том же webview
   const HOME_URL = 'https://groskaiser-design.github.io/product-selector/router.html';
 
-  // BackButton: свернуть "Замеры", иначе перейти на главную страницу приложения
   try {
     tg.BackButton.show();
     tg.onEvent('backButtonClicked', () => {
       const measuresSec = document.getElementById('sec-measures');
       const measuresHeader = document.querySelector('[data-toggle="sec-measures"]');
+      // 1) если «Замеры» открыты — сворачиваем
       if (measuresSec && !measuresSec.classList.contains('collapsed')) {
         measuresSec.classList.add('collapsed');
         if (measuresHeader) measuresHeader.setAttribute('aria-expanded','false');
         return;
       }
-      // если всё свернуто — переходим на главную в рамках текущего webview
+      // 2) иначе — переходим на домашнюю страницу приложения внутри webview
       try { location.replace(HOME_URL); } catch(_) { location.href = HOME_URL; }
     });
   } catch(e){}
@@ -214,8 +214,8 @@ const LS_KEY_LAST  = 'measurements:last';   // { ts, data }
 const LS_KEY_DRAFT = 'measurements:draft';  // { ts, data }
 
 /* ===== СЕТЬ / БЭКЕНД ===== */
-const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbwwr4M2Z6ZB8GyNgPl97LrGsU_OFCHWPF8gEJ5PZNNzpDmW6VKnI24emwGzT6Snp0Dd0A/exec'; // ← ваш URL деплоя Web App
-const APP_VERSION = '1.0.5';
+const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbwwr4M2Z6ZB8GyNgPl97LrGsU_OFCHWPF8gEJ5PZNNzpDmW6VKnI24emwGzT6Snp0Dd0A/exec';
+const APP_VERSION = '1.0.6';
 
 async function callBackend(action, extra = {}) {
   const base = {
@@ -226,7 +226,7 @@ async function callBackend(action, extra = {}) {
     ...extra
   };
 
-  // 1) GET (без preflight) — как в проде
+  // 1) GET (без preflight)
   const qs = new URLSearchParams();
   qs.set('action', action);
   qs.set('init_data', base.init_data);
@@ -239,7 +239,7 @@ async function callBackend(action, extra = {}) {
     try { return JSON.parse(tx); } catch(_) {}
   } catch(_) {}
 
-  // 2) Fallback POST text/plain (без preflight на iOS)
+  // 2) POST text/plain — fallback
   try {
     const rp = await fetch(BACKEND_URL, {
       method: 'POST',
@@ -287,7 +287,6 @@ function toggleSectionByHeader(h){
   if (id === 'sec-measures' && !willBeCollapsed && !fieldsWrap._observed){
     observeFields();
     fieldsWrap._observed = true;
-    // FIX: после раскрытия — выравниваем все уже созданные колёса
     requestAnimationFrame(realignAllWheels);
   }
 }
@@ -302,7 +301,7 @@ document.querySelectorAll('.section-h').forEach(h=>{
   });
 });
 
-/* ===== КОЛЁСА ===== */
+/* ===== КОЛЁСА (с кэшем значения) ===== */
 function buildWheel(fieldEl, initial){
   const min = +fieldEl.dataset.min;
   const max = +fieldEl.dataset.max;
@@ -351,6 +350,10 @@ function buildWheel(fieldEl, initial){
   const supportsScrollEnd = 'onscrollend' in window;
   let disabled = false;
 
+  // КЭШ значения (в десятых), используется когда элемент скрыт
+  const norm = v => +(Math.round(v * 10) / 10).toFixed(1);
+  let currentVal = norm(typeof initial === 'number' ? initial : (min + (max - min)/2));
+
   function applyFracLock(iVal){
     if (disabled) return;
     const lock = (iVal === maxInt);
@@ -365,11 +368,13 @@ function buildWheel(fieldEl, initial){
 
   function setValue(v){
     const clamped = clamp(+v, min, max);
-    const rounded = Math.round(clamped * 10) / 10;
+    const rounded = norm(clamped);
     const iVal = Math.trunc(rounded);
     let f = Math.round((rounded - iVal) * 10);
     if (iVal === maxInt) f = 0;
     const iIdx = iVal - minInt;
+
+    currentVal = norm(iVal + f/10);
 
     isProgrammatic = true;
     setScrollInstant(intCol, iIdx);
@@ -381,10 +386,19 @@ function buildWheel(fieldEl, initial){
 
   function snapNow(){
     if (isProgrammatic) return;
+
+    // если скрыто — не пересчитываем геометрию, держим кэш
+    if (intCol.clientHeight === 0 || fracCol.clientHeight === 0){
+      setValue(currentVal);
+      return;
+    }
+
     let iIdx = clamp(nearestIndex(intCol), 0, intRange);
     let f = clamp(nearestIndex(fracCol), 0, 9);
     const iVal = minInt + iIdx;
     if (iVal === maxInt) f = 0;
+
+    currentVal = norm(iVal + f/10);
 
     isProgrammatic = true;
     setScrollInstant(intCol, iIdx);
@@ -432,13 +446,11 @@ function buildWheel(fieldEl, initial){
     dispatchChange();
   }
 
-  // FIX: сверхнадёжная инициализация после раскладки
-  const initVal = (typeof initial==='number') ? initial : (min + (max - min) / 2);
+  // Надежная инициализация после раскладки
   (function robustInit(){
     const apply = ()=>{
-      setValue(initVal);
-      // если по какой-то причине оказались не на init — повторим мягко
-      setTimeout(()=>{ if (Math.abs(api.value - initVal) > 0.09) setValue(initVal); }, 120);
+      setValue(currentVal);
+      setTimeout(()=>{ if (Math.abs(api.value - currentVal) > 0.09) setValue(currentVal); }, 120);
     };
     if (intCol.clientHeight === 0 || fracCol.clientHeight === 0){
       let tries = 0;
@@ -448,7 +460,6 @@ function buildWheel(fieldEl, initial){
       };
       requestAnimationFrame(tick);
     } else {
-      // подстрахуемся двойным rAF
       requestAnimationFrame(()=>requestAnimationFrame(apply));
     }
   })();
@@ -456,11 +467,17 @@ function buildWheel(fieldEl, initial){
   const api = {
     setValue,
     get value(){
-      const iIdx = clamp(nearestIndex(intCol), 0, intRange);
+      // если скрыто — возвращаем кэш
+      if (intCol.clientHeight === 0 || fracCol.clientHeight === 0){
+        return currentVal;
+      }
+      let iIdx = clamp(nearestIndex(intCol), 0, intRange);
       let f = clamp(nearestIndex(fracCol), 0, 9);
       const iVal = minInt + iIdx;
       if (iVal === maxInt) f = 0;
-      return +(iVal + f/10).toFixed(1);
+      const v = norm(iVal + f/10);
+      currentVal = v;
+      return v;
     },
     setDisabled,
     destroy(){
@@ -559,7 +576,7 @@ function ensureWheel(fieldEl, cfg){
   return w;
 }
 
-// FIX: мягкое выравнивание всех уже созданных колёс (на случай смены ориентации/шрифта/темы)
+// Мягкое выравнивание всех уже созданных колёс
 function realignAllWheels(){
   for (const k in wheels){
     const w = wheels[k];
@@ -681,7 +698,6 @@ window.addEventListener('beforeunload', ()=>{ try{ saveDraft(); }catch(e){} });
         if (wheels[k] && typeof res.last.data[k] === 'number') wheels[k].setValue(res.last.data[k]);
         if (wheels[k] && res.last.data[k] === null) wheels[k].setDisabled(true);
       }
-      // FIX: выравниваем после подстановки серверных значений
       requestAnimationFrame(realignAllWheels);
     }
   }catch(e){ /* оффлайн — ок */ }
@@ -689,7 +705,7 @@ window.addEventListener('beforeunload', ()=>{ try{ saveDraft(); }catch(e){} });
 
 /* ===== СОХРАНЕНИЕ ===== */
 const saveBtn = document.getElementById('saveBtn');
-// FIX: явная визуальная обратная связь нажатия
+// Визуальная обратная связь нажатия
 saveBtn.addEventListener('pointerdown', ()=> saveBtn.classList.add('pressed'));
 ['pointerup','pointercancel','pointerleave'].forEach(ev=> saveBtn.addEventListener(ev, ()=> saveBtn.classList.remove('pressed')));
 
