@@ -4,7 +4,6 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Замеры — анкета (двойные колёса)</title>
-<!-- P1: Хаптика Telegram (не мешает вне WebApp) -->
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
   :root{
@@ -14,7 +13,6 @@
     --border: rgba(255,255,255,.28);
     --shadow: 0 8px 28px rgba(0,0,0,.18);
     --okA:#34d399; --okB:#10b981;
-    /* P0: единый источник высоты строки для JS и CSS */
     --row: 36px;
   }
   *{box-sizing:border-box;margin:0;padding:0}
@@ -38,30 +36,29 @@
     transform:translateZ(0);
   }
 
-  .page{
-    max-width:560px;
-    margin:0 auto;
-    padding:18px 14px 24px;
-    position:relative;
-    z-index:1;
-  }
+  .page{max-width:560px;margin:0 auto;padding:18px 14px 24px;position:relative;z-index:1}
 
   .section{
     background:linear-gradient(180deg,var(--cardA),var(--cardB));
     border:1px solid var(--border); border-radius:18px;
     box-shadow:var(--shadow);
     backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-    overflow:hidden;
+    overflow:hidden; margin-bottom:14px;
   }
-  .section-h{display:flex;align-items:center;gap:10px;padding:14px 16px}
+  .section-h{display:flex;align-items:center;gap:10px;padding:14px 16px;cursor:pointer;user-select:none}
   .section-h h2{font-size:16px;font-weight:800;flex:1}
+  .meta{font-size:11px;opacity:.9}
+  .toggle{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;opacity:.9}
+  .toggle svg{transition:transform .18s ease}
+  .section.collapsed .toggle svg{transform:rotate(-90deg)}
+  .section-content{padding:0 0 0}
+  .section.collapsed .section-content{display:none}
 
   .field{padding:12px}
   .field + .field{border-top:1px solid rgba(255,255,255,.14)}
   .row{display:flex;align-items:center;justify-content:space-between}
   .label{font-size:13px;font-weight:800}
   .unit{font-size:12px;opacity:.9}
-
   .help{margin-top:6px;text-align:center;font-size:12px;opacity:.8}
 
   /* ===== duo-wheel ===== */
@@ -78,34 +75,29 @@
   }
   .col{
     flex:0 0 92px; height:180px; overflow:auto; -webkit-overflow-scrolling:touch;
-    overscroll-behavior: contain;
-    scrollbar-width:none; scroll-snap-type: y mandatory;
+    overscroll-behavior: contain; scrollbar-width:none; scroll-snap-type:y mandatory;
     mask-image: linear-gradient(180deg, transparent, #000 18%, #000 82%, transparent);
     -webkit-mask-image: linear-gradient(180deg, transparent, #000 18%, #000 82%, transparent);
   }
   .col::-webkit-scrollbar{display:none}
   .option{
-    height:var(--row);
-    display:flex; align-items:center; justify-content:center;
+    height:var(--row); display:flex; align-items:center; justify-content:center;
     font-weight:900; font-size:18px; color:#eef2ff; opacity:.55; scroll-snap-align:center;
   }
   .option.active{ color:#fff; opacity:1; text-shadow:0 1px 0 rgba(0,0,0,.2); }
   .sep{display:flex;align-items:center;justify-content:center;width:10px;color:#e5e7eb;font-weight:800}
-
   .optline{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:8px}
   .optline input{width:18px;height:18px}
 
-  /* === Кнопка и панель сохранения === */
+  /* Кнопка сохранения */
   .savebar{
     display:flex;justify-content:center;padding:12px;
     border-top:1px solid rgba(255,255,255,.14);
-    /* P1: безопасная зона iOS */
     padding-bottom: calc(12px + env(safe-area-inset-bottom));
   }
   .btn{
     min-width:160px;padding:12px 16px;border:0;border-radius:14px;
-    background:#ED2F62;
-    color:#fff;font-weight:900;
+    background:#ED2F62; color:#fff;font-weight:900;
     box-shadow:0 12px 26px rgba(237,47,98,.35), inset 0 1px 0 rgba(255,255,255,.4);
     transition: transform .08s ease, box-shadow .12s ease, filter .12s ease;
     -webkit-tap-highlight-color:transparent;
@@ -117,34 +109,101 @@
   }
   .btn:focus-visible{outline:2px solid rgba(255,255,255,.7); outline-offset:2px; border-radius:16px}
 
-  /* P1: уважение prefers-reduced-motion */
   @media (prefers-reduced-motion: reduce){
     .btn{ transition:none; }
     .btn:active{ transform:none; filter:none; }
   }
 
-  /* отключаем ТОЛЬКО колесо (а не весь .field) */
+  /* Только колесо делаем неактивным */
   .disabled{opacity:.4;filter:saturate(.6)}
 </style>
 </head>
 <body>
   <div class="page">
-    <section class="section" id="form">
-      <div class="section-h"><h2>Анкета замеров</h2></div>
-      <div id="fields"></div>
-      <div class="savebar"><button class="btn" id="saveBtn">Сохранить</button></div>
+
+    <!-- Блок 1: Замеры (по умолчанию свернут) -->
+    <section class="section collapsed" id="sec-measures">
+      <div class="section-h" data-toggle="sec-measures">
+        <h2>Замеры</h2>
+        <div class="meta" id="lastTime">Последний замер: нет данных</div>
+        <div class="toggle" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path d="M8 10l4 4 4-4" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+      </div>
+      <div class="section-content">
+        <div id="fields"></div>
+        <div class="savebar"><button class="btn" id="saveBtn">Сохранить</button></div>
+      </div>
     </section>
+
+    <!-- Блок 2: Аналитика (развернут) -->
+    <section class="section" id="sec-analytics">
+      <div class="section-h" data-toggle="sec-analytics">
+        <h2>Аналитика</h2>
+        <div class="toggle" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path d="M8 10l4 4 4-4" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+      </div>
+      <div class="section-content" id="analytics">
+        <div class="field">
+          <div class="help">Здесь появится динамика по ключевым метрикам после сохранения хотя бы двух замеров.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Блок 3: Комментарий ИИ (развернут) -->
+    <section class="section" id="sec-ai">
+      <div class="section-h" data-toggle="sec-ai">
+        <h2>Комментарий ИИ</h2>
+        <div class="toggle" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path d="M8 10l4 4 4-4" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+      </div>
+      <div class="section-content" id="ai-comment">
+        <div class="field">
+          <div class="help">Здесь будет краткий разбор изменений и мягкие рекомендации на основе последних замеров.</div>
+        </div>
+      </div>
+    </section>
+
   </div>
 
 <script>
-/* ===== utils ===== */
-/* P0: читаем высоту строки из CSS-переменной, чтобы не расходиться с версткой */
+/* ===== КОНСТАНТЫ ХРАНИЛИЩА ===== */
+const LS_KEY_LAST  = 'measurements:last';   // { ts, data }
+const LS_KEY_DRAFT = 'measurements:draft';  // { ts, data }
+
+/* ===== УТИЛИТЫ ===== */
 const ROW_VAR = getComputedStyle(document.documentElement).getPropertyValue('--row').trim();
 const rowH = ROW_VAR.endsWith('px') ? parseFloat(ROW_VAR) : (parseFloat(ROW_VAR) || 36);
 const pad = 4;
 const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
+const fmt = (ts)=>{
+  if(!ts) return 'нет данных';
+  try{
+    return new Intl.DateTimeFormat('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}).format(new Date(ts));
+  }catch(e){ return new Date(ts).toLocaleString('ru-RU'); }
+};
+function readJSON(key, fallback=null){ try{ const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }catch(e){ return fallback; } }
+function writeJSON(key, obj){ try{ localStorage.setItem(key, JSON.stringify(obj)); }catch(e){} }
+function removeKey(key){ try{ localStorage.removeItem(key); }catch(e){} }
 
-/* ===== duo-wheel ===== */
+/* ===== АККОРДЕОН ===== */
+document.querySelectorAll('.section-h').forEach(h=>{
+  h.addEventListener('click', ()=>{
+    const id = h.getAttribute('data-toggle');
+    const sec = document.getElementById(id);
+    sec.classList.toggle('collapsed');
+  });
+});
+
+/* ===== КОЛЁСА ===== */
 function buildWheel(fieldEl, initial){
   const min = +fieldEl.dataset.min;
   const max = +fieldEl.dataset.max;
@@ -155,6 +214,7 @@ function buildWheel(fieldEl, initial){
   const intCol = fieldEl.querySelector('.col-int');
   const fracCol = fieldEl.querySelector('.col-frac');
   const duo = fieldEl.querySelector('.duo');
+  const key = fieldEl.dataset.key;
 
   const opt = t => { const d=document.createElement('div'); d.className='option'; d.textContent=t; return d; };
   function fillCol(col, from, to){
@@ -175,9 +235,7 @@ function buildWheel(fieldEl, initial){
     const children = col.children;
     const activeIdx = idx + pad;
     for (let i=0; i<children.length; i++){
-      const el = children[i];
-      // только два переключения классов (предыдущий/текущий) не храним — простая версия
-      el.classList.toggle('active', i===activeIdx);
+      children[i].classList.toggle('active', i===activeIdx);
     }
   };
 
@@ -193,8 +251,13 @@ function buildWheel(fieldEl, initial){
 
   function applyFracLock(iVal){
     const lock = (iVal === maxInt);
-    fracCol.style.pointerEvents = lock ? 'none' : 'auto';       // P0: блокируем ввод
+    fracCol.style.pointerEvents = lock ? 'none' : 'auto';
     fracCol.style.opacity = lock ? 0.5 : 1;
+  }
+
+  function dispatchChange(){
+    const v = api.value;
+    document.dispatchEvent(new CustomEvent('wheelchange', { detail:{ key, value: v }}));
   }
 
   function setValue(v){
@@ -203,7 +266,6 @@ function buildWheel(fieldEl, initial){
     const iVal = Math.trunc(rounded);
     let f = Math.round((rounded - iVal) * 10);
     if (iVal === maxInt) f = 0;
-
     const iIdx = iVal - minInt;
 
     isProgrammatic = true;
@@ -211,7 +273,7 @@ function buildWheel(fieldEl, initial){
     setScrollInstant(fracCol, f);
     applyFracLock(iVal);
     markActive(intCol); markActive(fracCol);
-    requestAnimationFrame(()=>{ isProgrammatic = false; });
+    requestAnimationFrame(()=>{ isProgrammatic = false; dispatchChange(); });
   }
 
   function snapNow(){
@@ -226,7 +288,7 @@ function buildWheel(fieldEl, initial){
     setScrollInstant(fracCol, f);
     applyFracLock(iVal);
     markActive(intCol); markActive(fracCol);
-    requestAnimationFrame(()=>{ isProgrammatic = false; });
+    requestAnimationFrame(()=>{ isProgrammatic = false; dispatchChange(); });
   }
 
   function onScrollInt(){
@@ -241,9 +303,8 @@ function buildWheel(fieldEl, initial){
     rafFrac = requestAnimationFrame(()=>markActive(fracCol));
     scheduleSnap();
   }
-
   function scheduleSnap(){
-    if (supportsScrollEnd) return; // будет отдельное событие
+    if (supportsScrollEnd) return;
     clearTimeout(snapTimer);
     snapTimer = setTimeout(snapNow, 80);
   }
@@ -258,12 +319,13 @@ function buildWheel(fieldEl, initial){
   function setDisabled(dis){
     duo.classList.toggle('disabled', dis);
     [intCol, fracCol].forEach(c=>c.style.pointerEvents = dis ? 'none':'auto');
+    dispatchChange();
   }
 
   const initVal = (typeof initial==='number') ? initial : (min + (max - min) / 2);
   requestAnimationFrame(()=>requestAnimationFrame(()=>setValue(initVal)));
 
-  return {
+  const api = {
     setValue,
     get value(){
       const iIdx = clamp(nearestIndex(intCol), 0, intRange);
@@ -273,7 +335,6 @@ function buildWheel(fieldEl, initial){
       return +(iVal + f/10).toFixed(1);
     },
     setDisabled,
-    /* P2: возможность корректного размонтирования (если понадобится) */
     destroy(){
       clearTimeout(snapTimer);
       intCol.removeEventListener('scroll', onScrollInt);
@@ -284,9 +345,10 @@ function buildWheel(fieldEl, initial){
       }
     }
   };
+  return api;
 }
 
-/* ===== config ===== */
+/* ===== КОНФИГ ПОЛЕЙ ===== */
 const FIELDS = [
   { key:'weight', label:'Вес', unit:'кг', min:40, max:250, initial:70.0 },
   { key:'height', label:'Рост', unit:'см', min:120, max:230, initial:160.0 },
@@ -314,20 +376,47 @@ const FIELDS = [
   { key:'ankle',   label:'Обхват лодыжки',  unit:'см', min:15, max:35, initial:22 },
 ];
 
-/* ===== render (P0: ленивая инициализация) ===== */
+/* ===== ЗАГРУЗКА ДАННЫХ (последние/черновик) ===== */
+const last = readJSON(LS_KEY_LAST);
+const draft = readJSON(LS_KEY_DRAFT);
+document.getElementById('lastTime').textContent = 'Последний замер: ' + fmt(last?.ts);
+
+// базовая матрица значений на старте: черновик (если свежее) → последние → дефолт
+const baseData = {};
+for (const cfg of FIELDS){
+  const fromDraft = (draft && (!last || (draft.ts >= last.ts))) ? draft.data?.[cfg.key] : undefined;
+  const fromLast  = last?.data?.[cfg.key];
+  baseData[cfg.key] = (typeof fromDraft === 'number' || fromDraft===null) ? fromDraft
+                     : (typeof fromLast  === 'number' || fromLast===null)  ? fromLast
+                     : undefined; // тогда пойдёт initial
+}
+
+/* ===== РЕНДЕР ПОЛЕЙ (ленивая инициализация) ===== */
 const fieldsWrap = document.getElementById('fields');
-const wheels = {};               // публичный доступ по ключу
-const wheelMap = new WeakMap();  // приватное хранение по DOM-элементу
+const wheels = {};
+const wheelMap = new WeakMap();
 
 function ensureWheel(fieldEl, cfg){
   let w = wheelMap.get(fieldEl);
   if (!w){
-    w = buildWheel(fieldEl, cfg.initial);
+    // Определяем стартовое значение
+    const initVal = (typeof baseData[cfg.key]==='number') ? baseData[cfg.key] : cfg.initial;
+    w = buildWheel(fieldEl, initVal);
     wheelMap.set(fieldEl, w);
     wheels[cfg.key] = w;
-    // если чекбокс уже кликнули до инициализации — применим состояние
-    const cb = fieldEl.querySelector('#opt_'+cfg.key);
-    if (cb && cb.checked) w.setDisabled(true);
+
+    // Если поле опционально и сохранено как null — отмечаем чекбокс и отключаем колесо
+    if (cfg.optional){
+      const cb = fieldEl.querySelector('#opt_'+cfg.key);
+      const isNull = baseData[cfg.key] === null;
+      if (cb){ cb.checked = !!isNull; }
+      if (isNull){ w.setDisabled(true); }
+      // слушатель чекбокса — для черновика
+      if (cb && !cb._bound){
+        cb.addEventListener('change', ()=>{ w.setDisabled(cb.checked); scheduleDraftSave(); });
+        cb._bound = true;
+      }
+    }
   }
   return w;
 }
@@ -367,20 +456,20 @@ for (const cfg of FIELDS){
   f.appendChild(h);
 
   fieldsWrap.appendChild(f);
-
-  if (cfg.optional){
-    const cb = f.querySelector('#opt_'+cfg.key);
-    cb.addEventListener('change', ()=>{
-      const wheel = ensureWheel(f, cfg); // инициализируем при первом взаимодействии
-      wheel.setDisabled(cb.checked);
-    });
-  }
 }
 
-/* Lazy init: инициализируем то, что во вьюпорте, остальное — при входе */
+/* Lazy init: инициализируем элементы в видимой области секции */
 const allFields = Array.from(fieldsWrap.querySelectorAll('.field'));
 const canObserve = 'IntersectionObserver' in window;
-if (canObserve){
+function observeFields(){
+  if (!canObserve){
+    for (const f of allFields){
+      const key = f.dataset.key;
+      const cfg = FIELDS.find(x=>x.key===key);
+      ensureWheel(f, cfg);
+    }
+    return;
+  }
   const io = new IntersectionObserver((entries)=>{
     for (const e of entries){
       if (e.isIntersecting){
@@ -392,8 +481,8 @@ if (canObserve){
       }
     }
   }, {root:null, rootMargin:'100px 0px', threshold:0});
+
   for (const f of allFields){
-    // если уже в зоне видимости — инициализируем сразу
     const rect = f.getBoundingClientRect();
     if (rect.top < (window.innerHeight + 100) && rect.bottom > -100){
       const key = f.dataset.key;
@@ -403,30 +492,59 @@ if (canObserve){
       io.observe(f);
     }
   }
-} else {
-  // Фолбэк: инициализируем сразу все
-  for (const f of allFields){
-    const key = f.dataset.key;
-    const cfg = FIELDS.find(x=>x.key===key);
-    ensureWheel(f, cfg);
+}
+// наблюдение запускаем при первом раскрытии секции "Замеры"
+document.querySelector('[data-toggle="sec-measures"]').addEventListener('click', ()=>{
+  // если раньше не инициализировали — сделать это сейчас
+  if (!fieldsWrap._observed){
+    observeFields();
+    fieldsWrap._observed = true;
   }
+}, {once:true});
+
+/* Если секция изначально развернута (мы сделали свернутой) — всё равно проверим на случай смены ТЗ */
+if (!document.getElementById('sec-measures').classList.contains('collapsed')){
+  observeFields(); fieldsWrap._observed = true;
 }
 
-/* ===== save (stub) ===== */
-document.getElementById('saveBtn').addEventListener('click', ()=>{
-  // P1: лёгкая хаптика в Telegram
-  try{ window.Telegram?.WebApp?.HapticFeedback?.impactOccurred('light'); }catch(e){}
-
-  const data = {};
+/* ===== ЧЕРНОВИК (автосохранение офлайн до нажатия "Сохранить") ===== */
+let draftTimer=null;
+function scheduleDraftSave(){
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(saveDraft, 300);
+}
+function collectCurrentData(withEnsure=false){
+  const out = {};
   for (const cfg of FIELDS){
-    const wheel = wheels[cfg.key] || ensureWheel(document.querySelector(`.field[data-key="${cfg.key}"]`), cfg);
-    if (cfg.optional){
-      const cb = document.getElementById('opt_'+cfg.key);
-      data[cfg.key] = cb && cb.checked ? null : wheel.value;
+    const fieldEl = document.querySelector(`.field[data-key="${cfg.key}"]`);
+    const wheel = wheels[cfg.key] || (withEnsure ? ensureWheel(fieldEl, cfg) : null);
+    const cb = fieldEl?.querySelector('#opt_'+cfg.key);
+    if (cfg.optional && cb && cb.checked){
+      out[cfg.key] = null;
+    } else if (wheel){
+      out[cfg.key] = wheel.value;
     } else {
-      data[cfg.key] = wheel.value;
+      // ещё не инициализировано — берём базовое значение (последнее/дефолт)
+      const v = baseData[cfg.key];
+      out[cfg.key] = (typeof v==='number' || v===null) ? v : cfg.initial;
     }
   }
+  return out;
+}
+function saveDraft(){
+  const data = collectCurrentData(false);
+  writeJSON(LS_KEY_DRAFT, { ts: Date.now(), data });
+}
+document.addEventListener('wheelchange', scheduleDraftSave);
+
+/* ===== СОХРАНЕНИЕ ===== */
+document.getElementById('saveBtn').addEventListener('click', ()=>{
+  try{ window.Telegram?.WebApp?.HapticFeedback?.impactOccurred('light'); }catch(e){}
+  const data = collectCurrentData(true);
+  const payload = { ts: Date.now(), data };
+  writeJSON(LS_KEY_LAST, payload);
+  removeKey(LS_KEY_DRAFT);
+  document.getElementById('lastTime').textContent = 'Последний замер: ' + fmt(payload.ts);
   alert('Сохраняем:\n' + JSON.stringify(data, null, 2));
 });
 </script>
