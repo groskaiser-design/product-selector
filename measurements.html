@@ -78,18 +78,18 @@
 <body>
   <div class="page">
     <section class="section" id="form">
-      <div class="section-h"><h2>Анкета замеров1</h2></div>
+      <div class="section-h"><h2>Анкета замеров2</h2></div>
       <div id="fields"></div>
       <div class="savebar"><button class="btn" id="saveBtn">Сохранить</button></div>
     </section>
   </div>
 
 <script>
-/* utils */
+/* ===== utils ===== */
 const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
 const rowH = 36, pad = 4;
 
-/* duo-wheel */
+/* ===== duo-wheel ===== */
 function buildWheel(fieldEl, initial){
   const min = +fieldEl.dataset.min;
   const max = +fieldEl.dataset.max;
@@ -99,7 +99,7 @@ function buildWheel(fieldEl, initial){
   const intCol = fieldEl.querySelector('.col-int');
   const fracCol = fieldEl.querySelector('.col-frac');
 
-  const opt = (t)=>{const d=document.createElement('div'); d.className='option'; d.textContent=t; return d;};
+  const opt = t => { const d=document.createElement('div'); d.className='option'; d.textContent=t; return d; };
   function fillCol(col, from, to){
     const frag=document.createDocumentFragment();
     for(let i=0;i<pad;i++) frag.appendChild(opt(''));
@@ -107,69 +107,69 @@ function buildWheel(fieldEl, initial){
     for(let i=0;i<pad;i++) frag.appendChild(opt(''));
     col.innerHTML=''; col.appendChild(frag);
   }
-
   fillCol(intCol, minInt, maxInt);
   fillCol(fracCol, 0, 9);
 
-  function nearestIndex(col){
-    const y = col.scrollTop + (col.clientHeight-rowH)/2;
-    return Math.round(y/rowH) - pad;
-  }
-  function markActive(col){
+  const nearestIndex = col =>
+    Math.round((col.scrollTop + (col.clientHeight-rowH)/2)/rowH) - pad;
+
+  const markActive = col => {
     const idx = nearestIndex(col);
     Array.from(col.children).forEach((el,i)=>el.classList.toggle('active', i===idx+pad));
-  }
-  function scrollToIndex(col, idx, instant=false){
-    const top = (idx + pad) * rowH - (col.clientHeight-rowH)/2;
-    col.scrollTo({top, behavior: instant?'auto':'smooth'});
-  }
+  };
 
-  function setValue(v, instant=false){
+  const setScrollInstant = (col, idx) => {
+    const top = (idx + pad) * rowH - (col.clientHeight-rowH)/2;
+    col.scrollTop = top; // без анимации, без доп. событий
+  };
+
+  let isProgrammatic = false;
+
+  function setValue(v){
     const clamped = clamp(+v, min, max);
-    const rounded = Math.round(clamped * 10) / 10;   // строго к десятым
+    const rounded = Math.round(clamped * 10) / 10;  // до десятых
     const i = Math.trunc(rounded);
     let f = Math.round((rounded - i) * 10);
+    if (i === maxInt) f = 0;                         // у максимума дроби нет
 
-    if (i === maxInt) f = 0;                          // на максимуме дробей нет
-
-    scrollToIndex(intCol, i, instant);
-    scrollToIndex(fracCol, f, instant);
-
-    fracCol.style.opacity = (i === maxInt) ? 0.5 : 1; // визуальная подсказка
+    isProgrammatic = true;
+    setScrollInstant(intCol, i);
+    setScrollInstant(fracCol, f);
+    fracCol.style.opacity = (i===maxInt)?0.5:1;
     markActive(intCol); markActive(fracCol);
+    requestAnimationFrame(()=>{ isProgrammatic = false; });
   }
 
   let snapTimer=null;
-  function onScrollEnd(){
+  function onScroll(){
+    if (isProgrammatic) return;
+    markActive(this);
     clearTimeout(snapTimer);
     snapTimer = setTimeout(()=>{
-      const i = clamp(nearestIndex(intCol), minInt, maxInt);
-      scrollToIndex(intCol, i, true);
-
+      if (isProgrammatic) return;
+      let i = clamp(nearestIndex(intCol), minInt, maxInt);
       let f = clamp(nearestIndex(fracCol), 0, 9);
       if (i === maxInt) f = 0;
-      scrollToIndex(fracCol, f, true);
 
-      fracCol.style.opacity = (i === maxInt) ? 0.5 : 1;
+      isProgrammatic = true;
+      setScrollInstant(intCol, i);
+      setScrollInstant(fracCol, f);
+      fracCol.style.opacity = (i===maxInt)?0.5:1;
       markActive(intCol); markActive(fracCol);
+      requestAnimationFrame(()=>{ isProgrammatic = false; });
     }, 80);
   }
-  [intCol, fracCol].forEach(col=>{
-    col.addEventListener('scroll', ()=>{ markActive(col); onScrollEnd(); }, {passive:true});
-    markActive(col);
-  });
+  intCol.addEventListener('scroll', onScroll, {passive:true});
+  fracCol.addEventListener('scroll', onScroll, {passive:true});
 
   function setDisabled(dis){
     fieldEl.classList.toggle('disabled', dis);
     [intCol, fracCol].forEach(c=>c.style.pointerEvents = dis ? 'none':'auto');
   }
 
+  // надёжная инициализация ровно в initial
   const initVal = (typeof initial==='number') ? initial : (min + (max - min) / 2);
-  const kick = () => setValue(initVal, true);
-  requestAnimationFrame(()=>requestAnimationFrame(()=>{
-    kick();
-    setTimeout(kick, 0);
-  }));
+  requestAnimationFrame(()=>requestAnimationFrame(()=>setValue(initVal)));
 
   return {
     setValue,
@@ -183,11 +183,10 @@ function buildWheel(fieldEl, initial){
   };
 }
 
-/* config */
+/* ===== config ===== */
 const FIELDS = [
   { key:'weight', label:'Вес', unit:'кг', min:40, max:250, initial:70.0 },
   { key:'height', label:'Рост', unit:'см', min:120, max:230, initial:160.0 },
-
   { key:'fat',    label:'% жира', unit:'%',  min:3,  max:60,  initial:20.0, optional:true },
 
   { key:'neck',   label:'Шея', unit:'см', min:20, max:70, initial:38 },
@@ -212,7 +211,7 @@ const FIELDS = [
   { key:'ankle',   label:'Обхват лодыжки',  unit:'см', min:15, max:35, initial:22 },
 ];
 
-/* render */
+/* ===== render ===== */
 const fieldsWrap = document.getElementById('fields');
 const wheels = {};
 
@@ -261,7 +260,7 @@ for (const cfg of FIELDS){
   }
 }
 
-/* save (stub) */
+/* ===== save (stub) ===== */
 document.getElementById('saveBtn').addEventListener('click', ()=>{
   const data = {};
   for (const cfg of FIELDS){
