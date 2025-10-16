@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Замеры — двойные колёса</title>
+<title>Замеры тела</title>
 <style>
   :root{
     --bg: linear-gradient(135deg,#667eea 0%,#764ba2 100%);
@@ -12,10 +12,11 @@
     --border: rgba(255,255,255,.28);
     --shadow: 0 8px 28px rgba(0,0,0,.18);
     --accent:#6366f1;
+    --okA:#34d399; --okB:#10b981;
   }
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%}
-  body{min-height:100svh;background:var(--bg);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;color:#111}
+  body{min-height:100svh;background:var(--bg);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;color:#fff}
   .page{max-width:560px;margin:0 auto;padding:18px 14px 24px}
 
   .section{
@@ -23,33 +24,40 @@
     border:1px solid var(--border); border-radius:18px;
     box-shadow:var(--shadow);
     backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-    overflow:hidden; color:#fff;
+    overflow:hidden;
   }
   .section + .section{margin-top:14px}
   .section-h{display:flex;align-items:center;gap:10px;padding:14px 16px}
   .section-h h2{font-size:16px;font-weight:800;flex:1}
+  .caret{width:26px;height:26px;display:grid;place-items:center;border-radius:999px;
+    background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.28);cursor:pointer;transition:.2s}
+  .caret svg{width:14px;height:14px;fill:#fff;transform:rotate(180deg);transition:transform .22s ease}
+  .collapsed .caret svg{transform:rotate(0deg)}
+  .panel{max-height:9999px;transition:max-height .28s ease}
+  .collapsed .panel{max-height:0;overflow:hidden}
 
   .field{padding:12px}
-  .field + .field{border-top:1px solid rgba(255,255,255,.14)}
+  .field + .field{border-top:1px solid rgba(255,255,255,.12)}
   .row{display:flex;align-items:center;justify-content:space-between}
   .label{font-size:12px;font-weight:700}
   .unit{font-size:12px;opacity:.9}
 
-  /* центральный ввод */
-  .manual{display:flex;justify-content:center;margin:8px 0}
-  .num{
-    width:180px;text-align:center;padding:8px 10px;border-radius:12px;
+  /* центральный вывод (не редактируется) */
+  .readout-wrap{display:flex;justify-content:center;margin:8px 0}
+  .readout{
+    min-width:140px;text-align:center;padding:8px 12px;border-radius:12px;
     background:#fff;color:#111;border:1px solid rgba(0,0,0,.08);
     font-weight:900;font-size:20px;font-variant-numeric:tabular-nums;
+    letter-spacing:.2px;
   }
 
   /* ===== duo-wheel ===== */
   .duo{
-    position:relative; display:flex; gap:12px; padding:12px;
+    position:relative; display:flex; gap:6px; padding:12px;
     border-radius:14px; background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.24);
   }
   .duo::after{ /* центральная подсветка строки */
-    content:""; position:absolute; left:10px; right:10px; top:50%;
+    content:""; position:absolute; left:8px; right:8px; top:50%;
     height:36px; transform:translateY(-50%);
     background:rgba(255,255,255,.14); border:1px solid rgba(255,255,255,.35);
     border-radius:10px; pointer-events:none;
@@ -69,13 +77,15 @@
   }
   .option.active{ color:#fff; opacity:1; text-shadow:0 1px 0 rgba(0,0,0,.2); }
 
-  .sep{display:flex;align-items:center;justify-content:center;width:22px;color:#e5e7eb;font-weight:800}
-  .hint{margin-top:6px;text-align:center;font-size:12px;opacity:.85}
+  /* «прижали» разряды */
+  .sep{display:flex;align-items:center;justify-content:center;width:10px;margin:0 -2px;color:#e5e7eb;font-weight:900}
+
+  .hint{margin-top:6px;text-align:center;font-size:12px;opacity:.9}
 
   .savebar{display:flex;justify-content:flex-end;padding:12px}
   .btn{
     min-width:160px;padding:12px 16px;border:0;border-radius:14px;
-    background:linear-gradient(135deg,#34d399,#10b981); color:#fff;font-weight:900;
+    background:linear-gradient(135deg,var(--okA),var(--okB)); color:#fff;font-weight:900;
     box-shadow:0 12px 26px rgba(16,185,129,.35), inset 0 1px 0 rgba(255,255,255,.4);
   }
 </style>
@@ -83,50 +93,130 @@
 <body>
   <div class="page">
 
-    <section class="section">
-      <div class="section-h"><h2>Анкета замеров</h2></div>
-
-      <!-- Рост -->
-      <div class="field" data-key="height" data-min="0" data-max="250" data-decimals="1" data-unit="см">
-        <div class="row">
-          <div class="label">Рост</div>
-          <div class="unit">см</div>
-        </div>
-
-        <div class="manual"><input id="height-num" class="num" type="number" step="0.1" inputmode="decimal" /></div>
-
-        <div class="duo">
-          <div class="col col-int"></div>
-          <div class="sep">,</div>
-          <div class="col col-frac"></div>
-        </div>
-        <div class="hint">крутите целые и миллиметры</div>
+    <section class="section" id="formSec">
+      <div class="section-h">
+        <h2>Анкета замеров</h2>
+        <button class="caret" id="formCaret" aria-label="Свернуть/развернуть">
+          <svg viewBox="0 0 20 20"><path d="M10 13.5 3.5 7l1.4-1.4L10 10.2l5.1-4.6L16.5 7 10 13.5z"/></svg>
+        </button>
       </div>
-
-      <!-- Вес (тот же компонент) -->
-      <div class="field" data-key="weight" data-min="20" data-max="250" data-decimals="1" data-unit="кг">
-        <div class="row">
-          <div class="label">Вес</div>
-          <div class="unit">кг</div>
-        </div>
-
-        <div class="manual"><input id="weight-num" class="num" type="number" step="0.1" inputmode="decimal" /></div>
-
-        <div class="duo">
-          <div class="col col-int"></div>
-          <div class="sep">,</div>
-          <div class="col col-frac"></div>
-        </div>
-        <div class="hint">кг и десятые доли</div>
+      <div class="panel">
+        <!-- поля генерируются JS по схеме -->
+        <div id="fields"></div>
+        <div class="savebar"><button class="btn">Сохранить</button></div>
       </div>
+    </section>
 
-      <div class="savebar"><button class="btn">Сохранить</button></div>
+    <section class="section" id="analyticsSec">
+      <div class="section-h">
+        <h2>Аналитика</h2>
+        <button class="caret" id="anCaret" aria-label="Свернуть/развернуть">
+          <svg viewBox="0 0 20 20"><path d="M10 13.5 3.5 7l1.4-1.4L10 10.2l5.1-4.6L16.5 7 10 13.5z"/></svg>
+        </button>
+      </div>
+      <div class="panel">
+        <div style="height:260px;display:grid;place-items:center;color:#e5e7eb;opacity:.85;">[тут будет график]</div>
+      </div>
+    </section>
+
+    <section class="section" id="aiSec">
+      <div class="section-h">
+        <h2>Выводы</h2>
+        <button class="caret" id="aiCaret" aria-label="Свернуть/развернуть">
+          <svg viewBox="0 0 20 20"><path d="M10 13.5 3.5 7l1.4-1.4L10 10.2l5.1-4.6L16.5 7 10 13.5z"/></svg>
+        </button>
+      </div>
+      <div class="panel">
+        <div style="padding:12px">
+          <div style="background:#fff;color:#111;border-radius:12px;padding:12px 14px;border:1px solid rgba(0,0,0,.08)">
+            Здесь аккуратно вставим текст от ИИ из ячейки — с базовой типографикой.
+          </div>
+        </div>
+      </div>
     </section>
 
   </div>
 
 <script>
-  // утилиты
+  /* ===== collapses ===== */
+  function makeCollapse(sec, defaultOpen=true){
+    if(!defaultOpen) sec.classList.add('collapsed');
+    sec.querySelector('.caret').addEventListener('click',()=>sec.classList.toggle('collapsed'));
+  }
+  makeCollapse(document.getElementById('formSec'), false);   // анкета по ТЗ — свернута
+  makeCollapse(document.getElementById('analyticsSec'), true);
+  makeCollapse(document.getElementById('aiSec'), true);
+
+  /* ===== схема полей анкеты ===== */
+  const FIELDS = [
+    {key:'height', label:'Рост', unit:'см', min:50, max:250, init:178.0},
+    {key:'weight', label:'Вес', unit:'кг', min:20, max:250, init:72.4},
+    {key:'fat',    label:'% жира (опц.)', unit:'%', min:0, max:70, init:18.0},
+    {key:'neck',   label:'Шея', unit:'см', min:20, max:60, init:38.0},
+    {key:'shoulders',label:'Плечи обхват', unit:'см', min:60, max:160, init:110.0},
+    {key:'chest',  label:'Грудь', unit:'см', min:60, max:160, init:102.0},
+    {key:'waist',  label:'Талия', unit:'см', min:50, max:150, init:86.0},
+
+    {group:'Бицепс (расслаб.)'},
+    {key:'biceps_l_rel',label:'Бицепс Л (расслаб.)', unit:'см', min:15, max:60, init:31.0},
+    {key:'biceps_r_rel',label:'Бицепс П (расслаб.)', unit:'см', min:15, max:60, init:31.5},
+
+    {group:'Бицепс (напряж.)'},
+    {key:'biceps_l_flex',label:'Бицепс Л (напряж.)', unit:'см', min:20, max:70, init:34.0},
+    {key:'biceps_r_flex',label:'Бицепс П (напряж.)', unit:'см', min:20, max:70, init:34.5},
+
+    {group:'Ноги'},
+    {key:'thigh_l',label:'Бедро Л', unit:'см', min:35, max:90, init:56.0},
+    {key:'thigh_r',label:'Бедро П', unit:'см', min:35, max:90, init:56.5},
+    {key:'calf_l', label:'Икра Л', unit:'см', min:25, max:55, init:38.0},
+    {key:'calf_r', label:'Икра П', unit:'см', min:25, max:55, init:38.5},
+
+    {group:'Прочее'},
+    {key:'glutes', label:'Ягодицы', unit:'см', min:60, max:160, init:104.0},
+    {key:'wrist',  label:'Обхват запястья', unit:'см', min:10, max:30, init:17.5},
+    {key:'knee',   label:'Обхват колена', unit:'см', min:25, max:60, init:39.0},
+    {key:'ankle',  label:'Обхват лодыжки', unit:'см', min:15, max:35, init:22.5},
+  ];
+
+  const fieldsHost = document.getElementById('fields');
+  const wheels = {}; // key -> controller
+
+  function sectionTitle(text){
+    const el=document.createElement('div');
+    el.style.cssText='padding:10px 12px 4px;font-weight:800;opacity:.9';
+    el.textContent=text; return el;
+  }
+
+  FIELDS.forEach(f=>{
+    if(f.group){ fieldsHost.appendChild(sectionTitle(f.group)); return; }
+    fieldsHost.appendChild(buildField(f));
+  });
+
+  function buildField(cfg){
+    const wrap=document.createElement('div'); wrap.className='field';
+    wrap.dataset.key=cfg.key; wrap.dataset.min=cfg.min; wrap.dataset.max=cfg.max;
+
+    wrap.innerHTML=`
+      <div class="row">
+        <div class="label">${cfg.label}</div>
+        <div class="unit">${cfg.unit}</div>
+      </div>
+
+      <div class="readout-wrap"><div class="readout" id="${cfg.key}-out">–</div></div>
+
+      <div class="duo">
+        <div class="col col-int"></div>
+        <div class="sep">,</div>
+        <div class="col col-frac"></div>
+      </div>
+      <div class="hint">крутите целые и десятые</div>
+    `;
+    // создать колёса
+    wheels[cfg.key] = buildWheel(wrap, cfg.init);
+    return wrap;
+  }
+
+  /* ===== компонент «двоe колёс» ===== */
   const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
   const fmt1=v=>(Math.round(v*10)/10).toFixed(1);
 
@@ -134,26 +224,23 @@
     const min = +fieldEl.dataset.min;
     const max = +fieldEl.dataset.max;
     const key = fieldEl.dataset.key;
-    const decimals = +fieldEl.dataset.decimals || 1;
 
     const intCol = fieldEl.querySelector('.col-int');
     const fracCol = fieldEl.querySelector('.col-frac');
-    const numInput = document.getElementById(`${key}-num`);
+    const out = document.getElementById(`${key}-out`);
 
-    // наполнить колонны + паддинги сверху/снизу для центрирования
     function fillCol(col, from, to, pad=4){
       const frag=document.createDocumentFragment();
-      for(let i=0;i<pad;i++){ const p=document.createElement('div'); p.className='option'; p.textContent=''; frag.appendChild(p); }
-      for(let i=from;i<=to;i++){ const d=document.createElement('div'); d.className='option'; d.textContent=i; frag.appendChild(d); }
-      for(let i=0;i<pad;i++){ const p=document.createElement('div'); p.className='option'; p.textContent=''; frag.appendChild(p); }
+      for(let i=0;i<pad;i++){ frag.appendChild(opt()); }
+      for(let i=from;i<=to;i++){ frag.appendChild(opt(i)); }
+      for(let i=0;i<pad;i++){ frag.appendChild(opt()); }
       col.innerHTML=''; col.appendChild(frag);
+      function opt(v=''){ const d=document.createElement('div'); d.className='option'; d.textContent=v; return d; }
     }
-
     fillCol(intCol, Math.floor(min), Math.floor(max));
-    fillCol(fracCol, 0, (decimals===1?9:99));
+    fillCol(fracCol, 0, 9);
 
-    // позиционирование к значению
-    const rowH = 36, pad = 4; // см. fillCol
+    const rowH = 36, pad = 4;
     function scrollToIndex(col, idx, instant=false){
       const top = (idx + pad) * rowH - (col.clientHeight-rowH)/2;
       col.scrollTo({top, behavior: instant ? 'auto' : 'smooth'});
@@ -167,62 +254,53 @@
       Array.from(col.children).forEach((el,i)=>el.classList.toggle('active', i===idx+pad));
     }
 
-    // актуализация числа и ограничение долей при int=max
     function applyFromCols(){
       let i = clamp(nearestIndex(intCol), Math.floor(min), Math.floor(max));
       let f = clamp(nearestIndex(fracCol), 0, 9);
-      if(i===Math.floor(max)){ f = 0; scrollToIndex(fracCol, 0, true); } // не выходим за предел
+      if(i===Math.floor(max)) { f = 0; scrollToIndex(fracCol, 0, true); }
       const val = i + f/10;
-      numInput.value = fmt1(val);
+      out.textContent = fmt1(val);
       markActive(intCol); markActive(fracCol);
+      currentValues[key] = val;
     }
 
     let snapTimer=null;
     function onScrollEnd(){
       clearTimeout(snapTimer);
       snapTimer = setTimeout(()=>{
-        // снап к ближайшим индекcам
         scrollToIndex(intCol, clamp(nearestIndex(intCol), Math.floor(min), Math.floor(max)), true);
         scrollToIndex(fracCol, clamp(nearestIndex(fracCol), 0, 9), true);
         applyFromCols();
       }, 80);
     }
-
     [intCol, fracCol].forEach(col=>{
       col.addEventListener('scroll', ()=>{ markActive(col); onScrollEnd(); }, {passive:true});
-      // начальная активность
       markActive(col);
     });
 
-    // из input -> колёса
     function setValue(v, instant=false){
       const val = clamp(+v, min, max);
       const i = Math.trunc(val);
       let f = Math.round((val - i) * 10);
-      if (i===Math.floor(max)) f = 0;
+      if(i===Math.floor(max)) f = 0;
       scrollToIndex(intCol, i, instant);
       scrollToIndex(fracCol, f, instant);
-      numInput.value = fmt1(i + f/10);
+      out.textContent = fmt1(i + f/10);
       markActive(intCol); markActive(fracCol);
+      currentValues[key] = i + f/10;
     }
 
-    // начальное значение
     setValue(initial ?? (min + (max-min)/2), true);
-
-    numInput.addEventListener('input', ()=>{
-      const v = parseFloat(String(numInput.value).replace(',','.'));
-      if(!isNaN(v)) setValue(v);
-    });
-
-    return { setValue, get value(){ return parseFloat(numInput.value); } };
+    return { setValue, get value(){ return currentValues[key]; } };
   }
 
-  // инициализация двух полей
-  const heightWheel = buildWheel(document.querySelector('[data-key="height"]'), 178.0);
-  const weightWheel = buildWheel(document.querySelector('[data-key="weight"]'), 72.4);
+  const currentValues = {};
 
+  /* ===== сохранить (пока просто алерт) ===== */
   document.querySelector('.btn').addEventListener('click', ()=>{
-    alert(`Сохраняем:\nРост: ${heightWheel.value} см\nВес: ${weightWheel.value} кг`);
+    // здесь дальше уйдёт в бэкенд
+    const ordered = Object.keys(wheels).map(k=>`${k}: ${wheels[k].value}`);
+    alert('Сохраняем:\n' + ordered.join('\n'));
   });
 </script>
 </body>
