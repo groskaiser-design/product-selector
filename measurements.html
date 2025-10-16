@@ -104,14 +104,11 @@
   }
   .btn:focus-visible{outline:2px solid rgba(255,255,255,.7); outline-offset:2px; border-radius:16px}
   @media (prefers-reduced-motion: reduce){ .btn{ transition:none; } }
-
-  /* явная визуальная отдача по нажатию (надёжнее, чем :active на iOS) */
   .btn.pressed{
     transform:translateY(1px) scale(.98);
     box-shadow:0 6px 16px rgba(237,47,98,.35), inset 0 1px 0 rgba(255,255,255,.4);
     filter:saturate(.95);
   }
-
   .btn.loading{ opacity:.9; pointer-events:none; }
   .spinner{
     width:16px;height:16px;border:2px solid rgba(255,255,255,.55);
@@ -195,53 +192,12 @@
 })();
 
 /* ===== КОНСТАНТЫ ХРАНИЛИЩА ===== */
-const LS_KEY_LAST  = 'measurements:last';   // { ts, data } — подтверждённая запись
-const SS_KEY_DRAFT = 'measurements:sessionDraft'; // { ts, data } — черновик в рамках текущего сеанса
+const LS_KEY_LAST  = 'measurements:last';                  // подтверждённая запись
+const SS_KEY_DRAFT = 'measurements:sessionDraft';          // черновик сеанса
 
 /* ===== СЕТЬ / БЭКЕНД ===== */
 const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbwwr4M2Z6ZB8GyNgPl97LrGsU_OFCHWPF8gEJ5PZNNzpDmW6VKnI24emwGzT6Snp0Dd0A/exec';
 const APP_VERSION = '1.0.7';
-
-async function callBackend(action, extra = {}) {
-  const base = {
-    action,
-    init_data: safeInitData(),
-    app_version: APP_VERSION,
-    locale: navigator.language || 'ru-RU',
-    ...extra
-  };
-
-  // 1) GET (без preflight)
-  const qs = new URLSearchParams();
-  qs.set('action', action);
-  qs.set('init_data', base.init_data);
-  qs.set('json', JSON.stringify(base));
-  qs.set('_t', String(Date.now()));
-
-  try {
-    const r  = await fetch(BACKEND_URL + '?' + qs.toString(), { cache:'no-cache' });
-    const tx = await r.text();
-    try { return JSON.parse(tx); } catch(_) {}
-  } catch(_) {}
-
-  // 2) Fallback POST text/plain (iOS)
-  try {
-    const rp = await fetch(BACKEND_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
-      body: JSON.stringify(base),
-      keepalive: true,
-      redirect: 'follow',
-      credentials: 'omit',
-      referrerPolicy: 'no-referrer'
-    });
-    const tp = await rp.text();
-    try { return JSON.parse(tp); }
-    catch { return { ok:false, error:'bad_json', _raw: tp.slice(0,200) }; }
-  } catch(e) {
-    return { ok:false, error: e?.message || 'network_error' };
-  }
-}
 
 /* ===== УТИЛИТЫ ===== */
 const ROW_VAR = getComputedStyle(document.documentElement).getPropertyValue('--row').trim();
@@ -249,19 +205,47 @@ const rowH = ROW_VAR.endsWith('px') ? parseFloat(ROW_VAR) : (parseFloat(ROW_VAR)
 const pad = 4;
 const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
 
-const DTF = new Intl.DateTimeFormat('ru-RU', {
-  day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'
-});
-const fmt = (ts)=>(!ts ? 'нет данных' : DTF.format(new Date(ts)));
+const DTF = new Intl.DateTimeFormat('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
+const fmt = ts => (!ts ? 'нет данных' : DTF.format(new Date(ts)));
 
-function readJSON(key, fallback=null){ try{ const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }catch(e){ return fallback; } }
-function writeJSON(key, obj){ try{ localStorage.setItem(key, JSON.stringify(obj)); }catch(e){} }
-function readSessionJSON(key, fallback=null){ try{ const v = sessionStorage.getItem(key); return v ? JSON.parse(v) : fallback; }catch(e){ return fallback; } }
-function writeSessionJSON(key, obj){ try{ sessionStorage.setItem(key, JSON.stringify(obj)); }catch(e){} }
+function readJSON(key, fallback=null){ try{ const v=localStorage.getItem(key); return v?JSON.parse(v):fallback; }catch(e){ return fallback; } }
+function writeJSON(key,obj){ try{ localStorage.setItem(key, JSON.stringify(obj)); }catch(e){} }
+function readSessionJSON(key,fallback=null){ try{ const v=sessionStorage.getItem(key); return v?JSON.parse(v):fallback; }catch(e){ return fallback; } }
+function writeSessionJSON(key,obj){ try{ sessionStorage.setItem(key, JSON.stringify(obj)); }catch(e){} }
 function removeSessionKey(key){ try{ sessionStorage.removeItem(key); }catch(e){} }
 function safeInitData(){ return window.Telegram?.WebApp?.initData || ''; }
 
-/* ===== АККОРДЕОН (a11y + клавиатура) ===== */
+async function callBackend(action, extra = {}) {
+  const base = { action, init_data: safeInitData(), app_version: APP_VERSION, locale: navigator.language || 'ru-RU', ...extra };
+
+  // 1) GET (без preflight)
+  const qs = new URLSearchParams();
+  qs.set('action', action);
+  qs.set('init_data', base.init_data);
+  qs.set('json', JSON.stringify(base));
+  qs.set('_t', String(Date.now()));
+  try{
+    const r = await fetch(BACKEND_URL + '?' + qs.toString(), { cache:'no-cache' });
+    const tx = await r.text();
+    try{ return JSON.parse(tx); }catch(_){}
+  }catch(_){}
+
+  // 2) Fallback POST text/plain (iOS)
+  try{
+    const rp = await fetch(BACKEND_URL, {
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=UTF-8'},
+      body: JSON.stringify(base),
+      keepalive:true, redirect:'follow', credentials:'omit', referrerPolicy:'no-referrer'
+    });
+    const tp = await rp.text();
+    try{ return JSON.parse(tp); }catch{ return {ok:false, error:'bad_json', _raw: tp.slice(0,200)}; }
+  }catch(e){
+    return { ok:false, error: e?.message || 'network_error' };
+  }
+}
+
+/* ===== АККОРДЕОН ===== */
 function setAriaExpanded(h){
   const sec = document.getElementById(h.getAttribute('data-toggle'));
   h.setAttribute('aria-expanded', String(!sec.classList.contains('collapsed')));
@@ -271,9 +255,12 @@ function toggleSectionByHeader(h){
   const sec = document.getElementById(id);
   const willBeCollapsed = sec.classList.toggle('collapsed');
   h.setAttribute('aria-expanded', String(!willBeCollapsed));
-  if (id === 'sec-measures' && !willBeCollapsed && !fieldsWrap._observed){
-    observeFields();
-    fieldsWrap._observed = true;
+  if (id === 'sec-measures' && !willBeCollapsed){
+    // Ленивая инициализация колес при первом раскрытии
+    if (typeof fieldsWrap !== 'undefined' && !fieldsWrap._observed){
+      observeFields();
+      fieldsWrap._observed = true;
+    }
   }
 }
 document.querySelectorAll('.section-h').forEach(h=>{
@@ -304,7 +291,6 @@ function buildWheel(fieldEl, initial){
   function fillCol(col, from, to){
     const frag=document.createDocumentFragment();
     for(let i=0;i<pad;i++) frag.appendChild(opt(''));
-    for(let i=from;i<=to)i++){} /* guard */
     for(let i=from;i<=to;i++) frag.appendChild(opt(i));
     for(let i=0;i<pad;i++) frag.appendChild(opt(''));
     col.innerHTML=''; col.appendChild(frag);
@@ -489,19 +475,15 @@ const FIELDS = [
   { key:'ankle',   label:'Обхват лодыжки',  unit:'см', min:15, max:35, initial:22 },
 ];
 
-/* Быстрый доступ к конфигу по ключу */
+/* ===== Быстрый доступ к конфигу ===== */
 const CFG = Object.fromEntries(FIELDS.map(f=>[f.key, f]));
 
 /* ===== ИСХОДНОЕ СОСТОЯНИЕ: last + sessionDraft ===== */
 const last = readJSON(LS_KEY_LAST);
 let sessionDraft = readSessionJSON(SS_KEY_DRAFT);
-
-// если в кеше есть last новее, чем draft — дропаем устаревший sessionDraft
 if (sessionDraft && last?.ts && sessionDraft.ts && last.ts >= sessionDraft.ts){
-  sessionDraft = null;
-  removeSessionKey(SS_KEY_DRAFT);
+  sessionDraft = null; removeSessionKey(SS_KEY_DRAFT);
 }
-
 document.getElementById('lastTime').textContent = 'Последний замер: ' + fmt(last?.ts);
 
 const baseData = {};
@@ -610,7 +592,6 @@ function observeFields(){
     }
   }
 }
-
 if (!document.getElementById('sec-measures').classList.contains('collapsed')){
   observeFields(); fieldsWrap._observed = true;
 }
@@ -638,54 +619,44 @@ function touchDraft(){
   clearTimeout(draftTimer);
   draftTimer = setTimeout(()=>{
     const obj = { ts: Date.now(), data: collectCurrentData(false) };
-    sessionDraft = obj;
     writeSessionJSON(SS_KEY_DRAFT, obj);
   }, 150);
 }
 document.addEventListener('wheelchange', touchDraft);
 
-/* ===== ПОДЪЕМ ИЗ БД (всегда), НО НЕ ПЕРЕТИРАЕМ АКТИВНЫЙ ЧЕРНОВИК ===== */
+/* ===== ПОДЪЕМ ИЗ БД (если нет активного черновика) ===== */
 async function fetchAndApplyFromBackend(){
   try{
     const res = await callBackend('init');
     if (res && res.ok && res.last){
+      // если появился черновик — не перетираем UI
+      if (readSessionJSON(SS_KEY_DRAFT)) return;
+
       const tsMs = Date.parse(res.last.ts_iso);
-      if (sessionDraft) return; // есть активный черновик — не трогаем UI
+      document.getElementById('lastTime').textContent = 'Последний замер: ' + fmt(tsMs);
+      writeJSON(LS_KEY_LAST, { ts: tsMs, data: res.last.data });
 
       let changed = false;
       for (const k of Object.keys(res.last.data || {})){
         const v = res.last.data[k];
-        if (baseData[k] !== v){
-          baseData[k] = v;
-          changed = true;
-        }
+        if (baseData[k] !== v){ baseData[k] = v; changed = true; }
       }
-      document.getElementById('lastTime').textContent = 'Последний замер: ' + fmt(tsMs);
-      writeJSON(LS_KEY_LAST, { ts: tsMs, data: res.last.data });
-
       if (changed){
         for (const k of Object.keys(res.last.data || {})){
           const w = wheels[k];
           const v = res.last.data[k];
           if (!w) continue;
-          if (v === null){
-            w.setDisabled(true);
-          } else if (typeof v === 'number' && Math.abs(w.value - v) > 1e-9){
-            w.setValue(v);
-          }
+          if (v === null){ w.setDisabled(true); }
+          else if (typeof v === 'number' && Math.abs(w.value - v) > 1e-9){ w.setValue(v); }
         }
       }
     }
-  }catch(e){ /* офлайн — ок */ }
+  }catch(e){}
 }
-
-// начальная фоновая синхронизация с БД
 fetchAndApplyFromBackend();
-
-// при возврате/активации окна — актуализируем, если нет черновика
-window.addEventListener('pageshow', ()=>{ if (!sessionDraft) fetchAndApplyFromBackend(); });
+window.addEventListener('pageshow', ()=>{ if (!readSessionJSON(SS_KEY_DRAFT)) fetchAndApplyFromBackend(); });
 document.addEventListener('visibilitychange', ()=>{
-  if (document.visibilityState === 'visible' && !sessionDraft) fetchAndApplyFromBackend();
+  if (document.visibilityState === 'visible' && !readSessionJSON(SS_KEY_DRAFT)) fetchAndApplyFromBackend();
 });
 
 /* ===== КНОПКА: визуальная отдача, лоадер ===== */
@@ -696,7 +667,6 @@ const saveBtn = document.getElementById('saveBtn');
 ['pointerup','pointercancel','mouseleave','touchend','touchcancel','mouseup','blur'].forEach(ev =>
   saveBtn.addEventListener(ev, ()=> saveBtn.classList.remove('pressed'), {passive:true})
 );
-
 function setSavingState(isSaving){
   const label = saveBtn.querySelector('.btn-label');
   const sp = saveBtn.querySelector('.spinner');
@@ -727,7 +697,7 @@ document.getElementById('saveBtn').addEventListener('click', async ()=>{
     data
   };
 
-  // локально обновим last (кандидат) и baseData
+  // локальный кеш "last"
   writeJSON(LS_KEY_LAST, { ts: clientTs, data });
   document.getElementById('lastTime').textContent = 'Последний замер: ' + fmt(clientTs);
   Object.assign(baseData, data);
@@ -742,9 +712,7 @@ document.getElementById('saveBtn').addEventListener('click', async ()=>{
       const serverTs = Date.parse(res.ts_iso);
       writeJSON(LS_KEY_LAST, { ts: serverTs, data });
       document.getElementById('lastTime').textContent = 'Последний замер: ' + fmt(serverTs);
-
-      // успешное сохранение => черновик не нужен
-      sessionDraft = null;
+      // очистка черновика сеанса
       removeSessionKey(SS_KEY_DRAFT);
 
       // свернуть раздел "Замеры"
