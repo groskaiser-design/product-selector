@@ -87,7 +87,7 @@
   .optline{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:8px}
   .optline input{width:18px;height:18px}
 
-  /* Кнопка сохранения */
+  /* Кнопка сохранения + лоадер */
   .savebar{
     display:flex;justify-content:center;padding:12px;
     border-top:1px solid rgba(255,255,255,.14);
@@ -97,30 +97,29 @@
     min-width:160px;padding:12px 16px;border:0;border-radius:14px;
     background:#ED2F62; color:#fff;font-weight:900;
     box-shadow:0 12px 26px rgba(237,47,98,.35), inset 0 1px 0 rgba(255,255,255,.4);
-    transition: transform .08s ease, box-shadow .12s ease, filter .12s ease;
+    transition: transform .08s ease, box-shadow .12s ease, filter .12s ease, opacity .12s ease;
     -webkit-tap-highlight-color:transparent;
     touch-action: manipulation;
-    will-change: transform, box-shadow, filter;
+    display:inline-flex; align-items:center; justify-content:center; gap:10px;
   }
-  .btn:active{
+  .btn:focus-visible{outline:2px solid rgba(255,255,255,.7); outline-offset:2px; border-radius:16px}
+  @media (prefers-reduced-motion: reduce){ .btn{ transition:none; } }
+
+  /* явная визуальная отдача по нажатию (надёжнее, чем :active на iOS) */
+  .btn.pressed{
     transform:translateY(1px) scale(.98);
     box-shadow:0 6px 16px rgba(237,47,98,.35), inset 0 1px 0 rgba(255,255,255,.4);
     filter:saturate(.95);
   }
-  /* FIX: явная микропульсация на нажатие (видно даже при быстром тапе) */
-  @keyframes btnPress {
-    0%   { transform: translateY(0) scale(1);   box-shadow:0 12px 26px rgba(237,47,98,.35), inset 0 1px 0 rgba(255,255,255,.4); }
-    50%  { transform: translateY(1px) scale(.98); box-shadow:0 6px 16px rgba(237,47,98,.35), inset 0 1px 0 rgba(255,255,255,.4); }
-    100% { transform: translateY(0) scale(1);   box-shadow:0 12px 26px rgba(237,47,98,.35), inset 0 1px 0 rgba(255,255,255,.4); }
-  }
-  .btn.pressed { animation: btnPress .18s ease; }
 
-  .btn:focus-visible{outline:2px solid rgba(255,255,255,.7); outline-offset:2px; border-radius:16px}
-  @media (prefers-reduced-motion: reduce){
-    .btn{ transition:none; }
-    .btn:active{ transform:none; filter:none; }
-    .btn.pressed{ animation:none; }
+  .btn.loading{ opacity:.9; pointer-events:none; }
+  .spinner{
+    width:16px;height:16px;border:2px solid rgba(255,255,255,.55);
+    border-top-color:#fff;border-radius:50%;
+    animation:spin .8s linear infinite;
   }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+
   .disabled{opacity:.4;filter:saturate(.6)}
 </style>
 </head>
@@ -140,7 +139,12 @@
       </div>
       <div class="section-content">
         <div id="fields"></div>
-        <div class="savebar"><button class="btn" id="saveBtn">Сохранить</button></div>
+        <div class="savebar">
+          <button class="btn" id="saveBtn" aria-busy="false">
+            <span class="btn-label">Сохранить</span>
+            <span class="spinner" aria-hidden="true" hidden></span>
+          </button>
+        </div>
       </div>
     </section>
 
@@ -181,29 +185,13 @@
   </div>
 
 <script>
-/* ===== Telegram Mini App boot + BackButton (FIX) ===== */
+/* ===== Telegram Mini App boot ===== */
 (function initTMA(){
   const tg = window.Telegram?.WebApp;
   if (!tg) return;
   try { tg.ready(); } catch(e){}
   try { tg.expand(); } catch(e){}
   try { tg.setHeaderColor('secondary_bg_color'); } catch(e){}
-
-  // FIX: включаем BackButton вместо "Закрыть"
-  try {
-    tg.BackButton.show();
-    tg.onEvent('backButtonClicked', () => {
-      const measuresSec = document.getElementById('sec-measures');
-      const measuresHeader = document.querySelector('[data-toggle="sec-measures"]');
-      if (measuresSec && !measuresSec.classList.contains('collapsed')) {
-        measuresSec.classList.add('collapsed');
-        if (measuresHeader) measuresHeader.setAttribute('aria-expanded','false');
-        return;
-      }
-      // если всё свернуто — выходим из мини-приложения
-      tg.close();
-    });
-  } catch(e){}
 })();
 
 /* ===== КОНСТАНТЫ ХРАНИЛИЩА ===== */
@@ -211,7 +199,7 @@ const LS_KEY_LAST  = 'measurements:last';   // { ts, data }
 const LS_KEY_DRAFT = 'measurements:draft';  // { ts, data }
 
 /* ===== СЕТЬ / БЭКЕНД ===== */
-const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbwwr4M2Z6ZB8GyNgPl97LrGsU_OFCHWPF8gEJ5PZNNzpDmW6VKnI24emwGzT6Snp0Dd0A/exec'; // ← ваш URL деплоя Web App
+const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbwwr4M2Z6ZB8GyNgPl97LrGsU_OFCHWPF8gEJ5PZNNzpDmW6VKnI24emwGzT6Snp0Dd0A/exec'; // ваш URL деплоя Web App
 const APP_VERSION = '1.0.5';
 
 async function callBackend(action, extra = {}) {
@@ -223,7 +211,7 @@ async function callBackend(action, extra = {}) {
     ...extra
   };
 
-  // 1) GET (без preflight) — как в проде
+  // 1) GET (без preflight)
   const qs = new URLSearchParams();
   qs.set('action', action);
   qs.set('init_data', base.init_data);
@@ -236,7 +224,7 @@ async function callBackend(action, extra = {}) {
     try { return JSON.parse(tx); } catch(_) {}
   } catch(_) {}
 
-  // 2) Fallback POST text/plain (без preflight на iOS)
+  // 2) Fallback POST text/plain (iOS)
   try {
     const rp = await fetch(BACKEND_URL, {
       method: 'POST',
@@ -284,8 +272,6 @@ function toggleSectionByHeader(h){
   if (id === 'sec-measures' && !willBeCollapsed && !fieldsWrap._observed){
     observeFields();
     fieldsWrap._observed = true;
-    // FIX: после раскрытия — выравниваем все уже созданные колёса
-    requestAnimationFrame(realignAllWheels);
   }
 }
 document.querySelectorAll('.section-h').forEach(h=>{
@@ -342,6 +328,23 @@ function buildWheel(fieldEl, initial){
     col.scrollTop = top;
   };
 
+  // ВАЖНО: временно отключаем scroll-snap на программной установке,
+  // иначе браузер "отснэпает" к ближайшему (часто — минимум)
+  function withNoSnap(fn){
+    const prevInt = intCol.style.scrollSnapType;
+    const prevFrac = fracCol.style.scrollSnapType;
+    intCol.style.scrollSnapType = 'none';
+    fracCol.style.scrollSnapType = 'none';
+    try { fn(); }
+    finally {
+      requestAnimationFrame(()=>{
+        intCol.style.scrollSnapType = prevInt || '';
+        fracCol.style.scrollSnapType = prevFrac || '';
+        markActive(intCol); markActive(fracCol);
+      });
+    }
+  }
+
   let isProgrammatic = false;
   let rafInt = 0, rafFrac = 0;
   let snapTimer=null;
@@ -369,8 +372,10 @@ function buildWheel(fieldEl, initial){
     const iIdx = iVal - minInt;
 
     isProgrammatic = true;
-    setScrollInstant(intCol, iIdx);
-    setScrollInstant(fracCol, f);
+    withNoSnap(()=>{
+      setScrollInstant(intCol, iIdx);
+      setScrollInstant(fracCol, f);
+    });
     applyFracLock(iVal);
     markActive(intCol); markActive(fracCol);
     requestAnimationFrame(()=>{ isProgrammatic = false; dispatchChange(); });
@@ -429,26 +434,9 @@ function buildWheel(fieldEl, initial){
     dispatchChange();
   }
 
-  // FIX: сверхнадёжная инициализация после раскладки
   const initVal = (typeof initial==='number') ? initial : (min + (max - min) / 2);
-  (function robustInit(){
-    const apply = ()=>{
-      setValue(initVal);
-      // если по какой-то причине оказались не на init — повторим мягко
-      setTimeout(()=>{ if (Math.abs(api.value - initVal) > 0.09) setValue(initVal); }, 120);
-    };
-    if (intCol.clientHeight === 0 || fracCol.clientHeight === 0){
-      let tries = 0;
-      const tick = ()=>{
-        if ((intCol.clientHeight>0 && fracCol.clientHeight>0) || tries>16) apply();
-        else { tries++; requestAnimationFrame(tick); }
-      };
-      requestAnimationFrame(tick);
-    } else {
-      // подстрахуемся двойным rAF
-      requestAnimationFrame(()=>requestAnimationFrame(apply));
-    }
-  })();
+  // двойной rAF + без snap — гарантирует корректную начальную позицию
+  requestAnimationFrame(()=>requestAnimationFrame(()=>setValue(initVal)));
 
   const api = {
     setValue,
@@ -556,16 +544,6 @@ function ensureWheel(fieldEl, cfg){
   return w;
 }
 
-// FIX: мягкое выравнивание всех уже созданных колёс (на случай смены ориентации/шрифта/темы)
-function realignAllWheels(){
-  for (const k in wheels){
-    const w = wheels[k];
-    if (!w) continue;
-    const v = w.value;
-    w.setValue(v);
-  }
-}
-
 for (const cfg of FIELDS){
   const f = document.createElement('div');
   f.className = 'field';
@@ -631,7 +609,7 @@ if (!document.getElementById('sec-measures').classList.contains('collapsed')){
   observeFields(); fieldsWrap._observed = true;
 }
 
-/* ===== ЧЕРНОВИК (автосохранение офлайн) ===== */
+/* ===== ЧЕРНОВИК ===== */
 let draftTimer=null;
 function scheduleDraftSave(){
   clearTimeout(draftTimer);
@@ -678,21 +656,33 @@ window.addEventListener('beforeunload', ()=>{ try{ saveDraft(); }catch(e){} });
         if (wheels[k] && typeof res.last.data[k] === 'number') wheels[k].setValue(res.last.data[k]);
         if (wheels[k] && res.last.data[k] === null) wheels[k].setDisabled(true);
       }
-      // FIX: выравниваем после подстановки серверных значений
-      requestAnimationFrame(realignAllWheels);
     }
   }catch(e){ /* оффлайн — ок */ }
 })();
 
-/* ===== СОХРАНЕНИЕ ===== */
+/* ===== КНОПКА: визуальная отдача, лоадер ===== */
 const saveBtn = document.getElementById('saveBtn');
-// FIX: явная визуальная обратная связь нажатия
-saveBtn.addEventListener('pointerdown', ()=> saveBtn.classList.add('pressed'));
-['pointerup','pointercancel','pointerleave'].forEach(ev=> saveBtn.addEventListener(ev, ()=> saveBtn.classList.remove('pressed')));
+['pointerdown','touchstart','mousedown'].forEach(ev =>
+  saveBtn.addEventListener(ev, ()=> saveBtn.classList.add('pressed'), {passive:true})
+);
+['pointerup','pointercancel','mouseleave','touchend','touchcancel','mouseup','blur'].forEach(ev =>
+  saveBtn.addEventListener(ev, ()=> saveBtn.classList.remove('pressed'), {passive:true})
+);
 
-saveBtn.addEventListener('click', async ()=>{
-  try{ window.Telegram?.WebApp?.HapticFeedback?.impactOccurred('light'); }catch(e){}
-  saveBtn.classList.add('pressed'); setTimeout(()=>saveBtn.classList.remove('pressed'), 180);
+function setSavingState(isSaving){
+  const label = saveBtn.querySelector('.btn-label');
+  const sp = saveBtn.querySelector('.spinner');
+  saveBtn.classList.toggle('loading', isSaving);
+  saveBtn.disabled = isSaving;
+  saveBtn.setAttribute('aria-busy', String(isSaving));
+  if (sp) sp.hidden = !isSaving;
+  if (label) label.textContent = isSaving ? 'Сохранение…' : 'Сохранить';
+}
+
+/* ===== СОХРАНЕНИЕ ===== */
+document.getElementById('saveBtn').addEventListener('click', async ()=>{
+  const tg = window.Telegram?.WebApp;
+  try{ tg?.HapticFeedback?.impactOccurred('light'); }catch(e){}
 
   const data = collectCurrentData(true);
 
@@ -715,6 +705,10 @@ saveBtn.addEventListener('click', async ()=>{
   document.getElementById('lastTime').textContent = 'Последний замер: ' + fmt(clientTs);
   Object.assign(baseData, data);
 
+  // UI: лоадер
+  setSavingState(true);
+  try { tg?.MainButton?.showProgress?.(); } catch(e){}
+
   try{
     const res = await callBackend('save', extra);
     if (res && res.ok){
@@ -726,17 +720,20 @@ saveBtn.addEventListener('click', async ()=>{
       const measuresHeader = document.querySelector('[data-toggle="sec-measures"]');
       if (measuresSec) measuresSec.classList.add('collapsed');
       if (measuresHeader) measuresHeader.setAttribute('aria-expanded','false');
-      window.Telegram?.WebApp?.showPopup?.({title:'Сохранено', message:'Данные обновлены', buttons:[{type:'ok'}]});
+      tg?.showPopup?.({title:'Сохранено', message:'Данные обновлены', buttons:[{type:'ok'}]});
     } else {
-      (window.Telegram?.WebApp?.showAlert
-        ? window.Telegram.WebApp.showAlert('Ошибка сохранения на сервере.\nДанные сохранены локально.\nКод: ' + (res?.error||'unknown'))
+      (tg?.showAlert
+        ? tg.showAlert('Ошибка сохранения на сервере.\nДанные сохранены локально.\nКод: ' + (res?.error||'unknown'))
         : alert('Ошибка сохранения на сервере.\nДанные сохранены локально.\nКод: ' + (res?.error||'unknown')));
     }
   }catch(err){
     const msg = (err && err.message) ? String(err.message) : 'Неизвестная ошибка сети';
-    (window.Telegram?.WebApp?.showAlert
-      ? window.Telegram.WebApp.showAlert('Не удалось отправить на сервер.\nДанные сохранены локально.\nПричина: ' + msg)
+    (tg?.showAlert
+      ? tg.showAlert('Не удалось отправить на сервер.\nДанные сохранены локально.\nПричина: ' + msg)
       : alert('Не удалось отправить на сервер.\nДанные сохранены локально.\nПричина: ' + msg));
+  } finally {
+    setSavingState(false);
+    try { tg?.MainButton?.hideProgress?.(); } catch(e){}
   }
 });
 </script>
