@@ -2,715 +2,345 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Замеры тела</title>
-<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Замеры — анкета (прототип)</title>
 <style>
   :root{
-    --bg: linear-gradient(135deg,#667eea 0%,#764ba2 100%);
+    --bg-grad: linear-gradient(135deg,#667eea 0%,#764ba2 100%);
     --card: rgba(255,255,255,.16);
-    --card-border: rgba(255,255,255,.25);
-    --txt: #111;
-    --white: #fff;
-    --muted: #6b7280;
-    --accent: #6366f1;
-    --ok: #10b981;
-    --err: #ef4444;
+    --card-border: rgba(255,255,255,.28);
+    --card-shadow: 0 8px 30px rgba(0,0,0,.18);
+    --accent:#6366f1;
+    --text:#111;
   }
+
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%}
   body{
+    min-height:100svh; /* iOS-safe viewport */
+    background:var(--bg-grad);
     font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
-    background:var(--bg); color:var(--txt);
-    min-height:100vh; padding:18px 14px 28px;
+    color:var(--text);
+    -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
   }
-  .container{max-width:560px;margin:0 auto}
+  .page{max-width:560px;margin:0 auto;padding:18px 14px 24px}
 
-  /* ==== блок-карточка ==== */
-  .card{
-    background:var(--card); border:1px solid var(--card-border);
-    border-radius:18px; padding:14px; backdrop-filter:blur(16px);
-    -webkit-backdrop-filter:blur(16px);
-    box-shadow:0 8px 28px rgba(0,0,0,.12), inset 0 1px 0 rgba(255,255,255,.35);
-    margin-bottom:14px;
+  /* ===== Секция-аккордеон (фон не делится) ===== */
+  .section{
+    background:var(--card);
+    border:1px solid var(--card-border);
+    border-radius:18px;
+    box-shadow:var(--card-shadow);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    overflow:hidden;
   }
-  .card-header{display:flex;align-items:center;justify-content:space-between;gap:10px}
-  .card-title{color:#fff;font-weight:800;font-size:16px}
-  .chip{font-size:12px;color:#fff;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.26);padding:4px 8px;border-radius:999px}
-  .acc-toggle{appearance:none;background:transparent;border:0;color:#fff;font-weight:800;font-size:14px}
-  .acc{overflow:hidden; transition:max-height .24s ease}
-  .acc.collapsed{max-height:0}
-  .acc.expanded{max-height:1200px}
+  .section + .section{margin-top:14px}
+  .section-h{
+    display:flex;align-items:center;gap:10px;
+    padding:14px 16px; cursor:pointer; user-select:none;
+  }
+  .section-h h2{font-size:16px;font-weight:800;color:#fff;flex:1}
+  .chev{width:18px;height:18px;display:inline-block;transform:rotate(-90deg);transition:transform .2s}
+  .open .chev{transform:rotate(0deg)}
+  .section-b{
+    border-top:1px solid rgba(255,255,255,.22);
+    background:rgba(255,255,255,.08); /* единый слой – никакого «разреза» */
+    max-height:0; overflow:hidden; transition:max-height .25s ease;
+  }
+  .open .section-b{
+    /* ограничиваем высоту и даём внутренний скролл (iOS инерция включена) */
+    max-height:70svh;
+  }
+  .section-content{
+    padding:12px 12px 16px;
+    overflow:auto; -webkit-overflow-scrolling:touch;
+    scrollbar-gutter: stable both-edges;
+  }
+  /* iOS видимый скролл */
+  .section-content::-webkit-scrollbar{width:8px}
+  .section-content::-webkit-scrollbar-thumb{background:#c5c9d2;border-radius:8px}
+  .section-content{scrollbar-width:thin; scrollbar-color:#c5c9d2 transparent}
 
-  /* ==== поля анкеты ==== */
-  .form-grid{display:grid;grid-template-columns:1fr;gap:12px;margin-top:10px}
+  /* ===== Поле/группа ===== */
   .field{
-    background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.25);
-    border-radius:14px; padding:10px 10px 12px;
+    background:rgba(255,255,255,.14);
+    border:1px solid rgba(255,255,255,.28);
+    border-radius:14px;
+    padding:10px 10px 12px;
+    color:#fff;
   }
-  .row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px}
-  .label{color:#fff;font-weight:700;font-size:13px}
-  .req{opacity:.8;font-size:11px;color:#e0e7ff}
-  .val{
-    color:#111;background:#fff;border-radius:10px;padding:6px 10px;font-weight:800;
-    min-width:84px;text-align:right; cursor:pointer
-  }
-  .val small{color:#6b7280;font-weight:700;margin-left:4px}
-  .hint{font-size:11px;color:#e5e7eb;margin-top:4px}
-  .error{font-size:11px;color:#ffe4e6;margin-top:4px;display:none}
-  .field.invalid .error{display:block}
+  .field + .field{margin-top:10px}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .label{font-size:12px;font-weight:700;opacity:.95}
+  .value{min-width:84px;text-align:right;font-variant-tabular-nums:tabular-nums}
+  .value .num{font-weight:800;font-size:18px}
+  .value .unit{font-size:12px;opacity:.85;margin-left:4px}
 
-  /* ==== "горизонтальный wheel" (кастомный слайдер) ==== */
+  /* ===== Горизонтальное колесо на базе range (легкое, управляемое, с метками) ===== */
   .wheel{
-    position:relative; padding:14px 8px 6px; margin:2px 0 0;
-    --track-h: 40px;
+    margin-top:8px; position:relative; padding:20px 10px 16px;
+    --track:#e5e7eb; --thumb:#fff; --tick:#cbd5e1; --label:#111;
   }
-  .wheel .marker{
-    position:absolute;left:50%;top:0;transform:translateX(-50%);
-    width:2px;height:calc(var(--track-h) + 10px);background:var(--accent);border-radius:2px;opacity:.9
+  .wheel .center-mark{
+    position:absolute; left:50%; top:8px; bottom:8px; width:2px;
+    transform:translateX(-50%);
+    background:linear-gradient(180deg,transparent,rgba(99,102,241,.9),transparent);
+    border-radius:2px; pointer-events:none;
   }
   .wheel input[type=range]{
-    -webkit-appearance:none; width:100%;
-    background:transparent; height:var(--track-h);
+    -webkit-appearance:none; appearance:none; width:100%;
+    background:transparent; margin:0; padding:0;
   }
-  .wheel input[type=range]:focus{outline:none}
   .wheel input[type=range]::-webkit-slider-runnable-track{
-    height:8px; background:rgba(0,0,0,.08); border-radius:999px; border:1px solid rgba(0,0,0,.08);
+    height:4px; background:var(--track); border-radius:999px;
   }
   .wheel input[type=range]::-moz-range-track{
-    height:8px; background:rgba(0,0,0,.08); border-radius:999px; border:1px solid rgba(0,0,0,.08);
+    height:4px; background:var(--track); border-radius:999px;
   }
   .wheel input[type=range]::-webkit-slider-thumb{
-    -webkit-appearance:none; margin-top:-8px;
+    -webkit-appearance:none; appearance:none; margin-top:-10px;
     width:24px;height:24px;border-radius:50%;
-    background:#fff;border:2px solid var(--accent);box-shadow:0 6px 14px rgba(0,0,0,.2)
+    background:var(--thumb);
+    border:3px solid var(--accent);
+    box-shadow:0 6px 18px rgba(0,0,0,.22);
   }
   .wheel input[type=range]::-moz-range-thumb{
     width:24px;height:24px;border-radius:50%;
-    background:#fff;border:2px solid var(--accent);box-shadow:0 6px 14px rgba(0,0,0,.2)
+    background:var(--thumb); border:3px solid var(--accent);
+    box-shadow:0 6px 18px rgba(0,0,0,.22);
   }
+
+  /* Метки +/-10 вокруг центра */
   .ticks{
-    position:relative;height:22px;margin-top:6px; mask-image:linear-gradient(90deg,transparent 0, #000 12%, #000 88%, transparent 100%);
+    position:relative; height:34px; margin-top:10px;
+    mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
   }
-  .tick{position:absolute;bottom:0;width:1px;background:#e5e7eb}
-  .tick.big{height:14px;background:#d1d5db}
-  .tick.small{height:8px}
-  .tick-label{position:absolute;bottom:14px;transform:translateX(-50%);font-size:10px;color:#fff;opacity:.9}
+  .tick{
+    position:absolute; bottom:16px; width:1px; height:10px; background:var(--tick);
+    transform:translateX(-50%);
+  }
+  .tick.major{height:14px}
+  .tick-label{
+    position:absolute; bottom:0; transform:translateX(-50%);
+    font-size:11px; color:#111; font-weight:700; background:rgba(255,255,255,.85);
+    padding:2px 6px; border-radius:8px; box-shadow:0 2px 8px rgba(0,0,0,.08);
+    white-space:nowrap;
+  }
 
-  .btn-row{display:flex;gap:10px;margin-top:8px}
+  /* Переключатель режима меток (скрыть/редкие/±10) */
+  .labels-mode{
+    display:flex; gap:6px; margin-top:8px; flex-wrap:wrap
+  }
+  .labels-mode button{
+    font-size:11px; font-weight:700; padding:6px 8px; border-radius:999px;
+    border:1px solid rgba(255,255,255,.35); color:#fff; background:rgba(255,255,255,.12);
+    cursor:pointer;
+  }
+  .labels-mode button.active{background:#6366f1; border-color:#6366f1}
+
+  /* Кнопка «Сохранить» */
+  .savebar{
+    position:sticky; bottom:0; margin-top:14px; padding-top:10px;
+    background:linear-gradient(180deg,rgba(0,0,0,0),rgba(0,0,0,.08));
+    display:flex; justify-content:flex-end;
+  }
   .btn{
-    flex:1; padding:10px 12px;border-radius:12px;border:0;font-weight:800;cursor:pointer
+    background:#10b981; color:#fff; border:0; border-radius:12px;
+    padding:12px 16px; font-weight:800; cursor:pointer;
+    box-shadow:0 8px 20px rgba(16,185,129,.35);
   }
-  .btn.primary{background:#fff;color:#111}
-  .btn.primary:disabled{opacity:.5}
-  .btn.ghost{background:rgba(255,255,255,.12);color:#fff;border:1px solid rgba(255,255,255,.25)}
-
-  /* ==== аналитика ==== */
-  .chips{display:flex;gap:8px;overflow:auto;padding-bottom:4px;margin:8px -6px 0;padding-inline:6px}
-  .chip-toggle{white-space:nowrap}
-  .chip-toggle.active{background:#fff;color:#111;border-color:#fff}
-  .tabs{display:flex;gap:8px;margin-top:10px}
-  .tab{flex:1;padding:8px;border-radius:10px;border:1px solid rgba(255,255,255,.25);color:#fff;background:rgba(255,255,255,.12);text-align:center;cursor:pointer;font-weight:800}
-  .tab.active{background:#fff;color:#111}
-
-  .chart-wrap{background:#fff;border-radius:14px;padding:10px;margin-top:10px}
-  svg{display:block;width:100%;height:auto}
-  .charts-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
-  .mini{background:#fff;border-radius:12px;padding:10px}
-
-  .skeleton{
-    position:relative;overflow:hidden;background:rgba(255,255,255,.4);border-radius:12px;height:120px
-  }
-  .skeleton::after{
-    content:"";position:absolute;inset:0;
-    background:linear-gradient(90deg,transparent,rgba(255,255,255,.7),transparent);
-    transform:translateX(-100%);animation:shimmer 1.1s infinite
-  }
-  @keyframes shimmer{to{transform:translateX(100%)}}
-
-  /* ==== выводы ==== */
-  .ai{background:#fff;border-radius:14px;padding:12px;margin-top:10px}
-  .ai h4{margin:0 0 6px 0}
-  .ai .date{color:#6b7280;font-size:12px;margin-bottom:6px}
-  .ai .content{color:#111;font-size:14px;line-height:1.55}
-  .ai .content ul{margin-left:18px}
-
-  /* ==== модал цифр ==== */
-  .modal{
-    position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;z-index:1000
-  }
-  .modal.show{display:flex}
-  .modal-card{background:#fff;border-radius:14px;padding:14px;min-width:260px}
-  .modal-title{font-weight:800;margin-bottom:8px}
-  .numrow{display:flex;gap:6px;margin:8px 0}
-  .numrow input{
-    flex:1;padding:10px;border-radius:10px;border:1px solid #e5e7eb;font-weight:800;font-size:16px
-  }
-  .modal-actions{display:flex;gap:8px;margin-top:8px}
-  .modal-actions .btn{flex:1}
-
-  /* ios скроллбар-подсказка (тонкая видимость) */
-  .scroll-hint{position:absolute;right:3px;top:36px;width:3px;height:40px;border-radius:2px;background:rgba(0,0,0,.15)}
 </style>
 </head>
 <body>
-  <div class="container">
+  <div class="page">
+    <!-- Секция: Анкета (свернута по умолчанию – как договорились) -->
+    <section class="section" id="s-form">
+      <header class="section-h" data-toggle="#s-form">
+        <h2>Анкета замеров</h2>
+        <span class="chev">❯</span>
+      </header>
+      <div class="section-b">
+        <div class="section-content">
+          <!-- === Рост (см) === -->
+          <div class="field" data-field="height">
+            <div class="row">
+              <div class="label">Рост</div>
+              <div class="value"><span class="num" id="val-height">178.0</span><span class="unit">см</span></div>
+            </div>
+            <div class="wheel" data-min="50.0" data-max="250.0" data-step="0.1" data-key="height" data-unit="см">
+              <div class="center-mark" aria-hidden="true"></div>
+              <input type="range" min="50.0" max="250.0" step="0.1" value="178.0" aria-label="Рост, см" />
+              <div class="ticks" aria-hidden="true"></div>
+              <div class="labels-mode" role="group" aria-label="Режим меток">
+                <button data-mode="none">без меток</button>
+                <button data-mode="sparse">редкие</button>
+                <button data-mode="window" class="active">±10</button>
+              </div>
+            </div>
+          </div>
 
-    <!-- БЛОК 1: АНКЕТА (свернута) -->
-    <section class="card">
-      <div class="card-header">
-        <div class="card-title">Анкета замеров</div>
-        <div class="chip" id="lastUpdated">последнее: —</div>
-        <button class="acc-toggle" id="accFormBtn" aria-expanded="false">развернуть</button>
-      </div>
-      <div class="acc collapsed" id="accForm">
-        <div class="form-grid" id="formGrid">
-          <!-- поля создаются JS из схемы -->
+          <!-- === Вес (кг) — шаг 0.1 (100 г) === -->
+          <div class="field" data-field="weight">
+            <div class="row">
+              <div class="label">Вес</div>
+              <div class="value"><span class="num" id="val-weight">72.4</span><span class="unit">кг</span></div>
+            </div>
+            <div class="wheel" data-min="20.0" data-max="250.0" data-step="0.1" data-key="weight" data-unit="кг">
+              <div class="center-mark" aria-hidden="true"></div>
+              <input type="range" min="20.0" max="250.0" step="0.1" value="72.4" aria-label="Вес, кг" />
+              <div class="ticks" aria-hidden="true"></div>
+              <div class="labels-mode" role="group" aria-label="Режим меток">
+                <button data-mode="none">без меток</button>
+                <button data-mode="sparse" class="active">редкие</button>
+                <button data-mode="window">±10</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- здесь дальше добавим остальные поля (шея/плечи/грудь/...),
+               сейчас важна идеальная UX-модель на примерах -->
+
+          <div class="savebar">
+            <button class="btn" id="save">Сохранить</button>
+          </div>
         </div>
-        <div class="btn-row">
-          <button class="btn ghost" id="btnReset">Сбросить</button>
-          <button class="btn primary" id="btnSave" disabled>Сохранить</button>
+      </div>
+    </section>
+
+    <!-- Заглушки секций «Аналитика» и «Выводы» (раскрыты по умолчанию, сворачиваемые) -->
+    <section class="section open" id="s-analytics">
+      <header class="section-h" data-toggle="#s-analytics"><h2>Аналитика</h2><span class="chev">❯</span></header>
+      <div class="section-b" style="max-height:60svh">
+        <div class="section-content" style="height:100%">
+          <div style="height:220px;display:flex;align-items:center;justify-content:center;color:#fff;opacity:.8">[тут будет график]</div>
         </div>
       </div>
     </section>
 
-    <!-- БЛОК 2: АНАЛИТИКА (развернута) -->
-    <section class="card">
-      <div class="card-header">
-        <div class="card-title">Аналитика</div>
-        <span class="chip">последние замеры</span>
-      </div>
-
-      <!-- tabs вида графиков -->
-      <div class="tabs" id="chartTabs">
-        <div class="tab active" data-view="single">Один график</div>
-        <div class="tab" data-view="grid">Много графиков</div>
-      </div>
-
-      <!-- выбор метрики -->
-      <div class="chips" id="metricChips"></div>
-
-      <!-- основной график -->
-      <div class="chart-wrap" id="mainChart">
-        <div class="skeleton" id="mainChartSk"></div>
-      </div>
-
-      <!-- сетка мини-графиков -->
-      <div class="charts-grid" id="miniCharts" style="display:none">
-        <!-- мини-чарты рендерятся JS -->
+    <section class="section open" id="s-ai">
+      <header class="section-h" data-toggle="#s-ai"><h2>Выводы</h2><span class="chev">❯</span></header>
+      <div class="section-b" style="max-height:40svh">
+        <div class="section-content">
+          <div class="field" style="color:#111;background:#fff;border-color:#fff">
+            <div style="font-size:14px;line-height:1.6">
+              Здесь аккуратно вставим текст от ИИ из ячейки — с базовой типографикой.
+            </div>
+          </div>
+        </div>
       </div>
     </section>
-
-    <!-- БЛОК 3: ВЫВОДЫ ИИ (развернуты) -->
-    <section class="card">
-      <div class="card-header">
-        <div class="card-title">Выводы ИИ</div>
-        <span class="chip">сегодня</span>
-      </div>
-      <div class="ai" id="aiBox">
-        <div class="skeleton" style="height:80px" id="aiSk"></div>
-      </div>
-    </section>
-
-  </div>
-
-  <!-- модал для точного ввода -->
-  <div class="modal" id="numModal" role="dialog" aria-modal="true" aria-hidden="true">
-    <div class="modal-card">
-      <div class="modal-title" id="numTitle">Значение</div>
-      <div class="numrow">
-        <input type="number" step="0.1" inputmode="decimal" id="numInput"/>
-      </div>
-      <div class="modal-actions">
-        <button class="btn ghost" id="numCancel">Отмена</button>
-        <button class="btn primary" id="numOk">Ок</button>
-      </div>
-    </div>
   </div>
 
 <script>
-/* ====== TELEGRAM HAPTIC ====== */
-const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
-function haptic(){
-  try{ tg && tg.HapticFeedback && tg.HapticFeedback.impactOccurred('light'); }catch(_){}
-}
-
-/* ====== СХЕМА ПОЛЕЙ ====== */
-const FIELDS = [
-  {key:'height', label:'Рост', unit:'см', min:50,  max:250, step:0.1, required:true},
-  {key:'weight', label:'Вес',  unit:'кг', min:20,  max:300, step:0.1, required:true},
-  {key:'fat',    label:'% жира', unit:'%', min:2, max:60,  step:0.1, required:false, note:'Источник: весы дома / в зале'},
-  {key:'neck',   label:'Шея', unit:'см', min:10,  max:80,  step:0.1, required:true},
-  {key:'shoulders', label:'Плечи (обхват)', unit:'см', min:20, max:200, step:0.1, required:true},
-  {key:'chest',  label:'Грудь', unit:'см', min:20, max:200, step:0.1, required:true},
-  {key:'waist',  label:'Талия', unit:'см', min:20, max:200, step:0.1, required:true},
-  {key:'biceps_l_rel', label:'Бицепс Л (расс.)', unit:'см', min:15, max:80, step:0.1, required:true},
-  {key:'biceps_r_rel', label:'Бицепс П (расс.)', unit:'см', min:15, max:80, step:0.1, required:true},
-  {key:'biceps_l_flex',label:'Бицепс Л (напр.)', unit:'см', min:15, max:80, step:0.1, required:true},
-  {key:'biceps_r_flex',label:'Бицепс П (напр.)', unit:'см', min:15, max:80, step:0.1, required:true},
-  {key:'thigh_l', label:'Бедро Л', unit:'см', min:25, max:120, step:0.1, required:true},
-  {key:'thigh_r', label:'Бедро П', unit:'см', min:25, max:120, step:0.1, required:true},
-  {key:'calf_l',  label:'Икра Л', unit:'см', min:20, max:70,  step:0.1, required:true},
-  {key:'calf_r',  label:'Икра П', unit:'см', min:20, max:70,  step:0.1, required:true},
-  {key:'glutes',  label:'Ягодицы', unit:'см', min:40, max:140, step:0.1, required:true},
-  {key:'wrist',   label:'Запястье', unit:'см', min:10, max:30, step:0.1, required:true},
-  {key:'knee',    label:'Колено', unit:'см', min:20, max:60, step:0.1, required:true},
-  {key:'ankle',   label:'Лодыжка', unit:'см', min:15, max:35, step:0.1, required:true},
-];
-
-/* ====== Моки данных: последний замер + история ====== */
-let lastSaved = null; // последняя «сегодня» (мок)
-const history = [
-  {date:'2025-03-01', weight:82.4, waist:86.0},
-  {date:'2025-03-10', weight:81.9, waist:85.4},
-  {date:'2025-03-18', weight:81.6, waist:84.9},
-  {date:'2025-03-27', weight:81.1, waist:84.4},
-  {date:'2025-04-05', weight:80.6, waist:83.9},
-  {date:'2025-04-15', weight:80.2, waist:83.2},
-  {date:'2025-04-28', weight:79.8, waist:82.7},
-  {date:'2025-05-12', weight:79.2, waist:82.1},
-  {date:'2025-05-25', weight:78.9, waist:81.6},
-  {date:'2025-06-08', weight:78.6, waist:81.3},
-];
-
-/* ====== Рендер анкеты ====== */
-const formGrid = document.getElementById('formGrid');
-const lastUpdated = document.getElementById('lastUpdated');
-const accBtn = document.getElementById('accFormBtn');
-const acc = document.getElementById('accForm');
-const btnSave = document.getElementById('btnSave');
-const btnReset = document.getElementById('btnReset');
-
-const state = {}; // текущие значения колес
-const savedToday = {}; // что «сохранено» сегодня (мок)
-
-function fmt(v){ return (Math.round(v*10)/10).toFixed(1); }
-function nowTime(){ const d=new Date(); return d.toTimeString().slice(0,5); }
-
-function renderField(f){
-  const wrap = document.createElement('div');
-  wrap.className='field';
-  wrap.dataset.key = f.key;
-
-  wrap.innerHTML = `
-    <div class="row">
-      <div class="label">${f.label} ${f.required?'<span class="req">• обязательно</span>':''}</div>
-      <div class="val" data-open-num="1"><span class="val-num">—</span> <small>${f.unit}</small></div>
-    </div>
-    ${f.note?`<div class="hint">${f.note}</div>`:''}
-    <div class="wheel">
-      <div class="marker"></div>
-      <input type="range" min="${f.min}" max="${f.max}" step="${f.step}" value="${f.min}" />
-      <div class="ticks"></div>
-    </div>
-    <div class="error">Заполните поле</div>
-  `;
-
-  // Тики (не рисуем все 0.1 — только биг/смолл визуально)
-  const ticks = wrap.querySelector('.ticks');
-  const range = f.max - f.min;
-  const majorStep = 5;   // подпись каждые 5
-  const minorStep = 1;   // высокая риска каждый 1
-  for (let x = f.min; x <= f.max; x += 1){
-    const pos = (x - f.min) / range * 100;
-    const t = document.createElement('div');
-    t.className = 'tick ' + ((x % majorStep === 0) ? 'big' : 'small');
-    t.style.left = pos + '%';
-    ticks.appendChild(t);
-    if (x % majorStep === 0){
-      const lab = document.createElement('div');
-      lab.className = 'tick-label';
-      lab.style.left = pos + '%';
-      lab.textContent = x;
-      ticks.appendChild(lab);
-    }
-  }
-
-  const input = wrap.querySelector('input[type=range]');
-  const val = wrap.querySelector('.val');
-  const valNum = wrap.querySelector('.val-num');
-
-  const setValue = (v, snap=true)=>{
-    const num = Math.max(f.min, Math.min(f.max, parseFloat(v)));
-    const snapped = snap ? Math.round(num / f.step) * f.step : num;
-    input.value = snapped;
-    state[f.key] = snapped;
-    valNum.textContent = fmt(snapped);
-    validateField(f.key);
-  };
-
-  input.addEventListener('input', ()=>{
-    setValue(input.value, false);
-  });
-  input.addEventListener('change', ()=>{
-    setValue(input.value, true);
-    haptic();
-  });
-
-  // открыть модал точного ввода
-  val.addEventListener('click', ()=>{
-    openNumModal(f, state[f.key] ?? input.value, (n)=> setValue(n, true));
-  });
-
-  formGrid.appendChild(wrap);
-  // первоначальное значение
-  setValue(savedToday[f.key] ?? (f.prefill ?? f.min), true);
-}
-
-function validateField(key){
-  const f = FIELDS.find(x=>x.key===key);
-  const el = formGrid.querySelector(`.field[data-key="${key}"]`);
-  if (!f || !el) return;
-  const v = state[key];
-  const valid = (!f.required && (v==null || v==='')) || (typeof v==='number' && !isNaN(v));
-  el.classList.toggle('invalid', !valid);
-  validateForm();
-}
-function validateForm(){
-  let ok = true;
-  for (const f of FIELDS){
-    if (!f.required) continue;
-    const v = state[f.key];
-    if (typeof v!=='number' || isNaN(v)){ ok=false; break; }
-  }
-  btnSave.disabled = !ok;
-}
-
-function prefillFromLast(){
-  // имитация: если сегодня пусто — возьмём из history последнюю точку (по ключам weight/waist),
-  // остальные — просто средний диапазон (чтобы показать UX).
-  const mid = (min,max)=> Math.round(((min+max)/2)*10)/10;
-  FIELDS.forEach(f=>{
-    if (f.key==='weight' && history.length){
-      savedToday[f.key] = history[history.length-1].weight;
-    } else if (f.key==='waist' && history.length){
-      savedToday[f.key] = history[history.length-1].waist;
-    } else {
-      savedToday[f.key] = mid(f.min, f.max);
-    }
-  });
-  lastUpdated.textContent = 'последнее: шаблон';
-}
-
-prefillFromLast();
-FIELDS.forEach(renderField);
-validateForm();
-
-/* Аккордеон анкеты */
-accBtn.addEventListener('click', ()=>{
-  const isOpen = acc.classList.contains('expanded');
-  acc.classList.toggle('expanded', !isOpen);
-  acc.classList.toggle('collapsed', isOpen);
-  accBtn.textContent = isOpen ? 'развернуть' : 'свернуть';
-  accBtn.setAttribute('aria-expanded', String(!isOpen));
-});
-
-/* Сохранить / Сбросить (моки) */
-btnSave.addEventListener('click', ()=>{
-  Object.assign(lastSaved, state);
-  lastUpdated.textContent = 'последнее: ' + nowTime();
-  btnSave.disabled = true;
-});
-btnReset.addEventListener('click', ()=>{
-  // откат к savedToday (как «последнему сохранённому»)
-  FIELDS.forEach(f=>{
-    const el = formGrid.querySelector(`.field[data-key="${f.key}"] input[type=range]`);
-    if (el) { el.value = savedToday[f.key]; el.dispatchEvent(new Event('change')); }
-  });
-  lastUpdated.textContent = 'последнее: шаблон';
-});
-
-/* ====== Модал точного ввода ====== */
-const numModal = document.getElementById('numModal');
-const numInput = document.getElementById('numInput');
-const numTitle = document.getElementById('numTitle');
-const numCancel = document.getElementById('numCancel');
-const numOk = document.getElementById('numOk');
-let numCb = null;
-function openNumModal(field, value, cb){
-  numTitle.textContent = field.label;
-  numInput.step = field.step;
-  numInput.min = field.min;
-  numInput.max = field.max;
-  numInput.value = value;
-  numCb = cb;
-  numModal.classList.add('show');
-  numModal.setAttribute('aria-hidden','false');
-  setTimeout(()=> numInput.focus(), 0);
-}
-function closeNumModal(){
-  numModal.classList.remove('show');
-  numModal.setAttribute('aria-hidden','true');
-  numCb = null;
-}
-numCancel.addEventListener('click', closeNumModal);
-numOk.addEventListener('click', ()=>{
-  if (numCb){ numCb(parseFloat(numInput.value)); haptic(); }
-  closeNumModal();
-});
-numModal.addEventListener('click', (e)=>{ if(e.target===numModal) closeNumModal(); });
-
-/* ====== АНАЛИТИКА ====== */
-// Метрики для чипов (ключ = поле)
-const METRICS = [
-  {key:'weight', label:'Вес', unit:'кг'},
-  {key:'waist',  label:'Талия', unit:'см'},
-  {key:'chest',  label:'Грудь', unit:'см'},
-  {key:'neck',   label:'Шея', unit:'см'},
-  {key:'glutes', label:'Ягодицы', unit:'см'},
-];
-const metricChips = document.getElementById('metricChips');
-let activeMetric = METRICS[0].key;
-
-function renderMetricChips(){
-  metricChips.innerHTML='';
-  METRICS.forEach(m=>{
-    const btn = document.createElement('button');
-    btn.className='chip chip-toggle' + (m.key===activeMetric?' active':'');
-    btn.textContent = m.label;
-    btn.addEventListener('click', ()=>{
-      activeMetric = m.key;
-      document.querySelectorAll('.chip-toggle').forEach(x=>x.classList.remove('active'));
-      btn.classList.add('active');
-      drawMainChart();
+  // ===== Аккордеоны (фон не «режется» и всё скроллится внутри)
+  document.querySelectorAll('[data-toggle]').forEach(h=>{
+    h.addEventListener('click', ()=>{
+      const sec = document.querySelector(h.getAttribute('data-toggle'));
+      sec.classList.toggle('open');
     });
-    metricChips.appendChild(btn);
   });
-}
-renderMetricChips();
 
-/* Tabs: один график / сетка мини */
-const tabs = document.getElementById('chartTabs');
-const mainChart = document.getElementById('mainChart');
-const miniCharts = document.getElementById('miniCharts');
-tabs.addEventListener('click', (e)=>{
-  const t = e.target.closest('.tab'); if(!t) return;
-  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
-  t.classList.add('active');
-  const view = t.dataset.view;
-  mainChart.style.display = (view==='single') ? 'block' : 'none';
-  miniCharts.style.display = (view==='grid') ? 'grid' : 'none';
-});
+  // ===== Колесо: логику делаем лёгкой (range + отрисовка меток в окне)
+  function format(v){ return (Math.round(v*10)/10).toFixed(1); }
 
-/* Рисование основного графика: парные столбики (пред/текущий) */
-function drawMainChart(){
-  const wrap = mainChart;
-  wrap.innerHTML='';
-  const metric = METRICS.find(m=>m.key===activeMetric);
-  if (!metric) return;
+  function renderTicks(wheel, mode){
+    const ticks = wheel.querySelector('.ticks');
+    const input = wheel.querySelector('input[type=range]');
+    const min = parseFloat(input.min), max = parseFloat(input.max), step = parseFloat(input.step)||0.1;
+    const val = parseFloat(input.value);
+    const unit = wheel.dataset.unit || '';
 
-  // мок: соберём значения метрики из history, если нет — сгенерим тренд
-  const data = history.map(h=>({
-    date:h.date,
-    value: (h[metric.key]!=null) ? h[metric.key] :
-           (metric.key==='weight' ? h.weight : metric.key==='waist' ? h.waist : null)
-  })).filter(d=>d.value!=null);
+    ticks.innerHTML = '';
 
-  if (!data.length){
-    const d = document.createElement('div'); d.textContent='Нет данных';
-    d.style.padding='8px'; wrap.appendChild(d); return;
+    if(mode==='none') return;
+
+    // Геометрия контейнера
+    const width = ticks.clientWidth;
+    const centerX = width/2;
+
+    // Функции для разных режимов
+    let values = [];
+    if(mode==='window'){
+      // ±10 значений вокруг текущего (с шагом input.step)
+      const count = 10;
+      for(let i=-count;i<=count;i++){
+        const v = Math.min(max, Math.max(min, val + i*step));
+        values.push({v, isMajor:(i%5===0)});
+      }
+    } else if(mode==='sparse'){
+      // «редкие»: кратные 1.0 в пределах ±10 единиц
+      const span = 10;
+      const start = Math.floor(val - span);
+      const end   = Math.ceil (val + span);
+      for(let x=start; x<=end; x++){
+        if(x<min || x>max) continue;
+        const v = x;
+        values.push({v, isMajor:(x%5===0)});
+      }
+    }
+
+    // Раскладка: равномерно вокруг центра (только визуальные подсказки)
+    const n = values.length;
+    const usable = Math.min(width*0.76, 320); // компоновка, чтобы не залипало к краям
+    const stepPx = (n>1) ? (usable/(n-1)) : 0;
+    const left0 = centerX - usable/2;
+
+    values.forEach((o, i)=>{
+      const x = left0 + i*stepPx;
+      const t = document.createElement('div');
+      t.className = 'tick' + (o.isMajor?' major':'');
+      t.style.left = x+'px';
+      ticks.appendChild(t);
+
+      // Подписываем только основные (или крайние) – не захламляем
+      if(o.isMajor || i===0 || i===n-1){
+        const lab = document.createElement('div');
+        lab.className = 'tick-label';
+        lab.style.left = x+'px';
+        lab.textContent = format(o.v);
+        ticks.appendChild(lab);
+      }
+    });
   }
 
-  const w = wrap.clientWidth - 4, h = 220, pad = 28;
-  const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
-  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  function bindWheel(wheel){
+    const input = wheel.querySelector('input[type=range]');
+    const key = wheel.dataset.key;
+    const unit = wheel.dataset.unit || '';
+    const outEl = document.getElementById('val-'+key);
+    const modeBtns = wheel.querySelectorAll('.labels-mode button');
 
-  const values = data.map(d=>d.value);
-  const vMin = Math.min(...values);
-  const vMax = Math.max(...values);
-  const y = v => {
-    const t = (v - vMin) / (vMax - vMin || 1);
-    return h - pad - t*(h - pad - 32);
-  };
-
-  // оси
-  const ax = document.createElementNS(svg.namespaceURI,'line');
-  ax.setAttribute('x1', 8); ax.setAttribute('y1', h-pad);
-  ax.setAttribute('x2', w-8); ax.setAttribute('y2', h-pad);
-  ax.setAttribute('stroke', '#e5e7eb'); svg.appendChild(ax);
-
-  const n = data.length;
-  const gap = 14;
-  const groupW = Math.max(22, Math.min(42, (w - 16 - (n-1)*gap) / n));
-  const barW = (groupW - 4)/2;
-
-  for (let i=0;i<n;i++){
-    const cur = data[i].value;
-    const prev = (i>0) ? data[i-1].value : null;
-
-    const gx = 8 + i*(groupW + gap);
-    const yCur = y(cur);
-    // prev bar
-    if (prev!=null){
-      const yPrev = y(prev);
-      const rectPrev = document.createElementNS(svg.namespaceURI,'rect');
-      rectPrev.setAttribute('x', gx);
-      rectPrev.setAttribute('y', Math.min(yPrev, h-pad));
-      rectPrev.setAttribute('width', barW);
-      rectPrev.setAttribute('height', Math.max(2, (h-pad) - yPrev));
-      rectPrev.setAttribute('fill', '#dbeafe');
-      svg.appendChild(rectPrev);
-    } else {
-      // пунктирный «пустой»
-      const rectDashed = document.createElementNS(svg.namespaceURI,'rect');
-      rectDashed.setAttribute('x', gx);
-      rectDashed.setAttribute('y', yCur);
-      rectDashed.setAttribute('width', barW);
-      rectDashed.setAttribute('height', Math.max(2, (h-pad) - yCur));
-      rectDashed.setAttribute('fill', 'none');
-      rectDashed.setAttribute('stroke', '#e5e7eb');
-      rectDashed.setAttribute('stroke-dasharray', '3 3');
-      svg.appendChild(rectDashed);
-    }
-
-    // current bar
-    const rectCur = document.createElementNS(svg.namespaceURI,'rect');
-    rectCur.setAttribute('x', gx + barW + 4);
-    rectCur.setAttribute('y', Math.min(yCur, h-pad));
-    rectCur.setAttribute('width', barW);
-    rectCur.setAttribute('height', Math.max(2, (h-pad) - yCur));
-    rectCur.setAttribute('fill', '#60a5fa');
-    svg.appendChild(rectCur);
-
-    // дельта
-    if (prev!=null){
-      const delta = cur - prev;
-      const txt = document.createElementNS(svg.namespaceURI,'text');
-      txt.setAttribute('x', gx + groupW/2);
-      txt.setAttribute('y', Math.min(yCur, y(prev)) - 6);
-      txt.setAttribute('text-anchor', 'middle');
-      txt.setAttribute('font-size','10');
-      txt.setAttribute('fill', delta>=0 ? '#ef4444' : '#10b981');
-      txt.textContent = (delta>=0?'+':'') + fmt(delta) + ' ' + metric.unit;
-      svg.appendChild(txt);
-    }
-
-    // подпись даты
-    const dt = document.createElementNS(svg.namespaceURI,'text');
-    dt.setAttribute('x', gx + groupW/2);
-    dt.setAttribute('y', h - pad + 12);
-    dt.setAttribute('text-anchor','middle');
-    dt.setAttribute('font-size','10');
-    dt.setAttribute('fill','#6b7280');
-    const label = data[i].date.slice(5).replace('-','.');
-    dt.textContent = label;
-    svg.appendChild(dt);
-  }
-
-  wrap.appendChild(svg);
-}
-
-/* Мини-графики: по нескольким метрикам сразу (спарклайны) */
-function drawMiniCharts(){
-  miniCharts.innerHTML='';
-  METRICS.forEach(m=>{
-    const box = document.createElement('div'); box.className='mini';
-    const title = document.createElement('div');
-    title.style.fontWeight='800'; title.style.marginBottom='6px';
-    title.textContent = m.label;
-    box.appendChild(title);
-
-    const w = (miniCharts.clientWidth/2) - 10; const h = 90; const pad = 10;
-    const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
-    svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
-
-    const data = history.map(h=>({
-      date:h.date,
-      value:(h[m.key]!=null)?h[m.key]:(m.key==='weight'?h.weight:m.key==='waist'?h.waist:null)
-    })).filter(d=>d.value!=null);
-
-    if (!data.length){
-      const d = document.createElement('div'); d.style.fontSize='12px'; d.style.color='#6b7280'; d.textContent='нет данных';
-      box.appendChild(d); miniCharts.appendChild(box); return;
-    }
-
-    const values = data.map(d=>d.value);
-    const vMin = Math.min(...values), vMax = Math.max(...values);
-    const y = v => {
-      const t = (v - vMin) / (vMax - vMin || 1);
-      return h - pad - t*(h - pad - 22);
-    }
-    const x = i => pad + i*((w - pad*2)/Math.max(1,(data.length-1)));
-
-    // линия
-    let dAttr = '';
-    data.forEach((p,i)=>{ dAttr += (i?'L':'M') + x(i) + ' ' + y(p.value) + ' '; });
-    const path = document.createElementNS(svg.namespaceURI,'path');
-    path.setAttribute('d', dAttr.trim());
-    path.setAttribute('fill','none');
-    path.setAttribute('stroke','#60a5fa');
-    path.setAttribute('stroke-width','2');
-    svg.appendChild(path);
-
-    // точки
-    data.forEach((p,i)=>{
-      const c = document.createElementNS(svg.namespaceURI,'circle');
-      c.setAttribute('cx', x(i)); c.setAttribute('cy', y(p.value)); c.setAttribute('r','2.5');
-      c.setAttribute('fill','#3b82f6'); svg.appendChild(c);
+    let mode = 'window';
+    modeBtns.forEach(b=>{
+      b.addEventListener('click', ()=>{
+        modeBtns.forEach(x=>x.classList.toggle('active', x===b));
+        mode = b.dataset.mode;
+        renderTicks(wheel, mode);
+      });
     });
 
-    // ось X дат (редко)
-    const dt = document.createElementNS(svg.namespaceURI,'text');
-    dt.setAttribute('x', w/2); dt.setAttribute('y', h-4);
-    dt.setAttribute('text-anchor','middle'); dt.setAttribute('font-size','10'); dt.setAttribute('fill','#6b7280');
-    dt.textContent = data[0].date.slice(5).replace('-','.') + ' – ' + data[data.length-1].date.slice(5).replace('-','.');
-    svg.appendChild(dt);
+    function update(){
+      const v = parseFloat(input.value||0);
+      outEl.textContent = format(v);
+      renderTicks(wheel, mode);
+    }
+    input.addEventListener('input', update);
+    window.addEventListener('resize', ()=>renderTicks(wheel, mode));
+    update();
+  }
 
-    box.appendChild(svg);
-    miniCharts.appendChild(box);
+  document.querySelectorAll('.wheel').forEach(bindWheel);
+
+  // «Сохранить» (пока только заглушка UX)
+  document.getElementById('save').addEventListener('click', ()=>{
+    // тут позже добавим отправку
+    alert('Сохранили черновик замеров (демо)');
   });
-}
 
-/* Скелетон-гейт для графика и выводов */
-setTimeout(()=>{
-  document.getElementById('mainChartSk')?.remove();
-  drawMainChart();
-}, 600);
-
-setTimeout(()=>{
-  document.getElementById('aiSk')?.remove();
-  const box = document.getElementById('aiBox');
-  box.innerHTML = `
-    <h4>Резюме прогресса</h4>
-    <div class="date">обновлено: сегодня, 12:10</div>
-    <div class="content">
-      <p>За последние 5 замеров вес ↓ на <b>−1.8 кг</b>, талия ↓ на <b>−2.1 см</b>. Темп снижения умеренный — сохраняем дефицит и контроль по талии.</p>
-      <ul>
-        <li>Приоритет: сон 7–8 ч, вода 30–35 мл/кг</li>
-        <li>Силовые 2–3×/нед + шаги 8–10к</li>
-        <li>Кбжу корректировать каждые 2–3 недели</li>
-      </ul>
-    </div>
-  `;
-}, 700);
-
-/* Переключение «много графиков» */
-document.querySelector('[data-view="grid"]').addEventListener('click', ()=>{
-  // отложим рендер, будто грузим
-  miniCharts.innerHTML = `
-    <div class="skeleton" style="height:90px"></div>
-    <div class="skeleton" style="height:90px"></div>
-    <div class="skeleton" style="height:90px"></div>
-    <div class="skeleton" style="height:90px"></div>
-  `;
-  setTimeout(()=> drawMiniCharts(), 300);
-});
-document.querySelector('[data-view="single"]').addEventListener('click', ()=>{
-  // уже отрисовывали single
-  drawMainChart();
-});
-
-/* Перерисовать график при resize (адаптивные размеры) */
-window.addEventListener('resize', ()=>{
-  if (document.querySelector('.tab.active')?.dataset.view === 'single') drawMainChart();
-  else drawMiniCharts();
-});
-
-/* iOS лёгкая подсказка «есть скролл» (если анкета длинная и раскрыта) */
-const hint = document.createElement('div');
-hint.className='scroll-hint';
-document.body.appendChild(hint);
-/* end */
+  // По умолчанию анкета свёрнута (как просили)
+  // Если хочешь при первом заходе её показывать — добавь .open на #s-form
 </script>
 </body>
 </html>
