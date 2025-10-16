@@ -184,12 +184,13 @@ const ROW_VAR = getComputedStyle(document.documentElement).getPropertyValue('--r
 const rowH = ROW_VAR.endsWith('px') ? parseFloat(ROW_VAR) : (parseFloat(ROW_VAR) || 36);
 const pad = 4;
 const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
-const fmt = (ts)=>{
-  if(!ts) return 'нет данных';
-  try{
-    return new Intl.DateTimeFormat('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}).format(new Date(ts));
-  }catch(e){ return new Date(ts).toLocaleString('ru-RU'); }
-};
+
+/* Кэш форматтера даты */
+const DTF = new Intl.DateTimeFormat('ru-RU', {
+  day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'
+});
+const fmt = (ts)=>(!ts ? 'нет данных' : DTF.format(new Date(ts)));
+
 function readJSON(key, fallback=null){ try{ const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }catch(e){ return fallback; } }
 function writeJSON(key, obj){ try{ localStorage.setItem(key, JSON.stringify(obj)); }catch(e){} }
 function removeKey(key){ try{ localStorage.removeItem(key); }catch(e){} }
@@ -248,8 +249,10 @@ function buildWheel(fieldEl, initial){
   let rafInt = 0, rafFrac = 0;
   let snapTimer=null;
   const supportsScrollEnd = 'onscrollend' in window;
+  let disabled = false; // локальное состояние disable
 
   function applyFracLock(iVal){
+    if (disabled) return; // когда поле выключено — ничего не трогаем
     const lock = (iVal === maxInt);
     fracCol.style.pointerEvents = lock ? 'none' : 'auto';
     fracCol.style.opacity = lock ? 0.5 : 1;
@@ -317,8 +320,15 @@ function buildWheel(fieldEl, initial){
   }
 
   function setDisabled(dis){
+    disabled = dis;
     duo.classList.toggle('disabled', dis);
     [intCol, fracCol].forEach(c=>c.style.pointerEvents = dis ? 'none':'auto');
+    if (!dis){
+      // при повторной активации восстановим корректный lock дробной части
+      const iIdx = clamp(nearestIndex(intCol), 0, intRange);
+      const iVal = minInt + iIdx;
+      applyFracLock(iVal);
+    }
     dispatchChange();
   }
 
@@ -376,6 +386,9 @@ const FIELDS = [
   { key:'ankle',   label:'Обхват лодыжки',  unit:'см', min:15, max:35, initial:22 },
 ];
 
+/* Быстрый доступ к конфигу по ключу */
+const CFG = Object.fromEntries(FIELDS.map(f=>[f.key, f]));
+
 /* ===== ЗАГРУЗКА ДАННЫХ (последние/черновик) ===== */
 const last = readJSON(LS_KEY_LAST);
 const draft = readJSON(LS_KEY_DRAFT);
@@ -388,30 +401,29 @@ for (const cfg of FIELDS){
   const fromLast  = last?.data?.[cfg.key];
   baseData[cfg.key] = (typeof fromDraft === 'number' || fromDraft===null) ? fromDraft
                      : (typeof fromLast  === 'number' || fromLast===null)  ? fromLast
-                     : undefined; // тогда пойдёт initial
+                     : undefined;
 }
 
 /* ===== РЕНДЕР ПОЛЕЙ (ленивая инициализация) ===== */
 const fieldsWrap = document.getElementById('fields');
 const wheels = {};
 const wheelMap = new WeakMap();
+/* Кэш DOM-элементов полей */
+const fieldByKey = Object.create(null);
 
 function ensureWheel(fieldEl, cfg){
   let w = wheelMap.get(fieldEl);
   if (!w){
-    // Определяем стартовое значение
     const initVal = (typeof baseData[cfg.key]==='number') ? baseData[cfg.key] : cfg.initial;
     w = buildWheel(fieldEl, initVal);
     wheelMap.set(fieldEl, w);
     wheels[cfg.key] = w;
 
-    // Если поле опционально и сохранено как null — отмечаем чекбокс и отключаем колесо
     if (cfg.optional){
       const cb = fieldEl.querySelector('#opt_'+cfg.key);
       const isNull = baseData[cfg.key] === null;
       if (cb){ cb.checked = !!isNull; }
       if (isNull){ w.setDisabled(true); }
-      // слушатель чекбокса — для черновика
       if (cb && !cb._bound){
         cb.addEventListener('change', ()=>{ w.setDisabled(cb.checked); scheduleDraftSave(); });
         cb._bound = true;
@@ -456,17 +468,17 @@ for (const cfg of FIELDS){
   f.appendChild(h);
 
   fieldsWrap.appendChild(f);
+  fieldByKey[cfg.key] = f; // кеш ссылки на DOM-элемент поля
 }
 
-/* Lazy init: инициализируем элементы в видимой области секции */
+/* Lazy init */
 const allFields = Array.from(fieldsWrap.querySelectorAll('.field'));
 const canObserve = 'IntersectionObserver' in window;
 function observeFields(){
   if (!canObserve){
     for (const f of allFields){
       const key = f.dataset.key;
-      const cfg = FIELDS.find(x=>x.key===key);
-      ensureWheel(f, cfg);
+      ensureWheel(f, CFG[key]);
     }
     return;
   }
@@ -474,9 +486,7 @@ function observeFields(){
     for (const e of entries){
       if (e.isIntersecting){
         const f = e.target;
-        const key = f.dataset.key;
-        const cfg = FIELDS.find(x=>x.key===key);
-        ensureWheel(f, cfg);
+        ensureWheel(f, CFG[f.dataset.key]);
         io.unobserve(f);
       }
     }
@@ -485,24 +495,18 @@ function observeFields(){
   for (const f of allFields){
     const rect = f.getBoundingClientRect();
     if (rect.top < (window.innerHeight + 100) && rect.bottom > -100){
-      const key = f.dataset.key;
-      const cfg = FIELDS.find(x=>x.key===key);
-      ensureWheel(f, cfg);
+      ensureWheel(f, CFG[f.dataset.key]);
     } else {
       io.observe(f);
     }
   }
 }
-// наблюдение запускаем при первом раскрытии секции "Замеры"
 document.querySelector('[data-toggle="sec-measures"]').addEventListener('click', ()=>{
-  // если раньше не инициализировали — сделать это сейчас
   if (!fieldsWrap._observed){
     observeFields();
     fieldsWrap._observed = true;
   }
 }, {once:true});
-
-/* Если секция изначально развернута (мы сделали свернутой) — всё равно проверим на случай смены ТЗ */
 if (!document.getElementById('sec-measures').classList.contains('collapsed')){
   observeFields(); fieldsWrap._observed = true;
 }
@@ -516,7 +520,7 @@ function scheduleDraftSave(){
 function collectCurrentData(withEnsure=false){
   const out = {};
   for (const cfg of FIELDS){
-    const fieldEl = document.querySelector(`.field[data-key="${cfg.key}"]`);
+    const fieldEl = fieldByKey[cfg.key];
     const wheel = wheels[cfg.key] || (withEnsure ? ensureWheel(fieldEl, cfg) : null);
     const cb = fieldEl?.querySelector('#opt_'+cfg.key);
     if (cfg.optional && cb && cb.checked){
@@ -524,7 +528,6 @@ function collectCurrentData(withEnsure=false){
     } else if (wheel){
       out[cfg.key] = wheel.value;
     } else {
-      // ещё не инициализировано — берём базовое значение (последнее/дефолт)
       const v = baseData[cfg.key];
       out[cfg.key] = (typeof v==='number' || v===null) ? v : cfg.initial;
     }
