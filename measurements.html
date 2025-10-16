@@ -107,6 +107,7 @@
     box-shadow:0 6px 16px rgba(237,47,98,.35), inset 0 1px 0 rgba(255,255,255,.4);
     filter:saturate(.95);
   }
+  /* FIX: явная микропульсация на нажатие (видно даже при быстром тапе) */
   @keyframes btnPress {
     0%   { transform: translateY(0) scale(1);   box-shadow:0 12px 26px rgba(237,47,98,.35), inset 0 1px 0 rgba(255,255,255,.4); }
     50%  { transform: translateY(1px) scale(.98); box-shadow:0 6px 16px rgba(237,47,98,.35), inset 0 1px 0 rgba(255,255,255,.4); }
@@ -126,6 +127,7 @@
 <body>
   <div class="page">
 
+    <!-- Блок 1: Замеры (по умолчанию свернут) -->
     <section class="section collapsed" id="sec-measures">
       <div class="section-h" data-toggle="sec-measures" role="button" tabindex="0" aria-controls="sec-measures" aria-expanded="false">
         <h2>Замеры</h2>
@@ -142,6 +144,7 @@
       </div>
     </section>
 
+    <!-- Блок 2: Аналитика (развернут) -->
     <section class="section" id="sec-analytics">
       <div class="section-h" data-toggle="sec-analytics" role="button" tabindex="0" aria-controls="sec-analytics" aria-expanded="true">
         <h2>Аналитика</h2>
@@ -158,6 +161,7 @@
       </div>
     </section>
 
+    <!-- Блок 3: Комментарий ИИ (развернут) -->
     <section class="section" id="sec-ai">
       <div class="section-h" data-toggle="sec-ai" role="button" tabindex="0" aria-controls="sec-ai" aria-expanded="true">
         <h2>Комментарий ИИ</h2>
@@ -177,9 +181,7 @@
   </div>
 
 <script>
-/* ===== Telegram Mini App boot + BackButton ===== */
-const HOME_URL = new URL('./router.html', location.href).toString(); // домашняя страница приложения (внутри мини-аппа)
-
+/* ===== Telegram Mini App boot + BackButton (FIX) ===== */
 (function initTMA(){
   const tg = window.Telegram?.WebApp;
   if (!tg) return;
@@ -187,105 +189,30 @@ const HOME_URL = new URL('./router.html', location.href).toString(); // дома
   try { tg.expand(); } catch(e){}
   try { tg.setHeaderColor('secondary_bg_color'); } catch(e){}
 
-  // BackButton: 1) свернуть секцию; 2) сохранить черновик и перейти на домашнюю
+  // FIX: включаем BackButton вместо "Закрыть"
   try {
     tg.BackButton.show();
-    tg.onEvent('backButtonClicked', async () => {
+    tg.onEvent('backButtonClicked', () => {
       const measuresSec = document.getElementById('sec-measures');
       const measuresHeader = document.querySelector('[data-toggle="sec-measures"]');
       if (measuresSec && !measuresSec.classList.contains('collapsed')) {
         measuresSec.classList.add('collapsed');
         if (measuresHeader) measuresHeader.setAttribute('aria-expanded','false');
-        await saveDraftNow(); // на всякий
         return;
       }
-      // Перед уходом — гарантированно пишем в CloudStorage
-      await saveDraftNow();
-      // Навигация внутри мини-аппа на домашнюю страницу
-      try { tg.openLink(HOME_URL); } catch(_) { location.href = HOME_URL; }
+      // если всё свернуто — выходим из мини-приложения
+      tg.close();
     });
   } catch(e){}
 })();
 
-/* ===== КЛЮЧИ ХРАНИЛИЩА ===== */
+/* ===== КОНСТАНТЫ ХРАНИЛИЩА ===== */
 const LS_KEY_LAST  = 'measurements:last';   // { ts, data }
 const LS_KEY_DRAFT = 'measurements:draft';  // { ts, data }
 
-/* ===== CloudStorage wrapper (Telegram) ===== */
-const CS = {
-  has(){ return !!window.Telegram?.WebApp?.CloudStorage; },
-  getItems(keys){
-    return new Promise(resolve=>{
-      const cs = window.Telegram?.WebApp?.CloudStorage;
-      if (!cs) return resolve(null);
-      try {
-        // стандартная сигнатура: (keys, onSuccess, onError)
-        cs.getItems(keys, (obj)=>resolve(obj||null), ()=>resolve(null));
-      } catch(_) {
-        // возможная error-first сигнатура
-        try { cs.getItems(keys, (err, obj)=> resolve(err?null: (obj||null))); }
-        catch{ resolve(null); }
-      }
-    });
-  },
-  setItem(key, value){
-    return new Promise(resolve=>{
-      const cs = window.Telegram?.WebApp?.CloudStorage;
-      if (!cs) return resolve(false);
-      try { cs.setItem(key, value, ()=>resolve(true), ()=>resolve(false)); }
-      catch{ resolve(false); }
-    });
-  }
-};
-
-/* ===== Утилиты ===== */
-const ROW_VAR = getComputedStyle(document.documentElement).getPropertyValue('--row').trim();
-const rowH = ROW_VAR.endsWith('px') ? parseFloat(ROW_VAR) : (parseFloat(ROW_VAR) || 36);
-const pad = 4;
-const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
-
-const DTF = new Intl.DateTimeFormat('ru-RU', {
-  day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'
-});
-const fmt = (ts)=>(!ts ? 'нет данных' : DTF.format(new Date(ts)));
-
-function readJSON(key, fallback=null){ try{ const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }catch(e){ return fallback; } }
-function writeJSON(key, obj){ try{ localStorage.setItem(key, JSON.stringify(obj)); }catch(e){} }
-function removeKey(key){ try{ localStorage.removeItem(key); }catch(e){} }
-function safeInitData(){ return window.Telegram?.WebApp?.initData || ''; }
-
-/* Синхронизация CloudStorage -> localStorage на старте */
-(async function hydrateFromCloud(){
-  try{
-    const items = await CS.getItems([LS_KEY_LAST, LS_KEY_DRAFT]);
-    if (!items) return;
-
-    const cloudLast  = items[LS_KEY_LAST]  ? JSON.parse(items[LS_KEY_LAST])  : null;
-    const cloudDraft = items[LS_KEY_DRAFT] ? JSON.parse(items[LS_KEY_DRAFT]) : null;
-
-    const localLast  = readJSON(LS_KEY_LAST);
-    const localDraft = readJSON(LS_KEY_DRAFT);
-
-    if (cloudLast && (!localLast || (cloudLast.ts > localLast.ts))) writeJSON(LS_KEY_LAST, cloudLast);
-    if (cloudDraft && (!localDraft || (cloudDraft.ts > localDraft.ts))) writeJSON(LS_KEY_DRAFT, cloudDraft);
-
-    // после гидрации — обновим UI/базу
-    const mergedLast = readJSON(LS_KEY_LAST);
-    if (mergedLast?.ts){
-      document.getElementById('lastTime').textContent = 'Последний замер: ' + fmt(mergedLast.ts);
-      for (const k of Object.keys(mergedLast.data||{})){
-        baseData[k] = mergedLast.data[k];
-        if (wheels[k] && typeof mergedLast.data[k] === 'number') wheels[k].setValue(mergedLast.data[k]);
-        if (wheels[k] && mergedLast.data[k] === null) wheels[k].setDisabled(true);
-      }
-      requestAnimationFrame(realignAllWheels);
-    }
-  }catch(_){}
-})();
-
 /* ===== СЕТЬ / БЭКЕНД ===== */
-const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbwwr4M2Z6ZB8GyNgPl97LrGsU_OFCHWPF8gEJ5PZNNzpDmW6VKnI24emwGzT6Snp0Dd0A/exec';
-const APP_VERSION = '1.0.6';
+const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbwwr4M2Z6ZB8GyNgPl97LrGsU_OFCHWPF8gEJ5PZNNzpDmW6VKnI24emwGzT6Snp0Dd0A/exec'; // ← ваш URL деплоя Web App
+const APP_VERSION = '1.0.5';
 
 async function callBackend(action, extra = {}) {
   const base = {
@@ -296,6 +223,7 @@ async function callBackend(action, extra = {}) {
     ...extra
   };
 
+  // 1) GET (без preflight) — как в проде
   const qs = new URLSearchParams();
   qs.set('action', action);
   qs.set('init_data', base.init_data);
@@ -308,6 +236,7 @@ async function callBackend(action, extra = {}) {
     try { return JSON.parse(tx); } catch(_) {}
   } catch(_) {}
 
+  // 2) Fallback POST text/plain (без preflight на iOS)
   try {
     const rp = await fetch(BACKEND_URL, {
       method: 'POST',
@@ -326,7 +255,23 @@ async function callBackend(action, extra = {}) {
   }
 }
 
-/* ===== АККОРДЕОН ===== */
+/* ===== УТИЛИТЫ ===== */
+const ROW_VAR = getComputedStyle(document.documentElement).getPropertyValue('--row').trim();
+const rowH = ROW_VAR.endsWith('px') ? parseFloat(ROW_VAR) : (parseFloat(ROW_VAR) || 36);
+const pad = 4;
+const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
+
+const DTF = new Intl.DateTimeFormat('ru-RU', {
+  day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'
+});
+const fmt = (ts)=>(!ts ? 'нет данных' : DTF.format(new Date(ts)));
+
+function readJSON(key, fallback=null){ try{ const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }catch(e){ return fallback; } }
+function writeJSON(key, obj){ try{ localStorage.setItem(key, JSON.stringify(obj)); }catch(e){} }
+function removeKey(key){ try{ localStorage.removeItem(key); }catch(e){} }
+function safeInitData(){ return window.Telegram?.WebApp?.initData || ''; }
+
+/* ===== АККОРДЕОН (a11y + клавиатура) ===== */
 function setAriaExpanded(h){
   const sec = document.getElementById(h.getAttribute('data-toggle'));
   h.setAttribute('aria-expanded', String(!sec.classList.contains('collapsed')));
@@ -339,6 +284,7 @@ function toggleSectionByHeader(h){
   if (id === 'sec-measures' && !willBeCollapsed && !fieldsWrap._observed){
     observeFields();
     fieldsWrap._observed = true;
+    // FIX: после раскрытия — выравниваем все уже созданные колёса
     requestAnimationFrame(realignAllWheels);
   }
 }
@@ -365,9 +311,6 @@ function buildWheel(fieldEl, initial){
   const fracCol = fieldEl.querySelector('.col-frac');
   const duo = fieldEl.querySelector('.duo');
   const key = fieldEl.dataset.key;
-
-  // Кэш текущего значения, используется когда колонка/секция скрыта
-  let currentVal = (typeof initial==='number') ? initial : (min + (max - min)/2);
 
   const opt = t => { const d=document.createElement('div'); d.className='option'; d.textContent=t; return d; };
   function fillCol(col, from, to){
@@ -414,7 +357,6 @@ function buildWheel(fieldEl, initial){
 
   function dispatchChange(){
     const v = api.value;
-    currentVal = v; // всегда держим в кэше актуальное значение
     document.dispatchEvent(new CustomEvent('wheelchange', { detail:{ key, value: v }}));
   }
 
@@ -487,11 +429,12 @@ function buildWheel(fieldEl, initial){
     dispatchChange();
   }
 
-  // Надежная инициализация
-  const initVal = currentVal;
+  // FIX: сверхнадёжная инициализация после раскладки
+  const initVal = (typeof initial==='number') ? initial : (min + (max - min) / 2);
   (function robustInit(){
     const apply = ()=>{
       setValue(initVal);
+      // если по какой-то причине оказались не на init — повторим мягко
       setTimeout(()=>{ if (Math.abs(api.value - initVal) > 0.09) setValue(initVal); }, 120);
     };
     if (intCol.clientHeight === 0 || fracCol.clientHeight === 0){
@@ -502,6 +445,7 @@ function buildWheel(fieldEl, initial){
       };
       requestAnimationFrame(tick);
     } else {
+      // подстрахуемся двойным rAF
       requestAnimationFrame(()=>requestAnimationFrame(apply));
     }
   })();
@@ -509,15 +453,11 @@ function buildWheel(fieldEl, initial){
   const api = {
     setValue,
     get value(){
-      // В скрытом состоянии возвращаем кэш (исключает «минимумы»)
-      if (intCol.clientHeight === 0 || fracCol.clientHeight === 0) return currentVal;
       const iIdx = clamp(nearestIndex(intCol), 0, intRange);
       let f = clamp(nearestIndex(fracCol), 0, 9);
       const iVal = minInt + iIdx;
       if (iVal === maxInt) f = 0;
-      const v = +(iVal + f/10).toFixed(1);
-      currentVal = v;
-      return v;
+      return +(iVal + f/10).toFixed(1);
     },
     setDisabled,
     destroy(){
@@ -533,7 +473,7 @@ function buildWheel(fieldEl, initial){
   return api;
 }
 
-/* ===== Конфиг полей ===== */
+/* ===== КОНФИГ ПОЛЕЙ ===== */
 const FIELDS = [
   { key:'weight', label:'Вес', unit:'кг', min:40, max:250, initial:70.0 },
   { key:'height', label:'Рост', unit:'см', min:120, max:230, initial:160.0 },
@@ -561,11 +501,12 @@ const FIELDS = [
   { key:'ankle',   label:'Обхват лодыжки',  unit:'см', min:15, max:35, initial:22 },
 ];
 
+/* Быстрый доступ к конфигу по ключу */
 const CFG = Object.fromEntries(FIELDS.map(f=>[f.key, f]));
 
-/* ===== Загрузка данных локально ===== */
-let last = readJSON(LS_KEY_LAST);
-let draft = readJSON(LS_KEY_DRAFT);
+/* ===== ЗАГРУЗКА ДАННЫХ (последние/черновик) ===== */
+const last = readJSON(LS_KEY_LAST);
+const draft = readJSON(LS_KEY_DRAFT);
 document.getElementById('lastTime').textContent = 'Последний замер: ' + fmt(last?.ts);
 
 const baseData = {};
@@ -577,7 +518,7 @@ for (const cfg of FIELDS){
                      : undefined;
 }
 
-/* ===== Рендер полей (лениво) ===== */
+/* ===== РЕНДЕР ПОЛЕЙ (ленивая инициализация) ===== */
 const fieldsWrap = document.getElementById('fields');
 const wheels = {};
 const wheelMap = new WeakMap();
@@ -592,6 +533,7 @@ function ensureWheel(fieldEl, cfg){
     wheels[cfg.key] = w;
 
     if (cfg.optional){
+      // чекбокс «нет данных» для опциональных полей
       let cb = fieldEl.querySelector('#opt_'+cfg.key);
       if (!cb){
         const opt = document.createElement('div');
@@ -614,12 +556,13 @@ function ensureWheel(fieldEl, cfg){
   return w;
 }
 
-// мягкое выравнивание всех уже созданных колёс
+// FIX: мягкое выравнивание всех уже созданных колёс (на случай смены ориентации/шрифта/темы)
 function realignAllWheels(){
   for (const k in wheels){
     const w = wheels[k];
     if (!w) continue;
-    w.setValue(w.value);
+    const v = w.value;
+    w.setValue(v);
   }
 }
 
@@ -683,15 +626,16 @@ function observeFields(){
     }
   }
 }
+
 if (!document.getElementById('sec-measures').classList.contains('collapsed')){
   observeFields(); fieldsWrap._observed = true;
 }
 
-/* ===== Черновик (автосохранение) ===== */
+/* ===== ЧЕРНОВИК (автосохранение офлайн) ===== */
 let draftTimer=null;
 function scheduleDraftSave(){
   clearTimeout(draftTimer);
-  draftTimer = setTimeout(saveDraft, 250);
+  draftTimer = setTimeout(saveDraft, 300);
 }
 function collectCurrentData(withEnsure=false){
   const out = {};
@@ -702,7 +646,7 @@ function collectCurrentData(withEnsure=false){
     if (cfg.optional && cb && cb.checked){
       out[cfg.key] = null;
     } else if (wheel){
-      out[cfg.key] = wheel.value; // безопасно и когда секция скрыта — вернёт кэш
+      out[cfg.key] = wheel.value;
     } else {
       const v = baseData[cfg.key];
       out[cfg.key] = (typeof v==='number' || v===null) ? v : cfg.initial;
@@ -710,22 +654,17 @@ function collectCurrentData(withEnsure=false){
   }
   return out;
 }
-async function saveDraft(){
+function saveDraft(){
   const data = collectCurrentData(false);
-  const payload = { ts: Date.now(), data };
-  writeJSON(LS_KEY_DRAFT, payload);
-  // синхронно зеркалим в CloudStorage (если доступен)
-  try{ await CS.setItem(LS_KEY_DRAFT, JSON.stringify(payload)); }catch(_){}
+  writeJSON(LS_KEY_DRAFT, { ts: Date.now(), data });
 }
-async function saveDraftNow(){ try{ await saveDraft(); }catch(_){} }
-
 document.addEventListener('wheelchange', scheduleDraftSave);
 document.addEventListener('visibilitychange', ()=>{
-  if (document.visibilityState === 'hidden') { saveDraftNow(); }
+  if (document.visibilityState === 'hidden') { try{ saveDraft(); }catch(e){} }
 });
-window.addEventListener('beforeunload', ()=>{ try{ saveDraftNow(); }catch(e){} });
+window.addEventListener('beforeunload', ()=>{ try{ saveDraft(); }catch(e){} });
 
-/* ===== Инициализация с бэкенда (мягкая) ===== */
+/* ===== ИНИЦИАЛИЗАЦИЯ С БЭКЕНДА (мягкая) ===== */
 (async function softInitFromBackend(){
   if (draft && (!last || draft.ts >= last.ts)) return;
   try{
@@ -734,20 +673,20 @@ window.addEventListener('beforeunload', ()=>{ try{ saveDraftNow(); }catch(e){} }
       const tsMs = Date.parse(res.last.ts_iso);
       document.getElementById('lastTime').textContent = 'Последний замер: ' + fmt(tsMs);
       writeJSON(LS_KEY_LAST, { ts: tsMs, data: res.last.data });
-      try{ await CS.setItem(LS_KEY_LAST, JSON.stringify({ ts: tsMs, data: res.last.data })); }catch(_){}
-
       for (const k of Object.keys(res.last.data || {})){
         baseData[k] = res.last.data[k];
         if (wheels[k] && typeof res.last.data[k] === 'number') wheels[k].setValue(res.last.data[k]);
         if (wheels[k] && res.last.data[k] === null) wheels[k].setDisabled(true);
       }
+      // FIX: выравниваем после подстановки серверных значений
       requestAnimationFrame(realignAllWheels);
     }
   }catch(e){ /* оффлайн — ок */ }
 })();
 
-/* ===== Сохранение ===== */
+/* ===== СОХРАНЕНИЕ ===== */
 const saveBtn = document.getElementById('saveBtn');
+// FIX: явная визуальная обратная связь нажатия
 saveBtn.addEventListener('pointerdown', ()=> saveBtn.classList.add('pressed'));
 ['pointerup','pointercancel','pointerleave'].forEach(ev=> saveBtn.addEventListener(ev, ()=> saveBtn.classList.remove('pressed')));
 
@@ -770,13 +709,9 @@ saveBtn.addEventListener('click', async ()=>{
     data
   };
 
-  // локально и в облаке — сразу
-  const lastPayload = { ts: clientTs, data };
-  writeJSON(LS_KEY_LAST, lastPayload);
+  // локально сразу сохраним
+  writeJSON(LS_KEY_LAST, { ts: clientTs, data });
   removeKey(LS_KEY_DRAFT);
-  try{ await CS.setItem(LS_KEY_LAST, JSON.stringify(lastPayload)); }catch(_){}
-  try{ await CS.setItem(LS_KEY_DRAFT, JSON.stringify({ ts:0, data:{} })); }catch(_){}
-
   document.getElementById('lastTime').textContent = 'Последний замер: ' + fmt(clientTs);
   Object.assign(baseData, data);
 
@@ -784,11 +719,9 @@ saveBtn.addEventListener('click', async ()=>{
     const res = await callBackend('save', extra);
     if (res && res.ok){
       const serverTs = Date.parse(res.ts_iso);
-      const serverPayload = { ts: serverTs, data };
-      writeJSON(LS_KEY_LAST, serverPayload);
-      try{ await CS.setItem(LS_KEY_LAST, JSON.stringify(serverPayload)); }catch(_){}
-
+      writeJSON(LS_KEY_LAST, { ts: serverTs, data });
       document.getElementById('lastTime').textContent = 'Последний замер: ' + fmt(serverTs);
+      // свернуть раздел "Замеры" после успешного сохранения
       const measuresSec = document.getElementById('sec-measures');
       const measuresHeader = document.querySelector('[data-toggle="sec-measures"]');
       if (measuresSec) measuresSec.classList.add('collapsed');
