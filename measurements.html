@@ -193,11 +193,11 @@
 
 /* ===== КОНСТАНТЫ ХРАНИЛИЩА ===== */
 const LS_KEY_LAST  = 'measurements:last';                  // подтверждённая запись
-const SS_KEY_DRAFT = 'measurements:sessionDraft';          // черновик сеанса
+const SS_KEY_DRAFT = 'measurements:sessionDraft';          // черновик сеанса (только до сохранения)
 
 /* ===== СЕТЬ / БЭКЕНД ===== */
 const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbwwr4M2Z6ZB8GyNgPl97LrGsU_OFCHWPF8gEJ5PZNNzpDmW6VKnI24emwGzT6Snp0Dd0A/exec';
-const APP_VERSION = '1.0.8';
+const APP_VERSION = '1.0.9';
 
 /* ===== УТИЛИТЫ ===== */
 const ROW_VAR = getComputedStyle(document.documentElement).getPropertyValue('--row').trim();
@@ -216,6 +216,23 @@ function readSessionJSON(key,fallback=null){ try{ const v=sessionStorage.getItem
 function writeSessionJSON(key,obj){ try{ sessionStorage.setItem(key, JSON.stringify(obj)); }catch(e){} }
 function removeSessionKey(key){ try{ sessionStorage.removeItem(key); }catch(e){} }
 function safeInitData(){ return window.Telegram?.WebApp?.initData || ''; }
+
+/* равенство наборов данных (числа сравниваем с допуском) */
+function equalData(a={}, b={}){
+  for (const {key} of FIELDS){
+    const va = a[key], vb = b[key];
+    if (va === null || vb === null){
+      if (va !== vb) return false;
+    } else if (typeof va === 'number' && typeof vb === 'number'){
+      if (Math.abs(va - vb) > 1e-9) return false;
+    } else if (typeof va === 'undefined' && typeof vb === 'undefined'){
+      continue;
+    } else {
+      return false;
+    }
+  }
+  return true;
+}
 
 async function callBackend(action, extra = {}) {
   const base = { action, init_data: safeInitData(), app_version: APP_VERSION, locale: navigator.language || 'ru-RU', ...extra };
@@ -483,12 +500,19 @@ const FIELDS = [
 /* Быстрый доступ к конфигу */
 const CFG = Object.fromEntries(FIELDS.map(f=>[f.key, f]));
 
-/* ===== ИСХОДНОЕ СОСТОЯНИЕ: last + sessionDraft ===== */
+/* ===== ИСХОДНОЕ СОСТОЯНИЕ: last + sessionDraft (с очисткой «тихих» черновиков) ===== */
 const last = readJSON(LS_KEY_LAST);
 let sessionDraft = readSessionJSON(SS_KEY_DRAFT);
+
+// устаревший черновик (по времени last) — удалить
 if (sessionDraft && last?.ts && sessionDraft.ts && last.ts >= sessionDraft.ts){
   sessionDraft = null; removeSessionKey(SS_KEY_DRAFT);
 }
+// «тихий» черновик без правок и совпадающий с last — удалить
+if (sessionDraft && (!sessionDraft.dirty) && last?.data && equalData(sessionDraft.data||{}, last.data||{})){
+  sessionDraft = null; removeSessionKey(SS_KEY_DRAFT);
+}
+
 document.getElementById('lastTime').textContent = 'Последний замер: ' + fmt(last?.ts);
 
 const baseData = {};
@@ -623,7 +647,7 @@ function collectCurrentData(withEnsure=false){
 function touchDraft(){
   clearTimeout(draftTimer);
   draftTimer = setTimeout(()=>{
-    const obj = { ts: Date.now(), data: collectCurrentData(false) };
+    const obj = { ts: Date.now(), dirty: true, data: collectCurrentData(false) };
     sessionDraft = obj;
     writeSessionJSON(SS_KEY_DRAFT, obj);
   }, 150);
@@ -635,16 +659,24 @@ document.addEventListener('wheelchange', (e)=>{
   touchDraft();
 });
 
-/* ===== ПОДЪЕМ ИЗ БД (если нет активного черновика) ===== */
+/* ===== ПОДЪЕМ ИЗ БД (если нет активного «грязного» черновика) ===== */
 async function fetchAndApplyFromBackend(){
   try{
     const res = await callBackend('init');
     if (res && res.ok && res.last){
-      if (readSessionJSON(SS_KEY_DRAFT)) return; // есть черновик — не перетираем UI
-
       const tsMs = Date.parse(res.last.ts_iso);
-      document.getElementById('lastTime').textContent = 'Последний замер: ' + fmt(tsMs);
+
+      const sd = readSessionJSON(SS_KEY_DRAFT);
+      if (sd?.dirty === true) return; // пользователь что-то крутил — не трогаем
+
+      // если в sessionStorage лежит «тихий» черновик, совпадающий с пришедшими данными — удаляем его
+      if (sd && !sd.dirty && equalData(sd.data||{}, res.last.data||{})){
+        removeSessionKey(SS_KEY_DRAFT);
+      }
+
+      // применяем БД
       writeJSON(LS_KEY_LAST, { ts: tsMs, data: res.last.data });
+      document.getElementById('lastTime').textContent = 'Последний замер: ' + fmt(tsMs);
 
       let changed = false;
       for (const k of Object.keys(res.last.data || {})){
@@ -664,9 +696,12 @@ async function fetchAndApplyFromBackend(){
   }catch(e){}
 }
 fetchAndApplyFromBackend();
-window.addEventListener('pageshow', ()=>{ if (!readSessionJSON(SS_KEY_DRAFT)) fetchAndApplyFromBackend(); });
+window.addEventListener('pageshow', ()=>{ const sd=readSessionJSON(SS_KEY_DRAFT); if (!(sd?.dirty)) fetchAndApplyFromBackend(); });
 document.addEventListener('visibilitychange', ()=>{
-  if (document.visibilityState === 'visible' && !readSessionJSON(SS_KEY_DRAFT)) fetchAndApplyFromBackend();
+  if (document.visibilityState === 'visible'){
+    const sd=readSessionJSON(SS_KEY_DRAFT);
+    if (!(sd?.dirty)) fetchAndApplyFromBackend();
+  }
 });
 
 /* ===== КНОПКА: визуальная отдача, лоадер ===== */
