@@ -180,6 +180,21 @@
 const LS_KEY_LAST  = 'measurements:last';   // { ts, data }
 const LS_KEY_DRAFT = 'measurements:draft';  // { ts, data }
 
+/* ===== СЕТЬ / БЭКЕНД ===== */
+const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbwxf0taY1yMZ5ALfPTmPw9Y_P2t522K2BUT3xnLsiHs1J7MHaCF5pC6O1Qdj4iNEsD67Q/exec'; // <-- вы подставите
+const APP_VERSION = '1.0.0';
+
+async function postJSON(payload){
+  const r = await fetch(BACKEND_URL, {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(payload)
+  });
+  // GAS почти всегда 200 — читаем тело и интерпретируем ok/error
+  const data = await r.json().catch(()=>({ok:false, error:'bad_json'}));
+  return data;
+}
+
 /* ===== УТИЛИТЫ ===== */
 const ROW_VAR = getComputedStyle(document.documentElement).getPropertyValue('--row').trim();
 const rowH = ROW_VAR.endsWith('px') ? parseFloat(ROW_VAR) : (parseFloat(ROW_VAR) || 36);
@@ -195,6 +210,7 @@ const fmt = (ts)=>(!ts ? 'нет данных' : DTF.format(new Date(ts)));
 function readJSON(key, fallback=null){ try{ const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }catch(e){ return fallback; } }
 function writeJSON(key, obj){ try{ localStorage.setItem(key, JSON.stringify(obj)); }catch(e){} }
 function removeKey(key){ try{ localStorage.removeItem(key); }catch(e){} }
+function safeInitData(){ return window.Telegram?.WebApp?.initData || ''; }
 
 /* ===== АККОРДЕОН (a11y + клавиатура) ===== */
 function setAriaExpanded(h){
@@ -564,29 +580,82 @@ document.addEventListener('visibilitychange', ()=>{
 });
 window.addEventListener('beforeunload', ()=>{ try{ saveDraft(); }catch(e){} });
 
+/* ===== ИНИЦИАЛИЗАЦИЯ С БЭКЕНДА (мягкая) ===== */
+(async function softInitFromBackend(){
+  // если есть более свежий черновик — уважаем его и не трогаем
+  if (draft && (!last || draft.ts >= last.ts)) return;
+  // пробуем подтянуть последний замер из БД
+  try{
+    const res = await postJSON({ action:'init', init_data: safeInitData() });
+    if (res && res.ok && res.last){
+      // обновим бейдж и локальный last (включая дату — важно)
+      const tsMs = Date.parse(res.last.ts_iso);
+      document.getElementById('lastTime').textContent = 'Последний замер: ' + fmt(tsMs);
+      writeJSON(LS_KEY_LAST, { ts: tsMs, data: res.last.data });
+      // обновим базовые значения и уже инициализированные крутилки
+      for (const k of Object.keys(res.last.data || {})){
+        baseData[k] = res.last.data[k];
+        if (wheels[k] && typeof res.last.data[k] === 'number') wheels[k].setValue(res.last.data[k]);
+        if (wheels[k] && res.last.data[k] === null) wheels[k].setDisabled(true);
+      }
+    }
+  }catch(e){ /* тихо, оффлайн режим ок */ }
+})();
+
 /* ===== СОХРАНЕНИЕ ===== */
-document.getElementById('saveBtn').addEventListener('click', ()=>{
+document.getElementById('saveBtn').addEventListener('click', async ()=>{
   try{ window.Telegram?.WebApp?.HapticFeedback?.impactOccurred('light'); }catch(e){}
 
   const data = collectCurrentData(true);
-  const payload = { ts: Date.now(), data };
 
-  // 1) сохраняем и чистим черновик
-  writeJSON(LS_KEY_LAST, payload);
+  // служебные отметки клиента (дозаписываем дату замера локально и отправляем на сервер)
+  const clientTs = Date.now();
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  const dayLocal = new Intl.DateTimeFormat('sv-SE', { timeZone: tz, year:'numeric', month:'2-digit', day:'2-digit' })
+                    .format(new Date(clientTs)); // YYYY-MM-DD
+
+  const payload = {
+    action: 'save',
+    init_data: safeInitData(),
+    app_version: APP_VERSION,
+    locale: navigator.language || 'ru-RU',
+    tz,
+    save_id: (crypto?.randomUUID ? crypto.randomUUID() : String(clientTs)),
+    client_ts: clientTs,                // <— дозапись даты/времени клиента
+    client_day_local: dayLocal,         // <— дозапись локального дня клиента
+    data
+  };
+
+  // сначала локально фиксируем черновик как last (на случай потери связи)
+  writeJSON(LS_KEY_LAST, { ts: clientTs, data });
   removeKey(LS_KEY_DRAFT);
-
-  // 2) обновляем бейдж времени и базовые значения для ленивых колёс
-  document.getElementById('lastTime').textContent = 'Последний замер: ' + fmt(payload.ts);
+  document.getElementById('lastTime').textContent = 'Последний замер: ' + fmt(clientTs);
   Object.assign(baseData, data);
 
-  // 3) сворачиваем блок «Замеры» и обновляем aria
-  const measuresSec = document.getElementById('sec-measures');
-  const measuresHeader = document.querySelector('[data-toggle="sec-measures"]');
-  if (measuresSec) measuresSec.classList.add('collapsed');
-  if (measuresHeader) measuresHeader.setAttribute('aria-expanded','false');
-
-  // 4) демонстрационный алерт (как и было)
-  alert('Сохраняем:\n' + JSON.stringify(data, null, 2));
+  // отправляем на сервер (тихо и надёжно)
+  let serverTs = null;
+  try{
+    const res = await postJSON(payload);
+    if (res && res.ok){
+      serverTs = Date.parse(res.ts_iso);
+      // перезапишем локальный last серверным временем (истина в БД)
+      writeJSON(LS_KEY_LAST, { ts: serverTs, data });
+      document.getElementById('lastTime').textContent = 'Последний замер: ' + fmt(serverTs);
+      // сворачиваем блок «Замеры»
+      const measuresSec = document.getElementById('sec-measures');
+      const measuresHeader = document.querySelector('[data-toggle="sec-measures"]');
+      if (measuresSec) measuresSec.classList.add('collapsed');
+      if (measuresHeader) measuresHeader.setAttribute('aria-expanded','false');
+      // мягкое подтверждение
+      window.Telegram?.WebApp?.showPopup?.({title:'Сохранено', message:'Данные обновлены', buttons:[{type:'ok'}]});
+    } else {
+      // сервер ответил ошибкой — информируем, но локальный last уже есть
+      alert('Ошибка сохранения: ' + (res?.error || 'unknown'));
+    }
+  }catch(err){
+    // сеть недоступна — остаёмся на локальном last, пользователь ещё раз сможет сохранить
+    alert('Нет сети. Данные сохранены локально и будут повторно отправлены при следующей попытке.');
+  }
 });
 </script>
 </body>
