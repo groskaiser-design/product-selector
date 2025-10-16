@@ -181,7 +181,7 @@
   </div>
 
 <script>
-/* ===== Telegram Mini App boot + BackButton (FIX) ===== */
+/* ===== Telegram Mini App boot + BackButton ===== */
 (function initTMA(){
   const tg = window.Telegram?.WebApp;
   if (!tg) return;
@@ -189,19 +189,25 @@
   try { tg.expand(); } catch(e){}
   try { tg.setHeaderColor('secondary_bg_color'); } catch(e){}
 
-  // FIX: включаем BackButton вместо "Закрыть"
+  // включаем BackButton и настраиваем переход на главную
   try {
     tg.BackButton.show();
     tg.onEvent('backButtonClicked', () => {
       const measuresSec = document.getElementById('sec-measures');
       const measuresHeader = document.querySelector('[data-toggle="sec-measures"]');
+      // 1) если открыт раздел "Замеры" — сворачиваем
       if (measuresSec && !measuresSec.classList.contains('collapsed')) {
         measuresSec.classList.add('collapsed');
         if (measuresHeader) measuresHeader.setAttribute('aria-expanded','false');
         return;
       }
-      // если всё свернуто — выходим из мини-приложения
-      tg.close();
+      // 2) иначе — открыть главную страницу в in-app браузере Telegram
+      try {
+        tg.openLink(MAIN_URL, { try_instant_view: false });
+      } catch (_) {
+        // Фолбэк, если openLink недоступен
+        location.href = MAIN_URL;
+      }
     });
   } catch(e){}
 })();
@@ -212,6 +218,9 @@ const LS_KEY_DRAFT = 'measurements:draft';  // { ts, data }
 
 /* ===== СЕТЬ / БЭКЕНД ===== */
 const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbwwr4M2Z6ZB8GyNgPl97LrGsU_OFCHWPF8gEJ5PZNNzpDmW6VKnI24emwGzT6Snp0Dd0A/exec'; // ← ваш URL деплоя Web App
+// Главная страница для возврата по BackButton
+const MAIN_URL = 'https://groskaiser-design.github.io/product-selector/router.html';
+
 const APP_VERSION = '1.0.5';
 
 async function callBackend(action, extra = {}) {
@@ -284,7 +293,7 @@ function toggleSectionByHeader(h){
   if (id === 'sec-measures' && !willBeCollapsed && !fieldsWrap._observed){
     observeFields();
     fieldsWrap._observed = true;
-    // FIX: после раскрытия — выравниваем все уже созданные колёса
+    // после раскрытия — выравниваем все уже созданные колёса
     requestAnimationFrame(realignAllWheels);
   }
 }
@@ -429,7 +438,7 @@ function buildWheel(fieldEl, initial){
     dispatchChange();
   }
 
-  // FIX: сверхнадёжная инициализация после раскладки
+  // сверхнадёжная инициализация после раскладки
   const initVal = (typeof initial==='number') ? initial : (min + (max - min) / 2);
   (function robustInit(){
     const apply = ()=>{
@@ -556,7 +565,7 @@ function ensureWheel(fieldEl, cfg){
   return w;
 }
 
-// FIX: мягкое выравнивание всех уже созданных колёс (на случай смены ориентации/шрифта/темы)
+// мягкое выравнивание всех уже созданных колёс (на случай смены ориентации/шрифта/темы)
 function realignAllWheels(){
   for (const k in wheels){
     const w = wheels[k];
@@ -678,7 +687,7 @@ window.addEventListener('beforeunload', ()=>{ try{ saveDraft(); }catch(e){} });
         if (wheels[k] && typeof res.last.data[k] === 'number') wheels[k].setValue(res.last.data[k]);
         if (wheels[k] && res.last.data[k] === null) wheels[k].setDisabled(true);
       }
-      // FIX: выравниваем после подстановки серверных значений
+      // выравниваем после подстановки серверных значений
       requestAnimationFrame(realignAllWheels);
     }
   }catch(e){ /* оффлайн — ок */ }
@@ -686,7 +695,7 @@ window.addEventListener('beforeunload', ()=>{ try{ saveDraft(); }catch(e){} });
 
 /* ===== СОХРАНЕНИЕ ===== */
 const saveBtn = document.getElementById('saveBtn');
-// FIX: явная визуальная обратная связь нажатия
+// явная визуальная обратная связь нажатия
 saveBtn.addEventListener('pointerdown', ()=> saveBtn.classList.add('pressed'));
 ['pointerup','pointercancel','pointerleave'].forEach(ev=> saveBtn.addEventListener(ev, ()=> saveBtn.classList.remove('pressed')));
 
@@ -736,7 +745,7 @@ saveBtn.addEventListener('click', async ()=>{
     const msg = (err && err.message) ? String(err.message) : 'Неизвестная ошибка сети';
     (window.Telegram?.WebApp?.showAlert
       ? window.Telegram.WebApp.showAlert('Не удалось отправить на сервер.\nДанные сохранены локально.\nПричина: ' + msg)
-      : alert('Не удалось отправить на сервер.\nДанные сохранены локально.\nПричина: ' + msg));
+      : alert('Не удалось отправить на сервер.\нДанные сохранены локально.\nПричина: ' + msg));
   }
 });
 </script>
