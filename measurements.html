@@ -235,6 +235,12 @@ const APP_VERSION = '1.0.10';
    ЗАМЕНИТЕ НА СВОЙ URL: */
 const AI_API_URL  = 'https://script.google.com/macros/s/AKfycby0u-mTNYL8w3KC08EY53UiAvs1XGui2ZFUuceaov58S9OBA4jqXDGNfhzvUCmihP95/exec';
 
+/* >>> авто-пуллинг ИИ-комментария (минимальные правки) */
+const AI_REFRESH_MS = 60000; // опрос раз в 60с
+let aiPollTimer = null;
+function startAIPoll(){ stopAIPoll(); aiPollTimer = setInterval(()=>fetchAIComment({silent:true}), AI_REFRESH_MS); }
+function stopAIPoll(){ if (aiPollTimer){ clearInterval(aiPollTimer); aiPollTimer = null; } }
+
 /* ===== Главная страница (настраивается мета-тегами) ===== */
 const HOME_URL = (document.querySelector('meta[name="tma:home-url"]')?.content) || './index.html';
 const HOME_HASH = (document.querySelector('meta[name="tma:home-hash"]')?.content) || '';
@@ -367,7 +373,7 @@ async function callBackend(action, extra = {}) {
   }
 }
 
-/* ====== >>> ДОБАВЛЕНО: Комментарий ИИ (read-only API) ====== */
+/* ====== >>> Комментарий ИИ (read-only API) ====== */
 function setAILoading(isLoading){
   const cont = document.getElementById('ai-comment');
   if (!cont) return;
@@ -400,8 +406,9 @@ function rehydrateAIFromLocal(){
   const t = readAIFromLocal();
   if (t) renderAIComment(t);
 }
+
+/* >>> обновлённый fetch: перерисовка только при изменении, для экономии */
 async function fetchAIComment({ silent=false } = {}){
-  // если URL не задан — тихо выходим, не ломая UI
   if (!AI_API_URL){
     if (!silent && !readAIFromLocal()) setAILoading(false);
     return;
@@ -414,7 +421,9 @@ async function fetchAIComment({ silent=false } = {}){
       tz: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
     };
 
-    // 1) GET (аналогично основному API)
+    const prev = readAIFromLocal();
+
+    // 1) GET
     const qs = new URLSearchParams();
     qs.set('action','ai_comment');
     qs.set('init_data', base.init_data);
@@ -426,14 +435,17 @@ async function fetchAIComment({ silent=false } = {}){
       try{
         const json = JSON.parse(tx);
         if (json?.ok && typeof json.ai_comment === 'string'){
-          writeAIToLocal(json.ai_comment);
-          renderAIComment(json.ai_comment);
+          const next = String(json.ai_comment || '');
+          if (next !== prev){
+            writeAIToLocal(next);
+            renderAIComment(next);
+          }
           return;
         }
       }catch(_){}
     }catch(_){}
 
-    // 2) Fallback POST text/plain
+    // 2) POST fallback
     try{
       const rp = await fetch(AI_API_URL, {
         method:'POST',
@@ -445,8 +457,11 @@ async function fetchAIComment({ silent=false } = {}){
       try{
         const json = JSON.parse(tp);
         if (json?.ok && typeof json.ai_comment === 'string'){
-          writeAIToLocal(json.ai_comment);
-          renderAIComment(json.ai_comment);
+          const next = String(json.ai_comment || '');
+          if (next !== prev){
+            writeAIToLocal(next);
+            renderAIComment(next);
+          }
           return;
         }
       }catch(_){}
@@ -917,21 +932,25 @@ fetchAndApplyFromBackend({ force: !IS_BFCACHE });
 // Восстановление UI и синхронизация при возврате/активации вкладки
 window.addEventListener('pageshow', (e)=>{
   rehydrateFromLocal();
-  /* >>> добавлено: мгновенно отрисовать кэш ИИ и фоново обновить */
+  /* >>> мгновенно отрисовать кэш ИИ и фоново обновить */
   rehydrateAIFromLocal();
   const comingFromBFCache = e.persisted || IS_BFCACHE;
   fetchAndApplyFromBackend({ force: !comingFromBFCache });
   fetchAIComment({ silent:true });
+  startAIPoll(); // <-- авто-пуллинг
 });
 
 document.addEventListener('visibilitychange', ()=>{
   if (document.visibilityState === 'visible'){
     rehydrateFromLocal();
-    /* >>> добавлено: при возвращении на вкладку — показать кэш ИИ и мягко обновить */
+    /* >>> при возвращении на вкладку — показать кэш ИИ и мягко обновить */
     rehydrateAIFromLocal();
     const sd=readSessionJSON(SS_KEY_DRAFT);
     if (!(sd?.dirty)) fetchAndApplyFromBackend({ force:false });
     fetchAIComment({ silent:true });
+    startAIPoll(); // возобновляем опрос
+  } else {
+    stopAIPoll(); // пауза, когда вкладка скрыта
   }
 });
 
@@ -997,14 +1016,14 @@ document.getElementById('saveBtn').addEventListener('click', async ()=>{
       if (measuresSec) measuresSec.classList.add('collapsed');
       if (measuresHeader) measuresHeader.setAttribute('aria-expanded','false');
 
-      // >>> добавлено: запросить свежий ИИ-комментарий после успешного сохранения
+      // >>> запросить свежий ИИ-комментарий после успешного сохранения
       fetchAIComment({ silent:false });
 
       tg?.showPopup?.({title:'Сохранено', message:'Данные обновлены', buttons:[{type:'ok'}]});
     } else {
       (tg?.showAlert
         ? tg.showAlert('Ошибка сохранения на сервере.\nДанные сохранены локально.\nКод: ' + (res?.error||'unknown'))
-        : alert('Ошибка сохранения на сервере.\nДанные сохранены локально.\nКод: ' + (res?.error||'unknown')));
+        : alert('Ошибка сохранения на сервере.\нДанные сохранены локально.\nКод: ' + (res?.error||'unknown')));
     }
   }catch(err){
     const msg = (err && err.message) ? String(err.message) : 'Неизвестная ошибка сети';
