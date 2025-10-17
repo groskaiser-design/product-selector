@@ -212,15 +212,21 @@ function bindBack(){
 /* ===== КОНСТАНТЫ ХРАНИЛИЩА ===== */
 const LS_KEY_LAST  = 'measurements:last';                  // подтверждённая запись
 const SS_KEY_DRAFT = 'measurements:sessionDraft';          // черновик сеанса (только до сохранения)
+/* >>> добавлено: кэш ИИ-комментария (без влияния на остальной код) */
+const LS_KEY_AI    = 'measurements:ai:last';
 
 /* ===== СЕТЬ / БЭКЕНД ===== */
 const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbzI0G3RrA_UMwiNLQwk8JOpSgU51vid_CLEl7XKmbyxTBngCqr5Nk41BMSrzIcZMUFQ/exec';
 const APP_VERSION = '1.0.10';
-// Главная страница (настраивается мета-тегами)
+/* >>> добавлено: URL read-only Web App для "Анализ ИИ".
+   Если пусто, модуль просто ничего не делает и не ломает UI. */
+const AI_API_URL  = 'https://script.google.com/macros/s/AKfycbzZy8X9pKaHehS0sVUAc28WRALIjJhX8Jd90EmBY1kDRx3g341o6-dVBf_IOJxj6zVahA/exec'; // ← ВСТАВЬТЕ СЮДА URL нового Web App (ai_comment)
+
+/* ===== Главная страница (настраивается мета-тегами) ===== */
 const HOME_URL = (document.querySelector('meta[name="tma:home-url"]')?.content) || './index.html';
 const HOME_HASH = (document.querySelector('meta[name="tma:home-hash"]')?.content) || '';
 
-// Тип навигации: 'navigate' | 'reload' | 'back_forward' (BFCache)
+/* ===== Тип навигации ===== */
 const navEntry = performance?.getEntriesByType?.('navigation')?.[0];
 const NAV_TYPE = navEntry?.type || 'navigate';
 const IS_BFCACHE = NAV_TYPE === 'back_forward';
@@ -245,19 +251,15 @@ function safeInitData(){ return window.Telegram?.WebApp?.initData || ''; }
 
 // Универсальный переход «домой»: сначала пробуем SPA-роутер, затем hash, затем прямая навигация
 function goHome(reason=''){
-  // 1) SPA router, если предоставлен хост-приложением
   if (typeof window.appNavigate === 'function'){
     try { window.appNavigate('home'); return; } catch(_){ }
   }
-  // 2) Hash-маршрут
   if (HOME_HASH){
     if (location.hash !== HOME_HASH){ location.hash = HOME_HASH; return; }
   }
-  // 3) Жесткая навигация на URL главной
   if (HOME_URL){
     try { location.assign(HOME_URL); return; } catch(_){ }
   }
-  // 4) Фолбэк — закрыть webview (лучше, чем зависнуть)
   const tg = window.Telegram?.WebApp;
   try { tg?.close(); } catch(_){ }
 }
@@ -279,6 +281,7 @@ function equalData(a={}, b={}){
   return true;
 }
 
+/* ===== СЕТЬ: основной backend (init/save) ===== */
 async function callBackend(action, extra = {}) {
   const base = { action, init_data: safeInitData(), app_version: APP_VERSION, locale: navigator.language || 'ru-RU', ...extra };
 
@@ -309,6 +312,101 @@ async function callBackend(action, extra = {}) {
   }
 }
 
+/* ====== >>> ДОБАВЛЕНО: Комментарий ИИ (read-only API) ====== */
+function setAILoading(isLoading){
+  const cont = document.getElementById('ai-comment');
+  if (!cont) return;
+  cont.innerHTML = '';
+  const field = document.createElement('div');
+  field.className = 'field';
+  const div = document.createElement('div');
+  div.className = 'help';
+  div.textContent = isLoading ? 'Идёт анализ данных…' : 'Нет данных для комментария.';
+  field.appendChild(div);
+  cont.appendChild(field);
+}
+function renderAIComment(text){
+  const cont = document.getElementById('ai-comment');
+  if (!cont) return;
+  const s = (typeof text === 'string') ? text.trim() : '';
+  if (!s){ setAILoading(false); return; }
+  cont.innerHTML = '';
+  const field = document.createElement('div');
+  field.className = 'field';
+  const box = document.createElement('div');
+  box.setAttribute('aria-live','polite');
+  // безопасный рендер: только переносы строк
+  const lines = s.split(/\r?\n/);
+  for (let i=0;i<lines.length;i++){
+    if (i>0) box.appendChild(document.createElement('br'));
+    box.appendChild(document.createTextNode(lines[i]));
+  }
+  field.appendChild(box);
+  cont.appendChild(field);
+}
+function readAIFromLocal(){ try{ return (JSON.parse(localStorage.getItem(LS_KEY_AI))||{}).text || ''; }catch(_){ return ''; } }
+function writeAIToLocal(text){ try{ localStorage.setItem(LS_KEY_AI, JSON.stringify({ ts: Date.now(), text: String(text||'') })); }catch(_){ } }
+function rehydrateAIFromLocal(){
+  const t = readAIFromLocal();
+  if (t) renderAIComment(t);
+}
+async function fetchAIComment({ silent=false } = {}){
+  // если URL не задан — тихо выходим, не ломая UI
+  if (!AI_API_URL){
+    if (!silent && !readAIFromLocal()) setAILoading(false);
+    return;
+  }
+  try{
+    if (!silent) setAILoading(true);
+    const base = {
+      action: 'ai_comment',
+      init_data: safeInitData(),
+      tz: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+    };
+
+    // 1) GET (аналогично основному API)
+    const qs = new URLSearchParams();
+    qs.set('action','ai_comment');
+    qs.set('init_data', base.init_data);
+    qs.set('json', JSON.stringify(base));
+    qs.set('_t', String(Date.now()));
+    try{
+      const r = await fetch(AI_API_URL + '?' + qs.toString(), { cache:'no-cache' });
+      const tx = await r.text();
+      try{
+        const json = JSON.parse(tx);
+        if (json?.ok && typeof json.ai_comment === 'string'){
+          writeAIToLocal(json.ai_comment);
+          renderAIComment(json.ai_comment);
+          return;
+        }
+      }catch(_){}
+    }catch(_){}
+
+    // 2) Fallback POST text/plain
+    try{
+      const rp = await fetch(AI_API_URL, {
+        method:'POST',
+        headers:{'Content-Type':'text/plain;charset=UTF-8'},
+        body: JSON.stringify(base),
+        keepalive:true, redirect:'follow', credentials:'omit', referrerPolicy:'no-referrer'
+      });
+      const tp = await rp.text();
+      try{
+        const json = JSON.parse(tp);
+        if (json?.ok && typeof json.ai_comment === 'string'){
+          writeAIToLocal(json.ai_comment);
+          renderAIComment(json.ai_comment);
+          return;
+        }
+      }catch(_){}
+    }catch(_){}
+  } finally {
+    if (!readAIFromLocal()) setAILoading(false);
+  }
+}
+/* ====== / Комментарий ИИ ====== */
+
 /* ===== АККОРДЕОН ===== */
 function setAriaExpanded(h){
   const sec = document.getElementById(h.getAttribute('data-toggle'));
@@ -328,7 +426,6 @@ function toggleSectionByHeader(h){
 }
 (function bindAccordion(){
   const root = document;
-  // Делегированный обработчик кликов — стабильно работает даже при динамических изменениях DOM
   root.addEventListener('click', (e)=>{
     const h = e.target.closest ? e.target.closest('.section-h') : null;
     if (!h) return;
@@ -337,15 +434,11 @@ function toggleSectionByHeader(h){
     if (!h.hasAttribute('aria-controls')) h.setAttribute('aria-controls', h.getAttribute('data-toggle'));
     toggleSectionByHeader(h);
   }, {passive:true});
-
-  // Клавиатура: Enter/Space
   root.addEventListener('keydown', (e)=>{
     const h = e.target && e.target.closest ? e.target.closest('.section-h') : null;
     if (!h) return;
     if (e.key==='Enter' || e.key===' '){ e.preventDefault(); toggleSectionByHeader(h); }
   });
-
-  // Начальная синхронизация aria-expanded для всех заголовков
   document.querySelectorAll('.section-h').forEach(setAriaExpanded);
 })();
 
@@ -749,12 +842,10 @@ async function fetchAndApplyFromBackend({ force = false } = {}){
       const sd = readSessionJSON(SS_KEY_DRAFT);
       if (sd?.dirty === true && !force) return; // пользователь что-то крутил — не трогаем
 
-      // если в sessionStorage лежит «тихий» черновик, совпадающий с пришедшими данными — удаляем его
       if (sd && !sd.dirty && equalData(sd.data||{}, res.last.data||{})){
         removeSessionKey(SS_KEY_DRAFT);
       }
 
-      // применяем БД
       writeJSON(LS_KEY_LAST, { ts: tsMs, data: res.last.data });
       document.getElementById('lastTime').textContent = 'Последний замер: ' + fmt(tsMs);
 
@@ -776,15 +867,21 @@ fetchAndApplyFromBackend({ force: !IS_BFCACHE });
 // Восстановление UI и синхронизация при возврате/активации вкладки
 window.addEventListener('pageshow', (e)=>{
   rehydrateFromLocal();
+  /* >>> добавлено: мгновенно отрисовать кэш ИИ и фоново обновить */
+  rehydrateAIFromLocal();
   const comingFromBFCache = e.persisted || IS_BFCACHE;
   fetchAndApplyFromBackend({ force: !comingFromBFCache });
+  fetchAIComment({ silent:true });
 });
 
 document.addEventListener('visibilitychange', ()=>{
   if (document.visibilityState === 'visible'){
     rehydrateFromLocal();
+    /* >>> добавлено: при возвращении на вкладку — показать кэш ИИ и мягко обновить */
+    rehydrateAIFromLocal();
     const sd=readSessionJSON(SS_KEY_DRAFT);
     if (!(sd?.dirty)) fetchAndApplyFromBackend({ force:false });
+    fetchAIComment({ silent:true });
   }
 });
 
@@ -849,6 +946,10 @@ document.getElementById('saveBtn').addEventListener('click', async ()=>{
       const measuresHeader = document.querySelector('[data-toggle="sec-measures"]');
       if (measuresSec) measuresSec.classList.add('collapsed');
       if (measuresHeader) measuresHeader.setAttribute('aria-expanded','false');
+
+      // >>> добавлено: запросить свежий ИИ-комментарий после успешного сохранения
+      fetchAIComment({ silent:false });
+
       tg?.showPopup?.({title:'Сохранено', message:'Данные обновлены', buttons:[{type:'ok'}]});
     } else {
       (tg?.showAlert
