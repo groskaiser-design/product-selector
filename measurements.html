@@ -191,18 +191,23 @@
   try { tg.ready(); } catch(e){}
   try { tg.expand(); } catch(e){}
   try { tg.setHeaderColor('secondary_bg_color'); } catch(e){}
-  // Показ и обработчик системной кнопки «Назад»
-  try {
-    tg.BackButton?.show(); tg.BackButton?.onClick(() => { window.location.href = 'router.html'; });
-  } catch(e){}
+  // Назначаем обработчик системной кнопки «Назад»
+  try { bindBack(); } catch(e){}
 })();
 
-(function bindBack(){
+/* ===== Back button binding (router.html) ===== */
+function bindBack(){
   const tg = window.Telegram?.WebApp;
   if (!tg) return;
   try { tg.BackButton?.offClick?.(); } catch(e){}
-  try { tg.BackButton?.show(); tg.BackButton?.onClick(() => { try { window.location.href = 'router.html'; }); } catch(e){}
-})();
+  try {
+    tg.BackButton?.show();
+    tg.BackButton?.onClick(() => {
+      try { window.location.href = 'router.html'; }
+      catch(err){ console.error('[BackButton] navigation error:', err); }
+    });
+  } catch(e){ console.error('[BackButton] bind error:', e); }
+}
 
 /* ===== КОНСТАНТЫ ХРАНИЛИЩА ===== */
 const LS_KEY_LAST  = 'measurements:last';                  // подтверждённая запись
@@ -242,7 +247,7 @@ function safeInitData(){ return window.Telegram?.WebApp?.initData || ''; }
 function goHome(reason=''){
   // 1) SPA router, если предоставлен хост-приложением
   if (typeof window.appNavigate === 'function'){
-    try { window.appNavigate('home'); return; } catch(_){}
+    try { window.appNavigate('home'); return; } catch(_){ }
   }
   // 2) Hash-маршрут
   if (HOME_HASH){
@@ -250,11 +255,11 @@ function goHome(reason=''){
   }
   // 3) Жесткая навигация на URL главной
   if (HOME_URL){
-    try { location.assign(HOME_URL); return; } catch(_){}
+    try { location.assign(HOME_URL); return; } catch(_){ }
   }
   // 4) Фолбэк — закрыть webview (лучше, чем зависнуть)
   const tg = window.Telegram?.WebApp;
-  try { tg?.close(); } catch(_){}
+  try { tg?.close(); } catch(_){ }
 }
 
 /* равенство наборов данных (числа сравниваем с допуском) */
@@ -321,16 +326,28 @@ function toggleSectionByHeader(h){
     }
   }
 }
-document.querySelectorAll('.section-h').forEach(h=>{
-  if (!h.hasAttribute('role')) h.setAttribute('role','button');
-  if (!h.hasAttribute('tabindex')) h.setAttribute('tabindex','0');
-  if (!h.hasAttribute('aria-controls')) h.setAttribute('aria-controls', h.getAttribute('data-toggle'));
-  setAriaExpanded(h);
-  h.addEventListener('click', ()=>toggleSectionByHeader(h));
-  h.addEventListener('keydown', (e)=>{
-    if (e.key==='Enter' || e.key===' ') { e.preventDefault(); toggleSectionByHeader(h); }
+(function bindAccordion(){
+  const root = document;
+  // Делегированный обработчик кликов — стабильно работает даже при динамических изменениях DOM
+  root.addEventListener('click', (e)=>{
+    const h = e.target.closest ? e.target.closest('.section-h') : null;
+    if (!h) return;
+    if (!h.hasAttribute('role')) h.setAttribute('role','button');
+    if (!h.hasAttribute('tabindex')) h.setAttribute('tabindex','0');
+    if (!h.hasAttribute('aria-controls')) h.setAttribute('aria-controls', h.getAttribute('data-toggle'));
+    toggleSectionByHeader(h);
+  }, {passive:true});
+
+  // Клавиатура: Enter/Space
+  root.addEventListener('keydown', (e)=>{
+    const h = e.target && e.target.closest ? e.target.closest('.section-h') : null;
+    if (!h) return;
+    if (e.key==='Enter' || e.key===' '){ e.preventDefault(); toggleSectionByHeader(h); }
   });
-});
+
+  // Начальная синхронизация aria-expanded для всех заголовков
+  document.querySelectorAll('.section-h').forEach(setAriaExpanded);
+})();
 
 /* ===== КОЛЁСА ===== */
 function buildWheel(fieldEl, initial){
@@ -848,6 +865,39 @@ document.getElementById('saveBtn').addEventListener('click', async ()=>{
     try { tg?.MainButton?.hideProgress?.(); } catch(e){}
   }
 });
+
+/* ===== SELF-TESTS (не влияют на UI, только логи) ===== */
+(function runSelfTests(){
+  try{
+    const results = [];
+    const ok = (name, cond) => results.push({name, ok: !!cond});
+
+    // equalData tests
+    ok('equalData: same numbers', equalData({weight:70},{weight:70}) === true);
+    ok('equalData: diff numbers', equalData({weight:70},{weight:71}) === false);
+    ok('equalData: null equals null', equalData({fat:null},{fat:null}) === true);
+
+    // applyDataToUI test (no crash)
+    ok('applyDataToUI: safe call', (function(){ try{ applyDataToUI({weight:80}); return true; }catch{ return false; } })());
+
+    // Accordion toggle test (no crash and class toggles)
+    (function(){
+      const sec = document.createElement('section'); sec.id='__t'; sec.className='section collapsed';
+      const h = document.createElement('div'); h.className='section-h'; h.setAttribute('data-toggle','__t');
+      document.body.appendChild(sec); document.body.appendChild(h);
+      try{
+        toggleSectionByHeader(h);
+        ok('accordion toggles', !sec.classList.contains('collapsed'));
+      }catch{ ok('accordion toggles', false); }
+      sec.remove(); h.remove();
+    })();
+
+    // BackButton binding exists (cannot assert Telegram API in web), just no-throw call
+    ok('bindBack callable', (function(){ try{ bindBack(); return true; }catch{ return false; } })());
+
+    console.log('[SELF-TEST]', results.map(r=>`${r.ok?'✅':'❌'} ${r.name}`).join(' | '));
+  }catch(e){ console.warn('[SELF-TEST] failed:', e); }
+})();
 </script>
 </body>
 </html>
