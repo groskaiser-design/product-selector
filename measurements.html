@@ -225,73 +225,22 @@ function bindBack(){
 /* ===== КОНСТАНТЫ ХРАНИЛИЩА ===== */
 const LS_KEY_LAST  = 'measurements:last';                  // подтверждённая запись
 const SS_KEY_DRAFT = 'measurements:sessionDraft';          // черновик сеанса (только до сохранения)
-/* >>> добавлено: кэш ИИ-комментария (без влияния на остальной код) */
+/* >>> кэш ИИ-комментария */
 const LS_KEY_AI    = 'measurements:ai:last';
 
 /* ===== СЕТЬ / БЭКЕНД ===== */
 const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbzI0G3RrA_UMwiNLQwk8JOpSgU51vid_CLEl7XKmbyxTBngCqr5Nk41BMSrzIcZMUFQ/exec';
 const APP_VERSION = '1.0.10';
 
-/* ===== HtmlFrontAPI: ver/html (НОВОЕ) ===== */
-// Укажи опубликованный URL HtmlFrontAPI (standalone, /exec)
+/* ===== HtmlFrontAPI (ТОЛЬКО для пуллинга после сохранения) ===== */
+// Укажи опубликованный URL standalone-вебаппа из скрипта 3
 const HFP_API    = 'https://script.google.com/macros/s/AKfycbzs0CQBJtx5Rzrhs5U94DIr7CmO8t3Qug_hiRhMzffTdwTJV0-pfL0lOvo5oj3CUYFt/exec';
 const HFP_SHEET  = 'calc';
 const HFP_HEADER = 'HTML';
-const HFP_POLL_MS = 1500;
 
-let hfpTimer = null;
-let hfpLastVer = null;
-let hfpLastHtml = null;
-const hfpWaiters = [];
-function notifyHtmlWaiters(newHtml){
-  while (hfpWaiters.length) hfpWaiters.shift()(newHtml);
-}
-function waitForNextHtmlChange(timeoutMs=20000){
-  return new Promise(resolve=>{
-    const t = setTimeout(()=>resolve(null), timeoutMs);
-    hfpWaiters.push((html)=>{ clearTimeout(t); resolve(html); });
-  });
-}
-async function hfpGetJSON(u){
-  const r = await fetch(u, { cache:'no-store', credentials:'omit' });
-  try{ return await r.json(); }catch(_){ return null; }
-}
-async function hfpFetchOnce(){
-  const init = safeInitData();
-  const url = `${HFP_API}?action=html&sheet=${encodeURIComponent(HFP_SHEET)}&header=${encodeURIComponent(HFP_HEADER)}&init_data=${encodeURIComponent(init)}&_t=${Date.now()}`;
-  const h = await hfpGetJSON(url);
-  if (h?.ok && typeof h.html === 'string'){
-    if (hfpLastHtml !== h.html){
-      hfpLastHtml = h.html;
-      writeAIToLocal(h.html);
-      renderAIComment(h.html);
-      notifyHtmlWaiters(h.html);
-    }
-  }
-}
-async function hfpTick(){
-  try{
-    const v = await hfpGetJSON(`${HFP_API}?action=ver&sheet=${encodeURIComponent(HFP_SHEET)}&header=${encodeURIComponent(HFP_HEADER)}&_t=${Date.now()}`);
-    if (!v?.ok) return;
-    if (hfpLastVer === null) { hfpLastVer = v.ver; /* первая инициализация */ }
-    else if (v.ver !== hfpLastVer){
-      hfpLastVer = v.ver;
-      await hfpFetchOnce();
-    }
-  }catch(_){ }
-}
-function startHfpSync(){
-  stopHfpSync();
-  const cached = readAIFromLocal();
-  if (cached) renderAIComment(cached); else setAILoading(true);
-  hfpFetchOnce().catch(()=>{});
-  hfpTimer = setInterval(hfpTick, HFP_POLL_MS);
-}
-function stopHfpSync(){ if (hfpTimer){ clearInterval(hfpTimer); hfpTimer = null; } }
-
-/* ===== (старый) AI API — fallback, если HFP_API пуст ===== */
+/* ===== СТАРЫЙ read-only AI API (оставляем без изменений) ===== */
 const AI_API_URL  = 'https://script.google.com/macros/s/AKfycbxVVmL54FSc7_s5_8qMvb5l2lpgEwmKZHu3vGtPK4iDivsljh4p10cC7zN3XgMT_CcI/exec';
-const AI_REFRESH_MS = 60000; // опрос раз в 60с
+const AI_REFRESH_MS = 60000; // опрос раз в 60с (как было)
 let aiPollTimer = null;
 function startAIPoll(){ stopAIPoll(); aiPollTimer = setInterval(()=>fetchAIComment({silent:true}), AI_REFRESH_MS); }
 function stopAIPoll(){ if (aiPollTimer){ clearInterval(aiPollTimer); aiPollTimer = null; } }
@@ -428,7 +377,7 @@ async function callBackend(action, extra = {}) {
   }
 }
 
-/* ====== >>> Комментарий ИИ (read-only API) ====== */
+/* ====== Комментарий ИИ (UI helpers) ====== */
 function setAILoading(isLoading){
   const cont = document.getElementById('ai-comment');
   if (!cont) return;
@@ -438,6 +387,18 @@ function setAILoading(isLoading){
   const div = document.createElement('div');
   div.className = 'help';
   div.textContent = isLoading ? 'Идёт анализ данных…' : 'Нет данных для комментария.';
+  field.appendChild(div);
+  cont.appendChild(field);
+}
+function setAIMessage(text){
+  const cont = document.getElementById('ai-comment');
+  if (!cont) return;
+  cont.innerHTML = '';
+  const field = document.createElement('div');
+  field.className = 'field';
+  const div = document.createElement('div');
+  div.className = 'help';
+  div.textContent = String(text||'');
   field.appendChild(div);
   cont.appendChild(field);
 }
@@ -451,7 +412,7 @@ function renderAIComment(text){
   field.className = 'field';
   const box = document.createElement('div');
   box.setAttribute('aria-live','polite');
-  box.innerHTML = sanitizeHtml(s); // безопасная вставка HTML
+  box.innerHTML = sanitizeHtml(s);
   field.appendChild(box);
   cont.appendChild(field);
 }
@@ -462,7 +423,24 @@ function rehydrateAIFromLocal(){
   if (t) renderAIComment(t);
 }
 
-/* (старый) fetch AI — оставлен как fallback */
+/* ===== HtmlFrontAPI: одноразовое чтение HTML по текущему пользователю ===== */
+async function hfpFetchHtmlOnce(){
+  if (!HFP_API) return '';
+  try{
+    const qs = new URLSearchParams();
+    qs.set('action','html');
+    qs.set('sheet', HFP_SHEET);
+    qs.set('header', HFP_HEADER);
+    qs.set('init_data', safeInitData());
+    qs.set('_t', String(Date.now()));
+    const r = await fetch(HFP_API + '?' + qs.toString(), { cache:'no-store', credentials:'omit' });
+    const j = await r.json();
+    if (j && j.ok && typeof j.html === 'string') return j.html;
+  }catch(_){ }
+  return '';
+}
+
+/* ===== (старый) fetch AI — оставляем как было ===== */
 async function fetchAIComment({ silent=false } = {}){
   if (!AI_API_URL){
     if (!silent && !readAIFromLocal()) setAILoading(false);
@@ -981,7 +959,7 @@ async function fetchAndApplyFromBackend({ force = false } = {}){
   }catch(e){}
 }
 
-// На свежем заходе/перезагрузке — как в оригинале
+// На свежем заходе/перезагрузке
 fetchAndApplyFromBackend({ force: !IS_BFCACHE });
 
 // Восстановление UI и синхронизация при возврате/активации вкладки
@@ -990,8 +968,8 @@ window.addEventListener('pageshow', (e)=>{
   rehydrateAIFromLocal();
   const comingFromBFCache = e.persisted || IS_BFCACHE;
   fetchAndApplyFromBackend({ force: !comingFromBFCache });
-
-  if (HFP_API) { startHfpSync(); } else { fetchAIComment({ silent:true }); startAIPoll(); }
+  fetchAIComment({ silent:true });
+  startAIPoll(); // как было
 });
 
 document.addEventListener('visibilitychange', ()=>{
@@ -1000,10 +978,10 @@ document.addEventListener('visibilitychange', ()=>{
     rehydrateAIFromLocal();
     const sd=readSessionJSON(SS_KEY_DRAFT);
     if (!(sd?.dirty)) fetchAndApplyFromBackend({ force:false });
-
-    if (HFP_API) { startHfpSync(); } else { fetchAIComment({ silent:true }); startAIPoll(); }
+    fetchAIComment({ silent:true });
+    startAIPoll();
   } else {
-    if (HFP_API) stopHfpSync(); else stopAIPoll();
+    stopAIPoll();
   }
 });
 
@@ -1023,6 +1001,25 @@ function setSavingState(isSaving){
   saveBtn.setAttribute('aria-busy', String(isSaving));
   if (sp) sp.hidden = !isSaving;
   if (label) label.textContent = isSaving ? 'Сохранение…' : 'Сохранить';
+}
+
+// ПУЛЛИНГ HtmlFrontAPI ПОСЛЕ СОХРАНЕНИЯ (каждую секунду до обновления)
+let afterSaveTimer = null;
+function startAfterSavePolling(){
+  clearInterval(afterSaveTimer);
+  const prev = readAIFromLocal();
+  setAIMessage('Обновляем данные…');
+  const t0 = Date.now();
+  afterSaveTimer = setInterval(async ()=>{
+    const html = await hfpFetchHtmlOnce();
+    if (html && html.trim() && html !== prev){
+      writeAIToLocal(html);
+      renderAIComment(html);
+      clearInterval(afterSaveTimer);
+    } else if (Date.now() - t0 > 20000){ // fail-safe 20с
+      clearInterval(afterSaveTimer);
+    }
+  }, 1000);
 }
 
 /* ===== СОХРАНЕНИЕ ===== */
@@ -1059,18 +1056,18 @@ document.getElementById('saveBtn').addEventListener('click', async ()=>{
       writeJSON(LS_KEY_LAST, { ts: serverTs, data });
       document.getElementById('lastTime').textContent = 'Последний замер: ' + fmt(serverTs);
 
-      // НЕ сворачиваем «Замеры» — чтобы экран не прыгал
+      // очистка черновика сеанса
+      removeSessionKey(SS_KEY_DRAFT);
+      sessionDraft = null;
 
-      // ЯВНО показываем загрузку комментария и дожидаемся нового html
-      setAILoading(true);
-      if (HFP_API){
-        // небольшой лаг на перерасчет формулы в calc
-        setTimeout(()=>{ hfpFetchOnce().catch(()=>{}); }, 600);
-        // мягкое ожидание свежего html (не блокирует UI)
-        waitForNextHtmlChange(20000).then(()=>{});
-      } else {
-        fetchAIComment({ silent:false });
-      }
+      // свернуть раздел "Замеры" — как просил
+      const measuresSec = document.getElementById('sec-measures');
+      const measuresHeader = document.querySelector('[data-toggle="sec-measures"]');
+      if (measuresSec) measuresSec.classList.add('collapsed');
+      if (measuresHeader) measuresHeader.setAttribute('aria-expanded','false');
+
+      // сразу показать статус и начать долбить HtmlFrontAPI раз в секунду до получения нового HTML
+      startAfterSavePolling();
 
       tg?.showPopup?.({title:'Сохранено', message:'Данные обновлены', buttons:[{type:'ok'}]});
     } else {
