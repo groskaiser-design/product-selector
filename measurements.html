@@ -407,12 +407,55 @@ function rehydrateAIFromLocal(){
   if (t) renderAIComment(t);
 }
 
-/* >>> обновлённый fetch: перерисовка только при изменении, для экономии */
+/* <<< ДОБАВЛЕНО: статус в блоке ИИ и короткий опрос после сохранения >>> */
+function setAIStatus(text){
+  const cont = document.getElementById('ai-comment');
+  if (!cont) return;
+  cont.innerHTML = '';
+  const field = document.createElement('div');
+  field.className = 'field';
+  const div = document.createElement('div');
+  div.className = 'help';
+  div.textContent = String(text || '');
+  field.appendChild(div);
+  cont.appendChild(field);
+}
+let AI_SUPPRESS_EMPTY_PLACEHOLDER = false;     // подавить "Нет данных..." во время активного короткого опроса
+let aiSavePollTimer = null, aiSavePollInFlight = false;
+function stopAISavePoll(){
+  if (aiSavePollTimer){ clearInterval(aiSavePollTimer); aiSavePollTimer = null; }
+  aiSavePollInFlight = false;
+  AI_SUPPRESS_EMPTY_PLACEHOLDER = false;
+}
+function startAISavePollUntilChange(){
+  if (!AI_API_URL) return;
+  stopAIPoll();              // чтобы не было конкурирующих запросов
+  stopAISavePoll();          // сброс предыдущего короткого опроса (если был)
+  AI_SUPPRESS_EMPTY_PLACEHOLDER = true;
+
+  aiSavePollTimer = setInterval(async ()=>{
+    if (aiSavePollInFlight) return;
+    aiSavePollInFlight = true;
+    try{
+      // silent:true — чтобы не затирать надпись "Идёт загрузка данных…"
+      const changed = await fetchAIComment({ silent: true });
+      if (changed){
+        stopAISavePoll();    // затихаем после получения новых данных
+        startAIPoll();       // возвращаем фоновый опрос раз в 60с
+      }
+    } finally {
+      aiSavePollInFlight = false;
+    }
+  }, 1000);
+}
+/* >>> обновлённый fetch: теперь возвращает boolean — изменились ли данные */
 async function fetchAIComment({ silent=false } = {}){
   if (!AI_API_URL){
-    if (!silent && !readAIFromLocal()) setAILoading(false);
-    return;
+    if (!silent && !readAIFromLocal() && !AI_SUPPRESS_EMPTY_PLACEHOLDER) setAILoading(false);
+    return false;
   }
+  let updated = false;
+  let handled = false;
   try{
     if (!silent) setAILoading(true);
     const base = {
@@ -436,39 +479,44 @@ async function fetchAIComment({ silent=false } = {}){
         const json = JSON.parse(tx);
         if (json?.ok && typeof json.ai_comment === 'string'){
           const next = String(json.ai_comment || '');
-          if (next !== prev){
+          updated = (next !== prev) && next !== '';
+          if (updated){
             writeAIToLocal(next);
             renderAIComment(next);
           }
-          return;
+          handled = true;
         }
       }catch(_){}
     }catch(_){}
 
     // 2) POST fallback
-    try{
-      const rp = await fetch(AI_API_URL, {
-        method:'POST',
-        headers:{'Content-Type':'text/plain;charset=UTF-8'},
-        body: JSON.stringify(base),
-        keepalive:true, redirect:'follow', credentials:'omit', referrerPolicy:'no-referrer'
-      });
-      const tp = await rp.text();
+    if (!handled){
       try{
-        const json = JSON.parse(tp);
-        if (json?.ok && typeof json.ai_comment === 'string'){
-          const next = String(json.ai_comment || '');
-          if (next !== prev){
-            writeAIToLocal(next);
-            renderAIComment(next);
+        const rp = await fetch(AI_API_URL, {
+          method:'POST',
+          headers:{'Content-Type':'text/plain;charset=UTF-8'},
+          body: JSON.stringify(base),
+          keepalive:true, redirect:'follow', credentials:'omit', referrerPolicy:'no-referrer'
+        });
+        const tp = await rp.text();
+        try{
+          const json = JSON.parse(tp);
+          if (json?.ok && typeof json.ai_comment === 'string'){
+            const next = String(json.ai_comment || '');
+            updated = (next !== prev) && next !== '';
+            if (updated){
+              writeAIToLocal(next);
+              renderAIComment(next);
+            }
+            handled = true;
           }
-          return;
-        }
+        }catch(_){}
       }catch(_){}
-    }catch(_){}
+    }
   } finally {
-    if (!readAIFromLocal()) setAILoading(false);
+    if (!AI_SUPPRESS_EMPTY_PLACEHOLDER && !readAIFromLocal()) setAILoading(false);
   }
+  return updated;
 }
 /* ====== / Комментарий ИИ ====== */
 
@@ -996,6 +1044,9 @@ document.getElementById('saveBtn').addEventListener('click', async ()=>{
   document.getElementById('lastTime').textContent = 'Последний замер: ' + fmt(clientTs);
   Object.assign(baseData, data);
 
+  // <<< ПОКАЗЫВАЕМ СТАТУС В БЛОКЕ ИИ СРАЗУ ПОСЛЕ КЛИКА "СОХРАНИТЬ"
+  setAIStatus('Идёт загрузка данных…');
+
   setSavingState(true);
   try { tg?.MainButton?.showProgress?.(); } catch(e){}
 
@@ -1016,8 +1067,8 @@ document.getElementById('saveBtn').addEventListener('click', async ()=>{
       if (measuresSec) measuresSec.classList.add('collapsed');
       if (measuresHeader) measuresHeader.setAttribute('aria-expanded','false');
 
-      // >>> запросить свежий ИИ-комментарий после успешного сохранения
-      fetchAIComment({ silent:false });
+      // >>> ЗАПУСК КОРОТКОГО ОПРОСА ИИ-КОММЕНТАРИЯ КАЖДУЮ СЕКУНДУ ДО ИЗМЕНЕНИЯ
+      startAISavePollUntilChange();
 
       tg?.showPopup?.({title:'Сохранено', message:'Данные обновлены', buttons:[{type:'ok'}]});
     } else {
