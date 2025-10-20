@@ -204,7 +204,7 @@
   try { tg.ready(); } catch(e){}
   try { tg.expand(); } catch(e){}
   try { tg.setHeaderColor('secondary_bg_color'); } catch(e){}
-  try { bindBack(); } catch(e){}
+  try { bindBack(); } catch(e){} // системная «Назад»
 })();
 
 /* ===== Back button binding (router.html) ===== */
@@ -222,11 +222,11 @@ function bindBack(){
 }
 
 /* ===== КОНСТАНТЫ ХРАНИЛИЩА ===== */
-const LS_KEY_LAST  = 'measurements:last';
-const SS_KEY_DRAFT = 'measurements:sessionDraft';
-const LS_KEY_AI    = 'measurements:ai:last';
-const LS_LAST_META = 'measurements:last_meta';
-const LS_SENT_IIDS = 'measurements:sent_iids';
+const LS_KEY_LAST  = 'measurements:last';                  // подтверждённая запись
+const SS_KEY_DRAFT = 'measurements:sessionDraft';          // черновик сеанса
+const LS_KEY_AI    = 'measurements:ai:last';               // кэш комментария ИИ
+const LS_LAST_META = 'measurements:last_meta';             // { ts, sig, iid, serverTs? }
+const LS_SENT_IIDS = 'measurements:sent_iids';             // { iid: ts, ... }
 const SENT_IIDS_LIMIT = 100;
 const SAVE_THROTTLE_MS = 600;
 
@@ -251,7 +251,9 @@ const rowH = ROW_VAR.endsWith('px') ? parseFloat(ROW_VAR) : (parseFloat(ROW_VAR)
 const pad = 4;
 const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
 
-const DTF = new Intl.DateTimeFormat('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
+const DTF = new Intl.DateTimeFormat('ru-RU', {
+  day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'
+});
 const fmt = ts => (!ts ? 'нет данных' : DTF.format(new Date(ts)));
 
 function readJSON(key, fallback=null){ try{ const v=localStorage.getItem(key); return v?JSON.parse(v):fallback; }catch(e){ return fallback; } }
@@ -261,7 +263,7 @@ function writeSessionJSON(key,obj){ try{ sessionStorage.setItem(key, JSON.string
 function removeSessionKey(key){ try{ sessionStorage.removeItem(key); }catch(e){} }
 function safeInitData(){ return window.Telegram?.WebApp?.initData || ''; }
 
-/* === доп. утилиты для идемпотентности и стабильных сигнатур === */
+/* === утилиты для идемпотентности и стабильных сигнатур === */
 function stableStringify(obj) {
   const seen = new WeakSet();
   const sortKeys = (x) => {
@@ -275,13 +277,25 @@ function stableStringify(obj) {
   };
   return JSON.stringify(sortKeys(obj));
 }
-function hash32(str){ let h=0x811c9dc5; for(let i=0;i<str.length;i++){ h^=str.charCodeAt(i); h=(h+((h<<1)+(h<<4)+(h<<7)+(h<<8)+(h<<24)))>>>0; } return ('00000000'+h.toString(16)).slice(-8); }
+function hash32(str) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = (h + ((h<<1)+(h<<4)+(h<<7)+(h<<8)+(h<<24)))>>>0; }
+  return ('00000000'+h.toString(16)).slice(-8);
+}
 function readJSONLS(k, fallback){ return readJSON(k, fallback); }
 function writeJSONLS(k, v){ writeJSON(k, v); }
-function rememberIID(iid){ const m=readJSONLS(LS_SENT_IIDS,{}); m[iid]=Date.now(); const entries=Object.entries(m).sort((a,b)=>b[1]-a[1]).slice(0,SENT_IIDS_LIMIT); writeJSONLS(LS_SENT_IIDS,Object.fromEntries(entries)); }
-function wasIIDSent(iid){ const m=readJSONLS(LS_SENT_IIDS,{}); return Boolean(m[iid]); }
-function getLastMeta(){ return readJSONLS(LS_LAST_META,null); }
-function setLastMeta(meta){ writeJSONLS(LS_LAST_META,meta); }
+function rememberIID(iid) {
+  const m = readJSONLS(LS_SENT_IIDS, {});
+  m[iid] = Date.now();
+  const entries = Object.entries(m).sort((a,b)=>b[1]-a[1]).slice(0, SENT_IIDS_LIMIT);
+  writeJSONLS(LS_SENT_IIDS, Object.fromEntries(entries));
+}
+function wasIIDSent(iid) {
+  const m = readJSONLS(LS_SENT_IIDS, {});
+  return Boolean(m[iid]);
+}
+function getLastMeta() { return readJSONLS(LS_LAST_META, null); }
+function setLastMeta(meta) { writeJSONLS(LS_LAST_META, meta); }
 
 /* простой debounce для записи черновика */
 function debounce(fn, ms=120){ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms); }; }
@@ -360,13 +374,14 @@ function equalData(a={}, b={}){
   return true;
 }
 
-/* ===== СЕТЬ: основной backend (GET-первым, без дублирования init_data) ===== */
+/* ===== СЕТЬ: основной backend (GET-первым, С init_data в query!) ===== */
 async function callBackend(action, extra = {}) {
   const base = { action, init_data: safeInitData(), app_version: APP_VERSION, locale: navigator.language || 'ru-RU', ...extra };
 
-  // 1) GET — init_data только внутри json
+  // 1) GET — инициализационные данные в верхнем уровне
   const qs = new URLSearchParams();
   qs.set('action', action);
+  qs.set('init_data', base.init_data);             // <-- вернули
   qs.set('json', JSON.stringify(base));
   qs.set('_t', String(Date.now()));
   try{
@@ -443,10 +458,11 @@ async function fetchAIComment({ silent=false } = {}){
     const base = { action: 'ai_comment', init_data: safeInitData(), tz: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' };
     const prev = readAIFromLocal();
 
-    // 1) GET-первая попытка — БЕЗ отдельного init_data
+    // 1) GET (init_data — в верхнем уровне)
     try{
       const qs = new URLSearchParams();
       qs.set('action','ai_comment');
+      qs.set('init_data', base.init_data);        // <-- вернули
       qs.set('json', JSON.stringify(base));
       qs.set('_t', String(Date.now()));
       const r = await fetch(AI_API_URL + '?' + qs.toString(), { cache:'no-cache' });
@@ -455,7 +471,7 @@ async function fetchAIComment({ silent=false } = {}){
       if (next && next !== prev){ writeAIToLocal(next); renderAIComment(next); return; }
     }catch(_){}
 
-    // 2) POST (если доступен)
+    // 2) POST как запасной
     try{
       const rp = await fetch(AI_API_URL, {
         method:'POST',
@@ -472,7 +488,7 @@ async function fetchAIComment({ silent=false } = {}){
   }
 }
 
-/* короткий догон после «Сохранить» */
+/* короткий догон после «Сохранить» (до ~2.2 c) */
 async function chaseAICommentShort(timeoutMs = 2200, stepMs = 350){
   const start = Date.now();
   const baseline = readAIFromLocal();
@@ -495,8 +511,7 @@ function toggleSectionByHeader(h){
   h.setAttribute('aria-expanded', String(!willBeCollapsed));
   if (id === 'sec-measures' && !willBeCollapsed){
     if (typeof fieldsWrap !== 'undefined' && !fieldsWrap._observed){
-      observeFields();
-      fieldsWrap._observed = true;
+      observeFields(); fieldsWrap._observed = true;
     }
   }
 }
@@ -723,12 +738,18 @@ const FIELDS = [
 ];
 const CFG = Object.fromEntries(FIELDS.map(f=>[f.key, f]));
 
-/* ===== ИСХОДНОЕ СОСТОЯНИЕ ===== */
+/* ===== ИСХОДНОЕ СОСТОЯНИЕ: last + sessionDraft ===== */
 let last = readJSON(LS_KEY_LAST) || null;
 let sessionDraft = readSessionJSON(SS_KEY_DRAFT);
-// очистка «старых»/«тихих» черновиков
-if (sessionDraft && last?.ts && sessionDraft.ts && last.ts >= sessionDraft.ts){ sessionDraft=null; removeSessionKey(SS_KEY_DRAFT); }
-if (sessionDraft && (!sessionDraft.dirty) && last?.data && equalData(sessionDraft.data||{}, last.data||{})){ sessionDraft=null; removeSessionKey(SS_KEY_DRAFT); }
+
+// устаревший черновик — удалить
+if (sessionDraft && last?.ts && sessionDraft.ts && last.ts >= sessionDraft.ts){
+  sessionDraft = null; removeSessionKey(SS_KEY_DRAFT);
+}
+// «тихий» черновик, совпадающий с last — удалить
+if (sessionDraft && (!sessionDraft.dirty) && last?.data && equalData(sessionDraft.data||{}, last.data||{})){
+  sessionDraft = null; removeSessionKey(SS_KEY_DRAFT);
+}
 
 /* ===== UI ===== */
 const fieldsWrap = document.getElementById('fields');
@@ -785,9 +806,9 @@ function buildAllFields(){
     }
   }
 }
-function observeFields(){ /* подсветка активной строки — опционально */ }
+function observeFields(){}
 
-/* ===== СБОР / ПРИМЕНЕНИЕ ДАННЫХ ===== */
+/* ===== СБОР/ПРИМЕНЕНИЕ ===== */
 function collectCurrentData(){
   const out = {};
   for (const f of FIELDS){
@@ -811,7 +832,7 @@ function applyDataToUI(data){
   }
 }
 
-/* ===== СОСТОЯНИЕ КНОПКИ «Сохранить» ===== */
+/* ===== SAVE UI ===== */
 const saveBtn = document.getElementById('saveBtn');
 const saveSpinner = saveBtn.querySelector('.spinner');
 const saveLabel = saveBtn.querySelector('.btn-label');
@@ -833,25 +854,26 @@ function recomputeSaveDisabled(){
   saveBtn.style.opacity = disabled ? .6 : 1;
 }
 
-/* помечаем черновик и dirty на любое изменение колёс */
-function markDirtyAndDraft(){ writeSessionJSON(SS_KEY_DRAFT, { ts: Date.now(), data: collectCurrentData(), dirty:true }); }
+function markDirtyAndDraft(){
+  const d = collectCurrentData();
+  writeSessionJSON(SS_KEY_DRAFT, { ts: Date.now(), data:d, dirty:true });
+}
 const writeDraftDebounced = debounce(()=>markDirtyAndDraft(), 120);
 
-/* глобальный слушатель для колёс */
 document.addEventListener('wheelchange', (e)=>{
   if (e?.detail?.programmatic) return;
   writeDraftDebounced();
   recomputeSaveDisabled();
 }, {passive:true});
 
-/* ===== ПОДПИСИ / UI ===== */
+/* ===== Подписи ===== */
 const lastTimeEl = document.getElementById('lastTime');
 function updateLastMeta(){
   const ts = last?.ts || null;
   lastTimeEl.textContent = 'Последний замер: ' + fmt(ts);
 }
 
-/* ===== ИНИЦИАЛИЗАЦИЯ ===== */
+/* ===== ИНИЦ ===== */
 function initUI(){
   buildAllFields();
   if (sessionDraft?.data)      applyDataToUI(sessionDraft.data);
@@ -860,7 +882,7 @@ function initUI(){
   recomputeSaveDisabled();
 }
 
-/* ===== ЗАГРУЗКА С БЭКЕНДА (init) ===== */
+/* ===== INIT с бэка ===== */
 async function fetchAndApplyFromBackend(){
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
   const res = await callBackend('init', { tz });
@@ -876,7 +898,7 @@ async function fetchAndApplyFromBackend(){
   initUI();
 }
 
-/* ====== SAVE: single-flight + throttling + idempotency ====== */
+/* ===== Сохранение ===== */
 let saveInFlight = null;
 let lastSaveTs = 0;
 
@@ -888,11 +910,8 @@ async function saveWithGuards(){
 
   const data = collectCurrentData();
   const sig  = hash32(stableStringify(data));
-
   const meta = getLastMeta();
-  if (meta && meta.sig === sig){
-    return Promise.resolve({ok:true, skipped:true});
-  }
+  if (meta && meta.sig === sig) return Promise.resolve({ok:true, skipped:true});
 
   const iid = (crypto?.randomUUID?.() || Math.random().toString(36).slice(2)) + '-' + now;
 
@@ -902,13 +921,8 @@ async function saveWithGuards(){
       const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
       const payload = { tz, source:'webapp', app_version: APP_VERSION, t_client: now, data, iid };
       const res = await callBackend('save', payload);
-
       if (res?.ok){
-        const ls = {
-          ts: res.ts_iso ? Date.parse(res.ts_iso) : Date.now(),
-          day_local: res.day_local || '',
-          data
-        };
+        const ls = { ts: res.ts_iso ? Date.parse(res.ts_iso) : Date.now(), day_local: res.day_local || '', data };
         writeJSON(LS_KEY_LAST, ls);
         removeSessionKey(SS_KEY_DRAFT);
         last = ls;
@@ -932,18 +946,15 @@ async function saveWithGuards(){
   return saveInFlight;
 }
 
-/* единая привязка обработчиков сохранения */
+/* ===== Привязка кнопки ===== */
 (function wireSaveOnce(){
   if (!saveBtn || saveBtn.__wired) return;
   saveBtn.__wired = true;
-
   function pressFX(on){ saveBtn.classList.toggle('pressed', !!on); }
   saveBtn.addEventListener('pointerdown', ()=>pressFX(true));
   saveBtn.addEventListener('pointerup',   ()=>pressFX(false));
   saveBtn.addEventListener('pointercancel',()=>pressFX(false));
-
   saveBtn.addEventListener('click', (e)=>{ e.preventDefault(); saveWithGuards(); });
-
   const form = document.querySelector('form[data-measure]');
   if (form && !form.__wired){
     form.__wired = true;
@@ -951,15 +962,12 @@ async function saveWithGuards(){
   }
 })();
 
-/* ===== LOCAL-FIRST ЗАПУСК ===== */
+/* ===== LOCAL-FIRST старт ===== */
 function bootLocalFirst(){
   initUI();
-
-  // фоновый sync раз в неделю
   const meta = getLastMeta();
   const WEEK = 7*24*60*60*1000;
   const needsSync = !meta || (Date.now() - meta.ts > WEEK);
-
   if (needsSync){
     callBackend('init', { tz: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' })
       .then((res)=>{
@@ -977,25 +985,17 @@ function bootLocalFirst(){
         updateLastMeta();
         recomputeSaveDisabled();
       })
-      .catch(()=>{});
+      .catch(()=>{ /* игнор */ });
   }
 }
 
 /* ===== СТАРТ ===== */
 (function main(){
   bootLocalFirst();
-
-  // ИИ-комментарий
   rehydrateAIFromLocal();
   fetchAIComment().catch(console.error);
   startAIPoll();
-
-  // Пауза пуллинга при скрытии
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) stopAIPoll(); else startAIPoll();
-  }, {passive:true});
-
-  // При возврате из BFCache обновим доступность «Сохранить»
+  document.addEventListener('visibilitychange', () => { if (document.hidden) stopAIPoll(); else startAIPoll(); }, {passive:true});
   window.addEventListener('pageshow', ()=>recomputeSaveDisabled(), {once:true});
 })();
 </script>
