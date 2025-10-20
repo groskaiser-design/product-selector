@@ -229,11 +229,10 @@ const SS_KEY_DRAFT = 'measurements:sessionDraft';          // черновик �
 const LS_KEY_AI    = 'measurements:ai:last';
 
 /* ===== СЕТЬ / БЭКЕНД ===== */
-const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbz-Lz-NppoULWkW41KbIdJbq72gYa7KNwCt21M9C3w4In8rGroNmAi665DB_RKRm9h4FQ/exec';
+const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbzMgyXUttuJu_ZAdF1NPHcvcEnnxLql-aP6cwQ0XAOpK1PtMl5ZJx-WDIhHvypSaF241w/exec';
 const APP_VERSION = '1.0.10';
-/* >>> добавлено: URL read-only Web App для "Анализ ИИ".
-   ЗАМЕНИТЕ НА СВОЙ URL: */
-const AI_API_URL  = 'https://script.google.com/macros/s/AKfycbytmsmTE4NdsR6zopPe2s3hz69iS2ej2ldwWCrtiS6Lu_iiRkEtCAUXm406dWKdR4IdOQ/exec';
+/* >>> ЕДИНАЯ точка API для ИИ-комментария — используем тот же деплой */
+const AI_API_URL  = BACKEND_URL;
 
 /* >>> авто-пуллинг ИИ-комментария (минимальные правки) */
 const AI_REFRESH_MS = 60000; // опрос раз в 60с
@@ -468,6 +467,17 @@ async function fetchAIComment({ silent=false } = {}){
     }catch(_){}
   } finally {
     if (!readAIFromLocal()) setAILoading(false);
+  }
+}
+
+/* >>> КОРОТКИЙ ДОГОН ПОСЛЕ "СОХРАНИТЬ" (до ~2.2 c) */
+async function chaseAICommentShort(timeoutMs = 2200, stepMs = 350){
+  const start = Date.now();
+  const baseline = readAIFromLocal();
+  while (Date.now() - start < timeoutMs){
+    await fetchAIComment({ silent:true });
+    if (readAIFromLocal() !== baseline) break;
+    await new Promise(r => setTimeout(r, stepMs));
   }
 }
 /* ====== / Комментарий ИИ ====== */
@@ -928,6 +938,8 @@ async function fetchAndApplyFromBackend({ force = false } = {}){
 
 // На свежем заходе/перезагрузке форсируем данные БД; при back/forward (BFCache) — бережно
 fetchAndApplyFromBackend({ force: !IS_BFCACHE });
+/* >>> Вызов при старте: сразу подгружаем ИИ-комментарий (тихо) */
+fetchAIComment({ silent:true });
 
 // Восстановление UI и синхронизация при возврате/активации вкладки
 window.addEventListener('pageshow', (e)=>{
@@ -1016,14 +1028,17 @@ document.getElementById('saveBtn').addEventListener('click', async ()=>{
       if (measuresSec) measuresSec.classList.add('collapsed');
       if (measuresHeader) measuresHeader.setAttribute('aria-expanded','false');
 
-      // >>> запросить свежий ИИ-комментарий после успешного сохранения
-      fetchAIComment({ silent:false });
+      // >>> запросить свежий ИИ-комментарий после успешного сохранения:
+      //     показываем "Анализируем данные…" и догоняем до ~2.2 c
+      setAILoading(true);
+      fetchAIComment({ silent:true });
+      chaseAICommentShort();
 
       tg?.showPopup?.({title:'Сохранено', message:'Данные обновлены', buttons:[{type:'ok'}]});
     } else {
       (tg?.showAlert
         ? tg.showAlert('Ошибка сохранения на сервере.\nДанные сохранены локально.\nКод: ' + (res?.error||'unknown'))
-        : alert('Ошибка сохранения на сервере.\нДанные сохранены локально.\nКод: ' + (res?.error||'unknown')));
+        : alert('Ошибка сохранения на сервере.\nДанные сохранены локально.\nКод: ' + (res?.error||'unknown')));
     }
   }catch(err){
     const msg = (err && err.message) ? String(err.message) : 'Неизвестная ошибка сети';
