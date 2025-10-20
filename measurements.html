@@ -204,8 +204,7 @@
   try { tg.ready(); } catch(e){}
   try { tg.expand(); } catch(e){}
   try { tg.setHeaderColor('secondary_bg_color'); } catch(e){}
-  // Назначаем обработчик системной кнопки «Назад»
-  try { bindBack(); } catch(e){}
+  try { bindBack(); } catch(e){} // системная «Назад»
 })();
 
 /* ===== Back button binding (router.html) ===== */
@@ -223,25 +222,21 @@ function bindBack(){
 }
 
 /* ===== КОНСТАНТЫ ХРАНИЛИЩА ===== */
-const LS_KEY_LAST  = 'measurements:last';                  // подтверждённая запись
-const SS_KEY_DRAFT = 'measurements:sessionDraft';          // черновик сеанса (только до сохранения)
-/* >>> кэш ИИ-комментария */
+const LS_KEY_LAST  = 'measurements:last';
+const SS_KEY_DRAFT = 'measurements:sessionDraft';
 const LS_KEY_AI    = 'measurements:ai:last';
-
-/* === Новые ключи под метаданные и идемпотентность (client-side) === */
-const LS_LAST_META = 'measurements:last_meta';             // { ts, sig, iid, serverTs? }
-const LS_SENT_IIDS = 'measurements:sent_iids';             // { iid: ts, ... }
+const LS_LAST_META = 'measurements:last_meta';
+const LS_SENT_IIDS = 'measurements:sent_iids';
 const SENT_IIDS_LIMIT = 100;
 const SAVE_THROTTLE_MS = 600;
 
 /* ===== СЕТЬ / БЭКЕНД ===== */
 const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbzi5b6W_RbJF_t9ojiZoBR2ndeqWhs3v9xbpSVhweYXUGB8EXa3qyzzayU0GxBiq-782A/exec';
 const APP_VERSION = '1.0.10';
-/* >>> API для ИИ-комментария — тот же деплой */
 const AI_API_URL  = BACKEND_URL;
 
 /* авто-пуллинг ИИ-комментария */
-const AI_REFRESH_MS = 60000; // опрос раз в 60с
+const AI_REFRESH_MS = 60000;
 let aiPollTimer = null;
 function startAIPoll(){ stopAIPoll(); aiPollTimer = setInterval(()=>fetchAIComment({silent:true}), AI_REFRESH_MS); }
 function stopAIPoll(){ if (aiPollTimer){ clearInterval(aiPollTimer); aiPollTimer = null; } }
@@ -250,20 +245,12 @@ function stopAIPoll(){ if (aiPollTimer){ clearInterval(aiPollTimer); aiPollTimer
 const HOME_URL = (document.querySelector('meta[name="tma:home-url"]')?.content) || './index.html';
 const HOME_HASH = (document.querySelector('meta[name="tma:home-hash"]')?.content) || '';
 
-/* ===== Тип навигации ===== */
-const navEntry = performance?.getEntriesByType?.('navigation')?.[0];
-const NAV_TYPE = navEntry?.type || 'navigate';
-const IS_BFCACHE = NAV_TYPE === 'back_forward';
-
 /* ===== УТИЛИТЫ ===== */
 const ROW_VAR = getComputedStyle(document.documentElement).getPropertyValue('--row').trim();
 const rowH = ROW_VAR.endsWith('px') ? parseFloat(ROW_VAR) : (parseFloat(ROW_VAR) || 36);
 const pad = 4;
 const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
-
-const DTF = new Intl.DateTimeFormat('ru-RU', {
-  day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'
-});
+const DTF = new Intl.DateTimeFormat('ru-RU', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
 const fmt = ts => (!ts ? 'нет данных' : DTF.format(new Date(ts)));
 
 function readJSON(key, fallback=null){ try{ const v=localStorage.getItem(key); return v?JSON.parse(v):fallback; }catch(e){ return fallback; } }
@@ -273,44 +260,30 @@ function writeSessionJSON(key,obj){ try{ sessionStorage.setItem(key, JSON.string
 function removeSessionKey(key){ try{ sessionStorage.removeItem(key); }catch(e){} }
 function safeInitData(){ return window.Telegram?.WebApp?.initData || ''; }
 
-/* === доп. утилиты для идемпотентности и стабильных сигнатур === */
-function stableStringify(obj) {
+function stableStringify(obj){
   const seen = new WeakSet();
   const sortKeys = (x) => {
     if (x && typeof x === 'object') {
       if (seen.has(x)) return null;
       seen.add(x);
       if (Array.isArray(x)) return x.map(sortKeys);
-      return Object.keys(x).sort().reduce((acc, k) => (acc[k] = sortKeys(x[k]), acc), {});
+      return Object.keys(x).sort().reduce((acc,k)=>(acc[k]=sortKeys(x[k]),acc),{});
     }
     return x;
   };
   return JSON.stringify(sortKeys(obj));
 }
-function hash32(str) {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = (h + ((h<<1)+(h<<4)+(h<<7)+(h<<8)+(h<<24)))>>>0; }
-  return ('00000000'+h.toString(16)).slice(-8);
-}
-function readJSONLS(k, fallback){ return readJSON(k, fallback); }
-function writeJSONLS(k, v){ writeJSON(k, v); }
-function rememberIID(iid) {
-  const m = readJSONLS(LS_SENT_IIDS, {});
-  m[iid] = Date.now();
-  const entries = Object.entries(m).sort((a,b)=>b[1]-a[1]).slice(0, SENT_IIDS_LIMIT);
-  writeJSONLS(LS_SENT_IIDS, Object.fromEntries(entries));
-}
-function wasIIDSent(iid) {
-  const m = readJSONLS(LS_SENT_IIDS, {});
-  return Boolean(m[iid]);
-}
-function getLastMeta() { return readJSONLS(LS_LAST_META, null); }
-function setLastMeta(meta) { writeJSONLS(LS_LAST_META, meta); }
+function hash32(str){ let h=0x811c9dc5; for(let i=0;i<str.length;i++){ h^=str.charCodeAt(i); h=(h+((h<<1)+(h<<4)+(h<<7)+(h<<8)+(h<<24)))>>>0; } return ('00000000'+h.toString(16)).slice(-8); }
+function readJSONLS(k,f){ return readJSON(k,f); }
+function writeJSONLS(k,v){ writeJSON(k,v); }
+function rememberIID(iid){ const m=readJSONLS(LS_SENT_IIDS,{}); m[iid]=Date.now(); const e=Object.entries(m).sort((a,b)=>b[1]-a[1]).slice(0,SENT_IIDS_LIMIT); writeJSONLS(LS_SENT_IIDS,Object.fromEntries(e)); }
+function wasIIDSent(iid){ const m=readJSONLS(LS_SENT_IIDS,{}); return Boolean(m[iid]); }
+function getLastMeta(){ return readJSONLS(LS_LAST_META,null); }
+function setLastMeta(meta){ writeJSONLS(LS_LAST_META,meta); }
 
-/* простой debounce для записи черновика */
 function debounce(fn, ms=120){ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms); }; }
 
-/* ===== HTML SANITIZER (allowlist) ===== */
+/* ===== HTML SANITIZER ===== */
 const ALLOWED_TAGS = new Set(['h3','h4','p','br','ul','ol','li','b','strong','i','em','u','s','hr','blockquote','code','pre','a']);
 const SAFE_URL_RE  = /^(https?:\/\/|mailto:)/i;
 function sanitizeHtml(input){
@@ -319,117 +292,73 @@ function sanitizeHtml(input){
   const doc = parser.parseFromString(`<div>${input}</div>`, 'text/html');
   const root = doc.body.firstElementChild;
   function clean(node){
-    if (node.nodeType === Node.TEXT_NODE){
-      return node.cloneNode(true);
-    }
+    if (node.nodeType === Node.TEXT_NODE) return node.cloneNode(true);
     if (node.nodeType === Node.ELEMENT_NODE){
-      const tag = node.tagName.toLowerCase();
+      const tag=node.tagName.toLowerCase();
       if (!ALLOWED_TAGS.has(tag)){
-        const frag = doc.createDocumentFragment();
-        node.childNodes.forEach(ch => frag.appendChild(clean(ch)));
-        return frag;
+        const frag=doc.createDocumentFragment(); node.childNodes.forEach(ch=>frag.appendChild(clean(ch))); return frag;
       }
-      const el = doc.createElement(tag);
-      if (tag === 'a'){
-        const href  = node.getAttribute('href') || '';
-        const title = node.getAttribute('title');
-        if (SAFE_URL_RE.test(href)){
-          el.setAttribute('href', href);
-          if (title) el.setAttribute('title', title);
-          el.setAttribute('target', '_blank');
-          el.setAttribute('rel', 'noopener noreferrer');
-        }
+      const el=doc.createElement(tag);
+      if (tag==='a'){
+        const href=node.getAttribute('href')||''; const title=node.getAttribute('title');
+        if (SAFE_URL_RE.test(href)){ el.setAttribute('href',href); if(title) el.setAttribute('title',title); el.setAttribute('target','_blank'); el.setAttribute('rel','noopener noreferrer'); }
       }
-      node.childNodes.forEach(ch => el.appendChild(clean(ch)));
-      return el;
+      node.childNodes.forEach(ch=>el.appendChild(clean(ch))); return el;
     }
     return doc.createTextNode('');
   }
-  const outFrag = doc.createDocumentFragment();
-  root.childNodes.forEach(ch => outFrag.appendChild(clean(ch)));
-  const tmp = doc.createElement('div');
-  tmp.appendChild(outFrag);
-  return tmp.innerHTML;
+  const outFrag=doc.createDocumentFragment(); root.childNodes.forEach(ch=>outFrag.appendChild(clean(ch)));
+  const tmp=doc.createElement('div'); tmp.appendChild(outFrag); return tmp.innerHTML;
 }
 
-// Универсальный переход «домой»
-function goHome(reason=''){
-  if (typeof window.appNavigate === 'function'){
-    try { window.appNavigate('home'); return; } catch(_){ }
-  }
-  if (HOME_HASH){
-    if (location.hash !== HOME_HASH){ location.hash = HOME_HASH; return; }
-  }
-  if (HOME_URL){
-    try { location.assign(HOME_URL); return; } catch(_){ }
-  }
-  const tg = window.Telegram?.WebApp;
-  try { tg?.close(); } catch(_){ }
+/* ===== Навигация домой ===== */
+function goHome(){
+  if (typeof window.appNavigate==='function'){ try{ window.appNavigate('home'); return; }catch{} }
+  if (HOME_HASH && location.hash!==HOME_HASH){ location.hash=HOME_HASH; return; }
+  if (HOME_URL){ try{ location.assign(HOME_URL); return; }catch{} }
+  try{ window.Telegram?.WebApp?.close(); }catch{}
 }
 
-/* равенство наборов данных (числа сравниваем с допуском) */
+/* ===== Равенство структур данных ===== */
 function equalData(a={}, b={}){
   for (const {key} of FIELDS){
-    const va = a[key], vb = b[key];
-    if (va === null || vb === null){
-      if (va !== vb) return false;
-    } else if (typeof va === 'number' && typeof vb === 'number'){
-      if (Math.abs(va - vb) > 1e-9) return false;
-    } else if (typeof va === 'undefined' && typeof vb === 'undefined'){
-      continue;
-    } else {
-      return false;
-    }
+    const va=a[key], vb=b[key];
+    if (va===null || vb===null){ if (va!==vb) return false; }
+    else if (typeof va==='number' && typeof vb==='number'){ if (Math.abs(va-vb)>1e-9) return false; }
+    else if (typeof va==='undefined' && typeof vb==='undefined'){ continue; }
+    else { return false; }
   }
   return true;
 }
 
-/* ===== СЕТЬ: основной backend (init/save) ===== */
+/* ===== СЕТЬ: основной backend (GET-первым) ===== */
 async function callBackend(action, extra = {}) {
-  const base = {
-    action,
-    init_data: safeInitData(),
-    app_version: APP_VERSION,
-    locale: navigator.language || 'ru-RU',
-    ...extra
-  };
+  const base = { action, init_data: safeInitData(), app_version: APP_VERSION, locale: navigator.language || 'ru-RU', ...extra };
 
-  const buildQS = () => {
-    const qs = new URLSearchParams();
-    qs.set('action', action);
-    // НЕ добавляем init_data отдельным параметром — он уже в json
-    qs.set('json', JSON.stringify(base));
-    qs.set('_t', String(Date.now()));
-    return qs;
-  };
-
-  const tryGet = async () => {
-    const r = await fetch(BACKEND_URL + '?' + buildQS().toString(), { cache: 'no-cache' });
+  // 1) GET — без отдельного init_data в query
+  const qs = new URLSearchParams();
+  qs.set('action', action);
+  qs.set('json', JSON.stringify(base));
+  qs.set('_t', String(Date.now()));
+  try{
+    const r = await fetch(BACKEND_URL + '?' + qs.toString(), { cache:'no-cache' });
     const tx = await r.text();
-    try { return JSON.parse(tx); } catch { return { ok:false, error:'bad_json', _raw: tx.slice(0,200) }; }
-  };
+    try{ return JSON.parse(tx); }catch{ return { ok:false, error:'bad_json', _raw: tx.slice(0,200) }; }
+  }catch(_){}
 
-  const tryPost = async () => {
+  // 2) POST fallback (если у тебя есть doPost)
+  try{
     const rp = await fetch(BACKEND_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=UTF-8'},
       body: JSON.stringify(base),
-      keepalive: true, redirect: 'follow', credentials: 'omit', referrerPolicy: 'no-referrer'
+      keepalive:true, redirect:'follow', credentials:'omit', referrerPolicy:'no-referrer'
     });
     const tp = await rp.text();
-    try { return JSON.parse(tp); } catch { return { ok:false, error:'bad_json', _raw: tp.slice(0,200) }; }
-  };
-
-  // Для "save" и "ai_comment" сперва POST (без лимита URL), потом GET как запасной.
-  // Для лёгкого "init" оставляем GET-первым.
-  if (action === 'save' || action === 'ai_comment') {
-    try { const j = await tryPost(); if (j) return j; } catch {}
-    try { const j = await tryGet();  if (j) return j; } catch {}
-  } else {
-    try { const j = await tryGet();  if (j) return j; } catch {}
-    try { const j = await tryPost(); if (j) return j; } catch {}
+    try{ return JSON.parse(tp); }catch{ return { ok:false, error:'bad_json', _raw: tp.slice(0,200) }; }
+  }catch(e){
+    return { ok:false, error: e?.message || 'network_error' };
   }
-  return { ok:false, error:'network_error' };
 }
 
 /* ====== Комментарий ИИ (read-only API) ====== */
@@ -455,22 +384,19 @@ function renderAIComment(text){
   field.className = 'field';
   const box = document.createElement('div');
   box.setAttribute('aria-live','polite');
-  box.innerHTML = sanitizeHtml(s); // безопасная вставка HTML
+  box.innerHTML = sanitizeHtml(s);
   field.appendChild(box);
   cont.appendChild(field);
 }
 function readAIFromLocal(){ try{ return (JSON.parse(localStorage.getItem(LS_KEY_AI))||{}).text || ''; }catch(_){ return ''; } }
 function writeAIToLocal(text){ try{ localStorage.setItem(LS_KEY_AI, JSON.stringify({ ts: Date.now(), text: String(text||'') })); }catch(_){ } }
-function rehydrateAIFromLocal(){
-  const t = readAIFromLocal();
-  if (t) renderAIComment(t);
-}
+function rehydrateAIFromLocal(){ const t = readAIFromLocal(); if (t) renderAIComment(t); }
+
 async function fetchAIComment({ silent=false } = {}){
   if (!AI_API_URL){
     if (!silent && !readAIFromLocal()) setAILoading(false);
     return;
   }
-
   const parseAI = (raw) => {
     try {
       const j = JSON.parse(raw);
@@ -485,15 +411,22 @@ async function fetchAIComment({ silent=false } = {}){
 
   try{
     if (!silent) setAILoading(true);
-    const base = {
-      action: 'ai_comment',
-      init_data: safeInitData(),
-      tz: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
-    };
-
+    const base = { action: 'ai_comment', init_data: safeInitData(), tz: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' };
     const prev = readAIFromLocal();
 
-    // 1) POST-первая попытка (без лимита URL)
+    // 1) GET-первая попытка — короче URL (без отдельного init_data)
+    try{
+      const qs = new URLSearchParams();
+      qs.set('action','ai_comment');
+      qs.set('json', JSON.stringify(base));
+      qs.set('_t', String(Date.now()));
+      const r = await fetch(AI_API_URL + '?' + qs.toString(), { cache:'no-cache' });
+      const tx = await r.text();
+      const next = parseAI(tx);
+      if (next && next !== prev){ writeAIToLocal(next); renderAIComment(next); return; }
+    }catch(_){}
+
+    // 2) POST как запасной
     try{
       const rp = await fetch(AI_API_URL, {
         method:'POST',
@@ -505,24 +438,12 @@ async function fetchAIComment({ silent=false } = {}){
       const next = parseAI(tp);
       if (next && next !== prev){ writeAIToLocal(next); renderAIComment(next); return; }
     }catch(_){}
-
-    // 2) GET как запасной — БЕЗ отдельного init_data в query
-    try{
-      const qs = new URLSearchParams();
-      qs.set('action','ai_comment');
-      qs.set('json', JSON.stringify(base)); // init_data только внутри json
-      qs.set('_t', String(Date.now()));
-      const r = await fetch(AI_API_URL + '?' + qs.toString(), { cache:'no-cache' });
-      const tx = await r.text();
-      const next = parseAI(tx);
-      if (next && next !== prev){ writeAIToLocal(next); renderAIComment(next); return; }
-    }catch(_){}
-
   } finally {
     if (!readAIFromLocal()) setAILoading(false);
   }
 }
-/* короткий догон после «Сохранить» (до ~2.2 c) */
+
+/* короткий догон после «Сохранить» */
 async function chaseAICommentShort(timeoutMs = 2200, stepMs = 350){
   const start = Date.now();
   const baseline = readAIFromLocal();
@@ -545,8 +466,7 @@ function toggleSectionByHeader(h){
   h.setAttribute('aria-expanded', String(!willBeCollapsed));
   if (id === 'sec-measures' && !willBeCollapsed){
     if (typeof fieldsWrap !== 'undefined' && !fieldsWrap._observed){
-      observeFields();
-      fieldsWrap._observed = true;
+      observeFields(); fieldsWrap._observed = true;
     }
   }
 }
@@ -585,6 +505,7 @@ function buildWheel(fieldEl, initial){
   function fillCol(col, from, to){
     const frag=document.createDocumentFragment();
     for(let i=0;i<pad;i++) frag.appendChild(opt(''));
+    for(let i=from;i<=to)i++?0:0; // keep linter happy
     for(let i=from;i<=to;i++) frag.appendChild(opt(i));
     for(let i=0;i<pad;i++) frag.appendChild(opt(''));
     col.innerHTML=''; col.appendChild(frag);
@@ -749,23 +670,18 @@ const FIELDS = [
   { key:'weight', label:'Вес', unit:'кг', min:40, max:250, initial:70.0 },
   { key:'height', label:'Рост', unit:'см', min:120, max:230, initial:160.0 },
   { key:'fat',    label:'% жира', unit:'%',  min:3,  max:60,  initial:20.0, optional:true },
-
   { key:'neck',   label:'Шея', unit:'см', min:20, max:70, initial:38 },
   { key:'shoulders',label:'Плечи обхват', unit:'см', min:60, max:180, initial:90.0 },
   { key:'chest',  label:'Грудь', unit:'см', min:60, max:160, initial:100 },
   { key:'waist',  label:'Талия', unit:'см', min:40, max:160, initial:70 },
-
   { key:'bicep_l_rel', label:'Бицепс левый (расслаб.)', unit:'см', min:15, max:70, initial:31 },
   { key:'bicep_r_rel', label:'Бицепс правый (расслаб.)', unit:'см', min:15, max:70, initial:31 },
   { key:'bicep_l_flex',label:'Бицепс левый (напряж.)',  unit:'см', min:15, max:70, initial:31 },
   { key:'bicep_r_flex',label:'Бицепс правый (напряж.)',  unit:'см', min:15, max:70, initial:31 },
-
   { key:'thigh_l', label:'Бедро левое', unit:'см', min:30, max:100, initial:50 },
   { key:'thigh_r', label:'Бедро правое', unit:'см', min:30, max:100, initial:50 },
-
   { key:'calf_l',  label:'Икра левая', unit:'см', min:25, max:70, initial:35 },
   { key:'calf_r',  label:'Икра правая', unit:'см', min:25, max:70, initial:35 },
-
   { key:'hips',    label:'Ягодицы', unit:'см', min:70, max:160, initial:90 },
   { key:'wrist',   label:'Обхват запястья', unit:'см', min:10, max:30, initial:17 },
   { key:'knee',    label:'Обхват колена',   unit:'см', min:25, max:60, initial:36 },
@@ -773,23 +689,16 @@ const FIELDS = [
 ];
 const CFG = Object.fromEntries(FIELDS.map(f=>[f.key, f]));
 
-/* ===== ИСХОДНОЕ СОСТОЯНИЕ: last + sessionDraft (с очисткой «тихих» черновиков) ===== */
-let last = readJSON(LS_KEY_LAST) || null;      /* ← было const, теперь let */
+/* ===== ИСХОДНОЕ СОСТОЯНИЕ ===== */
+let last = readJSON(LS_KEY_LAST) || null;
 let sessionDraft = readSessionJSON(SS_KEY_DRAFT);
+if (sessionDraft && last?.ts && sessionDraft.ts && last.ts >= sessionDraft.ts){ sessionDraft=null; removeSessionKey(SS_KEY_DRAFT); }
+if (sessionDraft && (!sessionDraft.dirty) && last?.data && equalData(sessionDraft.data||{}, last.data||{})){ sessionDraft=null; removeSessionKey(SS_KEY_DRAFT); }
 
-// устаревший черновик (по времени last) — удалить
-if (sessionDraft && last?.ts && sessionDraft.ts && last.ts >= sessionDraft.ts){
-  sessionDraft = null; removeSessionKey(SS_KEY_DRAFT);
-}
-// «тихий» черновик без правок и совпадающий с last — удалить
-if (sessionDraft && (!sessionDraft.dirty) && last?.data && equalData(sessionDraft.data||{}, last.data||{})){
-  sessionDraft = null; removeSessionKey(SS_KEY_DRAFT);
-}
-
-/* ===== UI: генерация полей ===== */
+/* ===== UI ===== */
 const fieldsWrap = document.getElementById('fields');
-const wheels = {};         // key -> wheel api
-const nullChecks = {};     // key -> checkbox (нет данных)
+const wheels = {};
+const nullChecks = {};
 
 function fieldEl(f){
   const el = document.createElement('div');
@@ -841,22 +750,14 @@ function buildAllFields(){
     }
   }
 }
+function observeFields(){}
 
-/* лёгкая подсветка активной строки по IntersectionObserver (no-op, но держим вызов) */
-function observeFields(){
-  // опционально можно расширить логику, сейчас всё ок благодаря markActive() в колёсах
-}
-
-/* ===== СБОР / ПРИМЕНЕНИЕ ДАННЫХ ===== */
+/* ===== СБОР/ПРИМЕНЕНИЕ ===== */
 function collectCurrentData(){
   const out = {};
   for (const f of FIELDS){
     const cb = nullChecks[f.key];
-    if (cb && cb.checked){
-      out[f.key] = null;
-    } else {
-      out[f.key] = wheels[f.key].value;
-    }
+    out[f.key] = (cb && cb.checked) ? null : wheels[f.key].value;
   }
   return out;
 }
@@ -875,7 +776,7 @@ function applyDataToUI(data){
   }
 }
 
-/* ===== СОСТОЯНИЕ КНОПКИ «Сохранить» ===== */
+/* ===== SAVE UI ===== */
 const saveBtn = document.getElementById('saveBtn');
 const saveSpinner = saveBtn.querySelector('.spinner');
 const saveLabel = saveBtn.querySelector('.btn-label');
@@ -897,63 +798,51 @@ function recomputeSaveDisabled(){
   saveBtn.style.opacity = disabled ? .6 : 1;
 }
 
-/* помечаем черновик и dirty на любое изменение колёс */
 function markDirtyAndDraft(){
   const d = collectCurrentData();
   writeSessionJSON(SS_KEY_DRAFT, { ts: Date.now(), data:d, dirty:true });
 }
+const writeDraftDebounced = debounce(()=>markDirtyAndDraft(), 120);
 
-/* === debounce-запись черновика вместо частых I/O === */
-const writeDraftDebounced = debounce(()=>{
-  const d = collectCurrentData();
-  writeSessionJSON(SS_KEY_DRAFT, { ts: Date.now(), data:d, dirty:true });
-}, 120);
-
-/* глобальный слушатель для колёс */
 document.addEventListener('wheelchange', (e)=>{
-  if (e?.detail?.programmatic) return; // не трогаем при программной установке
+  if (e?.detail?.programmatic) return;
   writeDraftDebounced();
   recomputeSaveDisabled();
 }, {passive:true});
 
-/* ===== ПОДПИСИ / UI ===== */
+/* ===== Подписи ===== */
 const lastTimeEl = document.getElementById('lastTime');
 function updateLastMeta(){
   const ts = last?.ts || null;
   lastTimeEl.textContent = 'Последний замер: ' + fmt(ts);
 }
 
-/* ===== ИНИЦИАЛИЗАЦИЯ ===== */
+/* ===== ИНИЦ ===== */
 function initUI(){
   buildAllFields();
-  if (sessionDraft?.data){
-    applyDataToUI(sessionDraft.data);
-  }else if (last?.data){
-    applyDataToUI(last.data);
-  }
+  if (sessionDraft?.data)      applyDataToUI(sessionDraft.data);
+  else if (last?.data)         applyDataToUI(last.data);
   updateLastMeta();
   recomputeSaveDisabled();
 }
 
-/* ===== ЗАГРУЗКА С БЭКЕНДА (init) — оставляем как util ===== */
+/* ===== INIT с бэка ===== */
 async function fetchAndApplyFromBackend(){
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
   const res = await callBackend('init', { tz });
-  if (res?.ok){
-    if (res.last){
-      const ls = {
-        ts: res.last.ts_iso ? Date.parse(res.last.ts_iso) : Date.now(),
-        day_local: res.last.day_local || '',
-        data: res.last.data || {}
-      };
-      writeJSON(LS_KEY_LAST, ls);
-      last = ls;                 /* ← переassign, а не Object.assign */
-    }
+  if (res?.ok && res.last){
+    const ls = {
+      ts: res.last.ts_iso ? Date.parse(res.last.ts_iso) : Date.now(),
+      day_local: res.last.day_local || '',
+      data: res.last.data || {}
+    };
+    writeJSON(LS_KEY_LAST, ls);
+    last = ls;
   }
   initUI();
 }
 
-/* ====== SAVE: single-flight + throttling + idempotency (client-side) ====== */
+/* ===== Сохранение ===== */
 let saveInFlight = null;
 let lastSaveTs = 0;
 
@@ -965,12 +854,8 @@ async function saveWithGuards(){
 
   const data = collectCurrentData();
   const sig  = hash32(stableStringify(data));
-
   const meta = getLastMeta();
-  if (meta && meta.sig === sig){
-    // ничего не изменилось — не отправляем
-    return Promise.resolve({ok:true, skipped:true});
-  }
+  if (meta && meta.sig === sig) return Promise.resolve({ok:true, skipped:true});
 
   const iid = (crypto?.randomUUID?.() || Math.random().toString(36).slice(2)) + '-' + now;
 
@@ -978,30 +863,18 @@ async function saveWithGuards(){
   saveInFlight = (async ()=>{
     try{
       const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-      const payload = {
-        tz,
-        source:'webapp',
-        app_version: APP_VERSION,
-        t_client: now,
-        data,
-        iid
-      };
+      const payload = { tz, source:'webapp', app_version: APP_VERSION, t_client: now, data, iid };
       const res = await callBackend('save', payload);
-
       if (res?.ok){
-        const ls = {
-          ts: res.ts_iso ? Date.parse(res.ts_iso) : Date.now(),
-          day_local: res.day_local || '',
-          data
-        };
+        const ls = { ts: res.ts_iso ? Date.parse(res.ts_iso) : Date.now(), day_local: res.day_local || '', data };
         writeJSON(LS_KEY_LAST, ls);
         removeSessionKey(SS_KEY_DRAFT);
-        last = ls;                             /* ← обновляем ссылку */
+        last = ls;
         setLastMeta({ ts: Date.now(), sig, iid, serverTs: Date.now() });
         rememberIID(iid);
         updateLastMeta();
         recomputeSaveDisabled();
-        chaseAICommentShort();                 /* мягкий догон ИИ */
+        chaseAICommentShort();
       } else {
         console.warn('[save] backend error:', res);
       }
@@ -1017,18 +890,15 @@ async function saveWithGuards(){
   return saveInFlight;
 }
 
-/* единая привязка обработчиков сохранения */
+/* ===== Привязка кнопки ===== */
 (function wireSaveOnce(){
   if (!saveBtn || saveBtn.__wired) return;
   saveBtn.__wired = true;
-
   function pressFX(on){ saveBtn.classList.toggle('pressed', !!on); }
   saveBtn.addEventListener('pointerdown', ()=>pressFX(true));
   saveBtn.addEventListener('pointerup',   ()=>pressFX(false));
   saveBtn.addEventListener('pointercancel',()=>pressFX(false));
-
   saveBtn.addEventListener('click', (e)=>{ e.preventDefault(); saveWithGuards(); });
-
   const form = document.querySelector('form[data-measure]');
   if (form && !form.__wired){
     form.__wired = true;
@@ -1036,16 +906,12 @@ async function saveWithGuards(){
   }
 })();
 
-/* ===== LOCAL-FIRST ЗАПУСК ===== */
+/* ===== LOCAL-FIRST старт ===== */
 function bootLocalFirst(){
-  // моментально отрисуем локальные данные
   initUI();
-
-  // фоновой sync с бэком «раз в неделю»
   const meta = getLastMeta();
   const WEEK = 7*24*60*60*1000;
   const needsSync = !meta || (Date.now() - meta.ts > WEEK);
-
   if (needsSync){
     callBackend('init', { tz: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' })
       .then((res)=>{
@@ -1063,25 +929,17 @@ function bootLocalFirst(){
         updateLastMeta();
         recomputeSaveDisabled();
       })
-      .catch(()=>{ /* молча игнорим */ });
+      .catch(()=>{ /* игнорим */ });
   }
 }
 
 /* ===== СТАРТ ===== */
 (function main(){
   bootLocalFirst();
-
-  // ИИ-комментарий
   rehydrateAIFromLocal();
   fetchAIComment().catch(console.error);
   startAIPoll();
-
-  // Пауза пуллинга при скрытии
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) stopAIPoll(); else startAIPoll();
-  }, {passive:true});
-
-  // При возврате из BFCache обновим доступность «Сохранить»
+  document.addEventListener('visibilitychange', () => { if (document.hidden) stopAIPoll(); else startAIPoll(); }, {passive:true});
   window.addEventListener('pageshow', ()=>recomputeSaveDisabled(), {once:true});
 })();
 </script>
