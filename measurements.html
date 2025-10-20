@@ -386,33 +386,50 @@ function equalData(a={}, b={}){
 
 /* ===== СЕТЬ: основной backend (init/save) ===== */
 async function callBackend(action, extra = {}) {
-  const base = { action, init_data: safeInitData(), app_version: APP_VERSION, locale: navigator.language || 'ru-RU', ...extra };
+  const base = {
+    action,
+    init_data: safeInitData(),
+    app_version: APP_VERSION,
+    locale: navigator.language || 'ru-RU',
+    ...extra
+  };
 
-  // 1) GET (без preflight)
-  const qs = new URLSearchParams();
-  qs.set('action', action);
-  qs.set('init_data', base.init_data);
-  qs.set('json', JSON.stringify(base));
-  qs.set('_t', String(Date.now()));
-  try{
-    const r = await fetch(BACKEND_URL + '?' + qs.toString(), { cache:'no-cache' });
+  const buildQS = () => {
+    const qs = new URLSearchParams();
+    qs.set('action', action);
+    // НЕ добавляем init_data отдельным параметром — он уже в json
+    qs.set('json', JSON.stringify(base));
+    qs.set('_t', String(Date.now()));
+    return qs;
+  };
+
+  const tryGet = async () => {
+    const r = await fetch(BACKEND_URL + '?' + buildQS().toString(), { cache: 'no-cache' });
     const tx = await r.text();
-    try{ return JSON.parse(tx); }catch(_){ }
-  }catch(_){ }
+    try { return JSON.parse(tx); } catch { return { ok:false, error:'bad_json', _raw: tx.slice(0,200) }; }
+  };
 
-  // 2) Fallback POST text/plain (iOS)
-  try{
+  const tryPost = async () => {
     const rp = await fetch(BACKEND_URL, {
-      method:'POST',
-      headers:{'Content-Type':'text/plain;charset=UTF-8'},
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
       body: JSON.stringify(base),
-      keepalive:true, redirect:'follow', credentials:'omit', referrerPolicy:'no-referrer'
+      keepalive: true, redirect: 'follow', credentials: 'omit', referrerPolicy: 'no-referrer'
     });
     const tp = await rp.text();
-    try{ return JSON.parse(tp); }catch{ return {ok:false, error:'bad_json', _raw: tp.slice(0,200)}; }
-  }catch(e){
-    return { ok:false, error: e?.message || 'network_error' };
+    try { return JSON.parse(tp); } catch { return { ok:false, error:'bad_json', _raw: tp.slice(0,200) }; }
+  };
+
+  // Для "save" и "ai_comment" сперва POST (без лимита URL), потом GET как запасной.
+  // Для лёгкого "init" оставляем GET-первым.
+  if (action === 'save' || action === 'ai_comment') {
+    try { const j = await tryPost(); if (j) return j; } catch {}
+    try { const j = await tryGet();  if (j) return j; } catch {}
+  } else {
+    try { const j = await tryGet();  if (j) return j; } catch {}
+    try { const j = await tryPost(); if (j) return j; } catch {}
   }
+  return { ok:false, error:'network_error' };
 }
 
 /* ====== Комментарий ИИ (read-only API) ====== */
@@ -453,6 +470,19 @@ async function fetchAIComment({ silent=false } = {}){
     if (!silent && !readAIFromLocal()) setAILoading(false);
     return;
   }
+
+  const parseAI = (raw) => {
+    try {
+      const j = JSON.parse(raw);
+      const val = j.ai_comment ?? j.comment ?? j.html ?? j.ai ?? j.text ?? '';
+      if (typeof val === 'string') return val;
+      if (val && typeof val === 'object' && typeof val.html === 'string') return val.html;
+      return '';
+    } catch {
+      return (typeof raw === 'string' && raw.length < 50000) ? raw : '';
+    }
+  };
+
   try{
     if (!silent) setAILoading(true);
     const base = {
@@ -463,29 +493,7 @@ async function fetchAIComment({ silent=false } = {}){
 
     const prev = readAIFromLocal();
 
-    // 1) GET
-    const qs = new URLSearchParams();
-    qs.set('action','ai_comment');
-    qs.set('init_data', base.init_data);
-    qs.set('json', JSON.stringify(base));
-    qs.set('_t', String(Date.now()));
-    try{
-      const r = await fetch(AI_API_URL + '?' + qs.toString(), { cache:'no-cache' });
-      const tx = await r.text();
-      try{
-        const json = JSON.parse(tx);
-        if (json?.ok && typeof json.ai_comment === 'string'){
-          const next = String(json.ai_comment || '');
-          if (next !== prev){
-            writeAIToLocal(next);
-            renderAIComment(next);
-          }
-          return;
-        }
-      }catch(_){}
-    }catch(_){}
-
-    // 2) POST fallback
+    // 1) POST-первая попытка (без лимита URL)
     try{
       const rp = await fetch(AI_API_URL, {
         method:'POST',
@@ -494,18 +502,22 @@ async function fetchAIComment({ silent=false } = {}){
         keepalive:true, redirect:'follow', credentials:'omit', referrerPolicy:'no-referrer'
       });
       const tp = await rp.text();
-      try{
-        const json = JSON.parse(tp);
-        if (json?.ok && typeof json.ai_comment === 'string'){
-          const next = String(json.ai_comment || '');
-          if (next !== prev){
-            writeAIToLocal(next);
-            renderAIComment(next);
-          }
-          return;
-        }
-      }catch(_){}
+      const next = parseAI(tp);
+      if (next && next !== prev){ writeAIToLocal(next); renderAIComment(next); return; }
     }catch(_){}
+
+    // 2) GET как запасной — БЕЗ отдельного init_data в query
+    try{
+      const qs = new URLSearchParams();
+      qs.set('action','ai_comment');
+      qs.set('json', JSON.stringify(base)); // init_data только внутри json
+      qs.set('_t', String(Date.now()));
+      const r = await fetch(AI_API_URL + '?' + qs.toString(), { cache:'no-cache' });
+      const tx = await r.text();
+      const next = parseAI(tx);
+      if (next && next !== prev){ writeAIToLocal(next); renderAIComment(next); return; }
+    }catch(_){}
+
   } finally {
     if (!readAIFromLocal()) setAILoading(false);
   }
