@@ -204,7 +204,6 @@
   try { tg.ready(); } catch(e){}
   try { tg.expand(); } catch(e){}
   try { tg.setHeaderColor('secondary_bg_color'); } catch(e){}
-  // Назначаем обработчик системной кнопки «Назад»
   try { bindBack(); } catch(e){}
 })();
 
@@ -223,23 +222,40 @@ function bindBack(){
 }
 
 /* ===== КОНСТАНТЫ ХРАНИЛИЩА ===== */
-const LS_KEY_LAST  = 'measurements:last';                  // подтверждённая запись
-const SS_KEY_DRAFT = 'measurements:sessionDraft';          // черновик сеанса (только до сохранения)
-/* >>> добавлено: кэш ИИ-комментария (без влияния на остальной код) */
+const LS_KEY_LAST  = 'measurements:last';
+const SS_KEY_DRAFT = 'measurements:sessionDraft';
 const LS_KEY_AI    = 'measurements:ai:last';
 
 /* ===== СЕТЬ / БЭКЕНД ===== */
 const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbzEf_GuK7BhKZOM_nLTWhjlPwrrhXTCGwa-wZKrWfyZedBkjFZ3ZZzN9emRquTD4qem-w/exec';
 const APP_VERSION = '1.0.10';
-/* >>> добавлено: URL read-only Web App для "Анализ ИИ".
-   ЗАМЕНИТЕ НА СВОЙ URL: */
+/* ЗАМЕНИ НА СВОЙ read-only Apps Script URL: */
 const AI_API_URL  = 'https://script.google.com/macros/s/AKfycbz2hrtLohjH0mdb99NuHvTOt6MfvWxvFC6R37dyZXSMTr1eMRAn5d-ovlh27e8KAi61_g/exec';
 
-/* >>> авто-пуллинг ИИ-комментария (минимальные правки) */
-const AI_REFRESH_MS = 60000; // опрос раз в 60с
+/* авто-пуллинг ИИ-комментария */
+const AI_REFRESH_MS = 60000;
 let aiPollTimer = null;
 function startAIPoll(){ stopAIPoll(); aiPollTimer = setInterval(()=>fetchAIComment({silent:true}), AI_REFRESH_MS); }
 function stopAIPoll(){ if (aiPollTimer){ clearInterval(aiPollTimer); aiPollTimer = null; } }
+
+/* >>> NEW: активное ожидание «получили — отдали» */
+const AI_WAIT = { timeoutMs: 60000, stepMs: 1000 };
+async function waitForAIComment({ timeoutMs = 60000, stepMs = 1000 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let last = readAIFromLocal();
+  setAILoading(true);
+  while (Date.now() < deadline) {
+    await fetchAIComment({ silent: true });
+    const curr = readAIFromLocal();
+    if (curr && curr !== last) {
+      renderAIComment(curr);
+      return true;
+    }
+    await new Promise(r => setTimeout(r, stepMs));
+  }
+  setAILoading(false);
+  return false;
+}
 
 /* ===== Главная страница (настраивается мета-тегами) ===== */
 const HOME_URL = (document.querySelector('meta[name="tma:home-url"]')?.content) || './index.html';
@@ -310,7 +326,7 @@ function sanitizeHtml(input){
   return tmp.innerHTML;
 }
 
-// Универсальный переход «домой»: сначала пробуем SPA-роутер, затем hash, затем прямая навигация
+// Универсальный переход «домой»
 function goHome(reason=''){
   if (typeof window.appNavigate === 'function'){
     try { window.appNavigate('home'); return; } catch(_){ }
@@ -325,7 +341,7 @@ function goHome(reason=''){
   try { tg?.close(); } catch(_){ }
 }
 
-/* равенство наборов данных (числа сравниваем с допуском) */
+/* равенство наборов данных */
 function equalData(a={}, b={}){
   for (const {key} of FIELDS){
     const va = a[key], vb = b[key];
@@ -346,7 +362,7 @@ function equalData(a={}, b={}){
 async function callBackend(action, extra = {}) {
   const base = { action, init_data: safeInitData(), app_version: APP_VERSION, locale: navigator.language || 'ru-RU', ...extra };
 
-  // 1) GET (без preflight)
+  // 1) GET
   const qs = new URLSearchParams();
   qs.set('action', action);
   qs.set('init_data', base.init_data);
@@ -358,7 +374,7 @@ async function callBackend(action, extra = {}) {
     try{ return JSON.parse(tx); }catch(_){ }
   }catch(_){ }
 
-  // 2) Fallback POST text/plain (iOS)
+  // 2) POST fallback
   try{
     const rp = await fetch(BACKEND_URL, {
       method:'POST',
@@ -373,7 +389,7 @@ async function callBackend(action, extra = {}) {
   }
 }
 
-/* ====== >>> Комментарий ИИ (read-only API) ====== */
+/* ====== Комментарий ИИ (read-only API) ====== */
 function setAILoading(isLoading){
   const cont = document.getElementById('ai-comment');
   if (!cont) return;
@@ -396,7 +412,7 @@ function renderAIComment(text){
   field.className = 'field';
   const box = document.createElement('div');
   box.setAttribute('aria-live','polite');
-  box.innerHTML = sanitizeHtml(s); // безопасная вставка HTML
+  box.innerHTML = sanitizeHtml(s);
   field.appendChild(box);
   cont.appendChild(field);
 }
@@ -407,7 +423,24 @@ function rehydrateAIFromLocal(){
   if (t) renderAIComment(t);
 }
 
-/* >>> обновлённый fetch: перерисовка только при изменении, для экономии */
+/* универсальный парсер ответа AI API */
+function extractAIFromResponseText(rawText){
+  if (!rawText) return '';
+  // Сначала попытка JSON
+  try{
+    const j = JSON.parse(rawText);
+    if (j && j.ok){
+      const candidates = [j.ai_comment, j.html, j.comment, j.text];
+      for (const c of candidates){ if (typeof c === 'string' && c.trim()) return c; }
+    }
+  }catch(_){}
+  // Если это просто HTML/текст — принимаем
+  const txt = String(rawText || '').trim();
+  if (txt.startsWith('<') && txt.includes('>')) return txt;
+  return '';
+}
+
+/* обновлённый fetch: перерисовка только при изменении */
 async function fetchAIComment({ silent=false } = {}){
   if (!AI_API_URL){
     if (!silent && !readAIFromLocal()) setAILoading(false);
@@ -432,17 +465,11 @@ async function fetchAIComment({ silent=false } = {}){
     try{
       const r = await fetch(AI_API_URL + '?' + qs.toString(), { cache:'no-cache' });
       const tx = await r.text();
-      try{
-        const json = JSON.parse(tx);
-        if (json?.ok && typeof json.ai_comment === 'string'){
-          const next = String(json.ai_comment || '');
-          if (next !== prev){
-            writeAIToLocal(next);
-            renderAIComment(next);
-          }
-          return;
-        }
-      }catch(_){}
+      const next = extractAIFromResponseText(tx);
+      if (next){
+        if (next !== prev){ writeAIToLocal(next); renderAIComment(next); }
+        return;
+      }
     }catch(_){}
 
     // 2) POST fallback
@@ -454,17 +481,11 @@ async function fetchAIComment({ silent=false } = {}){
         keepalive:true, redirect:'follow', credentials:'omit', referrerPolicy:'no-referrer'
       });
       const tp = await rp.text();
-      try{
-        const json = JSON.parse(tp);
-        if (json?.ok && typeof json.ai_comment === 'string'){
-          const next = String(json.ai_comment || '');
-          if (next !== prev){
-            writeAIToLocal(next);
-            renderAIComment(next);
-          }
-          return;
-        }
-      }catch(_){}
+      const next = extractAIFromResponseText(tp);
+      if (next){
+        if (next !== prev){ writeAIToLocal(next); renderAIComment(next); }
+        return;
+      }
     }catch(_){}
   } finally {
     if (!readAIFromLocal()) setAILoading(false);
@@ -715,15 +736,13 @@ const FIELDS = [
 /* Быстрый доступ к конфигу */
 const CFG = Object.fromEntries(FIELDS.map(f=>[f.key, f]));
 
-/* ===== ИСХОДНОЕ СОСТОЯНИЕ: last + sessionDraft (с очисткой «тихих» черновиков) ===== */
+/* ===== ИСХОДНОЕ СОСТОЯНИЕ ===== */
 const last = readJSON(LS_KEY_LAST);
 let sessionDraft = readSessionJSON(SS_KEY_DRAFT);
 
-// устаревший черновик (по времени last) — удалить
 if (sessionDraft && last?.ts && sessionDraft.ts && last.ts >= sessionDraft.ts){
   sessionDraft = null; removeSessionKey(SS_KEY_DRAFT);
 }
-// «тихий» черновик без правок и совпадающий с last — удалить
 if (sessionDraft && (!sessionDraft.dirty) && last?.data && equalData(sessionDraft.data||{}, last.data||{})){
   sessionDraft = null; removeSessionKey(SS_KEY_DRAFT);
 }
@@ -739,7 +758,7 @@ for (const cfg of FIELDS){
                    : undefined;
 }
 
-/* ===== РЕНДЕР ПОЛЕЙ (ленивая инициализация) ===== */
+/* ===== РЕНДЕР ПОЛЕЙ ===== */
 const fieldsWrap = document.getElementById('fields');
 const wheels = {};
 const wheelMap = new WeakMap();
@@ -840,7 +859,7 @@ if (!document.getElementById('sec-measures').classList.contains('collapsed')){
   observeFields(); fieldsWrap._observed = true;
 }
 
-/* ===== ЧЕРНОВИК: sessionStorage + in-memory ===== */
+/* ===== ЧЕРНОВИК ===== */
 let draftTimer=null;
 function collectCurrentData(withEnsure=false){
   const out = {};
@@ -874,7 +893,7 @@ document.addEventListener('wheelchange', (e)=>{
   touchDraft();
 });
 
-/* ===== Применение данных к UI + Ре-гидратация из локального источника ===== */
+/* ===== Применение к UI ===== */
 function applyDataToUI(data = {}){
   let touched = false;
   for (const { key } of FIELDS){
@@ -897,7 +916,7 @@ function rehydrateFromLocal(){
   applyDataToUI(src);
 }
 
-/* ===== ПОДЪЕМ ИЗ БД (с опцией force для navigate/reload) ===== */
+/* ===== ПОДЪЕМ ИЗ БД ===== */
 async function fetchAndApplyFromBackend({ force = false } = {}){
   try{
     const res = await callBackend('init');
@@ -905,7 +924,7 @@ async function fetchAndApplyFromBackend({ force = false } = {}){
       const tsMs = Date.parse(res.last.ts_iso);
 
       const sd = readSessionJSON(SS_KEY_DRAFT);
-      if (sd?.dirty === true && !force) return; // пользователь что-то крутил — не трогаем
+      if (sd?.dirty === true && !force) return;
 
       if (sd && !sd.dirty && equalData(sd.data||{}, res.last.data||{})){
         removeSessionKey(SS_KEY_DRAFT);
@@ -926,31 +945,29 @@ async function fetchAndApplyFromBackend({ force = false } = {}){
   }catch(e){}
 }
 
-// На свежем заходе/перезагрузке форсируем данные БД; при back/forward (BFCache) — бережно
+// На свежем заходе/перезагрузке
 fetchAndApplyFromBackend({ force: !IS_BFCACHE });
 
-// Восстановление UI и синхронизация при возврате/активации вкладки
+/* ===== Активность страницы ===== */
 window.addEventListener('pageshow', (e)=>{
   rehydrateFromLocal();
-  /* >>> мгновенно отрисовать кэш ИИ и фоново обновить */
   rehydrateAIFromLocal();
   const comingFromBFCache = e.persisted || IS_BFCACHE;
   fetchAndApplyFromBackend({ force: !comingFromBFCache });
   fetchAIComment({ silent:true });
-  startAIPoll(); // <-- авто-пуллинг
+  startAIPoll();
 });
 
 document.addEventListener('visibilitychange', ()=>{
   if (document.visibilityState === 'visible'){
     rehydrateFromLocal();
-    /* >>> при возвращении на вкладку — показать кэш ИИ и мягко обновить */
     rehydrateAIFromLocal();
     const sd=readSessionJSON(SS_KEY_DRAFT);
     if (!(sd?.dirty)) fetchAndApplyFromBackend({ force:false });
     fetchAIComment({ silent:true });
-    startAIPoll(); // возобновляем опрос
+    startAIPoll();
   } else {
-    stopAIPoll(); // пауза, когда вкладка скрыта
+    stopAIPoll();
   }
 });
 
@@ -1016,8 +1033,9 @@ document.getElementById('saveBtn').addEventListener('click', async ()=>{
       if (measuresSec) measuresSec.classList.add('collapsed');
       if (measuresHeader) measuresHeader.setAttribute('aria-expanded','false');
 
-      // >>> запросить свежий ИИ-комментарий после успешного сохранения
+      // запросить свежий ИИ-комментарий + активно подождать до 60с
       fetchAIComment({ silent:false });
+      waitForAIComment(AI_WAIT).catch(()=>{});
 
       tg?.showPopup?.({title:'Сохранено', message:'Данные обновлены', buttons:[{type:'ok'}]});
     } else {
@@ -1036,21 +1054,18 @@ document.getElementById('saveBtn').addEventListener('click', async ()=>{
   }
 });
 
-/* ===== SELF-TESTS (не влияют на UI, только логи) ===== */
+/* ===== SELF-TESTS (только в консоль) ===== */
 (function runSelfTests(){
   try{
     const results = [];
     const ok = (name, cond) => results.push({name, ok: !!cond});
 
-    // equalData tests
     ok('equalData: same numbers', equalData({weight:70},{weight:70}) === true);
     ok('equalData: diff numbers', equalData({weight:70},{weight:71}) === false);
     ok('equalData: null equals null', equalData({fat:null},{fat:null}) === true);
 
-    // applyDataToUI test (no crash)
     ok('applyDataToUI: safe call', (function(){ try{ applyDataToUI({weight:80}); return true; }catch{ return false; } })());
 
-    // Accordion toggle test (no crash and class toggles)
     (function(){
       const sec = document.createElement('section'); sec.id='__t'; sec.className='section collapsed';
       const h = document.createElement('div'); h.className='section-h'; h.setAttribute('data-toggle','__t');
@@ -1062,7 +1077,6 @@ document.getElementById('saveBtn').addEventListener('click', async ()=>{
       sec.remove(); h.remove();
     })();
 
-    // BackButton binding exists (cannot assert Telegram API in web), just no-throw call
     ok('bindBack callable', (function(){ try{ bindBack(); return true; }catch{ return false; } })());
 
     console.log('[SELF-TEST]', results.map(r=>`${r.ok?'✅':'❌'} ${r.name}`).join(' | '));
