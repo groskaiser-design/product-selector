@@ -541,7 +541,7 @@ async function saveMeasurementsToDB(values){
   };
 }
 
-  /* ============================================================
+ /* ============================================================
  * BLOCK D — UI: одна привязка «Сохранить», жёсткий кулдаун 10с,
  * попап при частых кликах, per-user память row_calc,
  * гарантированное сворачивание аккордеона.
@@ -589,8 +589,9 @@ function setSavingState(isSaving){
   if (!btn) return;
   const label = btn.querySelector('.btn-label');
   const sp    = btn.querySelector('.spinner');
+
+  // ВАЖНО: НЕ используем btn.disabled — иначе не поймаем повторные клики для попапа
   btn.classList.toggle('loading', isSaving);
-  btn.disabled = isSaving;
   btn.setAttribute('aria-busy', String(isSaving));
   btn.setAttribute('data-saving', String(isSaving));
   if (sp)    sp.hidden = !isSaving;
@@ -655,37 +656,19 @@ function collectWheelValues(){
   return out;
 }
 
-/* --- делегация событий + перехват по disabled + жёсткий кулдаун 10с --- */
+/* --- делегация событий (кнопка может пересоздаваться) и жёсткий кулдаун 10с --- */
 (function bindSaveDelegation(){
   if (window.__saveDelegationInstalled) return;
   window.__saveDelegationInstalled = true;
 
-  // 0) Перехватываем pointerdown в capture, чтобы срабатывать даже по disabled
-  document.addEventListener('pointerdown', async (e)=>{
-    const btn = e.target?.closest?.(SAVE_BTN_SELECTOR);
-    if (!btn) return;
-    const now = Date.now();
-    const inCooldown = (now - __lastAllowedTs) < COOLDOWN_MS;
-
-    // если идёт сохранение или кулдаун — блокируем и показываем попап
-    if (savingInFlight || inCooldown){
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      try { window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred?.('error'); } catch {}
-      await showPopupSafe('Слишком часто', 'Не чаще одного раза в 10 секунд.');
-      return;
-    }
-    // иначе — пропускаем событие дальше (клик пройдет в onSaveClick)
-  }, true);
-
-  // 1) Нормальные клики (когда разрешено)
+  // Нормальные клики — всегда ловим и решаем в onSaveClick, кнопка НЕ disabled
   document.addEventListener('click', (e)=>{
     const btn = e.target?.closest?.(SAVE_BTN_SELECTOR);
     if (!btn) return;
     onSaveClick(e);
   });
 
-  // 2) Визуальный отклик
+  // Визуальный отклик
   ['pointerdown','mousedown','touchstart'].forEach(ev =>
     document.addEventListener(ev, (e)=>{
       const btn = e.target?.closest?.(SAVE_BTN_SELECTOR);
@@ -705,14 +688,21 @@ async function onSaveClick(e){
   const tg  = window.Telegram?.WebApp;
   const now = Date.now();
 
-  // финальная защита (на случай пропуска capture)
-  if (savingInFlight || (now - __lastAllowedTs) < COOLDOWN_MS){
+  // попап, если идёт сохранение
+  if (savingInFlight){
     try { tg?.HapticFeedback?.notificationOccurred?.('error'); } catch {}
     await showPopupSafe('Слишком часто', 'Не чаще одного раза в 10 секунд.');
     return;
   }
 
-  // фиксируем момент РАЗРЕШЁННОГО нажатия сразу — окно 10с начато
+  // попап, если не прошло 10с после последнего разрешённого нажатия
+  if (now - __lastAllowedTs < COOLDOWN_MS){
+    try { tg?.HapticFeedback?.notificationOccurred?.('error'); } catch {}
+    await showPopupSafe('Слишком часто', 'Не чаще одного раза в 10 секунд.');
+    return;
+  }
+
+  // фиксируем «разрешённый» клик сразу
   __lastAllowedTs = now;
 
   savingInFlight = true;
@@ -726,7 +716,6 @@ async function onSaveClick(e){
 
     setRowCalcForUser(res.row_calc);
 
-    // снимаем спиннер ДО схлопывания и попапа
     setSavingState(false);
     collapseAccordionSafe();
 
@@ -734,8 +723,7 @@ async function onSaveClick(e){
     await showPopupSafe('Готово', 'Данные сохранены.');
   }catch(err){
     setSavingState(false);
-
-    // если сервер прислал rate limit — сообщение то же самое
+    // серверный rate-limit — тот же попап
     if (err?.code === 429 || /too\s*many\s*requests|rate[-_\s]*limit|слишком\s+часто|429/i.test(String(err?.message||err))){
       try { tg?.HapticFeedback?.notificationOccurred?.('error'); } catch {}
       await showPopupSafe('Слишком часто', 'Не чаще одного раза в 10 секунд.');
