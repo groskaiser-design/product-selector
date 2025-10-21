@@ -531,7 +531,10 @@ async function saveToDB(){
 /* ============================================================
  *  BLOCK D: Привязка кнопки "Сохранить"
  * ============================================================ */
+
 const saveBtn = document.getElementById('saveBtn');
+
+// Анимация нажатия
 ['pointerdown','touchstart','mousedown'].forEach(ev =>
   saveBtn.addEventListener(ev, ()=> saveBtn.classList.add('pressed'), {passive:true})
 );
@@ -539,6 +542,7 @@ const saveBtn = document.getElementById('saveBtn');
   saveBtn.addEventListener(ev, ()=> saveBtn.classList.remove('pressed'), {passive:true})
 );
 
+// Смена состояния кнопки/спиннера
 function setSavingState(isSaving){
   const label = saveBtn.querySelector('.btn-label');
   const sp = saveBtn.querySelector('.spinner');
@@ -549,6 +553,7 @@ function setSavingState(isSaving){
   if (label) label.textContent = isSaving ? 'Обработка…' : 'Сохранить';
 }
 
+// Сворачиваем раздел «Замеры»
 function collapseMeasures(){
   const measuresSec = document.getElementById('sec-measures');
   const measuresHeader = document.querySelector('[data-toggle="sec-measures"]');
@@ -556,39 +561,41 @@ function collapseMeasures(){
   if (measuresHeader) measuresHeader.setAttribute('aria-expanded','false');
 }
 
+// Универсальный popup (или alert)
 function showPopup(title, message){
   const tg = window.Telegram?.WebApp;
   if (tg?.showPopup) tg.showPopup({title, message, buttons:[{type:'ok'}]});
   else alert(`${title}\n\n${message}`);
 }
 
-function updateLastTime(tsIso){
-  const el = document.getElementById('lastTime');
-  if (!el || !tsIso) return;
-  const d = new Date(tsIso);
-  const fmt = new Intl.DateTimeFormat(undefined, {dateStyle:'medium', timeStyle:'short'});
-  el.textContent = 'Последний замер: ' + fmt.format(d);
+// Сбор значений из всех «крутилок»
+function collectWheelValues(){
+  const out = {};
+  for (const cfg of FIELDS){
+    const fieldEl = fieldByKey[cfg.key];
+    const w = wheels[cfg.key] || ensureWheel(fieldEl, cfg); // ленивая инициализация
+    const cb = fieldEl?.querySelector('#opt_' + cfg.key);
+    out[cfg.key] = (cfg.optional && cb && cb.checked) ? null : w.value;
+  }
+  return out;
 }
 
+// Клик по «Сохранить»: собираем значения, показываем UX, без памяти/бэкенда
 saveBtn.addEventListener('click', async ()=>{
   const tg = window.Telegram?.WebApp;
   try{ tg?.HapticFeedback?.impactOccurred('light'); }catch(e){}
 
+  const values = collectWheelValues();
+  console.log('[MEASUREMENTS]', values); // здесь у вас готовый объект со значениями
+
   setSavingState(true);
   try { tg?.MainButton?.showProgress?.(); } catch(e){}
+  await new Promise(r=>setTimeout(r, 500)); // короткая имитация обработки
+  setSavingState(false);
+  try { tg?.MainButton?.hideProgress?.(); } catch(e){}
 
-  try{
-    const res = await saveToDB();
-    updateLastTime(res.ts_iso);
-    collapseMeasures();
-    showPopup('Готово', 'Данные сохранены.');
-  }catch(err){
-    console.error('[save] error:', err);
-    showPopup('Ошибка', String(err && err.message || err));
-  }finally{
-    setSavingState(false);
-    try { tg?.MainButton?.hideProgress?.(); } catch(e){}
-  }
+  collapseMeasures();
+  showPopup('Готово', 'Данные собраны. Откройте консоль, чтобы посмотреть объект.');
 });
 
 /* ============================================================
