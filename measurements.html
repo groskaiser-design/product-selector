@@ -543,18 +543,17 @@ async function saveMeasurementsToDB(values){
 
 /* ============================================================
  * BLOCK D — один хендлер «Сохранить», ЖЁСТКИЙ кулдаун 10с,
- * попап при частых кликах, без disabled/pe:none,
- * работает даже с оверлеями (хит-тест по координатам),
- * гарантированное схлопывание аккордеона.
+ * попап при частых кликах, без disabled, с вибро,
+ * работает даже с оверлеями (хит-тест), схлоп аккордеона.
  * ============================================================ */
 
 var savingInFlight = false;
 
-/* --- жёсткий кулдаун: 10 000 мс между РАЗРЕШЁННЫМИ нажатиями --- */
+/* --- кулдаун: следующее разрешённое нажатие не раньше __unlockAt --- */
 var COOLDOWN_MS = 10000;
-var __lastAllowedTs = 0; // когда последний раз реально запускали сохранение
+var __unlockAt = 0; // timestamp (ms), когда снова можно сохранять
 
-/* --- per-user device memory for row_calc --- */
+/* --- per-user memory for row_calc --- */
 var ROWCALC_KEY_PREFIX = 'macros:last_row_calc:';
 function currentUserId(){ 
   try { return (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe && window.Telegram.WebApp.initDataUnsafe.user && window.Telegram.WebApp.initDataUnsafe.user.id) || 'anon'; }
@@ -570,12 +569,8 @@ function setRowCalcForUser(rowCalc, uid){
 }
 function getRowCalcForUser(uid){
   if (typeof uid === 'undefined') uid = currentUserId();
-  if (window.__rowCalcByUid && (String(uid) in window.__rowCalcByUid)) {
-    return window.__rowCalcByUid[String(uid)];
-  }
-  var v = null;
-  try { v = localStorage.getItem(rowCalcKey(uid)); }
-  catch(e) { try { v = sessionStorage.getItem(rowCalcKey(uid)); } catch(e2){} }
+  if (window.__rowCalcByUid && (String(uid) in window.__rowCalcByUid)) return window.__rowCalcByUid[String(uid)];
+  var v = null; try { v = localStorage.getItem(rowCalcKey(uid)); } catch(e) { try { v = sessionStorage.getItem(rowCalcKey(uid)); } catch(e2){} }
   var n = (v == null) ? null : Number(v);
   if (!window.__rowCalcByUid) window.__rowCalcByUid = {};
   window.__rowCalcByUid[String(uid)] = isNaN(n) ? null : n;
@@ -593,34 +588,36 @@ function setSavingState(isSaving){
   var label = btn.querySelector('.btn-label');
   var sp    = btn.querySelector('.spinner');
 
-  // ВАЖНО: НЕ используем btn.disabled и не даём стилям вырубить события
-  if (isSaving) {
-    btn.classList.add('loading');
-  } else {
-    btn.classList.remove('loading');
-  }
-  // На всякий случай держим активным
+  // ВАЖНО: не используем disabled и не даём стилям вырубить события
+  if (isSaving) { btn.classList.add('loading'); } else { btn.classList.remove('loading'); }
   try { btn.style.setProperty('pointer-events', 'auto', 'important'); } catch(e){}
   btn.setAttribute('aria-busy', String(isSaving));
   btn.setAttribute('data-saving', String(isSaving));
-
   if (sp)    sp.hidden = !isSaving;
   if (label) label.textContent = isSaving ? 'Обработка…' : 'Сохранить';
 }
 
-/* --- popup helper --- */
-async function showPopupSafe(title, message){
-  var tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
-  if (!(tg && tg.showPopup)){ alert(title + '\n\n' + message); return; }
-  if (window.__popupOpen) return;
-  window.__popupOpen = true;
-  try{
-    await new Promise(function(resolve){
-      var onClose = function(){ try{tg.offEvent('popup_closed', onClose);}catch(e){} window.__popupOpen=false; resolve(); };
-      try{ tg.onEvent('popup_closed', onClose); }catch(e){}
-      tg.showPopup({ title: title, message: message, buttons:[{type:'ok'}] });
-    });
-  }finally{ window.__popupOpen = false; }
+/* --- popup helper + вибро --- */
+async function showPopupSafe(title, message, haptic){
+  try {
+    var tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
+    if (haptic && tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred) {
+      // 'success' | 'warning' | 'error'
+      tg.HapticFeedback.notificationOccurred(haptic);
+    }
+    if (!(tg && tg.showPopup)){ alert(title + '\n\n' + message); return; }
+    if (window.__popupOpen) return;
+    window.__popupOpen = true;
+    try{
+      await new Promise(function(resolve){
+        var onClose = function(){ try{tg.offEvent('popup_closed', onClose);}catch(e){} window.__popupOpen=false; resolve(); };
+        try{ tg.onEvent('popup_closed', onClose); }catch(e){}
+        tg.showPopup({ title:title, message:message, buttons:[{type:'ok'}] });
+      });
+    }finally{ window.__popupOpen = false; }
+  } catch(e) {
+    try { alert(title + '\n\n' + message); } catch(_) {}
+  }
 }
 
 /* --- схлоп аккордеона --- */
@@ -653,7 +650,7 @@ function collectWheelValues(){
   return out;
 }
 
-/* --- утилиты для гейта: хитовое попадание по кнопке --- */
+/* --- утилиты гейта: определяем, что пользователь действительно тыкнул по кнопке --- */
 function _pointFromEvent(e){
   try{
     if (e && e.touches && e.touches[0]) return { x: e.touches[0].clientX, y: e.touches[0].clientY };
@@ -663,79 +660,61 @@ function _pointFromEvent(e){
 }
 function _isEventOnSave(e){
   var btn = getSaveBtn(); if (!btn) return false;
-
-  // 1) обычный случай: таргет внутри кнопки
-  var t = e.target;
-  if (t && t.closest) {
-    try { if (t.closest(SAVE_BTN_SELECTOR)) return true; } catch(ex){}
+  if (e && e.target && e.target.closest) {
+    try { if (e.target.closest(SAVE_BTN_SELECTOR)) return true; } catch(ex){}
   }
-  // 2) оверлей закрывает кнопку — проверяем координаты указателя против bbox кнопки
-  var p = _pointFromEvent(e);
-  if (!p) return false;
-  var r = btn.getBoundingClientRect();
-  if (!r) return false;
+  // хит-тест по координатам (если сверху оверлей)
+  var p = _pointFromEvent(e); if (!p) return false;
+  var r = btn.getBoundingClientRect(); if (!r) return false;
   return (p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom);
 }
 
-/* --- делегация + CAPTURE-гейт: показываем попап всегда, даже с оверлеями --- */
+/* --- делегация + CAPTURE-гейт: показываем попап ВСЕГДА внутри 10с и во время сохранения --- */
 (function bindSaveDelegation(){
   if (window.__saveDelegationInstalled) return; 
   window.__saveDelegationInstalled = true;
 
-  async function gate(e){
+  function gate(e){
     if (!_isEventOnSave(e)) return;
     var now = Date.now();
-    if (savingInFlight || (now - __lastAllowedTs) < COOLDOWN_MS){
-      // блокируем и сразу попап — до того как кто-то отменит/поглотит событие
+    if (savingInFlight || (now < __unlockAt)){
+      // мгновенный попап + вибро «error», блокируем событие
       try { e.preventDefault(); } catch(ex){}
       try { if (e.stopImmediatePropagation) e.stopImmediatePropagation(); else if (e.stopPropagation) e.stopPropagation(); } catch(ex){}
-      await showPopupSafe('Слишком часто', 'Не чаще одного раза в 10 секунд.');
+      // без await, чтобы быть в синхронном жесте пользователя
+      showPopupSafe('Слишком часто', 'Не чаще одного раза в 10 секунд.', 'error');
     }
   }
 
-  // Ставим слушатели как можно раньше в цепочке (и на window, и на document)
+  // Ставим capture-слушатели максимально рано (и на window, и на document)
   ['pointerdown','touchstart','mousedown','click'].forEach(function(ev){
     try { window.addEventListener(ev, gate, true); } catch(ex){}
     try { document.addEventListener(ev, gate, true); } catch(ex2){}
   });
-  // Доступность: Enter/Space
-  try {
-    document.addEventListener('keydown', async function(e){
-      if (!_isEventOnSave(e)) return;
-      if (!(e.key === 'Enter' || e.key === ' ' || e.code === 'Space')) return;
-      var now = Date.now();
-      if (savingInFlight || (now - __lastAllowedTs) < COOLDOWN_MS){
-        try { e.preventDefault(); } catch(ex){}
-        try { if (e.stopImmediatePropagation) e.stopImmediatePropagation(); else if (e.stopPropagation) e.stopPropagation(); } catch(ex2){}
-        await showPopupSafe('Слишком часто', 'Не чаще одного раза в 10 секунд.');
-      }
-    }, true);
-  } catch(ex3){}
 
-  // Нормальный запуск сохранения (пузырьковый клик)
+  // Основной «клик» запуска сохранения (пузыри)
   document.addEventListener('click', function(e){
-    var t = e.target;
-    var inside = false;
-    if (t && t.closest) { try { inside = !!t.closest(SAVE_BTN_SELECTOR); } catch(ex){} }
-    if (!inside && !_isEventOnSave(e)) return; // хитовое попадание
+    if (!_isEventOnSave(e)) return;
     onSaveClick(e);
   });
 })();
 
 async function onSaveClick(e){
   if (e && e.preventDefault) try{ e.preventDefault(); }catch(ex){}
+  var tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
   var now = Date.now();
 
-  // финальная защита (если вдруг прошли мимо capture)
-  if (savingInFlight || (now - __lastAllowedTs) < COOLDOWN_MS){
-    await showPopupSafe('Слишком часто', 'Не чаще одного раза в 10 секунд.');
+  // дубль-проверка на всякий случай
+  if (savingInFlight || (now < __unlockAt)){
+    showPopupSafe('Слишком часто', 'Не чаще одного раза в 10 секунд.', 'error');
     return;
   }
 
-  // старт «разрешённого» окна — фиксируем сразу
-  __lastAllowedTs = now;
+  // старт: ставим окно кулдауна НА ВПЕРЁД
+  __unlockAt = now + COOLDOWN_MS;
   savingInFlight = true;
   setSavingState(true);
+  try { if (tg && tg.HapticFeedback && tg.HapticFeedback.impactOccurred) tg.HapticFeedback.impactOccurred('light'); } catch(_){}
 
   try{
     var values = collectWheelValues();
@@ -744,16 +723,20 @@ async function onSaveClick(e){
 
     setSavingState(false);
     collapseAccordionSafe();
+
+    try { if (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred) tg.HapticFeedback.notificationOccurred('success'); } catch(_){}
     await showPopupSafe('Готово', 'Данные сохранены.');
   }catch(err){
     setSavingState(false);
     var msg = String((err && err.message) || err || '');
-    if (err && err.code === 429 || /too\s*many\s*requests|rate[-_\s]*limit|слишком\s+часто|429/i.test(msg)){
-      await showPopupSafe('Слишком часто', 'Не чаще одного раза в 10 секунд.');
+    if ((err && err.code === 429) || /too\s*many\s*requests|rate[-_\s]*limit|слишком\s+часто|429/i.test(msg)){
+      // правило одно: 10с; просто сигналим
+      showPopupSafe('Слишком часто', 'Не чаще одного раза в 10 секунд.', 'error');
     } else if ((err && err.code === 408) || /timeout/i.test(msg)) {
-      await showPopupSafe('Не сохранено', 'Сервер не ответил вовремя. Повторите позже.');
+      showPopupSafe('Не сохранено', 'Сервер не ответил вовремя. Повторите позже.', 'error');
+      // при таймауте кулдаун уже выставлен — оставляем как есть
     } else {
-      await showPopupSafe('Не сохранено', 'Произошла ошибка при сохранении.');
+      showPopupSafe('Не сохранено', 'Произошла ошибка при сохранении.', 'error');
     }
   } finally {
     savingInFlight = false;
