@@ -545,6 +545,7 @@ async function saveMeasurementsToDB(values){
  * BLOCK D — ЖЁСТКИЙ кулдаун 10с с ПЕРСИСТОМ, попап всегда,
  * без disabled/pointer-events:none, вибро, хит-тест, submit-гейт,
  * гарантированное сворачивание аккордеона.
+ * + ПАТЧ: блокируем повторные клики (никаких POST) и показываем "Too many requests".
  * ============================================================ */
 
 var savingInFlight = false;
@@ -679,46 +680,58 @@ function _isEventOnSave(e){
   return (p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom);
 }
 
-/* --- делегация + CAPTURE-гейт (+ submit), попап ВСЕГДА в 10с и при saving --- */
+/* --- ЖЁСТКИЙ ГЕЙТ КУЛДАУНА: блокируем на capture и перед onSaveClick --- */
+function isCooldownActive(){
+  // true, если идёт сохранение или 10с ещё не прошли
+  return savingInFlight || (Date.now() < _getPersistUnlockAt());
+}
+
 (function bindSaveDelegation(){
   if (window.__saveDelegationInstalled) return; 
   window.__saveDelegationInstalled = true;
 
   function gate(e){
-    if (!_isEventOnSave(e)) return;
-    var now = Date.now();
-    var unlockAt = _getPersistUnlockAt();
-    if (savingInFlight || (now < unlockAt)){
-      try { e.preventDefault(); } catch(ex){}
-      try { if (e.stopImmediatePropagation) e.stopImmediatePropagation(); else if (e.stopPropagation) e.stopPropagation(); } catch(ex){}
-      showPopupSafe('Слишком часто', 'Не чаще одного раза в 10 секунд.', 'error'); // без await
-    }
+    if (!_isEventOnSave(e)) return;    // не наша кнопка — пропускаем
+    if (!isCooldownActive()) return;   // кулдауна нет — пропускаем
+
+    // Жёстко гасим событие и показываем попап
+    try { e.preventDefault(); } catch(_) {}
+    try { e.stopImmediatePropagation(); } catch(_) {}
+    try { e.stopPropagation(); } catch(_) {}
+    try { e.stopPropagationCapture && e.stopPropagationCapture(); } catch(_) {}
+    showPopupSafe('Too many requests', 'Не чаще одного раза в 10 секунд.', 'error'); // без await
   }
 
-  // ранние перехваты кликов/тапов
-  ['pointerdown','touchstart','mousedown','click'].forEach(function(ev){
-    try { window.addEventListener(ev, gate, true); } catch(ex){}
-    try { document.addEventListener(ev, gate, true); } catch(ex2){}
+  // Ранние перехваты кликов/тапов (CAPTURE)
+  ['pointerdown','touchstart','mousedown','click'].forEach((ev)=>{
+    try { window.addEventListener(ev, gate, true); } catch(_){}
+    try { document.addEventListener(ev, gate, true); } catch(_){}
   });
 
-  // перехват submit (если форма)
+  // Перехват submit (если кнопка в форме)
   try {
     document.addEventListener('submit', function(e){
-      var btn = getSaveBtn();
+      const btn = getSaveBtn();
       if (!btn) return;
       if (e && e.target && e.target.contains && e.target.contains(btn)) {
         gate(e);
       }
     }, true);
-  } catch(ex3){}
+  } catch(_){}
 
-  // запуск сохранения (пузыри)
+  // Финальный запуск сохранения (BUBBLE) — с подстраховкой
   document.addEventListener('click', function(e){
-    if (!_isEventOnSave(e)) return;
-    onSaveClick(e);
+    if (e.defaultPrevented) return;     // кто-то уже отменил — выходим
+    if (!_isEventOnSave(e)) return;     // не по нашей кнопке
+    if (isCooldownActive()){            // второй барьер
+      showPopupSafe('Too many requests', 'Не чаще одного раза в 10 секунд.', 'error');
+      return;
+    }
+    onSaveClick(e);                     // сюда попадаем только вне кулдауна
   });
 })();
 
+/* --- запуск сохранения --- */
 async function onSaveClick(e){
   if (e && e.preventDefault) try{ e.preventDefault(); }catch(ex){}
   var tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
@@ -727,7 +740,7 @@ async function onSaveClick(e){
 
   // финальная защита
   if (savingInFlight || (now < unlockAt)){
-    showPopupSafe('Слишком часто', 'Не чаще одного раза в 10 секунд.', 'error');
+    showPopupSafe('Too many requests', 'Не чаще одного раза в 10 секунд.', 'error');
     return;
   }
 
@@ -751,7 +764,7 @@ async function onSaveClick(e){
     setSavingState(false);
     var msg = String((err && err.message) || err || '');
     if ((err && err.code === 429) || /too\s*many\s*requests|rate[-_\s]*limit|слишком\s+часто|429/i.test(msg)){
-      showPopupSafe('Слишком часто', 'Не чаще одного раза в 10 секунд.', 'error');
+      showPopupSafe('Too many requests', 'Не чаще одного раза в 10 секунд.', 'error');
     } else if ((err && err.code === 408) || /timeout/i.test(msg)) {
       showPopupSafe('Не сохранено', 'Сервер не ответил вовремя. Повторите позже.', 'error');
     } else {
@@ -761,6 +774,7 @@ async function onSaveClick(e){
     savingInFlight = false;
   }
 }
+
   
 
 /* ============================================================
