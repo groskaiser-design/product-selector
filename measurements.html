@@ -548,18 +548,21 @@ async function saveMeasurementsToDB(values){
  * + ПАТЧ: блокируем повторные клики (никаких POST) и показываем "Too many requests".
  * ============================================================ */
 
-var savingInFlight = false;
+  /* ============================================================
+ * BLOCK D — ЖЁСТКИЙ кулдаун 10с с ПЕРСИСТОМ
+ * ============================================================ */
 
-/* --- кулдаун --- */
-var COOLDOWN_MS   = 10000;
-var COOLDOWN_KEY  = 'macros:save_cooldown_until';
-var __unlockAtMem = 0; // локальная память
+var savingInFlight = false;
+var COOLDOWN_MS = 10000;
+var COOLDOWN_KEY = 'macros:save_cooldown_until';
+var __unlockAtMem = 0;
 
 function _getPersistUnlockAt(){
   var v = 0;
   try { v = Number(localStorage.getItem(COOLDOWN_KEY)) || 0; } catch(e){}
   return Math.max(__unlockAtMem, v);
 }
+
 function _setPersistUnlockAt(ts){
   __unlockAtMem = ts;
   try { localStorage.setItem(COOLDOWN_KEY, String(ts)); } catch(e){}
@@ -592,41 +595,43 @@ window.getRowCalcForUser = getRowCalcForUser;
 window.setRowCalcForUser = setRowCalcForUser;
 
 /* --- кнопка --- */
-var SAVE_BTN_SELECTOR = '#saveBtn';
 function getSaveBtn(){ return document.getElementById('saveBtn'); }
 
 function setSavingState(isSaving){
   var btn = getSaveBtn(); if (!btn) return;
   var label = btn.querySelector('.btn-label');
-  var sp    = btn.querySelector('.spinner');
-
-  // НЕ используем disabled. Не даём стилям вырубить события.
+  var sp = btn.querySelector('.spinner');
+  
   if (isSaving) { btn.classList.add('loading'); } else { btn.classList.remove('loading'); }
-  try { btn.style.setProperty('pointer-events', 'auto', 'important'); } catch(e){}
   btn.setAttribute('aria-busy', String(isSaving));
-  btn.setAttribute('data-saving', String(isSaving));
-
-  if (sp)    sp.hidden = !isSaving;
+  
+  if (sp) sp.hidden = !isSaving;
   if (label) label.textContent = isSaving ? 'Обработка…' : 'Сохранить';
 }
 
-/* --- popup + вибро --- */
+/* --- popup --- */
 async function showPopupSafe(title, message, haptic){
   try {
     var tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
     if (haptic && tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred) {
-      tg.HapticFeedback.notificationOccurred(haptic); // 'success' | 'warning' | 'error'
+      tg.HapticFeedback.notificationOccurred(haptic);
     }
     if (!(tg && tg.showPopup)){ alert(title + '\n\n' + message); return; }
     if (window.__popupOpen) return;
     window.__popupOpen = true;
     try{
       await new Promise(function(resolve){
-        var onClose = function(){ try{tg.offEvent('popup_closed', onClose);}catch(e){} window.__popupOpen=false; resolve(); };
+        var onClose = function(){ 
+          try{ tg.offEvent('popup_closed', onClose); }catch(e){} 
+          window.__popupOpen = false; 
+          resolve(); 
+        };
         try{ tg.onEvent('popup_closed', onClose); }catch(e){}
-        tg.showPopup({ title:title, message:message, buttons:[{type:'ok'}] });
+        tg.showPopup({ title: title, message: message, buttons: [{type:'ok'}] });
       });
-    }finally{ window.__popupOpen = false; }
+    } finally { 
+      window.__popupOpen = false; 
+    }
   } catch(e) {
     try { alert(title + '\n\n' + message); } catch(_) {}
   }
@@ -635,17 +640,33 @@ async function showPopupSafe(title, message, haptic){
 /* --- схлоп аккордеона --- */
 function collapseAccordionSafe(){
   var act = function(){
-    if (typeof window.collapseMeasures === 'function') { try{ window.collapseMeasures(); return; }catch(e){} }
+    if (typeof window.collapseMeasures === 'function') { 
+      try{ window.collapseMeasures(); return; }catch(e){} 
+    }
     var list1 = document.querySelectorAll('details[open]#sec-measures, details[open][data-section="measures"], #sec-measures details[open]');
     Array.prototype.forEach.call(list1, function(d){ d.open = false; });
     var list2 = document.querySelectorAll('#sec-measures .collapse.show, [data-section="measures"] .collapse.show, .accordion .collapse.show');
-    Array.prototype.forEach.call(list2, function(p){ p.classList.remove('show'); p.style.height=''; p.setAttribute('aria-hidden','true'); });
+    Array.prototype.forEach.call(list2, function(p){ 
+      p.classList.remove('show'); 
+      p.style.height=''; 
+      p.setAttribute('aria-hidden','true'); 
+    });
     var list3 = document.querySelectorAll('[data-bs-toggle="collapse"][aria-expanded="true"], [aria-controls="sec-measures"][aria-expanded="true"]');
-    Array.prototype.forEach.call(list3, function(t){ t.setAttribute('aria-expanded','false'); try{ t.dispatchEvent(new Event('click',{bubbles:true})); }catch(e){} });
+    Array.prototype.forEach.call(list3, function(t){ 
+      t.setAttribute('aria-expanded','false'); 
+      try{ t.dispatchEvent(new Event('click',{bubbles:true})); }catch(e){} 
+    });
     var section = document.getElementById('sec-measures') || document.querySelector('[data-section="measures"]');
-    if (section){ section.classList.add('collapsed'); section.setAttribute('aria-hidden','true'); }
+    if (section){ 
+      section.classList.add('collapsed'); 
+      section.setAttribute('aria-hidden','true'); 
+    }
   };
-  try { requestAnimationFrame(function(){ requestAnimationFrame(act); }); } catch(e) { act(); }
+  try { 
+    requestAnimationFrame(function(){ requestAnimationFrame(act); }); 
+  } catch(e) { 
+    act(); 
+  }
 }
 
 /* --- сбор значений --- */
@@ -655,129 +676,126 @@ function collectWheelValues(){
   for (var i=0; i<FIELDS.length; i++){
     var cfg = FIELDS[i];
     var fieldEl = fieldByKey[cfg.key];
-    var w  = (wheels[cfg.key] || ensureWheel(fieldEl, cfg));
+    var w = (wheels[cfg.key] || ensureWheel(fieldEl, cfg));
     var cb = fieldEl ? fieldEl.querySelector('#opt_' + cfg.key) : null;
     out[cfg.key] = (cfg.optional && cb && cb.checked) ? null : w.value;
   }
   return out;
 }
 
-/* --- утилиты гейта: попали ли по кнопке --- */
-function _pointFromEvent(e){
-  try{
-    if (e && e.touches && e.touches[0]) return { x: e.touches[0].clientX, y: e.touches[0].clientY };
-    if (e && e.changedTouches && e.changedTouches[0]) return { x: e.changedTouches[0].clientX, y: e.changedTouches[0].clientY };
-    return { x: e.clientX, y: e.clientY };
-  }catch(ex){ return null; }
-}
-function _isEventOnSave(e){
-  var btn = getSaveBtn(); if (!btn) return false;
-  if (e && e.target && e.target.closest) {
-    try { if (e.target.closest(SAVE_BTN_SELECTOR)) return true; } catch(ex){}
-  }
-  var p = _pointFromEvent(e); if (!p) return false;
-  var r = btn.getBoundingClientRect(); if (!r) return false;
-  return (p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom);
-}
-
-/* --- ЖЁСТКИЙ ГЕЙТ КУЛДАУНА: блокируем на capture и перед onSaveClick --- */
+/* --- ГЛАВНАЯ ФУНКЦИЯ: проверка кулдауна --- */
 function isCooldownActive(){
-  // true, если идёт сохранение или 10с ещё не прошли
-  return savingInFlight || (Date.now() < _getPersistUnlockAt());
-}
-
-(function bindSaveDelegation(){
-  if (window.__saveDelegationInstalled) return; 
-  window.__saveDelegationInstalled = true;
-
-  function gate(e){
-    if (!_isEventOnSave(e)) return;    // не наша кнопка — пропускаем
-    if (!isCooldownActive()) return;   // кулдауна нет — пропускаем
-
-    // Жёстко гасим событие и показываем попап
-    try { e.preventDefault(); } catch(_) {}
-    try { e.stopImmediatePropagation(); } catch(_) {}
-    try { e.stopPropagation(); } catch(_) {}
-    try { e.stopPropagationCapture && e.stopPropagationCapture(); } catch(_) {}
-    showPopupSafe('Too many requests', 'Не чаще одного раза в 10 секунд.', 'error'); // без await
-  }
-
-  // Ранние перехваты кликов/тапов (CAPTURE)
-  ['pointerdown','touchstart','mousedown','click'].forEach((ev)=>{
-    try { window.addEventListener(ev, gate, true); } catch(_){}
-    try { document.addEventListener(ev, gate, true); } catch(_){}
-  });
-
-  // Перехват submit (если кнопка в форме)
-  try {
-    document.addEventListener('submit', function(e){
-      const btn = getSaveBtn();
-      if (!btn) return;
-      if (e && e.target && e.target.contains && e.target.contains(btn)) {
-        gate(e);
-      }
-    }, true);
-  } catch(_){}
-
-  // Финальный запуск сохранения (BUBBLE) — с подстраховкой
-  document.addEventListener('click', function(e){
-    if (e.defaultPrevented) return;     // кто-то уже отменил — выходим
-    if (!_isEventOnSave(e)) return;     // не по нашей кнопке
-    if (isCooldownActive()){            // второй барьер
-      showPopupSafe('Too many requests', 'Не чаще одного раза в 10 секунд.', 'error');
-      return;
-    }
-    onSaveClick(e);                     // сюда попадаем только вне кулдауна
-  });
-})();
-
-/* --- запуск сохранения --- */
-async function onSaveClick(e){
-  if (e && e.preventDefault) try{ e.preventDefault(); }catch(ex){}
-  var tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
+  if (savingInFlight) return true;
   var now = Date.now();
   var unlockAt = _getPersistUnlockAt();
+  return now < unlockAt;
+}
 
-  // финальная защита
-  if (savingInFlight || (now < unlockAt)){
-    showPopupSafe('Too many requests', 'Не чаще одного раза в 10 секунд.', 'error');
+/* --- ОБРАБОТЧИК КЛИКА ПО КНОПКЕ --- */
+async function handleSaveButtonClick(e){
+  // Всегда предотвращаем дефолтное поведение
+  if (e && e.preventDefault) {
+    try { e.preventDefault(); } catch(ex){}
+  }
+  if (e && e.stopPropagation) {
+    try { e.stopPropagation(); } catch(ex){}
+  }
+  
+  // Проверка кулдауна
+  if (isCooldownActive()){
+    var now = Date.now();
+    var unlockAt = _getPersistUnlockAt();
+    var remaining = Math.ceil((unlockAt - now) / 1000);
+    
+    console.log('🔴 БЛОКИРОВКА:', {
+      savingInFlight: savingInFlight,
+      now: now,
+      unlockAt: unlockAt,
+      remaining: remaining + 's'
+    });
+    
+    await showPopupSafe('Too many requests', 'Не чаще одного раза в 10 секунд.', 'error');
     return;
   }
+  
+  // Запуск сохранения
+  await performSave();
+}
 
-  // старт окна кулдауна — фиксируем и ПЕРСИСТИМ сразу
+/* --- ПРОЦЕСС СОХРАНЕНИЯ --- */
+async function performSave(){
+  var tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
+  var now = Date.now();
+  
+  console.log('✅ Начало сохранения:', new Date(now).toLocaleTimeString());
+  
+  // Устанавливаем кулдаун СРАЗУ
   _setPersistUnlockAt(now + COOLDOWN_MS);
   savingInFlight = true;
   setSavingState(true);
-  try { if (tg && tg.HapticFeedback && tg.HapticFeedback.impactOccurred) tg.HapticFeedback.impactOccurred('light'); } catch(_){}
+  
+  try { 
+    if (tg && tg.HapticFeedback && tg.HapticFeedback.impactOccurred) {
+      tg.HapticFeedback.impactOccurred('light'); 
+    } 
+  } catch(_){}
 
-  try{
+  try {
     var values = collectWheelValues();
-    var res    = await saveMeasurementsToDB(values);
+    var res = await saveMeasurementsToDB(values);
     setRowCalcForUser(res.row_calc);
 
     setSavingState(false);
     collapseAccordionSafe();
 
-    try { if (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred) tg.HapticFeedback.notificationOccurred('success'); } catch(_){}
+    try { 
+      if (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred) {
+        tg.HapticFeedback.notificationOccurred('success'); 
+      } 
+    } catch(_){}
+    
     await showPopupSafe('Готово', 'Данные сохранены.', 'success');
-  }catch(err){
+    
+    console.log('✅ Сохранение завершено. Кулдаун активен до:', new Date(_getPersistUnlockAt()).toLocaleTimeString());
+    
+  } catch(err) {
     setSavingState(false);
+    
     var msg = String((err && err.message) || err || '');
     if ((err && err.code === 429) || /too\s*many\s*requests|rate[-_\s]*limit|слишком\s+часто|429/i.test(msg)){
-      showPopupSafe('Too many requests', 'Не чаще одного раза в 10 секунд.', 'error');
+      await showPopupSafe('Too many requests', 'Не чаще одного раза в 10 секунд.', 'error');
     } else if ((err && err.code === 408) || /timeout/i.test(msg)) {
-      showPopupSafe('Не сохранено', 'Сервер не ответил вовремя. Повторите позже.', 'error');
+      await showPopupSafe('Не сохранено', 'Сервер не ответил вовремя. Повторите позже.', 'error');
     } else {
-      showPopupSafe('Не сохранено', 'Произошла ошибка при сохранении.', 'error');
+      await showPopupSafe('Не сохранено', 'Произошла ошибка при сохранении.', 'error');
     }
+    
+    console.error('❌ Ошибка сохранения:', err);
   } finally {
     savingInFlight = false;
-    // КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: НЕ сбрасываем персистированный кулдаун!
-    // _setPersistUnlockAt устанавливается один раз в начале и остаётся активным 10 секунд
+    console.log('✅ savingInFlight сброшен. Кулдаун активен до:', new Date(_getPersistUnlockAt()).toLocaleTimeString());
   }
 }
-  
 
+/* --- ПРИВЯЗКА ОБРАБОТЧИКА К КНОПКЕ --- */
+(function bindSaveButton(){
+  if (window.__saveButtonBound) return;
+  window.__saveButtonBound = true;
+  
+  var btn = getSaveBtn();
+  if (!btn) {
+    console.error('❌ Кнопка #saveBtn не найдена!');
+    return;
+  }
+  
+  // Единственный обработчик клика
+  btn.addEventListener('click', handleSaveButtonClick, false);
+  
+  console.log('✅ Обработчик кнопки сохранения установлен');
+})();
+
+
+  
 /* ============================================================
  *  BLOCK E: Аккордеон
  * ============================================================ */
