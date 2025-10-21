@@ -517,10 +517,18 @@ async function saveMeasurementsToDB(values){
     clearTimeout(t);
   }
 
+  // --- расширенный детект лимита ---
+  const isRateLimited =
+    resp?.status === 429 ||
+    (json && (json.code === 429 || json.status === 429)) ||
+    /(?:too\s*many\s*requests|rate[-_\s]*limit|429|слишком\s+часто)/i.test(
+      String(json?.error || raw || resp?.statusText || '')
+    );
+
   if (!resp?.ok || !json || json.ok !== true) {
     const msg = (json && json.error) ? json.error : `HTTP ${resp?.status ?? '0'} ${resp?.statusText ?? ''}`.trim();
-    if (/too many requests/i.test(msg)) { const e = new Error('Too many requests'); e.code = 429; throw e; }
-    if (msg === 'timeout' || /network/i.test(String(msg))) { const e = new Error('Сервер не ответил вовремя'); e.code = 408; throw e; }
+    if (isRateLimited) { const e = new Error('Too many requests'); e.code = 429; throw e; }
+    if (msg === 'timeout' || /timeout|network/i.test(String(msg))) { const e = new Error('Сервер не ответил вовремя'); e.code = 408; throw e; }
     const e = new Error(msg || 'Save failed'); e.code = resp?.status ?? 0; throw e;
   }
 
@@ -532,7 +540,6 @@ async function saveMeasurementsToDB(values){
     row_calc:  Number(json.row_calc)
   };
 }
-
 /* ============================================================
  * BLOCK D — UI: одна привязка «Сохранить», кулдаун, попапы
  * + per-user память row_calc + гарантированное сворачивание
@@ -583,6 +590,7 @@ function setSavingState(isSaving){
   btn.classList.toggle('loading', isSaving);
   btn.disabled = isSaving;
   btn.setAttribute('aria-busy', String(isSaving));
+  btn.setAttribute('data-saving', String(isSaving));
   if (sp)    sp.hidden = !isSaving;
   if (label) label.textContent = isSaving ? 'Обработка…' : 'Сохранить';
 }
@@ -606,15 +614,10 @@ async function showPopupSafe(title, message){
 /* --- гарантированное сворачивание аккордеона анкеты --- */
 function collapseAccordionSafe(){
   const act = () => {
-    // 0) если есть ф-я проекта
     if (typeof window.collapseMeasures === 'function') { try{ window.collapseMeasures(); return; }catch{} }
-
-    // 1) закрываем все <details open> в секции
     document.querySelectorAll(
       'details[open]#sec-measures, details[open][data-section="measures"], #sec-measures details[open]'
     ).forEach(d => { d.open = false; });
-
-    // 2) закрываем любые .collapse.show (Bootstrap/аналоги)
     document.querySelectorAll(
       '#sec-measures .collapse.show, [data-section="measures"] .collapse.show, .accordion .collapse.show'
     ).forEach(panel => {
@@ -622,23 +625,18 @@ function collapseAccordionSafe(){
       panel.style.height = '';
       panel.setAttribute('aria-hidden','true');
     });
-
-    // 3) приводим тогглеры в «закрыто»
     document.querySelectorAll(
       '[data-bs-toggle="collapse"][aria-expanded="true"], [aria-controls="sec-measures"][aria-expanded="true"]'
     ).forEach(toggler => {
       toggler.setAttribute('aria-expanded','false');
       try { toggler.dispatchEvent(new Event('click', {bubbles:true})); } catch {}
     });
-
-    // 4) общий фолбэк
     const section = document.getElementById('sec-measures') || document.querySelector('[data-section="measures"]');
     if (section){
       section.classList.add('collapsed');
       section.setAttribute('aria-hidden','true');
     }
   };
-  // двойной rAF — после завершения текущих мутаций/анимаций
   try { requestAnimationFrame(() => requestAnimationFrame(act)); } catch { act(); }
 }
 
@@ -655,17 +653,19 @@ function collectWheelValues(){
   return out;
 }
 
-/* --- делегация событий: работает даже если кнопку пересоздали --- */
+/* --- делегация событий + перехват по disabled --- */
 (function bindSaveDelegation(){
   if (window.__saveDelegationInstalled) return;
   window.__saveDelegationInstalled = true;
 
+  // 1) Нормальные клики (когда кнопка не disabled)
   document.addEventListener('click', (e)=>{
     const btn = e.target?.closest?.(SAVE_BTN_SELECTOR);
     if (!btn) return;
     onSaveClick(e);
   });
 
+  // 2) Визуальный отклик
   ['pointerdown','mousedown','touchstart'].forEach(ev =>
     document.addEventListener(ev, (e)=>{
       const btn = e.target?.closest?.(SAVE_BTN_SELECTOR);
@@ -678,6 +678,33 @@ function collectWheelValues(){
       if (btn) btn.classList.remove('pressed');
     }, true)
   );
+
+  // 3) Capture-перехват на disabled: показываем попап, даже если click не срабатывает
+  document.addEventListener('pointerdown', async (e)=>{
+    const btn = e.target?.closest?.(SAVE_BTN_SELECTOR);
+    if (!btn) return;
+    const now = Date.now();
+
+    // если идёт сохранение — «занято»
+    if (savingInFlight || btn.disabled || btn.getAttribute('data-saving') === 'true'){
+      e.preventDefault();
+      e.stopPropagation();
+      try { window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred?.('error'); } catch {}
+      await showPopupSafe('Слишком часто', 'Идёт сохранение. Подождите пару секунд.');
+      // лёгкий анти-спам, чтобы не спамили попапом
+      __lastSaveTs = now;
+      return;
+    }
+
+    // клиентский кулдаун
+    if (now - __lastSaveTs < MIN_SAVE_INTERVAL_MS){
+      e.preventDefault();
+      e.stopPropagation();
+      try { window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred?.('error'); } catch {}
+      await showPopupSafe('Слишком часто', 'Подождите пару секунд и попробуйте снова.');
+      __lastSaveTs = now;
+    }
+  }, true);
 })();
 
 async function onSaveClick(e){
@@ -685,18 +712,19 @@ async function onSaveClick(e){
   const tg = window.Telegram?.WebApp;
   const now = Date.now();
 
-  // если уже идёт сохранение — явно сообщаем пользователю
+  // защита повторных кликов, если всё-таки пришёл click
   if (savingInFlight){
     try { tg?.HapticFeedback?.notificationOccurred?.('error'); } catch {}
     await showPopupSafe('Слишком часто', 'Идёт сохранение. Подождите пару секунд.');
+    __lastSaveTs = now;
     return;
   }
 
-  // клиентский кулдаун для попапа «Слишком часто»
+  // клиентский кулдаун
   if (now - __lastSaveTs < MIN_SAVE_INTERVAL_MS){
     try { tg?.HapticFeedback?.notificationOccurred?.('error'); } catch {}
     await showPopupSafe('Слишком часто', 'Подождите пару секунд и попробуйте снова.');
-    __lastSaveTs = now; // чтобы не спамить попапами при «долблении»
+    __lastSaveTs = now;
     return;
   }
 
@@ -709,42 +737,38 @@ async function onSaveClick(e){
     const values = collectWheelValues();
     const res    = await saveMeasurementsToDB(values);
 
-    // сохраняем row_calc per-user
     setRowCalcForUser(res.row_calc);
 
     // снимаем спиннер ДО схлопывания и попапа
     setSavingState(false);
-
-    // гарантированно схлопываем аккордеон
     collapseAccordionSafe();
 
     try { tg?.HapticFeedback?.notificationOccurred?.('success'); } catch {}
     await showPopupSafe('Готово', 'Данные сохранены.');
 
-    // обновляем кулдаун — можно снова жать после интервала
+    // обновляем кулдаун
     __lastSaveTs = Date.now();
 
   }catch(err){
     const msg = String(err && err.message || err);
     setSavingState(false);
 
-    if (/too many requests/i.test(msg) || err?.code === 429){
+    if (/too\s*many\s*requests|слишком\s+часто|rate[-_\s]*limit|429/i.test(msg) || err?.code === 429){
       try { tg?.HapticFeedback?.notificationOccurred?.('error'); } catch {}
       await showPopupSafe('Слишком часто', 'Подождите пару секунд и попробуйте снова.');
-      __lastSaveTs = Date.now(); // учитываем серверный лимит
+      __lastSaveTs = Date.now();
     } else if (err?.code === 408 || /timeout/i.test(msg)) {
       try { tg?.HapticFeedback?.notificationOccurred?.('error'); } catch {}
       await showPopupSafe('Не сохранено', 'Сервер не ответил вовремя. Проверьте сеть и повторите.');
-      // кулдаун не ставим — можно повторить сразу
     } else {
       try { tg?.HapticFeedback?.notificationOccurred?.('error'); } catch {}
       await showPopupSafe('Не сохранено', 'Произошла ошибка при сохранении.');
-      // кулдаун не ставим — можно повторить сразу
     }
   } finally {
-    savingInFlight = false; // критично для повторного сохранения в той же сессии
+    savingInFlight = false;
   }
 }
+
 
   
 
