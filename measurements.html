@@ -449,9 +449,8 @@ if (!document.getElementById('sec-measures').classList.contains('collapsed')){
  * BLOCK C — SAVE TO DB (Apps Script, no preflight, pure logic)
  * =========================== */
 
-// ← ОСТАВЬТЕ вашу ссылку как есть
 const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbwjvkS5P7IcvTCFRbAb9jflLuD-R2IN3Azhg5_niKywHN3pJLDTBCL4kD2W-eDjKNnJmA/exec';
-const APP_VERSION = 'frontend-2025-10-21';
+const APP_VERSION  = 'frontend-2025-10-21';
 
 function nowIso(){ return new Date().toISOString(); }
 function todayLocalISO(tz){
@@ -470,37 +469,35 @@ function clientTZ(){
 function genSaveId(){ return Date.now() + '_' + Math.random().toString(36).slice(2,10); }
 
 /**
- * Отправка на Apps Script.
- * @param {Object} values — объект значений крутилок (обязателен!)
+ * Отправка в Apps Script
+ * @param {Object} values — значения крутилок (обязательны)
  * @returns {Promise<{ok:boolean,row_all:number,row_calc:number,day_local:string,ts_iso:string}>}
  */
 async function saveMeasurementsToDB(values){
   if (!values || typeof values !== 'object') {
-    throw new Error('Нет данных для сохранения (values пуст).');
+    throw new Error('Нет данных для сохранения.');
   }
 
-  const tg = window.Telegram?.WebApp;
-  const tz = clientTZ();
+  const tg       = window.Telegram?.WebApp;
+  const tz       = clientTZ();
   const dayLocal = todayLocalISO(tz);
-  const tClient = nowIso();
 
   const payload = {
     action: 'save',
-    init_data: String(tg?.initData || ''),           // raw init_data
+    init_data: String(tg?.initData || ''),
     tz,
     client_day_local: dayLocal,
     locale: tg?.initDataUnsafe?.user?.language_code || '',
     source: 'webapp',
     app_version: APP_VERSION,
-    t_client: tClient,
-    save_id: genSaveId(),                            // идемпотентность
-    data: values                                     // <-- только здесь кладём крутилки
+    t_client: nowIso(),
+    save_id: genSaveId(),
+    data: values
   };
 
-  // text/plain — без preflight
   const resp = await fetch(BACKEND_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+    headers: { 'Content-Type': 'text/plain;charset=UTF-8' }, // без preflight
     body: JSON.stringify(payload),
     redirect: 'follow',
     cache: 'no-store',
@@ -510,44 +507,61 @@ async function saveMeasurementsToDB(values){
 
   const raw = await resp.text();
   let json = null;
-  try { json = raw ? JSON.parse(raw) : null; } catch { /* ignore */ }
+  try { json = raw ? JSON.parse(raw) : null; } catch {}
 
-  // Apps Script при ошибках может вернуть 500 + {ok:false,error:"..."}
   if (!resp.ok || !json || json.ok !== true) {
-    const msg = (json && json.error)
-      ? json.error
-      : `HTTP ${resp.status} ${resp.statusText}`;
-    // нормализуем типичное сообщение о лимите
-    if (/too many requests/i.test(msg)) {
-      const err = new Error('Too many requests');
-      err.code = 429;
-      throw err;
-    }
-    const err = new Error(msg || 'Save failed');
-    err.code = resp.status;
-    throw err;
+    const msg = (json && json.error) ? json.error : `HTTP ${resp.status} ${resp.statusText}`;
+    if (/too many requests/i.test(msg)) { const e = new Error('Too many requests'); e.code = 429; throw e; }
+    const e = new Error(msg || 'Save failed'); e.code = resp.status; throw e;
   }
 
-  // успех
   return {
     ok: true,
     day_local: json.day_local,
-    ts_iso: json.ts_iso,
-    row_all: Number(json.row_all),
-    row_calc: Number(json.row_calc)
+    ts_iso:    json.ts_iso,
+    row_all:   Number(json.row_all),
+    row_calc:  Number(json.row_calc)
   };
 }
 
+
 /* ============================================================
- *  BLOCK D — UI: одна привязка «Сохранить», 3 попапа, хаптика
- *  + сохранение row_calc в память устройства
- *  Требует: saveMeasurementsToDB(values) из Block C
+ * BLOCK D — UI: одна привязка «Сохранить», три попапа, хаптика
+ * + пер-пользовательская память row_calc на устройстве
  * ============================================================ */
 
 const saveBtn = document.getElementById('saveBtn');
 let savingInFlight = false;
 
-// Мини-helpers
+/* --- per-user device memory for row_calc --- */
+const ROWCALC_KEY_PREFIX = 'macros:last_row_calc:';
+function currentUserId(){
+  return (window.Telegram?.WebApp?.initDataUnsafe?.user?.id) ?? 'anon';
+}
+function rowCalcKey(uid){ return ROWCALC_KEY_PREFIX + String(uid); }
+function setRowCalcForUser(rowCalc, uid = currentUserId()){
+  try { localStorage.setItem(rowCalcKey(uid), String(rowCalc)); }
+  catch { try { sessionStorage.setItem(rowCalcKey(uid), String(rowCalc)); } catch {} }
+  window.__rowCalcByUid = window.__rowCalcByUid || {};
+  window.__rowCalcByUid[String(uid)] = Number(rowCalc);
+}
+function getRowCalcForUser(uid = currentUserId()){
+  if (window.__rowCalcByUid && String(uid) in window.__rowCalcByUid) {
+    return window.__rowCalcByUid[String(uid)];
+  }
+  let v = null;
+  try { v = localStorage.getItem(rowCalcKey(uid)); }
+  catch { try { v = sessionStorage.getItem(rowCalcKey(uid)); } catch {} }
+  const n = v == null ? null : Number(v);
+  window.__rowCalcByUid = window.__rowCalcByUid || {};
+  window.__rowCalcByUid[String(uid)] = isNaN(n) ? null : n;
+  return window.__rowCalcByUid[String(uid)];
+}
+// Экспорт на всякий случай
+window.getRowCalcForUser = getRowCalcForUser;
+window.setRowCalcForUser = setRowCalcForUser;
+
+/* --- UX helpers --- */
 function setSavingState(isSaving){
   if (!saveBtn) return;
   const label = saveBtn.querySelector('.btn-label');
@@ -559,11 +573,10 @@ function setSavingState(isSaving){
   if (label) label.textContent = isSaving ? 'Обработка…' : 'Сохранить';
 }
 
-// Безопасный popup (не открывает второй поверх)
 async function showPopupSafe(title, message){
   const tg = window.Telegram?.WebApp;
   if (!tg?.showPopup){ alert(`${title}\n\n${message}`); return; }
-  if (window.__popupOpen) return;           // уже открыт — молча игнорируем
+  if (window.__popupOpen) return;
   window.__popupOpen = true;
   try{
     await new Promise((resolve)=>{
@@ -571,19 +584,16 @@ async function showPopupSafe(title, message){
       try{ tg.onEvent('popup_closed', onClose); }catch{}
       tg.showPopup({ title, message, buttons:[{type:'ok'}] });
     });
-  }finally{ window.__popupOpen = false; }
+  }finally{
+    window.__popupOpen = false;
+  }
 }
 
-// Сохранить локально номер строки calc (на устройстве)
-function persistRowCalc(rowCalc){
-  try { localStorage.setItem('macros:last_row_calc', String(rowCalc)); }
-  catch { try { sessionStorage.setItem('macros:last_row_calc', String(rowCalc)); } catch{} }
-  window.__last_row_calc = rowCalc;
-}
-
-// Сбор значений крутилок (если уже есть — используем существующую версию)
+/* --- чтение значений крутилок --- */
 function collectWheelValues(){
+  // если автор уже задал свою версию — используем её
   if (typeof window._collectWheelValues === 'function') return window._collectWheelValues();
+
   const out = {};
   for (const cfg of FIELDS){
     const fieldEl = fieldByKey[cfg.key];
@@ -594,7 +604,7 @@ function collectWheelValues(){
   return out;
 }
 
-// Визуальный отклик кнопки (без passive:true — чтобы не было warning)
+/* --- визуальный отклик кнопки --- */
 if (saveBtn){
   ['pointerdown','mousedown','touchstart'].forEach(ev =>
     saveBtn.addEventListener(ev, ()=> saveBtn.classList.add('pressed'))
@@ -604,7 +614,7 @@ if (saveBtn){
   );
 }
 
-// Единственный обработчик клика
+/* --- единый обработчик клика --- */
 if (saveBtn && !window.__saveHandlerBound){
   window.__saveHandlerBound = true;
   saveBtn.addEventListener('click', onSaveClick);
@@ -614,43 +624,42 @@ async function onSaveClick(e){
   e?.preventDefault?.();
   const tg = window.Telegram?.WebApp;
 
-  if (savingInFlight) return;   // защита от повторов
+  if (savingInFlight) return;
   savingInFlight = true;
   setSavingState(true);
 
   try{
     try { tg?.HapticFeedback?.impactOccurred?.('light'); } catch {}
 
-    // 1) собрать значения крутилок
+    // 1) собрать значения
     const values = collectWheelValues();
 
-    // 2) реальный вызов бэкенда (Block C)
+    // 2) сохранить
     const res = await saveMeasurementsToDB(values);
 
-    // 3) успешный сценарий
-    try { tg?.HapticFeedback?.notificationOccurred?.('success'); } catch {}
-    persistRowCalc(res.row_calc);   // ← сохраняем на устройстве
+    // 3) локальная память по user_id
+    setRowCalcForUser(res.row_calc);
 
-    await showPopupSafe(
-      'Готово',
-      `Сохранено ✅\nALL: строка ${res.row_all}\nCALC: строка ${res.row_calc}`
-    );
-
+    // 4) UX: остановить спиннер и схлопнуть «Замеры» сразу
+    setSavingState(false);
     if (typeof collapseMeasures === 'function') collapseMeasures();
-  }catch(err){
-    const msg = String(err && err.message || err);
 
-    // Сценарий «Слишком часто нажимаете»
+    // 5) уведомление
+    try { tg?.HapticFeedback?.notificationOccurred?.('success'); } catch {}
+    await showPopupSafe('Готово', 'Данные сохранены.');
+  }catch(err){
+    // остановим спиннер в случае ошибки тоже
+    setSavingState(false);
+
+    const msg = String(err && err.message || err);
     if (/too many requests/i.test(msg) || err?.code === 429){
       try { tg?.HapticFeedback?.notificationOccurred?.('error'); } catch {}
       await showPopupSafe('Слишком часто', 'Подождите пару секунд и попробуйте снова.');
     } else {
-      // Общая ошибка «Не сохранено»
       try { tg?.HapticFeedback?.notificationOccurred?.('error'); } catch {}
-      await showPopupSafe('Не сохранено', msg || 'Не удалось сохранить данные.');
+      await showPopupSafe('Не сохранено', 'Произошла ошибка при сохранении.');
     }
   } finally {
-    setSavingState(false);
     savingInFlight = false;
   }
 }
