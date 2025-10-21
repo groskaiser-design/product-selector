@@ -542,16 +542,27 @@ async function saveMeasurementsToDB(values){
 }
 
 /* ============================================================
- * BLOCK D — один хендлер «Сохранить», ЖЁСТКИЙ кулдаун 10с,
- * попап при частых кликах, без disabled, с вибро,
- * работает даже с оверлеями (хит-тест), схлоп аккордеона.
+ * BLOCK D — ЖЁСТКИЙ кулдаун 10с с ПЕРСИСТОМ, попап всегда,
+ * без disabled/pointer-events:none, вибро, хит-тест, submit-гейт,
+ * гарантированное сворачивание аккордеона.
  * ============================================================ */
 
 var savingInFlight = false;
 
-/* --- кулдаун: следующее разрешённое нажатие не раньше __unlockAt --- */
-var COOLDOWN_MS = 10000;
-var __unlockAt = 0; // timestamp (ms), когда снова можно сохранять
+/* --- кулдаун --- */
+var COOLDOWN_MS   = 10000;
+var COOLDOWN_KEY  = 'macros:save_cooldown_until';
+var __unlockAtMem = 0; // локальная память
+
+function _getPersistUnlockAt(){
+  var v = 0;
+  try { v = Number(localStorage.getItem(COOLDOWN_KEY)) || 0; } catch(e){}
+  return Math.max(__unlockAtMem, v);
+}
+function _setPersistUnlockAt(ts){
+  __unlockAtMem = ts;
+  try { localStorage.setItem(COOLDOWN_KEY, String(ts)); } catch(e){}
+}
 
 /* --- per-user memory for row_calc --- */
 var ROWCALC_KEY_PREFIX = 'macros:last_row_calc:';
@@ -588,22 +599,22 @@ function setSavingState(isSaving){
   var label = btn.querySelector('.btn-label');
   var sp    = btn.querySelector('.spinner');
 
-  // ВАЖНО: не используем disabled и не даём стилям вырубить события
+  // НЕ используем disabled. Не даём стилям вырубить события.
   if (isSaving) { btn.classList.add('loading'); } else { btn.classList.remove('loading'); }
   try { btn.style.setProperty('pointer-events', 'auto', 'important'); } catch(e){}
   btn.setAttribute('aria-busy', String(isSaving));
   btn.setAttribute('data-saving', String(isSaving));
+
   if (sp)    sp.hidden = !isSaving;
   if (label) label.textContent = isSaving ? 'Обработка…' : 'Сохранить';
 }
 
-/* --- popup helper + вибро --- */
+/* --- popup + вибро --- */
 async function showPopupSafe(title, message, haptic){
   try {
     var tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
     if (haptic && tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred) {
-      // 'success' | 'warning' | 'error'
-      tg.HapticFeedback.notificationOccurred(haptic);
+      tg.HapticFeedback.notificationOccurred(haptic); // 'success' | 'warning' | 'error'
     }
     if (!(tg && tg.showPopup)){ alert(title + '\n\n' + message); return; }
     if (window.__popupOpen) return;
@@ -650,7 +661,7 @@ function collectWheelValues(){
   return out;
 }
 
-/* --- утилиты гейта: определяем, что пользователь действительно тыкнул по кнопке --- */
+/* --- утилиты гейта: попали ли по кнопке --- */
 function _pointFromEvent(e){
   try{
     if (e && e.touches && e.touches[0]) return { x: e.touches[0].clientX, y: e.touches[0].clientY };
@@ -663,13 +674,12 @@ function _isEventOnSave(e){
   if (e && e.target && e.target.closest) {
     try { if (e.target.closest(SAVE_BTN_SELECTOR)) return true; } catch(ex){}
   }
-  // хит-тест по координатам (если сверху оверлей)
   var p = _pointFromEvent(e); if (!p) return false;
   var r = btn.getBoundingClientRect(); if (!r) return false;
   return (p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom);
 }
 
-/* --- делегация + CAPTURE-гейт: показываем попап ВСЕГДА внутри 10с и во время сохранения --- */
+/* --- делегация + CAPTURE-гейт (+ submit), попап ВСЕГДА в 10с и при saving --- */
 (function bindSaveDelegation(){
   if (window.__saveDelegationInstalled) return; 
   window.__saveDelegationInstalled = true;
@@ -677,22 +687,32 @@ function _isEventOnSave(e){
   function gate(e){
     if (!_isEventOnSave(e)) return;
     var now = Date.now();
-    if (savingInFlight || (now < __unlockAt)){
-      // мгновенный попап + вибро «error», блокируем событие
+    var unlockAt = _getPersistUnlockAt();
+    if (savingInFlight || (now < unlockAt)){
       try { e.preventDefault(); } catch(ex){}
       try { if (e.stopImmediatePropagation) e.stopImmediatePropagation(); else if (e.stopPropagation) e.stopPropagation(); } catch(ex){}
-      // без await, чтобы быть в синхронном жесте пользователя
-      showPopupSafe('Слишком часто', 'Не чаще одного раза в 10 секунд.', 'error');
+      showPopupSafe('Слишком часто', 'Не чаще одного раза в 10 секунд.', 'error'); // без await
     }
   }
 
-  // Ставим capture-слушатели максимально рано (и на window, и на document)
+  // ранние перехваты кликов/тапов
   ['pointerdown','touchstart','mousedown','click'].forEach(function(ev){
     try { window.addEventListener(ev, gate, true); } catch(ex){}
     try { document.addEventListener(ev, gate, true); } catch(ex2){}
   });
 
-  // Основной «клик» запуска сохранения (пузыри)
+  // перехват submit (если форма)
+  try {
+    document.addEventListener('submit', function(e){
+      var btn = getSaveBtn();
+      if (!btn) return;
+      if (e && e.target && e.target.contains && e.target.contains(btn)) {
+        gate(e);
+      }
+    }, true);
+  } catch(ex3){}
+
+  // запуск сохранения (пузыри)
   document.addEventListener('click', function(e){
     if (!_isEventOnSave(e)) return;
     onSaveClick(e);
@@ -703,15 +723,16 @@ async function onSaveClick(e){
   if (e && e.preventDefault) try{ e.preventDefault(); }catch(ex){}
   var tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
   var now = Date.now();
+  var unlockAt = _getPersistUnlockAt();
 
-  // дубль-проверка на всякий случай
-  if (savingInFlight || (now < __unlockAt)){
+  // финальная защита
+  if (savingInFlight || (now < unlockAt)){
     showPopupSafe('Слишком часто', 'Не чаще одного раза в 10 секунд.', 'error');
     return;
   }
 
-  // старт: ставим окно кулдауна НА ВПЕРЁД
-  __unlockAt = now + COOLDOWN_MS;
+  // старт окна кулдауна — фиксируем и ПЕРСИСТИМ сразу
+  _setPersistUnlockAt(now + COOLDOWN_MS);
   savingInFlight = true;
   setSavingState(true);
   try { if (tg && tg.HapticFeedback && tg.HapticFeedback.impactOccurred) tg.HapticFeedback.impactOccurred('light'); } catch(_){}
@@ -725,16 +746,14 @@ async function onSaveClick(e){
     collapseAccordionSafe();
 
     try { if (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred) tg.HapticFeedback.notificationOccurred('success'); } catch(_){}
-    await showPopupSafe('Готово', 'Данные сохранены.');
+    await showPopupSafe('Готово', 'Данные сохранены.', 'success');
   }catch(err){
     setSavingState(false);
     var msg = String((err && err.message) || err || '');
     if ((err && err.code === 429) || /too\s*many\s*requests|rate[-_\s]*limit|слишком\s+часто|429/i.test(msg)){
-      // правило одно: 10с; просто сигналим
       showPopupSafe('Слишком часто', 'Не чаще одного раза в 10 секунд.', 'error');
     } else if ((err && err.code === 408) || /timeout/i.test(msg)) {
       showPopupSafe('Не сохранено', 'Сервер не ответил вовремя. Повторите позже.', 'error');
-      // при таймауте кулдаун уже выставлен — оставляем как есть
     } else {
       showPopupSafe('Не сохранено', 'Произошла ошибка при сохранении.', 'error');
     }
