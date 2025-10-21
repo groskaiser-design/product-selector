@@ -543,12 +543,13 @@ async function saveMeasurementsToDB(values){
 
  /* ============================================================
  * BLOCK D — один хендлер «Сохранить», ЖЁСТКИЙ кулдаун 10с,
- * попап при частых кликах, без .disabled, схлоп аккордеона.
+ * попап при частых кликах, без disabled, схлоп аккордеона,
+ * защита от pointer-events:none на .loading.
  * ============================================================ */
 
 let savingInFlight = false;
 
-/* --- жёсткий кулдаун: 10 000 мс между разрешёнными нажатиями --- */
+/* --- жёсткий кулдаун: 10 000 мс между РАЗРЕШЁННЫМИ нажатиями --- */
 const COOLDOWN_MS = 10000;
 let __lastAllowedTs = 0; // когда последний раз реально запускали сохранение
 
@@ -579,10 +580,20 @@ function setSavingState(isSaving){
   const btn = getSaveBtn(); if (!btn) return;
   const label = btn.querySelector('.btn-label');
   const sp    = btn.querySelector('.spinner');
-  // ВАЖНО: НЕ используем btn.disabled — иначе не поймаем повторные клики
-  btn.classList.toggle('loading', isSaving);
+
+  // ВАЖНО: НЕ используем btn.disabled — иначе не поймаем повторы
+  // Если у тебя .loading ставит pointer-events:none — перебиваем это.
+  if (isSaving) {
+    btn.classList.add('loading');
+    btn.style.setProperty('pointer-events', 'auto', 'important');
+  } else {
+    btn.classList.remove('loading');
+    // на всякий случай тоже оставим активным
+    btn.style.setProperty('pointer-events', 'auto', 'important');
+  }
   btn.setAttribute('aria-busy', String(isSaving));
   btn.setAttribute('data-saving', String(isSaving));
+
   if (sp)    sp.hidden = !isSaving;
   if (label) label.textContent = isSaving ? 'Обработка…' : 'Сохранить';
 }
@@ -630,57 +641,56 @@ function collectWheelValues(){
   return out;
 }
 
-/* --- делегация и ЖЁСТКИЙ кулдаун --- */
+/* --- делегация + CAPTURE-гейт: показываем попап даже при «loading»/оверлеях --- */
 (function bindSaveDelegation(){
   if (window.__saveDelegationInstalled) return; window.__saveDelegationInstalled = true;
 
-  // 1) Ловим pointerdown в capture — сработает даже если кто-то вдруг поставит disabled/оверлей
-  document.addEventListener('pointerdown', async (e)=>{
+  const gate = async (e) => {
     const btn = e.target?.closest?.(SAVE_BTN_SELECTOR);
     if (!btn) return;
     const now = Date.now();
-    const inCooldown = (now - __lastAllowedTs) < COOLDOWN_MS;
-
-    if (savingInFlight || inCooldown){
+    if (savingInFlight || (now - __lastAllowedTs) < COOLDOWN_MS){
+      // блокируем и сразу попап — до того как где-то отменят событие
+      e.preventDefault(); 
+      e.stopImmediatePropagation();
+      await showPopupSafe('Слишком часто', 'Не чаще одного раза в 10 секунд.');
+    }
+  };
+  // ловим ВСЕ основные входы
+  document.addEventListener('pointerdown', gate, {capture:true});
+  document.addEventListener('touchstart', gate, {capture:true, passive:false});
+  document.addEventListener('mousedown',  gate, {capture:true});
+  document.addEventListener('click',      gate, {capture:true});   // на всякий случай (клавиатура/програм.)
+  document.addEventListener('keydown', async (e)=>{                // доступность: Enter/Space
+    const btn = e.target?.closest?.(SAVE_BTN_SELECTOR);
+    if (!btn) return;
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const now = Date.now();
+    if (savingInFlight || (now - __lastAllowedTs) < COOLDOWN_MS){
       e.preventDefault(); e.stopImmediatePropagation();
       await showPopupSafe('Слишком часто', 'Не чаще одного раза в 10 секунд.');
-      return;
     }
-  }, true);
+  }, {capture:true});
 
-  // 2) Нормальные клики
+  // нормальные клики — запускаем сохранение
   document.addEventListener('click', (e)=>{
     const btn = e.target?.closest?.(SAVE_BTN_SELECTOR);
     if (!btn) return;
     onSaveClick(e);
   });
-
-  // 3) Визуальный отклик
-  ['pointerdown','mousedown','touchstart'].forEach(ev =>
-    document.addEventListener(ev, (e)=>{
-      const btn = e.target?.closest?.(SAVE_BTN_SELECTOR);
-      if (btn) btn.classList.add('pressed');
-    }, true)
-  );
-  ['pointerup','mouseup','mouseleave','touchend','touchcancel','blur'].forEach(ev =>
-    document.addEventListener(ev, (e)=>{
-      const btn = e.target?.closest?.(SAVE_BTN_SELECTOR);
-      if (btn) btn.classList.remove('pressed');
-    }, true)
-  );
 })();
 
 async function onSaveClick(e){
   e?.preventDefault?.();
   const now = Date.now();
 
-  // дубль-проверка (если вдруг прошёл мимо capture)
+  // финальная защита (если что-то прошло мимо capture)
   if (savingInFlight || (now - __lastAllowedTs) < COOLDOWN_MS){
     await showPopupSafe('Слишком часто', 'Не чаще одного раза в 10 секунд.');
     return;
   }
 
-  // старт «разрешённого» окна
+  // старт «разрешённого» окна — фиксируем сразу
   __lastAllowedTs = now;
   savingInFlight = true;
   setSavingState(true);
@@ -695,7 +705,7 @@ async function onSaveClick(e){
     await showPopupSafe('Готово', 'Данные сохранены.');
   }catch(err){
     setSavingState(false);
-    // на ошибках кулдаун сохраняем — правило 10с одно для всех кейсов
+    // одно правило для всех кейсов
     if (err?.code === 429 || /too\s*many\s*requests|rate[-_\s]*limit|слишком\s+часто|429/i.test(String(err?.message||err))){
       await showPopupSafe('Слишком часто', 'Не чаще одного раза в 10 секунд.');
     } else if (err?.code === 408 || /timeout/i.test(String(err?.message||err))) {
@@ -707,6 +717,7 @@ async function onSaveClick(e){
     savingInFlight = false;
   }
 }
+
 
   
 
