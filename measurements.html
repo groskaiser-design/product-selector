@@ -538,6 +538,122 @@ async function saveMeasurementsToDB(values){
   };
 }
 
+/* ============================================================
+ *  BLOCK D — UI: одна привязка «Сохранить», 3 попапа, хаптика
+ *  + сохранение row_calc в память устройства
+ *  Требует: saveMeasurementsToDB(values) из Block C
+ * ============================================================ */
+
+const saveBtn = document.getElementById('saveBtn');
+let savingInFlight = false;
+
+// Мини-helpers
+function setSavingState(isSaving){
+  if (!saveBtn) return;
+  const label = saveBtn.querySelector('.btn-label');
+  const sp    = saveBtn.querySelector('.spinner');
+  saveBtn.classList.toggle('loading', isSaving);
+  saveBtn.disabled = isSaving;
+  saveBtn.setAttribute('aria-busy', String(isSaving));
+  if (sp)    sp.hidden = !isSaving;
+  if (label) label.textContent = isSaving ? 'Обработка…' : 'Сохранить';
+}
+
+// Безопасный popup (не открывает второй поверх)
+async function showPopupSafe(title, message){
+  const tg = window.Telegram?.WebApp;
+  if (!tg?.showPopup){ alert(`${title}\n\n${message}`); return; }
+  if (window.__popupOpen) return;           // уже открыт — молча игнорируем
+  window.__popupOpen = true;
+  try{
+    await new Promise((resolve)=>{
+      const onClose = () => { try{tg.offEvent('popup_closed', onClose);}catch{} window.__popupOpen=false; resolve(); };
+      try{ tg.onEvent('popup_closed', onClose); }catch{}
+      tg.showPopup({ title, message, buttons:[{type:'ok'}] });
+    });
+  }finally{ window.__popupOpen = false; }
+}
+
+// Сохранить локально номер строки calc (на устройстве)
+function persistRowCalc(rowCalc){
+  try { localStorage.setItem('macros:last_row_calc', String(rowCalc)); }
+  catch { try { sessionStorage.setItem('macros:last_row_calc', String(rowCalc)); } catch{} }
+  window.__last_row_calc = rowCalc;
+}
+
+// Сбор значений крутилок (если уже есть — используем существующую версию)
+function collectWheelValues(){
+  if (typeof window._collectWheelValues === 'function') return window._collectWheelValues();
+  const out = {};
+  for (const cfg of FIELDS){
+    const fieldEl = fieldByKey[cfg.key];
+    const w  = (wheels[cfg.key] || ensureWheel(fieldEl, cfg));
+    const cb = fieldEl?.querySelector('#opt_' + cfg.key);
+    out[cfg.key] = (cfg.optional && cb && cb.checked) ? null : w.value;
+  }
+  return out;
+}
+
+// Визуальный отклик кнопки (без passive:true — чтобы не было warning)
+if (saveBtn){
+  ['pointerdown','mousedown','touchstart'].forEach(ev =>
+    saveBtn.addEventListener(ev, ()=> saveBtn.classList.add('pressed'))
+  );
+  ['pointerup','mouseup','mouseleave','touchend','touchcancel','blur'].forEach(ev =>
+    saveBtn.addEventListener(ev, ()=> saveBtn.classList.remove('pressed'))
+  );
+}
+
+// Единственный обработчик клика
+if (saveBtn && !window.__saveHandlerBound){
+  window.__saveHandlerBound = true;
+  saveBtn.addEventListener('click', onSaveClick);
+}
+
+async function onSaveClick(e){
+  e?.preventDefault?.();
+  const tg = window.Telegram?.WebApp;
+
+  if (savingInFlight) return;   // защита от повторов
+  savingInFlight = true;
+  setSavingState(true);
+
+  try{
+    try { tg?.HapticFeedback?.impactOccurred?.('light'); } catch {}
+
+    // 1) собрать значения крутилок
+    const values = collectWheelValues();
+
+    // 2) реальный вызов бэкенда (Block C)
+    const res = await saveMeasurementsToDB(values);
+
+    // 3) успешный сценарий
+    try { tg?.HapticFeedback?.notificationOccurred?.('success'); } catch {}
+    persistRowCalc(res.row_calc);   // ← сохраняем на устройстве
+
+    await showPopupSafe(
+      'Готово',
+      `Сохранено ✅\nALL: строка ${res.row_all}\nCALC: строка ${res.row_calc}`
+    );
+
+    if (typeof collapseMeasures === 'function') collapseMeasures();
+  }catch(err){
+    const msg = String(err && err.message || err);
+
+    // Сценарий «Слишком часто нажимаете»
+    if (/too many requests/i.test(msg) || err?.code === 429){
+      try { tg?.HapticFeedback?.notificationOccurred?.('error'); } catch {}
+      await showPopupSafe('Слишком часто', 'Подождите пару секунд и попробуйте снова.');
+    } else {
+      // Общая ошибка «Не сохранено»
+      try { tg?.HapticFeedback?.notificationOccurred?.('error'); } catch {}
+      await showPopupSafe('Не сохранено', msg || 'Не удалось сохранить данные.');
+    }
+  } finally {
+    setSavingState(false);
+    savingInFlight = false;
+  }
+}
 
 
 /* ============================================================
