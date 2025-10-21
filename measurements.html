@@ -256,6 +256,15 @@ function writeSessionJSON(key,obj){ try{ sessionStorage.setItem(key, JSON.string
 function removeSessionKey(key){ try{ sessionStorage.removeItem(key); }catch(e){} }
 function safeInitData(){ return window.Telegram?.WebApp?.initData || ''; }
 
+// Ненавязчивое уведомление «Данные сохранены» в шапке замеров
+function flashSaved(){
+  const el = document.getElementById('lastTime');
+  if (!el) return;
+  const orig = el.textContent;
+  el.textContent = orig + ' · Данные сохранены';
+  setTimeout(()=>{ el.textContent = orig; }, 2000);
+}
+
 // Универсальный переход «домой»
 function goHome(reason=''){
   if (typeof window.appNavigate === 'function'){
@@ -292,19 +301,7 @@ function equalData(a={}, b={}){
 async function callBackend(action, extra = {}) {
   const base = { action, init_data: safeInitData(), app_version: APP_VERSION, locale: navigator.language || 'ru-RU', ...extra };
 
-  // 1) GET (без preflight)
-  const qs = new URLSearchParams();
-  qs.set('action', action);
-  qs.set('init_data', base.init_data);
-  qs.set('json', JSON.stringify(base));
-  qs.set('_t', String(Date.now()));
-  try{
-    const r = await fetch(BACKEND_URL + '?' + qs.toString(), { cache:'no-cache' });
-    const tx = await r.text();
-    try{ return JSON.parse(tx); }catch(_){ }
-  }catch(_){ }
-
-  // 2) Fallback POST text/plain (iOS)
+  // 1) СНАЧАЛА POST (быстро, без preflight)
   try{
     const rp = await fetch(BACKEND_URL, {
       method:'POST',
@@ -313,7 +310,19 @@ async function callBackend(action, extra = {}) {
       keepalive:true, redirect:'follow', credentials:'omit', referrerPolicy:'no-referrer'
     });
     const tp = await rp.text();
-    try{ return JSON.parse(tp); }catch{ return {ok:false, error:'bad_json', _raw: tp.slice(0,200)}; }
+    try{ return JSON.parse(tp); }catch{ /* провалимся к GET */ }
+  }catch(_){ /* попробуем GET */ }
+
+  // 2) Fallback GET (если POST не сработал)
+  try{
+    const qs = new URLSearchParams();
+    qs.set('action', action);
+    qs.set('init_data', base.init_data);
+    qs.set('json', JSON.stringify(base));
+    qs.set('_t', String(Date.now()));
+    const r = await fetch(BACKEND_URL + '?' + qs.toString(), { cache:'no-cache' });
+    const tx = await r.text();
+    try{ return JSON.parse(tx); }catch(_){ return {ok:false, error:'bad_json'}; }
   }catch(e){
     return { ok:false, error: e?.message || 'network_error' };
   }
@@ -812,7 +821,8 @@ document.getElementById('saveBtn').addEventListener('click', async ()=>{
   const tg = window.Telegram?.WebApp;
   try{ tg?.HapticFeedback?.impactOccurred('light'); }catch(e){}
 
-  const data = collectCurrentData(true);
+  // ⚠️ без форс-инициализации всех колёс
+  const data = collectCurrentData(false);
 
   const clientTs = Date.now();
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
@@ -851,8 +861,9 @@ document.getElementById('saveBtn').addEventListener('click', async ()=>{
       if (measuresSec) measuresSec.classList.add('collapsed');
       if (measuresHeader) measuresHeader.setAttribute('aria-expanded','false');
 
-      // Никаких действий с "Комментарий ИИ"
-      tg?.showPopup?.({title:'Сохранено', message:'Данные обновлены', buttons:[{type:'ok'}]});
+      // кратко показать текст в шапке
+      flashSaved();
+      // никаких попапов
     } else {
       (tg?.showAlert
         ? tg.showAlert('Ошибка сохранения на сервере.\nДанные сохранены локально.\nКод: ' + (res?.error||'unknown'))
