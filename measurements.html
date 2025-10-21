@@ -540,16 +540,18 @@ async function saveMeasurementsToDB(values){
     row_calc:  Number(json.row_calc)
   };
 }
-/* ============================================================
- * BLOCK D — UI: одна привязка «Сохранить», кулдаун, попапы
- * + per-user память row_calc + гарантированное сворачивание
+
+  /* ============================================================
+ * BLOCK D — UI: одна привязка «Сохранить», жёсткий кулдаун 10с,
+ * попап при частых кликах, per-user память row_calc,
+ * гарантированное сворачивание аккордеона.
  * ============================================================ */
 
 let savingInFlight = false;
 
-/* --- клиентский кулдаун (чтоб показать попап «Слишком часто») --- */
-const MIN_SAVE_INTERVAL_MS = 2000;
-let __lastSaveTs = 0;
+/* --- жёсткий кулдаун: ровно 10 000 мс между разрешёнными нажатиями --- */
+const COOLDOWN_MS = 10000;
+let __lastAllowedTs = 0; // момент последнего РАЗРЕШЁННОГО нажатия
 
 /* --- per-user device memory for row_calc --- */
 const ROWCALC_KEY_PREFIX = 'macros:last_row_calc:';
@@ -653,12 +655,30 @@ function collectWheelValues(){
   return out;
 }
 
-/* --- делегация событий + перехват по disabled --- */
+/* --- делегация событий + перехват по disabled + жёсткий кулдаун 10с --- */
 (function bindSaveDelegation(){
   if (window.__saveDelegationInstalled) return;
   window.__saveDelegationInstalled = true;
 
-  // 1) Нормальные клики (когда кнопка не disabled)
+  // 0) Перехватываем pointerdown в capture, чтобы срабатывать даже по disabled
+  document.addEventListener('pointerdown', async (e)=>{
+    const btn = e.target?.closest?.(SAVE_BTN_SELECTOR);
+    if (!btn) return;
+    const now = Date.now();
+    const inCooldown = (now - __lastAllowedTs) < COOLDOWN_MS;
+
+    // если идёт сохранение или кулдаун — блокируем и показываем попап
+    if (savingInFlight || inCooldown){
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      try { window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred?.('error'); } catch {}
+      await showPopupSafe('Слишком часто', 'Не чаще одного раза в 10 секунд.');
+      return;
+    }
+    // иначе — пропускаем событие дальше (клик пройдет в onSaveClick)
+  }, true);
+
+  // 1) Нормальные клики (когда разрешено)
   document.addEventListener('click', (e)=>{
     const btn = e.target?.closest?.(SAVE_BTN_SELECTOR);
     if (!btn) return;
@@ -678,55 +698,22 @@ function collectWheelValues(){
       if (btn) btn.classList.remove('pressed');
     }, true)
   );
-
-  // 3) Capture-перехват на disabled: показываем попап, даже если click не срабатывает
-  document.addEventListener('pointerdown', async (e)=>{
-    const btn = e.target?.closest?.(SAVE_BTN_SELECTOR);
-    if (!btn) return;
-    const now = Date.now();
-
-    // если идёт сохранение — «занято»
-    if (savingInFlight || btn.disabled || btn.getAttribute('data-saving') === 'true'){
-      e.preventDefault();
-      e.stopPropagation();
-      try { window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred?.('error'); } catch {}
-      await showPopupSafe('Слишком часто', 'Идёт сохранение. Подождите пару секунд.');
-      // лёгкий анти-спам, чтобы не спамили попапом
-      __lastSaveTs = now;
-      return;
-    }
-
-    // клиентский кулдаун
-    if (now - __lastSaveTs < MIN_SAVE_INTERVAL_MS){
-      e.preventDefault();
-      e.stopPropagation();
-      try { window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred?.('error'); } catch {}
-      await showPopupSafe('Слишком часто', 'Подождите пару секунд и попробуйте снова.');
-      __lastSaveTs = now;
-    }
-  }, true);
 })();
 
 async function onSaveClick(e){
   e?.preventDefault?.();
-  const tg = window.Telegram?.WebApp;
+  const tg  = window.Telegram?.WebApp;
   const now = Date.now();
 
-  // защита повторных кликов, если всё-таки пришёл click
-  if (savingInFlight){
+  // финальная защита (на случай пропуска capture)
+  if (savingInFlight || (now - __lastAllowedTs) < COOLDOWN_MS){
     try { tg?.HapticFeedback?.notificationOccurred?.('error'); } catch {}
-    await showPopupSafe('Слишком часто', 'Идёт сохранение. Подождите пару секунд.');
-    __lastSaveTs = now;
+    await showPopupSafe('Слишком часто', 'Не чаще одного раза в 10 секунд.');
     return;
   }
 
-  // клиентский кулдаун
-  if (now - __lastSaveTs < MIN_SAVE_INTERVAL_MS){
-    try { tg?.HapticFeedback?.notificationOccurred?.('error'); } catch {}
-    await showPopupSafe('Слишком часто', 'Подождите пару секунд и попробуйте снова.');
-    __lastSaveTs = now;
-    return;
-  }
+  // фиксируем момент РАЗРЕШЁННОГО нажатия сразу — окно 10с начато
+  __lastAllowedTs = now;
 
   savingInFlight = true;
   setSavingState(true);
@@ -745,21 +732,16 @@ async function onSaveClick(e){
 
     try { tg?.HapticFeedback?.notificationOccurred?.('success'); } catch {}
     await showPopupSafe('Готово', 'Данные сохранены.');
-
-    // обновляем кулдаун
-    __lastSaveTs = Date.now();
-
   }catch(err){
-    const msg = String(err && err.message || err);
     setSavingState(false);
 
-    if (/too\s*many\s*requests|слишком\s+часто|rate[-_\s]*limit|429/i.test(msg) || err?.code === 429){
+    // если сервер прислал rate limit — сообщение то же самое
+    if (err?.code === 429 || /too\s*many\s*requests|rate[-_\s]*limit|слишком\s+часто|429/i.test(String(err?.message||err))){
       try { tg?.HapticFeedback?.notificationOccurred?.('error'); } catch {}
-      await showPopupSafe('Слишком часто', 'Подождите пару секунд и попробуйте снова.');
-      __lastSaveTs = Date.now();
-    } else if (err?.code === 408 || /timeout/i.test(msg)) {
+      await showPopupSafe('Слишком часто', 'Не чаще одного раза в 10 секунд.');
+    } else if (err?.code === 408 || /timeout/i.test(String(err?.message||err))) {
       try { tg?.HapticFeedback?.notificationOccurred?.('error'); } catch {}
-      await showPopupSafe('Не сохранено', 'Сервер не ответил вовремя. Проверьте сеть и повторите.');
+      await showPopupSafe('Не сохранено', 'Сервер не ответил вовремя. Повторите позже.');
     } else {
       try { tg?.HapticFeedback?.notificationOccurred?.('error'); } catch {}
       await showPopupSafe('Не сохранено', 'Произошла ошибка при сохранении.');
@@ -768,7 +750,6 @@ async function onSaveClick(e){
     savingInFlight = false;
   }
 }
-
 
   
 
