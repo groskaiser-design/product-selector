@@ -524,14 +524,17 @@ async function saveMeasurementsToDB(values){
   };
 }
 
-
-/* ============================================================
- * BLOCK D — UI: одна привязка «Сохранить», три попапа, хаптика
- * + пер-пользовательская память row_calc на устройстве
+  /* ============================================================
+ * BLOCK D — UI: одна привязка «Сохранить», кулдаун, попапы
+ * + per-user память row_calc + гарантированное сворачивание
  * ============================================================ */
 
 const saveBtn = document.getElementById('saveBtn');
 let savingInFlight = false;
+
+/* --- клиентский кулдаун --- */
+const MIN_SAVE_INTERVAL_MS = 2500; // не давать жать «Сохранить» чаще этого
+let __lastSaveTs = 0;
 
 /* --- per-user device memory for row_calc --- */
 const ROWCALC_KEY_PREFIX = 'macros:last_row_calc:';
@@ -557,7 +560,6 @@ function getRowCalcForUser(uid = currentUserId()){
   window.__rowCalcByUid[String(uid)] = isNaN(n) ? null : n;
   return window.__rowCalcByUid[String(uid)];
 }
-// Экспорт на всякий случай
 window.getRowCalcForUser = getRowCalcForUser;
 window.setRowCalcForUser = setRowCalcForUser;
 
@@ -589,9 +591,28 @@ async function showPopupSafe(title, message){
   }
 }
 
+/* --- сворачивание аккордеона (надёжный fallback) --- */
+function collapseMeasuresSafe(){
+  // 1) если есть ваша функция — используем её
+  if (typeof window.collapseMeasures === 'function'){ try{ window.collapseMeasures(); return; }catch{} }
+
+  // 2) иначе — пытаемся свернуть по id
+  const sec = document.getElementById('sec-measures') || document.querySelector('[data-section="measures"]');
+  if (sec){
+    sec.classList.add('collapsed');
+    sec.setAttribute('aria-hidden','true');
+  }
+  // 3) если есть заголовок-тогглер — приводим aria-expanded к false и кликаем
+  const hdr = document.querySelector('[data-toggle="sec-measures"], [data-target="#sec-measures"], [aria-controls="sec-measures"]');
+  if (hdr){
+    hdr.setAttribute('aria-expanded','false');
+    // если ваш UI сворачивает по клику — эмулируем
+    try{ hdr.click(); }catch{}
+  }
+}
+
 /* --- чтение значений крутилок --- */
 function collectWheelValues(){
-  // если автор уже задал свою версию — используем её
   if (typeof window._collectWheelValues === 'function') return window._collectWheelValues();
 
   const out = {};
@@ -624,6 +645,14 @@ async function onSaveClick(e){
   e?.preventDefault?.();
   const tg = window.Telegram?.WebApp;
 
+  // клиентский кулдаун
+  const now = Date.now();
+  if (now - __lastSaveTs < MIN_SAVE_INTERVAL_MS){
+    try { tg?.HapticFeedback?.notificationOccurred?.('error'); } catch {}
+    await showPopupSafe('Слишком часто', 'Подождите пару секунд и попробуйте снова.');
+    return;
+  }
+
   if (savingInFlight) return;
   savingInFlight = true;
   setSavingState(true);
@@ -637,33 +666,39 @@ async function onSaveClick(e){
     // 2) сохранить
     const res = await saveMeasurementsToDB(values);
 
-    // 3) локальная память по user_id
+    // 3) пер-пользовательская память row_calc
     setRowCalcForUser(res.row_calc);
 
-    // 4) UX: остановить спиннер и схлопнуть «Замеры» сразу
+    // 4) UX: остановить спиннер и свернуть аккордеон немедленно
     setSavingState(false);
-    if (typeof collapseMeasures === 'function') collapseMeasures();
+    collapseMeasuresSafe();
 
     // 5) уведомление
     try { tg?.HapticFeedback?.notificationOccurred?.('success'); } catch {}
     await showPopupSafe('Готово', 'Данные сохранены.');
+
+    // 6) обновить таймер кулдауна — теперь можно сохранить снова через интервал
+    __lastSaveTs = Date.now();
+
   }catch(err){
-    // остановим спиннер в случае ошибки тоже
     setSavingState(false);
 
     const msg = String(err && err.message || err);
     if (/too many requests/i.test(msg) || err?.code === 429){
       try { tg?.HapticFeedback?.notificationOccurred?.('error'); } catch {}
       await showPopupSafe('Слишком часто', 'Подождите пару секунд и попробуйте снова.');
+      __lastSaveTs = Date.now(); // учитываем серверный лимит тоже
     } else {
       try { tg?.HapticFeedback?.notificationOccurred?.('error'); } catch {}
       await showPopupSafe('Не сохранено', 'Произошла ошибка при сохранении.');
+      // не обновляем __lastSaveTs, чтобы можно было попытаться сразу
     }
   } finally {
     savingInFlight = false;
   }
 }
 
+  
 
 /* ============================================================
  *  BLOCK E: Аккордеон
