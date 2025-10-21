@@ -451,6 +451,7 @@ if (!document.getElementById('sec-measures').classList.contains('collapsed')){
 
 const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbwjvkS5P7IcvTCFRbAb9jflLuD-R2IN3Azhg5_niKywHN3pJLDTBCL4kD2W-eDjKNnJmA/exec';
 const APP_VERSION  = 'frontend-2025-10-21';
+const REQUEST_TIMEOUT_MS = 15000;
 
 function nowIso(){ return new Date().toISOString(); }
 function todayLocalISO(tz){
@@ -495,24 +496,32 @@ async function saveMeasurementsToDB(values){
     data: values
   };
 
-  const resp = await fetch(BACKEND_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=UTF-8' }, // без preflight
-    body: JSON.stringify(payload),
-    redirect: 'follow',
-    cache: 'no-store',
-    credentials: 'omit',
-    mode: 'cors'
-  });
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(new Error('timeout')), REQUEST_TIMEOUT_MS);
 
-  const raw = await resp.text();
-  let json = null;
-  try { json = raw ? JSON.parse(raw) : null; } catch {}
+  let resp, raw, json = null;
+  try{
+    resp = await fetch(BACKEND_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8' }, // без preflight
+      body: JSON.stringify(payload),
+      redirect: 'follow',
+      cache: 'no-store',
+      credentials: 'omit',
+      mode: 'cors',
+      signal: controller.signal
+    });
+    raw = await resp.text();
+    try { json = raw ? JSON.parse(raw) : null; } catch {}
+  } finally {
+    clearTimeout(t);
+  }
 
-  if (!resp.ok || !json || json.ok !== true) {
-    const msg = (json && json.error) ? json.error : `HTTP ${resp.status} ${resp.statusText}`;
+  if (!resp?.ok || !json || json.ok !== true) {
+    const msg = (json && json.error) ? json.error : `HTTP ${resp?.status ?? '0'} ${resp?.statusText ?? ''}`.trim();
     if (/too many requests/i.test(msg)) { const e = new Error('Too many requests'); e.code = 429; throw e; }
-    const e = new Error(msg || 'Save failed'); e.code = resp.status; throw e;
+    if (msg === 'timeout' || /network/i.test(String(msg))) { const e = new Error('Сервер не ответил вовремя'); e.code = 408; throw e; }
+    const e = new Error(msg || 'Save failed'); e.code = resp?.status ?? 0; throw e;
   }
 
   return {
@@ -523,12 +532,12 @@ async function saveMeasurementsToDB(values){
     row_calc:  Number(json.row_calc)
   };
 }
+
 /* ============================================================
  * BLOCK D — UI: одна привязка «Сохранить», кулдаун, попапы
  * + per-user память row_calc + гарантированное сворачивание
  * ============================================================ */
 
-const saveBtn = document.getElementById('saveBtn');
 let savingInFlight = false;
 
 /* --- клиентский кулдаун (чтоб показать попап «Слишком часто») --- */
@@ -562,14 +571,18 @@ function getRowCalcForUser(uid = currentUserId()){
 window.getRowCalcForUser = getRowCalcForUser;
 window.setRowCalcForUser = setRowCalcForUser;
 
-/* --- UX helpers --- */
+/* --- helpers для кнопки --- */
+const SAVE_BTN_SELECTOR = '#saveBtn';
+function getSaveBtn(){ return document.getElementById('saveBtn'); }
+
 function setSavingState(isSaving){
-  if (!saveBtn) return;
-  const label = saveBtn.querySelector('.btn-label');
-  const sp    = saveBtn.querySelector('.spinner');
-  saveBtn.classList.toggle('loading', isSaving);
-  saveBtn.disabled = isSaving;
-  saveBtn.setAttribute('aria-busy', String(isSaving));
+  const btn   = getSaveBtn();
+  if (!btn) return;
+  const label = btn.querySelector('.btn-label');
+  const sp    = btn.querySelector('.spinner');
+  btn.classList.toggle('loading', isSaving);
+  btn.disabled = isSaving;
+  btn.setAttribute('aria-busy', String(isSaving));
   if (sp)    sp.hidden = !isSaving;
   if (label) label.textContent = isSaving ? 'Обработка…' : 'Сохранить';
 }
@@ -592,35 +605,41 @@ async function showPopupSafe(title, message){
 
 /* --- гарантированное сворачивание аккордеона анкеты --- */
 function collapseAccordionSafe(){
-  // 0) если у вас уже есть функция — используем её
-  if (typeof window.collapseMeasures === 'function') { try{ window.collapseMeasures(); return; }catch{} }
+  const act = () => {
+    // 0) если есть ф-я проекта
+    if (typeof window.collapseMeasures === 'function') { try{ window.collapseMeasures(); return; }catch{} }
 
-  // 1) вариант <details open>
-  const details = document.querySelector('details#sec-measures, details[data-section="measures"], #sec-measures details');
-  if (details && details.hasAttribute('open')) { details.open = false; }
+    // 1) закрываем все <details open> в секции
+    document.querySelectorAll(
+      'details[open]#sec-measures, details[open][data-section="measures"], #sec-measures details[open]'
+    ).forEach(d => { d.open = false; });
 
-  // 2) Bootstrap-подобный .collapse.show
-  const panel = document.querySelector('#sec-measures.collapse.show, [data-section="measures"].collapse.show, .accordion .collapse.show');
-  if (panel){
-    panel.classList.remove('show'); // визуально скрыть
-    panel.setAttribute('aria-hidden','true');
-  }
+    // 2) закрываем любые .collapse.show (Bootstrap/аналоги)
+    document.querySelectorAll(
+      '#sec-measures .collapse.show, [data-section="measures"] .collapse.show, .accordion .collapse.show'
+    ).forEach(panel => {
+      panel.classList.remove('show');
+      panel.style.height = '';
+      panel.setAttribute('aria-hidden','true');
+    });
 
-  // 3) общий случай: просто скрыть секцию
-  const section = document.getElementById('sec-measures') || document.querySelector('[data-section="measures"]');
-  if (section){
-    section.classList.add('collapsed');
-    section.setAttribute('aria-hidden','true');
-  }
+    // 3) приводим тогглеры в «закрыто»
+    document.querySelectorAll(
+      '[data-bs-toggle="collapse"][aria-expanded="true"], [aria-controls="sec-measures"][aria-expanded="true"]'
+    ).forEach(toggler => {
+      toggler.setAttribute('aria-expanded','false');
+      try { toggler.dispatchEvent(new Event('click', {bubbles:true})); } catch {}
+    });
 
-  // 4) «нажимаем» на активный тогглер, если он есть
-  const toggler =
-    document.querySelector('[data-bs-toggle="collapse"][data-bs-target="#sec-measures"]') ||
-    document.querySelector('[aria-controls="sec-measures"][aria-expanded="true"]') ||
-    document.querySelector('[data-toggle="sec-measures"][aria-expanded="true"]');
-  if (toggler){
-    try { toggler.setAttribute('aria-expanded','false'); toggler.click(); } catch {}
-  }
+    // 4) общий фолбэк
+    const section = document.getElementById('sec-measures') || document.querySelector('[data-section="measures"]');
+    if (section){
+      section.classList.add('collapsed');
+      section.setAttribute('aria-hidden','true');
+    }
+  };
+  // двойной rAF — после завершения текущих мутаций/анимаций
+  try { requestAnimationFrame(() => requestAnimationFrame(act)); } catch { act(); }
 }
 
 /* --- сбор значений крутилок --- */
@@ -636,40 +655,54 @@ function collectWheelValues(){
   return out;
 }
 
-/* --- визуальный отклик кнопки --- */
-if (saveBtn){
+/* --- делегация событий: работает даже если кнопку пересоздали --- */
+(function bindSaveDelegation(){
+  if (window.__saveDelegationInstalled) return;
+  window.__saveDelegationInstalled = true;
+
+  document.addEventListener('click', (e)=>{
+    const btn = e.target?.closest?.(SAVE_BTN_SELECTOR);
+    if (!btn) return;
+    onSaveClick(e);
+  });
+
   ['pointerdown','mousedown','touchstart'].forEach(ev =>
-    saveBtn.addEventListener(ev, ()=> saveBtn.classList.add('pressed'))
+    document.addEventListener(ev, (e)=>{
+      const btn = e.target?.closest?.(SAVE_BTN_SELECTOR);
+      if (btn) btn.classList.add('pressed');
+    }, true)
   );
   ['pointerup','mouseup','mouseleave','touchend','touchcancel','blur'].forEach(ev =>
-    saveBtn.addEventListener(ev, ()=> saveBtn.classList.remove('pressed'))
+    document.addEventListener(ev, (e)=>{
+      const btn = e.target?.closest?.(SAVE_BTN_SELECTOR);
+      if (btn) btn.classList.remove('pressed');
+    }, true)
   );
-}
-
-/* --- единая привязка клика (с очисткой старого обработчика) --- */
-if (saveBtn){
-  if (window.__saveHandler) saveBtn.removeEventListener('click', window.__saveHandler);
-  window.__saveHandler = onSaveClick;
-  saveBtn.addEventListener('click', window.__saveHandler);
-}
+})();
 
 async function onSaveClick(e){
   e?.preventDefault?.();
   const tg = window.Telegram?.WebApp;
-
-  // клиентский кулдаун для попапа «Слишком часто»
   const now = Date.now();
-  if (now - __lastSaveTs < MIN_SAVE_INTERVAL_MS){
+
+  // если уже идёт сохранение — явно сообщаем пользователю
+  if (savingInFlight){
     try { tg?.HapticFeedback?.notificationOccurred?.('error'); } catch {}
-    await showPopupSafe('Слишком часто', 'Подождите пару секунд и попробуйте снова.');
+    await showPopupSafe('Слишком часто', 'Идёт сохранение. Подождите пару секунд.');
     return;
   }
 
-  if (savingInFlight) return; // защита от двойного клика
+  // клиентский кулдаун для попапа «Слишком часто»
+  if (now - __lastSaveTs < MIN_SAVE_INTERVAL_MS){
+    try { tg?.HapticFeedback?.notificationOccurred?.('error'); } catch {}
+    await showPopupSafe('Слишком часто', 'Подождите пару секунд и попробуйте снова.');
+    __lastSaveTs = now; // чтобы не спамить попапами при «долблении»
+    return;
+  }
+
   savingInFlight = true;
   setSavingState(true);
 
-  let success = false;
   try{
     try { tg?.HapticFeedback?.impactOccurred?.('light'); } catch {}
 
@@ -678,8 +711,6 @@ async function onSaveClick(e){
 
     // сохраняем row_calc per-user
     setRowCalcForUser(res.row_calc);
-
-    success = true;
 
     // снимаем спиннер ДО схлопывания и попапа
     setSavingState(false);
@@ -701,6 +732,10 @@ async function onSaveClick(e){
       try { tg?.HapticFeedback?.notificationOccurred?.('error'); } catch {}
       await showPopupSafe('Слишком часто', 'Подождите пару секунд и попробуйте снова.');
       __lastSaveTs = Date.now(); // учитываем серверный лимит
+    } else if (err?.code === 408 || /timeout/i.test(msg)) {
+      try { tg?.HapticFeedback?.notificationOccurred?.('error'); } catch {}
+      await showPopupSafe('Не сохранено', 'Сервер не ответил вовремя. Проверьте сеть и повторите.');
+      // кулдаун не ставим — можно повторить сразу
     } else {
       try { tg?.HapticFeedback?.notificationOccurred?.('error'); } catch {}
       await showPopupSafe('Не сохранено', 'Произошла ошибка при сохранении.');
@@ -710,6 +745,7 @@ async function onSaveClick(e){
     savingInFlight = false; // критично для повторного сохранения в той же сессии
   }
 }
+
   
 
 /* ============================================================
