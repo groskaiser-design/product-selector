@@ -445,69 +445,85 @@ if (!document.getElementById('sec-measures').classList.contains('collapsed')){
 }
 
 /* ============================================================
- *  BLOCK C: DB SAVE (API client)
- *  — Меняете только BACKEND_URL на URL Apps Script (…/exec)
+ *  BLOCK C: DB SAVE (API client) — FIX CORS (no preflight)
  * ============================================================ */
-const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbwjvkS5P7IcvTCFRbAb9jflLuD-R2IN3Azhg5_niKywHN3pJLDTBCL4kD2W-eDjKNnJmA/exec';
+const BACKEND_URL = 'https://script.google.com/macros/s/ВАШ_DEPLOY_ID/exec';
 const APP_VERSION = 'frontend-2025-10-21';
 
+// Если у тебя эти утилиты уже объявлены в другом блоке — оставь свои и УДАЛИ дубликаты ниже.
 function uuidv4(){
-  const b = new Uint8Array(16);
-  crypto.getRandomValues(b);
-  b[6] = (b[6] & 0x0f) | 0x40;
-  b[8] = (b[8] & 0x3f) | 0x80;
-  const h = [...b].map(x=>x.toString(16).padStart(2,'0'));
-  return `${h[0]}${h[1]}${h[2]}${h[3]}-${h[4]}${h[5]}-${h[6]}${h[7]}-${h[8]}${h[9]}-${h[10]}${h[11]}${h[12]}${h[13]}${h[14]}${h[15]}`;
+  return ([1e7]+-1e3+-4e3+-8e3+-1e11)
+    .replace(/[018]/g,c=>(c^crypto.getRandomValues(new Uint8Array(1))[0]&15>>c/4).toString(16));
 }
-
 function todayLocalYMD(d=new Date()){
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  // просто yyyy-mm-dd по локали браузера
   const y = d.getFullYear();
   const m = String(d.getMonth()+1).padStart(2,'0');
-  const dd = String(d.getDate()).padStart(2,'0');
-  return `${y}-${m}-${dd}`;
+  const day = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
 }
-
 function collectFormData(){
-  // перед сбором — гарантируем, что все колёса созданы
-  for (const f of allFields){ ensureWheel(f, CFG[f.dataset.key]); }
-  const out = {};
-  for (const cfg of FIELDS){
-    const opt = cfg.optional ? document.getElementById('opt_'+cfg.key) : null;
-    if (opt && opt.checked){ continue; } // "нет данных" — поле пропускаем
-    const w = wheels[cfg.key];
-    if (w) out[cfg.key] = w.value;
+  // Собери значения из твоих инпутов/селекторов и верни объект полей
+  // пример:
+  return {
+    weight: getNumber('#weight'),
+    height: getNumber('#height'),
+    fat: getNumber('#fat'),
+    neck: getNumber('#neck'),
+    shoulders: getNumber('#shoulders'),
+    chest: getNumber('#chest'),
+    waist: getNumber('#waist'),
+    bicep_l_rel: getNumber('#bicep_l_rel'),
+    bicep_r_rel: getNumber('#bicep_r_rel'),
+    bicep_l_flex: getNumber('#bicep_l_flex'),
+    bicep_r_flex: getNumber('#bicep_r_flex'),
+    thigh_l: getNumber('#thigh_l'),
+    thigh_r: getNumber('#thigh_r'),
+    calf_l: getNumber('#calf_l'),
+    calf_r: getNumber('#calf_r'),
+    hips: getNumber('#hips'),
+    wrist: getNumber('#wrist'),
+    knee: getNumber('#knee'),
+    ankle: getNumber('#ankle'),
+  };
+  function getNumber(sel){
+    const v = document.querySelector(sel)?.value ?? '';
+    const n = Number(String(v).replace(',','.'));
+    return Number.isFinite(n) ? n : '';
   }
-  return out;
 }
 
 async function saveToDB(){
   const tg = window.Telegram?.WebApp;
-  if (!tg || !tg.initData){
-    throw new Error('Запуск доступен только из Telegram Mini App');
-  }
+  if (!tg || !tg.initData) throw new Error('Запуск доступен только из Telegram Mini App');
 
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
   const payload = {
     action: 'save',
-    init_data: tg.initData,                 // важная сырая строка для подписи на бэкенде
-    tz,                                     // IANA timezone
-    client_day_local: todayLocalYMD(),      // для удобства, бек всё равно нормализует
+    init_data: tg.initData,             // сырая строка Telegram WebApp initData
+    tz,
+    client_day_local: todayLocalYMD(),
     locale: navigator.language || '',
     source: 'webapp',
     app_version: APP_VERSION,
     data: collectFormData(),
-    save_id: uuidv4()                       // идемпотентность одного клика
+    save_id: uuidv4()                   // для идемпотентности на бэке
   };
 
+  // ВАЖНО: text/plain и НИКАКИХ кастомных заголовков → не будет preflight OPTIONS
   const resp = await fetch(BACKEND_URL, {
     method: 'POST',
-    headers: { 'Content-Type':'application/json', 'X-Requested-With':'XMLHttpRequest' },
-    body: JSON.stringify(payload)
+    headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+    body: JSON.stringify(payload),
+    redirect: 'follow',
   });
-  const json = await resp.json().catch(()=>({ok:false,error:'Bad JSON'}));
-  if (!resp.ok || !json.ok){
-    throw new Error(json.error || `HTTP ${resp.status}`);
-  }
+
+  const text = await resp.text();
+  let json; try { json = JSON.parse(text); } catch { json = { ok:false, error:'Bad JSON' }; }
+  if (!resp.ok || !json.ok) throw new Error(json.error || `HTTP ${resp.status}`);
+
+  // здесь можешь показать успех и использовать json.row_all/json.row_calc
   return json;
 }
 
