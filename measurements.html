@@ -204,7 +204,6 @@
   try { tg.ready(); } catch(e){}
   try { tg.expand(); } catch(e){}
   try { tg.setHeaderColor('secondary_bg_color'); } catch(e){}
-  // Назначаем обработчик системной кнопки «Назад»
   try { bindBack(); } catch(e){}
 })();
 
@@ -223,28 +222,28 @@ function bindBack(){
 }
 
 /* ===== КОНСТАНТЫ ХРАНИЛИЩА ===== */
-const LS_KEY_LAST  = 'measurements:last';                  // подтверждённая запись
-const SS_KEY_DRAFT = 'measurements:sessionDraft';          // черновик сеанса (только до сохранения)
-/* >>> добавлено: кэш ИИ-комментария (без влияния на остальной код) */
+const LS_KEY_LAST  = 'measurements:last';
+const SS_KEY_DRAFT = 'measurements:sessionDraft';
 const LS_KEY_AI    = 'measurements:ai:last';
+/* >>> новый флаг ожидания нового комментария после save */
+const SS_KEY_AI_PENDING = 'measurements:ai:pending';
 
 /* ===== СЕТЬ / БЭКЕНД ===== */
 const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbwIBP13PEqrVSEUx6iPACxwvcvvqVSHzkN7W4UBM7mhG564t_v9w2dbNfN6ribe4QTfdA/exec';
 const APP_VERSION = '1.0.10';
-/* >>> ЕДИНАЯ точка API для ИИ-комментария — используем тот же деплой */
 const AI_API_URL  = BACKEND_URL;
 
-/* >>> авто-пуллинг ИИ-комментария (минимальные правки) */
-const AI_REFRESH_MS = 60000; // опрос раз в 60с
+/* ===== ПУЛЛИНГ ИИ ===== */
+const AI_REFRESH_MS = 60000;
 let aiPollTimer = null;
 function startAIPoll(){ stopAIPoll(); aiPollTimer = setInterval(()=>fetchAIComment({silent:true}), AI_REFRESH_MS); }
 function stopAIPoll(){ if (aiPollTimer){ clearInterval(aiPollTimer); } aiPollTimer = null; }
 
-/* ===== Главная страница (настраивается мета-тегами) ===== */
+/* ===== HOME ===== */
 const HOME_URL = (document.querySelector('meta[name="tma:home-url"]')?.content) || './index.html';
 const HOME_HASH = (document.querySelector('meta[name="tma:home-hash"]')?.content) || '';
 
-/* ===== Тип навигации ===== */
+/* ===== NAV TYPE ===== */
 const navEntry = performance?.getEntriesByType?.('navigation')?.[0];
 const NAV_TYPE = navEntry?.type || 'navigate';
 const IS_BFCACHE = NAV_TYPE === 'back_forward';
@@ -255,9 +254,7 @@ const rowH = ROW_VAR.endsWith('px') ? parseFloat(ROW_VAR) : (parseFloat(ROW_VAR)
 const pad = 4;
 const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
 
-const DTF = new Intl.DateTimeFormat('ru-RU', {
-  day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'
-});
+const DTF = new Intl.DateTimeFormat('ru-RU', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
 const fmt = ts => (!ts ? 'нет данных' : DTF.format(new Date(ts)));
 
 function readJSON(key, fallback=null){ try{ const v=localStorage.getItem(key); return v?JSON.parse(v):fallback; }catch(e){ return fallback; } }
@@ -266,8 +263,11 @@ function readSessionJSON(key,fallback=null){ try{ const v=sessionStorage.getItem
 function writeSessionJSON(key,obj){ try{ sessionStorage.setItem(key, JSON.stringify(obj)); }catch(e){} }
 function removeSessionKey(key){ try{ sessionStorage.removeItem(key); }catch(e){} }
 function safeInitData(){ return window.Telegram?.WebApp?.initData || ''; }
+function getDayLocal(tz, t=Date.now()){
+  return new Intl.DateTimeFormat('sv-SE',{timeZone:tz,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(t));
+}
 
-/* ===== HTML SANITIZER (allowlist) ===== */
+/* ===== HTML SANITIZER ===== */
 const ALLOWED_TAGS = new Set(['h3','h4','p','br','ul','ol','li','b','strong','i','em','u','s','hr','blockquote','code','pre','a']);
 const SAFE_URL_RE  = /^(https?:\/\/|mailto:)/i;
 function sanitizeHtml(input){
@@ -276,9 +276,7 @@ function sanitizeHtml(input){
   const doc = parser.parseFromString(`<div>${input}</div>`, 'text/html');
   const root = doc.body.firstElementChild;
   function clean(node){
-    if (node.nodeType === Node.TEXT_NODE){
-      return node.cloneNode(true);
-    }
+    if (node.nodeType === Node.TEXT_NODE) return node.cloneNode(true);
     if (node.nodeType === Node.ELEMENT_NODE){
       const tag = node.tagName.toLowerCase();
       if (!ALLOWED_TAGS.has(tag)){
@@ -309,43 +307,30 @@ function sanitizeHtml(input){
   return tmp.innerHTML;
 }
 
-// Универсальный переход «домой»: сначала пробуем SPA-роутер, затем hash, затем прямая навигация
-function goHome(reason=''){
-  if (typeof window.appNavigate === 'function'){
-    try { window.appNavigate('home'); return; } catch(_){ }
-  }
-  if (HOME_HASH){
-    if (location.hash !== HOME_HASH){ location.hash = HOME_HASH; return; }
-  }
-  if (HOME_URL){
-    try { location.assign(HOME_URL); return; } catch(_){ }
-  }
-  const tg = window.Telegram?.WebApp;
-  try { tg?.close(); } catch(_){ }
+function goHome(){
+  if (typeof window.appNavigate === 'function'){ try { window.appNavigate('home'); return; } catch(_){ } }
+  if (HOME_HASH){ if (location.hash !== HOME_HASH){ location.hash = HOME_HASH; return; } }
+  if (HOME_URL){ try { location.assign(HOME_URL); return; } catch(_){ } }
+  const tg = window.Telegram?.WebApp; try { tg?.close(); } catch(_){ }
 }
 
-/* равенство наборов данных (числа сравниваем с допуском) */
+/* равенство наборов данных */
 function equalData(a={}, b={}){
   for (const {key} of FIELDS){
     const va = a[key], vb = b[key];
-    if (va === null || vb === null){
-      if (va !== vb) return false;
-    } else if (typeof va === 'number' && typeof vb === 'number'){
-      if (Math.abs(va - vb) > 1e-9) return false;
-    } else if (typeof va === 'undefined' && typeof vb === 'undefined'){
-      continue;
-    } else {
-      return false;
-    }
+    if (va === null || vb === null){ if (va !== vb) return false; }
+    else if (typeof va === 'number' && typeof vb === 'number'){ if (Math.abs(va - vb) > 1e-9) return false; }
+    else if (typeof va === 'undefined' && typeof vb === 'undefined'){ continue; }
+    else { return false; }
   }
   return true;
 }
 
-/* ===== СЕТЬ: основной backend (init/save) ===== */
+/* ===== API (init/save) ===== */
 async function callBackend(action, extra = {}) {
   const base = { action, init_data: safeInitData(), app_version: APP_VERSION, locale: navigator.language || 'ru-RU', ...extra };
 
-  // 1) GET (без preflight)
+  // GET
   const qs = new URLSearchParams();
   qs.set('action', action);
   qs.set('init_data', base.init_data);
@@ -354,16 +339,14 @@ async function callBackend(action, extra = {}) {
   try{
     const r = await fetch(BACKEND_URL + '?' + qs.toString(), { cache:'no-cache' });
     const tx = await r.text();
-    try{ return JSON.parse(tx); }catch(_){ }
-  }catch(_){ }
+    try{ return JSON.parse(tx); }catch(_){}
+  }catch(_){}
 
-  // 2) Fallback POST text/plain (iOS)
+  // POST fallback
   try{
     const rp = await fetch(BACKEND_URL, {
-      method:'POST',
-      headers:{'Content-Type':'text/plain;charset=UTF-8'},
-      body: JSON.stringify(base),
-      keepalive:true, redirect:'follow', credentials:'omit', referrerPolicy:'no-referrer'
+      method:'POST', headers:{'Content-Type':'text/plain;charset=UTF-8'},
+      body: JSON.stringify(base), keepalive:true, redirect:'follow', credentials:'omit', referrerPolicy:'no-referrer'
     });
     const tp = await rp.text();
     try{ return JSON.parse(tp); }catch{ return {ok:false, error:'bad_json', _raw: tp.slice(0,200)}; }
@@ -372,7 +355,7 @@ async function callBackend(action, extra = {}) {
   }
 }
 
-/* ====== >>> Комментарий ИИ (read-only API) ====== */
+/* ===== Комментарий ИИ: UI ===== */
 function setAILoading(isLoading){
   const cont = document.getElementById('ai-comment');
   if (!cont) return;
@@ -395,18 +378,27 @@ function renderAIComment(text){
   field.className = 'field';
   const box = document.createElement('div');
   box.setAttribute('aria-live','polite');
-  box.innerHTML = sanitizeHtml(s); // безопасная вставка HTML
+  box.innerHTML = sanitizeHtml(s);
   field.appendChild(box);
   cont.appendChild(field);
 }
 function readAIFromLocal(){ try{ return (JSON.parse(localStorage.getItem(LS_KEY_AI))||{}).text || ''; }catch(_){ return ''; } }
 function writeAIToLocal(text){ try{ localStorage.setItem(LS_KEY_AI, JSON.stringify({ ts: Date.now(), text: String(text||'') })); }catch(_){ } }
+function clearAICache(){ try{ localStorage.removeItem(LS_KEY_AI); }catch(_){} }
+
+/* флаг ожидания нового комментария (не даём показывать старый) */
+function setAIPending(day){ writeSessionJSON(SS_KEY_AI_PENDING, { day, ts: Date.now() }); }
+function getAIPending(){ return readSessionJSON(SS_KEY_AI_PENDING, null); }
+function isAIPending(){ return !!getAIPending(); }
+function clearAIPending(){ removeSessionKey(SS_KEY_AI_PENDING); }
+
 function rehydrateAIFromLocal(){
+  if (isAIPending()) { setAILoading(true); return; } // ждём новый — не показываем старый
   const t = readAIFromLocal();
   if (t) renderAIComment(t);
 }
 
-/* >>> обновлённый fetch: перерисовка только при изменении, для экономии */
+/* ===== fetch AI (не восстанавливает старый текст никогда) ===== */
 async function fetchAIComment({ silent=false } = {}){
   if (!AI_API_URL){
     if (!silent && !readAIFromLocal()) setAILoading(false);
@@ -414,20 +406,10 @@ async function fetchAIComment({ silent=false } = {}){
   }
   try{
     if (!silent) setAILoading(true);
-    const base = {
-      action: 'ai_comment',
-      init_data: safeInitData(),
-      tz: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
-    };
-
-    const prev = readAIFromLocal();
-
-    // 1) GET
+    const base = { action: 'ai_comment', init_data: safeInitData(), tz: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' };
+    // GET
     const qs = new URLSearchParams();
-    qs.set('action','ai_comment');
-    qs.set('init_data', base.init_data);
-    qs.set('json', JSON.stringify(base));
-    qs.set('_t', String(Date.now()));
+    qs.set('action','ai_comment'); qs.set('init_data', base.init_data); qs.set('json', JSON.stringify(base)); qs.set('_t', String(Date.now()));
     try{
       const r = await fetch(AI_API_URL + '?' + qs.toString(), { cache:'no-cache' });
       const tx = await r.text();
@@ -435,113 +417,94 @@ async function fetchAIComment({ silent=false } = {}){
         const json = JSON.parse(tx);
         if (json?.ok && typeof json.ai_comment === 'string'){
           const next = String(json.ai_comment || '');
-          if (next !== prev){
+          if (next){
             writeAIToLocal(next);
             renderAIComment(next);
-          } else if (!silent && prev){
-            // если мы показывали лоадер и контент не изменился — вернём старый текст
-            renderAIComment(prev);
           }
           return;
         }
       }catch(_){}
     }catch(_){}
-
-    // 2) POST fallback
+    // POST fallback
     try{
       const rp = await fetch(AI_API_URL, {
-        method:'POST',
-        headers:{'Content-Type':'text/plain;charset=UTF-8'},
-        body: JSON.stringify(base),
-        keepalive:true, redirect:'follow', credentials:'omit', referrerPolicy:'no-referrer'
+        method:'POST', headers:{'Content-Type':'text/plain;charset=UTF-8'},
+        body: JSON.stringify(base), keepalive:true, redirect:'follow', credentials:'omit', referrerPolicy:'no-referrer'
       });
       const tp = await rp.text();
       try{
         const json = JSON.parse(tp);
         if (json?.ok && typeof json.ai_comment === 'string'){
           const next = String(json.ai_comment || '');
-          if (next !== prev){
+          if (next){
             writeAIToLocal(next);
             renderAIComment(next);
-          } else if (!silent && prev){
-            renderAIComment(prev);
           }
           return;
         }
       }catch(_){}
     }catch(_){}
   } finally {
-    if (!readAIFromLocal()) setAILoading(false);
+    if (!readAIFromLocal() && !isAIPending()) setAILoading(false);
   }
 }
 
-/* >>> FAST_FETCH (мгновенная подгрузка по индексам из ответа save) */
+/* ===== FAST_FETCH и ожидание нового комментария ===== */
 async function fastFetch(opts = {}){
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
   const base = {
-    action: 'fast_fetch',
-    init_data: safeInitData(),
-    tz,
-    day_local: opts.dayLocal || undefined,
-    calc_row: opts.calc_row || undefined,
-    row_main: opts.row_main || undefined
+    action: 'fast_fetch', init_data: safeInitData(), tz,
+    day_local: opts.dayLocal || undefined, calc_row: opts.calc_row || undefined, row_main: opts.row_main || undefined
   };
-
   // GET
   try{
     const qs = new URLSearchParams();
-    qs.set('action','fast_fetch');
-    qs.set('init_data', base.init_data);
-    qs.set('json', JSON.stringify(base));
-    qs.set('_t', String(Date.now()));
+    qs.set('action','fast_fetch'); qs.set('init_data', base.init_data); qs.set('json', JSON.stringify(base)); qs.set('_t', String(Date.now()));
     const r = await fetch(BACKEND_URL + '?' + qs.toString(), { cache:'no-cache' });
     const tx = await r.text();
     try{ return JSON.parse(tx); }catch(_){}
   }catch(_){}
-
   // POST fallback
   try{
     const rp = await fetch(BACKEND_URL, {
-      method:'POST',
-      headers:{'Content-Type':'text/plain;charset=UTF-8'},
-      body: JSON.stringify(base),
-      keepalive:true, redirect:'follow', credentials:'omit', referrerPolicy:'no-referrer'
+      method:'POST', headers:{'Content-Type':'text/plain;charset=UTF-8'},
+      body: JSON.stringify(base), keepalive:true, redirect:'follow', credentials:'omit', referrerPolicy:'no-referrer'
     });
     const tp = await rp.text();
     try{ return JSON.parse(tp); }catch(_){}
   }catch(_){}
-
   return null;
 }
 
-async function fetchAICommentFast(opts = {}){
-  try{
-    const prev = readAIFromLocal();
-    const res = await fastFetch(opts);
-    if (res && res.ok && typeof res.ai_comment === 'string'){
-      const next = String(res.ai_comment || '');
-      if (next && next !== prev){
+/* жёсткое ожидание нового комментария: только новый, без возврата старого */
+async function waitForAIComment({ dayLocal, calc_row, row_main, timeoutMs = 20000, stepMs = 500 } = {}){
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline){
+    // пробуем fast_fetch
+    try{
+      const res = await fastFetch({ dayLocal, calc_row, row_main });
+      if (res && res.ok && typeof res.ai_comment === 'string' && res.ai_comment.trim()){
+        const next = String(res.ai_comment);
         writeAIToLocal(next);
         renderAIComment(next);
-      } else if (prev){
-        // если прислали такой же текст — восстановим его (снимем лоадер)
-        renderAIComment(prev);
+        clearAIPending();
+        return true;
       }
-    }
-  }catch(_){}
-}
-
-/* >>> КОРОТКИЙ ДОГОН ПОСЛЕ "СОХРАНИТЬ" (до ~2.2 c) */
-async function chaseAICommentShort(timeoutMs = 2200, stepMs = 350){
-  const start = Date.now();
-  const baseline = readAIFromLocal();
-  while (Date.now() - start < timeoutMs){
+    }catch(_){}
+    // пробуем обычный ai_comment
     await fetchAIComment({ silent:true });
-    if (readAIFromLocal() !== baseline) break;
+    if (readAIFromLocal()){
+      renderAIComment(readAIFromLocal());
+      clearAIPending();
+      return true;
+    }
     await new Promise(r => setTimeout(r, stepMs));
   }
+  // не пришло — фиксируем отсутствие
+  clearAIPending();
+  setAILoading(false); // «Нет данных для комментария.»
+  return false;
 }
-/* ====== / Комментарий ИИ ====== */
 
 /* ===== АККОРДЕОН ===== */
 function setAriaExpanded(h){
@@ -602,8 +565,7 @@ function buildWheel(fieldEl, initial){
   fillCol(intCol, minInt, maxInt);
   fillCol(fracCol, 0, 9);
 
-  const nearestIndex = col =>
-    Math.round((col.scrollTop + (col.clientHeight-rowH)/2)/rowH) - pad;
+  const nearestIndex = col => Math.round((col.scrollTop + (col.clientHeight-rowH)/2)/rowH) - pad;
 
   const lastActiveIdx = new WeakMap();
   function markActive(col){
@@ -785,15 +747,14 @@ const FIELDS = [
 /* Быстрый доступ к конфигу */
 const CFG = Object.fromEntries(FIELDS.map(f=>[f.key, f]));
 
-/* ===== ИСХОДНОЕ СОСТОЯНИЕ: last + sessionDraft (с очисткой «тихих» черновиков) ===== */
+/* ===== ИСХОДНОЕ СОСТОЯНИЕ ===== */
 const last = readJSON(LS_KEY_LAST);
 let sessionDraft = readSessionJSON(SS_KEY_DRAFT);
 
-// устаревший черновик (по времени last) — удалить
+// чистка черновика
 if (sessionDraft && last?.ts && sessionDraft.ts && last.ts >= sessionDraft.ts){
   sessionDraft = null; removeSessionKey(SS_KEY_DRAFT);
 }
-// «тихий» черновик без правок и совпадающий с last — удалить
 if (sessionDraft && (!sessionDraft.dirty) && last?.data && equalData(sessionDraft.data||{}, last.data||{})){
   sessionDraft = null; removeSessionKey(SS_KEY_DRAFT);
 }
@@ -910,7 +871,7 @@ if (!document.getElementById('sec-measures').classList.contains('collapsed')){
   observeFields(); fieldsWrap._observed = true;
 }
 
-/* ===== ЧЕРНОВИК: sessionStorage + in-memory ===== */
+/* ===== ЧЕРНОВИК ===== */
 let draftTimer=null;
 function collectCurrentData(withEnsure=false){
   const out = {};
@@ -944,7 +905,7 @@ document.addEventListener('wheelchange', (e)=>{
   touchDraft();
 });
 
-/* ===== Применение данных к UI + Ре-гидратация из локального источника ===== */
+/* ===== Применение данных к UI ===== */
 function applyDataToUI(data = {}){
   let touched = false;
   for (const { key } of FIELDS){
@@ -967,7 +928,7 @@ function rehydrateFromLocal(){
   applyDataToUI(src);
 }
 
-/* ===== ПОДЪЕМ ИЗ БД (с опцией force для navigate/reload) ===== */
+/* ===== ПОДЪЁМ ИЗ БД ===== */
 async function fetchAndApplyFromBackend({ force = false } = {}){
   try{
     const res = await callBackend('init');
@@ -975,7 +936,7 @@ async function fetchAndApplyFromBackend({ force = false } = {}){
       const tsMs = Date.parse(res.last.ts_iso);
 
       const sd = readSessionJSON(SS_KEY_DRAFT);
-      if (sd?.dirty === true && !force) return; // пользователь что-то крутил — не трогаем
+      if (sd?.dirty === true && !force) return;
 
       if (sd && !sd.dirty && equalData(sd.data||{}, res.last.data||{})){
         removeSessionKey(SS_KEY_DRAFT);
@@ -989,44 +950,40 @@ async function fetchAndApplyFromBackend({ force = false } = {}){
         const v = res.last.data[k];
         if (baseData[k] !== v){ baseData[k] = v; changed = true; }
       }
-      if (changed){
-        applyDataToUI(res.last.data);
-      }
+      if (changed){ applyDataToUI(res.last.data); }
     }
   }catch(e){}
 }
 
-// На свежем заходе/перезагрузке форсируем данные БД; при back/forward (BFCache) — бережно
+/* ===== Стартовое поведение ===== */
 fetchAndApplyFromBackend({ force: !IS_BFCACHE });
-/* >>> Вызов при старте: сразу подгружаем ИИ-комментарий (тихо) */
-fetchAIComment({ silent:true });
+rehydrateAIFromLocal();              // покажем кэш ИИ только если НЕ pending
+fetchAIComment({ silent:true });     // тихо обновим (не вернёт старый)
 
-// Восстановление UI и синхронизация при возврате/активации вкладки
+/* BFCache / visibility */
 window.addEventListener('pageshow', (e)=>{
   rehydrateFromLocal();
-  /* >>> мгновенно отрисовать кэш ИИ и фоново обновить */
-  rehydrateAIFromLocal();
+  if (!isAIPending()) rehydrateAIFromLocal();
   const comingFromBFCache = e.persisted || IS_BFCACHE;
   fetchAndApplyFromBackend({ force: !comingFromBFCache });
   fetchAIComment({ silent:true });
-  startAIPoll(); // <-- авто-пуллинг
+  if (!isAIPending()) startAIPoll();
 });
 
 document.addEventListener('visibilitychange', ()=>{
   if (document.visibilityState === 'visible'){
     rehydrateFromLocal();
-    /* >>> при возвращении на вкладку — показать кэш ИИ и мягко обновить */
-    rehydrateAIFromLocal();
+    if (!isAIPending()) rehydrateAIFromLocal();
     const sd=readSessionJSON(SS_KEY_DRAFT);
     if (!(sd?.dirty)) fetchAndApplyFromBackend({ force:false });
     fetchAIComment({ silent:true });
-    startAIPoll(); // возобновляем опрос
+    if (!isAIPending()) startAIPoll();
   } else {
-    stopAIPoll(); // пауза, когда вкладка скрыта
+    stopAIPoll();
   }
 });
 
-/* ===== КНОПКА: визуальная отдача, лоадер ===== */
+/* ===== КНОПКА: визуальная отдача ===== */
 const saveBtn = document.getElementById('saveBtn');
 ['pointerdown','touchstart','mousedown'].forEach(ev =>
   saveBtn.addEventListener(ev, ()=> saveBtn.classList.add('pressed'), {passive:true})
@@ -1053,8 +1010,7 @@ document.getElementById('saveBtn').addEventListener('click', async ()=>{
 
   const clientTs = Date.now();
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-  const dayLocal = new Intl.DateTimeFormat('sv-SE', { timeZone: tz, year:'numeric', month:'2-digit', day:'2-digit' })
-                    .format(new Date(clientTs)); // YYYY-MM-DD
+  const dayLocal = getDayLocal(tz, clientTs);
 
   const extra = {
     tz,
@@ -1071,9 +1027,6 @@ document.getElementById('saveBtn').addEventListener('click', async ()=>{
   setSavingState(true);
   try { tg?.MainButton?.showProgress?.(); } catch(e){}
 
-  // запомним, что было показано в ИИ до сохранения — чтобы при отсутствии изменений убрать лоадер
-  const prevAI = readAIFromLocal();
-
   try{
     const res = await callBackend('save', extra);
     if (res && res.ok){
@@ -1081,34 +1034,27 @@ document.getElementById('saveBtn').addEventListener('click', async ()=>{
       writeJSON(LS_KEY_LAST, { ts: serverTs, data });
       document.getElementById('lastTime').textContent = 'Последний замер: ' + fmt(serverTs);
 
-      // очистка черновика сеанса
+      // очистка черновика
       removeSessionKey(SS_KEY_DRAFT);
       sessionDraft = null;
 
-      // свернуть раздел "Замеры"
+      // свернуть «Замеры»
       const measuresSec = document.getElementById('sec-measures');
       const measuresHeader = document.querySelector('[data-toggle="sec-measures"]');
       if (measuresSec) measuresSec.classList.add('collapsed');
       if (measuresHeader) measuresHeader.setAttribute('aria-expanded','false');
 
-      // >>> быстрый fetch по индексам из ответа save (мгновенная подгрузка ИИ)
-      setAILoading(true);
-      if (res.calc_row && res.row_main){
-        await fetchAICommentFast({ dayLocal, calc_row: res.calc_row, row_main: res.row_main });
-      }
+      // === СТРОГОЕ ПРАВИЛО: старый ИИ не показываем ===
+      stopAIPoll();
+      clearAICache();            // удалить прошлый текст
+      setAIPending(dayLocal);    // пометить ожидание нового
+      setAILoading(true);        // показываем только «Идёт анализ данных…»
 
-      // >>> короткий догон на случай, если inline ещё не успел
-      await chaseAICommentShort();
+      // быстрый путь по индексам из save
+      await waitForAIComment({ dayLocal, calc_row: res.calc_row, row_main: res.row_main });
 
-      // если за время догонки текст не изменился — вернём прежний контент, чтобы не висел лоадер
-      const nowAI = readAIFromLocal();
-      if (nowAI){
-        renderAIComment(nowAI);
-      } else if (prevAI){
-        renderAIComment(prevAI);
-      } else {
-        setAILoading(false);
-      }
+      // перезапуск фонового опроса (если не осталось pending)
+      if (!isAIPending()) startAIPoll();
 
       tg?.showPopup?.({title:'Сохранено', message:'Данные обновлены', buttons:[{type:'ok'}]});
     } else {
@@ -1127,35 +1073,24 @@ document.getElementById('saveBtn').addEventListener('click', async ()=>{
   }
 });
 
-/* ===== SELF-TESTS (не влияют на UI, только логи) ===== */
+/* ===== SELF-TESTS (только логи) ===== */
 (function runSelfTests(){
   try{
     const results = [];
     const ok = (name, cond) => results.push({name, ok: !!cond});
-
-    // equalData tests
     ok('equalData: same numbers', equalData({weight:70},{weight:70}) === true);
     ok('equalData: diff numbers', equalData({weight:70},{weight:71}) === false);
     ok('equalData: null equals null', equalData({fat:null},{fat:null}) === true);
-
-    // applyDataToUI test (no crash)
-    ok('applyDataToUI: safe call', (function(){ try{ applyDataToUI({weight:80}); return true; }catch{ return false; } })());
-
-    // Accordion toggle test (no crash and class toggles)
+    ok('applyDataToUI safe', (function(){ try{ applyDataToUI({weight:80}); return true; }catch{ return false; } })());
     (function(){
       const sec = document.createElement('section'); sec.id='__t'; sec.className='section collapsed';
       const h = document.createElement('div'); h.className='section-h'; h.setAttribute('data-toggle','__t');
       document.body.appendChild(sec); document.body.appendChild(h);
-      try{
-        toggleSectionByHeader(h);
-        ok('accordion toggles', !sec.classList.contains('collapsed'));
-      }catch{ ok('accordion toggles', false); }
+      try{ toggleSectionByHeader(h); ok('accordion toggles', !sec.classList.contains('collapsed')); }
+      catch{ ok('accordion toggles', false); }
       sec.remove(); h.remove();
     })();
-
-    // BackButton binding exists (cannot assert Telegram API in web), just no-throw call
     ok('bindBack callable', (function(){ try{ bindBack(); return true; }catch{ return false; } })());
-
     console.log('[SELF-TEST]', results.map(r=>`${r.ok?'✅':'❌'} ${r.name}`).join(' | '));
   }catch(e){ console.warn('[SELF-TEST] failed:', e); }
 })();
