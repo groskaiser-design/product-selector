@@ -222,28 +222,42 @@ function bindBack(){
 }
 
 /* ===== КОНСТАНТЫ ХРАНИЛИЩА ===== */
-const LS_KEY_LAST  = 'measurements:last';
-const SS_KEY_DRAFT = 'measurements:sessionDraft';
-const LS_KEY_AI    = 'measurements:ai:last';
-/* >>> новый флаг ожидания нового комментария после save */
-const SS_KEY_AI_PENDING = 'measurements:ai:pending';
+const LS_KEY_LAST  = 'measurements:last';                  // подтверждённая запись
+const SS_KEY_DRAFT = 'measurements:sessionDraft';          // черновик сеанса
+/* >>> кэш ИИ-комментария + флаг ожидания нового */
+const LS_KEY_AI        = 'measurements:ai:last';
+const SS_KEY_AI_PENDING= 'measurements:ai:pending';        // { day_local, row_main, calc_row, ts }
 
 /* ===== СЕТЬ / БЭКЕНД ===== */
 const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbwIBP13PEqrVSEUx6iPACxwvcvvqVSHzkN7W4UBM7mhG564t_v9w2dbNfN6ribe4QTfdA/exec';
 const APP_VERSION = '1.0.10';
 const AI_API_URL  = BACKEND_URL;
 
-/* ===== ПУЛЛИНГ ИИ ===== */
-const AI_REFRESH_MS = 60000;
+/* >>> опрос ИИ */
+const AI_REFRESH_MS = 60000;          // обычный фоновый опрос (когда не ждём)
+const AI_PENDING_MS = 1000;           // опрос каждую секунду, пока ждём
 let aiPollTimer = null;
-function startAIPoll(){ stopAIPoll(); aiPollTimer = setInterval(()=>fetchAIComment({silent:true}), AI_REFRESH_MS); }
-function stopAIPoll(){ if (aiPollTimer){ clearInterval(aiPollTimer); } aiPollTimer = null; }
+let aiPendingTimer = null;
 
-/* ===== HOME ===== */
+function startAIPoll(){ stopAIPoll(); aiPollTimer = setInterval(()=>fetchAIComment({silent:true}), AI_REFRESH_MS); }
+function stopAIPoll(){ if (aiPollTimer){ clearInterval(aiPollTimer); } aiPollTimer=null; }
+
+function startAIPendingLoop(){
+  stopAIPendingLoop();
+  aiPendingTimer = setInterval(async ()=>{
+    const pending = getAIPending();
+    if (!pending){ stopAIPendingLoop(); startAIPoll(); return; }
+    const ok = await tryFetchNewAIUsingPending(pending);
+    if (ok){ stopAIPendingLoop(); startAIPoll(); }
+  }, AI_PENDING_MS);
+}
+function stopAIPendingLoop(){ if (aiPendingTimer){ clearInterval(aiPendingTimer); } aiPendingTimer=null; }
+
+/* ===== Главная страница (настраивается мета-тегами) ===== */
 const HOME_URL = (document.querySelector('meta[name="tma:home-url"]')?.content) || './index.html';
 const HOME_HASH = (document.querySelector('meta[name="tma:home-hash"]')?.content) || '';
 
-/* ===== NAV TYPE ===== */
+/* ===== Тип навигации ===== */
 const navEntry = performance?.getEntriesByType?.('navigation')?.[0];
 const NAV_TYPE = navEntry?.type || 'navigate';
 const IS_BFCACHE = NAV_TYPE === 'back_forward';
@@ -254,7 +268,9 @@ const rowH = ROW_VAR.endsWith('px') ? parseFloat(ROW_VAR) : (parseFloat(ROW_VAR)
 const pad = 4;
 const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
 
-const DTF = new Intl.DateTimeFormat('ru-RU', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
+const DTF = new Intl.DateTimeFormat('ru-RU', {
+  day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'
+});
 const fmt = ts => (!ts ? 'нет данных' : DTF.format(new Date(ts)));
 
 function readJSON(key, fallback=null){ try{ const v=localStorage.getItem(key); return v?JSON.parse(v):fallback; }catch(e){ return fallback; } }
@@ -263,11 +279,8 @@ function readSessionJSON(key,fallback=null){ try{ const v=sessionStorage.getItem
 function writeSessionJSON(key,obj){ try{ sessionStorage.setItem(key, JSON.stringify(obj)); }catch(e){} }
 function removeSessionKey(key){ try{ sessionStorage.removeItem(key); }catch(e){} }
 function safeInitData(){ return window.Telegram?.WebApp?.initData || ''; }
-function getDayLocal(tz, t=Date.now()){
-  return new Intl.DateTimeFormat('sv-SE',{timeZone:tz,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(t));
-}
 
-/* ===== HTML SANITIZER ===== */
+/* ===== HTML SANITIZER (allowlist) ===== */
 const ALLOWED_TAGS = new Set(['h3','h4','p','br','ul','ol','li','b','strong','i','em','u','s','hr','blockquote','code','pre','a']);
 const SAFE_URL_RE  = /^(https?:\/\/|mailto:)/i;
 function sanitizeHtml(input){
@@ -276,7 +289,9 @@ function sanitizeHtml(input){
   const doc = parser.parseFromString(`<div>${input}</div>`, 'text/html');
   const root = doc.body.firstElementChild;
   function clean(node){
-    if (node.nodeType === Node.TEXT_NODE) return node.cloneNode(true);
+    if (node.nodeType === Node.TEXT_NODE){
+      return node.cloneNode(true);
+    }
     if (node.nodeType === Node.ELEMENT_NODE){
       const tag = node.tagName.toLowerCase();
       if (!ALLOWED_TAGS.has(tag)){
@@ -307,30 +322,43 @@ function sanitizeHtml(input){
   return tmp.innerHTML;
 }
 
-function goHome(){
-  if (typeof window.appNavigate === 'function'){ try { window.appNavigate('home'); return; } catch(_){ } }
-  if (HOME_HASH){ if (location.hash !== HOME_HASH){ location.hash = HOME_HASH; return; } }
-  if (HOME_URL){ try { location.assign(HOME_URL); return; } catch(_){ } }
-  const tg = window.Telegram?.WebApp; try { tg?.close(); } catch(_){ }
+// Универсальный переход «домой»
+function goHome(reason=''){
+  if (typeof window.appNavigate === 'function'){
+    try { window.appNavigate('home'); return; } catch(_){ }
+  }
+  if (HOME_HASH){
+    if (location.hash !== HOME_HASH){ location.hash = HOME_HASH; return; }
+  }
+  if (HOME_URL){
+    try { location.assign(HOME_URL); return; } catch(_){ }
+  }
+  const tg = window.Telegram?.WebApp;
+  try { tg?.close(); } catch(_){ }
 }
 
-/* равенство наборов данных */
+/* равенство наборов данных (числа сравниваем с допуском) */
 function equalData(a={}, b={}){
   for (const {key} of FIELDS){
     const va = a[key], vb = b[key];
-    if (va === null || vb === null){ if (va !== vb) return false; }
-    else if (typeof va === 'number' && typeof vb === 'number'){ if (Math.abs(va - vb) > 1e-9) return false; }
-    else if (typeof va === 'undefined' && typeof vb === 'undefined'){ continue; }
-    else { return false; }
+    if (va === null || vb === null){
+      if (va !== vb) return false;
+    } else if (typeof va === 'number' && typeof vb === 'number'){
+      if (Math.abs(va - vb) > 1e-9) return false;
+    } else if (typeof va === 'undefined' && typeof vb === 'undefined'){
+      continue;
+    } else {
+      return false;
+    }
   }
   return true;
 }
 
-/* ===== API (init/save) ===== */
+/* ===== СЕТЬ: основной backend (init/save) ===== */
 async function callBackend(action, extra = {}) {
   const base = { action, init_data: safeInitData(), app_version: APP_VERSION, locale: navigator.language || 'ru-RU', ...extra };
 
-  // GET
+  // 1) GET (без preflight)
   const qs = new URLSearchParams();
   qs.set('action', action);
   qs.set('init_data', base.init_data);
@@ -339,14 +367,16 @@ async function callBackend(action, extra = {}) {
   try{
     const r = await fetch(BACKEND_URL + '?' + qs.toString(), { cache:'no-cache' });
     const tx = await r.text();
-    try{ return JSON.parse(tx); }catch(_){}
-  }catch(_){}
+    try{ return JSON.parse(tx); }catch(_){ }
+  }catch(_){ }
 
-  // POST fallback
+  // 2) Fallback POST text/plain (iOS)
   try{
     const rp = await fetch(BACKEND_URL, {
-      method:'POST', headers:{'Content-Type':'text/plain;charset=UTF-8'},
-      body: JSON.stringify(base), keepalive:true, redirect:'follow', credentials:'omit', referrerPolicy:'no-referrer'
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=UTF-8'},
+      body: JSON.stringify(base),
+      keepalive:true, redirect:'follow', credentials:'omit', referrerPolicy:'no-referrer'
     });
     const tp = await rp.text();
     try{ return JSON.parse(tp); }catch{ return {ok:false, error:'bad_json', _raw: tp.slice(0,200)}; }
@@ -355,7 +385,7 @@ async function callBackend(action, extra = {}) {
   }
 }
 
-/* ===== Комментарий ИИ: UI ===== */
+/* ======= Комментарий ИИ: helpers ======= */
 function setAILoading(isLoading){
   const cont = document.getElementById('ai-comment');
   if (!cont) return;
@@ -384,32 +414,79 @@ function renderAIComment(text){
 }
 function readAIFromLocal(){ try{ return (JSON.parse(localStorage.getItem(LS_KEY_AI))||{}).text || ''; }catch(_){ return ''; } }
 function writeAIToLocal(text){ try{ localStorage.setItem(LS_KEY_AI, JSON.stringify({ ts: Date.now(), text: String(text||'') })); }catch(_){ } }
-function clearAICache(){ try{ localStorage.removeItem(LS_KEY_AI); }catch(_){} }
+function clearAICache(){ try{ localStorage.removeItem(LS_KEY_AI); }catch(_){ } }
 
-/* флаг ожидания нового комментария (не даём показывать старый) */
-function setAIPending(day){ writeSessionJSON(SS_KEY_AI_PENDING, { day, ts: Date.now() }); }
-function getAIPending(){ return readSessionJSON(SS_KEY_AI_PENDING, null); }
-function isAIPending(){ return !!getAIPending(); }
+function getAIPending(){ return readSessionJSON(SS_KEY_AI_PENDING); }
+function setAIPending(obj){ writeSessionJSON(SS_KEY_AI_PENDING, { ...(obj||{}), ts: Date.now() }); }
 function clearAIPending(){ removeSessionKey(SS_KEY_AI_PENDING); }
 
 function rehydrateAIFromLocal(){
-  if (isAIPending()) { setAILoading(true); return; } // ждём новый — не показываем старый
+  // Если ждём новый комментарий — запрещено показывать старый кэш
+  if (getAIPending()){ setAILoading(true); return; }
   const t = readAIFromLocal();
   if (t) renderAIComment(t);
 }
 
-/* ===== fetch AI (не восстанавливает старый текст никогда) ===== */
+/* быстрый fetch по индексу (из ответа save) */
+async function fetchFastAI({ day_local, row_main, calc_row, tz }){
+  try{
+    const base = { action:'fast_fetch', init_data: safeInitData(), tz: tz || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+                   day_local, row_main, calc_row };
+    const qs = new URLSearchParams();
+    qs.set('action','fast_fetch');
+    qs.set('init_data', base.init_data);
+    qs.set('json', JSON.stringify(base));
+    qs.set('_t', String(Date.now()));
+    const r = await fetch(AI_API_URL + '?' + qs.toString(), { cache:'no-cache' });
+    const tx = await r.text();
+    try{
+      const json = JSON.parse(tx);
+      if (json?.ok && typeof json.ai_comment === 'string'){
+        return json.ai_comment || '';
+      }
+    }catch(_){}
+  }catch(_){}
+  // POST fallback
+  try{
+    const rp = await fetch(AI_API_URL, {
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=UTF-8'},
+      body: JSON.stringify({ action:'fast_fetch', init_data: safeInitData(), day_local, row_main, calc_row,
+                             tz: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' }),
+      keepalive:true, redirect:'follow', credentials:'omit', referrerPolicy:'no-referrer'
+    });
+    const tp = await rp.text();
+    try{
+      const json = JSON.parse(tp);
+      if (json?.ok && typeof json.ai_comment === 'string'){
+        return json.ai_comment || '';
+      }
+    }catch(_){}
+  }catch(_){}
+  return '';
+}
+
+/* обычный fetch комментария */
 async function fetchAIComment({ silent=false } = {}){
   if (!AI_API_URL){
     if (!silent && !readAIFromLocal()) setAILoading(false);
     return;
   }
   try{
-    if (!silent) setAILoading(true);
-    const base = { action: 'ai_comment', init_data: safeInitData(), tz: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' };
+    if (!silent && !getAIPending()) setAILoading(true); // при обычном запросе можем показать лоадер
+    const base = {
+      action: 'ai_comment',
+      init_data: safeInitData(),
+      tz: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+    };
+    const prev = readAIFromLocal();
+
     // GET
     const qs = new URLSearchParams();
-    qs.set('action','ai_comment'); qs.set('init_data', base.init_data); qs.set('json', JSON.stringify(base)); qs.set('_t', String(Date.now()));
+    qs.set('action','ai_comment');
+    qs.set('init_data', base.init_data);
+    qs.set('json', JSON.stringify(base));
+    qs.set('_t', String(Date.now()));
     try{
       const r = await fetch(AI_API_URL + '?' + qs.toString(), { cache:'no-cache' });
       const tx = await r.text();
@@ -417,92 +494,62 @@ async function fetchAIComment({ silent=false } = {}){
         const json = JSON.parse(tx);
         if (json?.ok && typeof json.ai_comment === 'string'){
           const next = String(json.ai_comment || '');
-          if (next){
+          if (next && next !== prev){
             writeAIToLocal(next);
-            renderAIComment(next);
+            // если мы не ждём конкретно новый — можем отрисовать
+            if (!getAIPending()) renderAIComment(next);
+            return;
           }
-          return;
         }
       }catch(_){}
     }catch(_){}
+
     // POST fallback
     try{
       const rp = await fetch(AI_API_URL, {
-        method:'POST', headers:{'Content-Type':'text/plain;charset=UTF-8'},
-        body: JSON.stringify(base), keepalive:true, redirect:'follow', credentials:'omit', referrerPolicy:'no-referrer'
+        method:'POST',
+        headers:{'Content-Type':'text/plain;charset=UTF-8'},
+        body: JSON.stringify(base),
+        keepalive:true, redirect:'follow', credentials:'omit', referrerPolicy:'no-referrer'
       });
       const tp = await rp.text();
       try{
         const json = JSON.parse(tp);
         if (json?.ok && typeof json.ai_comment === 'string'){
           const next = String(json.ai_comment || '');
-          if (next){
+          if (next && next !== prev){
             writeAIToLocal(next);
-            renderAIComment(next);
+            if (!getAIPending()) renderAIComment(next);
+            return;
           }
-          return;
         }
       }catch(_){}
     }catch(_){}
   } finally {
-    if (!readAIFromLocal() && !isAIPending()) setAILoading(false);
+    // В режиме ожидания нового комментария НЕ переключаем лоадер на "Нет данных"
+    if (!readAIFromLocal() && !getAIPending()) setAILoading(false);
   }
 }
 
-/* ===== FAST_FETCH и ожидание нового комментария ===== */
-async function fastFetch(opts = {}){
-  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-  const base = {
-    action: 'fast_fetch', init_data: safeInitData(), tz,
-    day_local: opts.dayLocal || undefined, calc_row: opts.calc_row || undefined, row_main: opts.row_main || undefined
-  };
-  // GET
-  try{
-    const qs = new URLSearchParams();
-    qs.set('action','fast_fetch'); qs.set('init_data', base.init_data); qs.set('json', JSON.stringify(base)); qs.set('_t', String(Date.now()));
-    const r = await fetch(BACKEND_URL + '?' + qs.toString(), { cache:'no-cache' });
-    const tx = await r.text();
-    try{ return JSON.parse(tx); }catch(_){}
-  }catch(_){}
-  // POST fallback
-  try{
-    const rp = await fetch(BACKEND_URL, {
-      method:'POST', headers:{'Content-Type':'text/plain;charset=UTF-8'},
-      body: JSON.stringify(base), keepalive:true, redirect:'follow', credentials:'omit', referrerPolicy:'no-referrer'
-    });
-    const tp = await rp.text();
-    try{ return JSON.parse(tp); }catch(_){}
-  }catch(_){}
-  return null;
-}
-
-/* жёсткое ожидание нового комментария: только новый, без возврата старого */
-async function waitForAIComment({ dayLocal, calc_row, row_main, timeoutMs = 20000, stepMs = 500 } = {}){
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline){
-    // пробуем fast_fetch
-    try{
-      const res = await fastFetch({ dayLocal, calc_row, row_main });
-      if (res && res.ok && typeof res.ai_comment === 'string' && res.ai_comment.trim()){
-        const next = String(res.ai_comment);
-        writeAIToLocal(next);
-        renderAIComment(next);
-        clearAIPending();
-        return true;
-      }
-    }catch(_){}
-    // пробуем обычный ai_comment
-    await fetchAIComment({ silent:true });
-    if (readAIFromLocal()){
-      renderAIComment(readAIFromLocal());
-      clearAIPending();
-      return true;
-    }
-    await new Promise(r => setTimeout(r, stepMs));
+/* попытка получить новый комментарий с учётом индексов из pending */
+async function tryFetchNewAIUsingPending(p){
+  if (!p) return false;
+  // 1) быстрый путь
+  const fromFast = await fetchFastAI({ day_local: p.day_local, row_main: p.row_main, calc_row: p.calc_row });
+  if (fromFast && fromFast.trim()){
+    writeAIToLocal(fromFast);
+    renderAIComment(fromFast);
+    clearAIPending();
+    return true;
   }
-  // не пришло — фиксируем отсутствие
-  clearAIPending();
-  setAILoading(false); // «Нет данных для комментария.»
+  // 2) резервный путь
+  await fetchAIComment({ silent:true });
+  const t = readAIFromLocal();
+  if (t && t.trim()){
+    renderAIComment(t);
+    clearAIPending();
+    return true;
+  }
   return false;
 }
 
@@ -565,7 +612,8 @@ function buildWheel(fieldEl, initial){
   fillCol(intCol, minInt, maxInt);
   fillCol(fracCol, 0, 9);
 
-  const nearestIndex = col => Math.round((col.scrollTop + (col.clientHeight-rowH)/2)/rowH) - pad;
+  const nearestIndex = col =>
+    Math.round((col.scrollTop + (col.clientHeight-rowH)/2)/rowH) - pad;
 
   const lastActiveIdx = new WeakMap();
   function markActive(col){
@@ -747,14 +795,15 @@ const FIELDS = [
 /* Быстрый доступ к конфигу */
 const CFG = Object.fromEntries(FIELDS.map(f=>[f.key, f]));
 
-/* ===== ИСХОДНОЕ СОСТОЯНИЕ ===== */
+/* ===== ИСХОДНОЕ СОСТОЯНИЕ: last + sessionDraft ===== */
 const last = readJSON(LS_KEY_LAST);
 let sessionDraft = readSessionJSON(SS_KEY_DRAFT);
 
-// чистка черновика
+// устаревший черновик — удалить
 if (sessionDraft && last?.ts && sessionDraft.ts && last.ts >= sessionDraft.ts){
   sessionDraft = null; removeSessionKey(SS_KEY_DRAFT);
 }
+// «тихий» черновик без правок и совпадающий с last — удалить
 if (sessionDraft && (!sessionDraft.dirty) && last?.data && equalData(sessionDraft.data||{}, last.data||{})){
   sessionDraft = null; removeSessionKey(SS_KEY_DRAFT);
 }
@@ -928,7 +977,7 @@ function rehydrateFromLocal(){
   applyDataToUI(src);
 }
 
-/* ===== ПОДЪЁМ ИЗ БД ===== */
+/* ===== Подъём из БД ===== */
 async function fetchAndApplyFromBackend({ force = false } = {}){
   try{
     const res = await callBackend('init');
@@ -950,36 +999,37 @@ async function fetchAndApplyFromBackend({ force = false } = {}){
         const v = res.last.data[k];
         if (baseData[k] !== v){ baseData[k] = v; changed = true; }
       }
-      if (changed){ applyDataToUI(res.last.data); }
+      if (changed){
+        applyDataToUI(res.last.data);
+      }
     }
   }catch(e){}
 }
 
-/* ===== Стартовое поведение ===== */
+/* ===== Стартовые вызовы ===== */
 fetchAndApplyFromBackend({ force: !IS_BFCACHE });
-rehydrateAIFromLocal();              // покажем кэш ИИ только если НЕ pending
-fetchAIComment({ silent:true });     // тихо обновим (не вернёт старый)
+rehydrateAIFromLocal();                 // кэш ИИ (если нет pending)
+fetchAIComment({ silent:true });        // мягкое обновление
 
-/* BFCache / visibility */
 window.addEventListener('pageshow', (e)=>{
   rehydrateFromLocal();
-  if (!isAIPending()) rehydrateAIFromLocal();
+  rehydrateAIFromLocal();               // не рендерит старый кэш, если pending
   const comingFromBFCache = e.persisted || IS_BFCACHE;
   fetchAndApplyFromBackend({ force: !comingFromBFCache });
   fetchAIComment({ silent:true });
-  if (!isAIPending()) startAIPoll();
+  if (getAIPending()){ stopAIPoll(); startAIPendingLoop(); } else { startAIPoll(); }
 });
 
 document.addEventListener('visibilitychange', ()=>{
   if (document.visibilityState === 'visible'){
     rehydrateFromLocal();
-    if (!isAIPending()) rehydrateAIFromLocal();
+    rehydrateAIFromLocal();
     const sd=readSessionJSON(SS_KEY_DRAFT);
     if (!(sd?.dirty)) fetchAndApplyFromBackend({ force:false });
     fetchAIComment({ silent:true });
-    if (!isAIPending()) startAIPoll();
+    if (getAIPending()){ stopAIPoll(); startAIPendingLoop(); } else { startAIPoll(); }
   } else {
-    stopAIPoll();
+    // при скрытии можно не стопать pending-loop — браузер сам дросселирует таймеры
   }
 });
 
@@ -1010,7 +1060,8 @@ document.getElementById('saveBtn').addEventListener('click', async ()=>{
 
   const clientTs = Date.now();
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-  const dayLocal = getDayLocal(tz, clientTs);
+  const dayLocal = new Intl.DateTimeFormat('sv-SE', { timeZone: tz, year:'numeric', month:'2-digit', day:'2-digit' })
+                    .format(new Date(clientTs)); // YYYY-MM-DD
 
   const extra = {
     tz,
@@ -1044,17 +1095,16 @@ document.getElementById('saveBtn').addEventListener('click', async ()=>{
       if (measuresSec) measuresSec.classList.add('collapsed');
       if (measuresHeader) measuresHeader.setAttribute('aria-expanded','false');
 
-      // === СТРОГОЕ ПРАВИЛО: старый ИИ не показываем ===
-      stopAIPoll();
-      clearAICache();            // удалить прошлый текст
-      setAIPending(dayLocal);    // пометить ожидание нового
-      setAILoading(true);        // показываем только «Идёт анализ данных…»
-
-      // быстрый путь по индексам из save
-      await waitForAIComment({ dayLocal, calc_row: res.calc_row, row_main: res.row_main });
-
-      // перезапуск фонового опроса (если не осталось pending)
-      if (!isAIPending()) startAIPoll();
+      // >>> Комментарий ИИ: строгое ожидание нового
+      stopAIPoll();                 // стандартный опрос выключаем
+      clearAICache();               // запрещаем появление старого текста
+      setAIPending({                // фиксируем, что ждём новый по этим индексам
+        day_local: res.day_local,
+        row_main:  res.row_main || res.row,
+        calc_row:  res.calc_row || 0
+      });
+      setAILoading(true);           // на экране только лоадер
+      startAIPendingLoop();         // каждые 1с: fast_fetch -> ai_comment
 
       tg?.showPopup?.({title:'Сохранено', message:'Данные обновлены', buttons:[{type:'ok'}]});
     } else {
@@ -1073,24 +1123,31 @@ document.getElementById('saveBtn').addEventListener('click', async ()=>{
   }
 });
 
-/* ===== SELF-TESTS (только логи) ===== */
+/* ===== SELF-TESTS (логи) ===== */
 (function runSelfTests(){
   try{
     const results = [];
     const ok = (name, cond) => results.push({name, ok: !!cond});
+
     ok('equalData: same numbers', equalData({weight:70},{weight:70}) === true);
     ok('equalData: diff numbers', equalData({weight:70},{weight:71}) === false);
     ok('equalData: null equals null', equalData({fat:null},{fat:null}) === true);
-    ok('applyDataToUI safe', (function(){ try{ applyDataToUI({weight:80}); return true; }catch{ return false; } })());
+
+    ok('applyDataToUI: safe call', (function(){ try{ applyDataToUI({weight:80}); return true; }catch{ return false; } })());
+
     (function(){
       const sec = document.createElement('section'); sec.id='__t'; sec.className='section collapsed';
       const h = document.createElement('div'); h.className='section-h'; h.setAttribute('data-toggle','__t');
       document.body.appendChild(sec); document.body.appendChild(h);
-      try{ toggleSectionByHeader(h); ok('accordion toggles', !sec.classList.contains('collapsed')); }
-      catch{ ok('accordion toggles', false); }
+      try{
+        toggleSectionByHeader(h);
+        ok('accordion toggles', !sec.classList.contains('collapsed'));
+      }catch{ ok('accordion toggles', false); }
       sec.remove(); h.remove();
     })();
+
     ok('bindBack callable', (function(){ try{ bindBack(); return true; }catch{ return false; } })());
+
     console.log('[SELF-TEST]', results.map(r=>`${r.ok?'✅':'❌'} ${r.name}`).join(' | '));
   }catch(e){ console.warn('[SELF-TEST] failed:', e); }
 })();
