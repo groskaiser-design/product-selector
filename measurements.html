@@ -578,76 +578,73 @@ document.addEventListener('DOMContentLoaded', () => {
   
 /* ============================================================
  *  BLOCK D — Привязка кнопки "Сохранить" + UX
- *  Требует: определённой функции saveToDB() из Block C
+ *  Требует: определённой функции saveMeasurementsToDB() из Block C
  * ============================================================ */
-(function () {
-  // 1) находим кнопку
-  const btn =
-    document.getElementById('saveBtn') ||
-    document.querySelector('#btn-save,#save,.js-save,[data-action="save"]');
 
-  if (!btn) {
-    console.warn('[Block D] Кнопка "Сохранить" не найдена — проверь селекторы');
-    return;
+
+const saveBtn = document.getElementById('saveBtn');
+
+['pointerdown','touchstart','mousedown'].forEach(ev =>
+  saveBtn.addEventListener(ev, ()=> saveBtn.classList.add('pressed'), {passive:true})
+);
+['pointerup','pointercancel','mouseleave','touchend','touchcancel','mouseup','blur'].forEach(ev =>
+  saveBtn.addEventListener(ev, ()=> saveBtn.classList.remove('pressed'), {passive:true})
+);
+
+function setSavingState(isSaving){
+  const label = saveBtn.querySelector('.btn-label');
+  const sp = saveBtn.querySelector('.spinner');
+  saveBtn.classList.toggle('loading', isSaving);
+  saveBtn.disabled = isSaving;
+  saveBtn.setAttribute('aria-busy', String(isSaving));
+  if (sp) sp.hidden = !isSaving;
+  if (label) label.textContent = isSaving ? 'Обработка…' : 'Сохранить';
+}
+
+function showPopup(title, message){
+  const tg = window.Telegram?.WebApp;
+  if (tg?.showPopup) tg.showPopup({title, message, buttons:[{type:'ok'}]});
+  else alert(`${title}\n\n${message}`);
+}
+
+function collectWheelValues(){
+  const out = {};
+  for (const cfg of FIELDS){
+    const fieldEl = fieldByKey[cfg.key];
+    const w = (wheels[cfg.key] || ensureWheel(fieldEl, cfg));
+    const cb = fieldEl?.querySelector('#opt_' + cfg.key);
+    out[cfg.key] = (cfg.optional && cb && cb.checked) ? null : w.value;
   }
+  return out;
+}
 
-  // 2) элементы для UX (необязательные)
-  const labelEl   = btn.querySelector('.btn-label') || btn;
-  const spinnerEl = btn.querySelector('.spinner');
+saveBtn.addEventListener('click', async () => {
+  const tg = window.Telegram?.WebApp;
+  try { tg?.HapticFeedback?.impactOccurred('light'); } catch(_) {}
 
-  // 3) визуальная реакция на нажатие
-  ['pointerdown','mousedown','touchstart'].forEach(ev =>
-    btn.addEventListener(ev, () => btn.classList.add('pressed'), { passive: true })
-  );
-  ['pointerup','mouseleave','touchend','touchcancel','mouseup','blur'].forEach(ev =>
-    btn.addEventListener(ev, () => btn.classList.remove('pressed'), { passive: true })
-  );
-
-  // 4) утилиты UX
-  function setSavingState(isSaving) {
-    btn.classList.toggle('loading', isSaving);
-    btn.disabled = isSaving;
-    btn.setAttribute('aria-busy', String(isSaving));
-    if (spinnerEl) spinnerEl.hidden = !isSaving;
-    if (labelEl && labelEl !== btn) labelEl.textContent = isSaving ? 'Обработка…' : 'Сохранить';
-  }
-  function collapseMeasures() {
-    const sec = document.getElementById('sec-measures');
-    const hdr = document.querySelector('[data-toggle="sec-measures"]');
-    if (sec) sec.classList.add('collapsed');
-    if (hdr) hdr.setAttribute('aria-expanded', 'false');
-  }
-  function showPopup(title, message) {
-    const tg = window.Telegram?.WebApp;
-    if (tg?.showPopup) tg.showPopup({ title, message, buttons: [{ type: 'ok' }] });
-    else alert(`${title}\n\n${message}`);
-  }
-
-  // 5) обработчик клика — вызываем saveToDB() из Block C
-  btn.addEventListener('click', async () => {
-    const tg = window.Telegram?.WebApp;
-    try { tg?.HapticFeedback?.impactOccurred('light'); } catch (_) {}
-
-    setSavingState(true);
-    try {
-      if (typeof saveToDB !== 'function') {
-        throw new Error('saveToDB() не найдена. Убедись, что Block C подключён выше.');
-      }
-      const res = await saveToDB(); // <- реальный вызов бэкенда
-
-      try { tg?.HapticFeedback?.impactOccurred('medium'); } catch (_) {}
-      showPopup('Готово', `Сохранено ✅\nСтрока: ${res.row_all}\nCalc: ${res.row_calc}`);
-      collapseMeasures();
-      console.log('[SAVE RESULT]', res);
-    } catch (err) {
-      try { tg?.HapticFeedback?.impactOccurred('heavy'); } catch (_) {}
-      console.error('[SAVE ERROR]', err);
-      showPopup('Ошибка', String(err?.message || err));
-    } finally {
-      setSavingState(false);
+  const values = collectWheelValues();              // <-- берём значения крутилок
+  setSavingState(true);
+  try {
+    if (typeof window.saveMeasurementsToDB !== 'function') {
+      throw new Error('saveMeasurementsToDB() не найдена. Убедись, что Block C подключён выше.');
     }
-  });
-})();
+
+    // если ваша реализация saveMeasurementsToDB ожидает объект значений — передаём:
+    const res = await window.saveMeasurementsToDB(values);
+
+    try { tg?.HapticFeedback?.impactOccurred('medium'); } catch(_) {}
+    const rowAll  = res?.row_all ?? '?';
+    const rowCalc = res?.row_calc ?? (typeof rowAll === 'number' ? rowAll + 1 : '?');
+
+    showPopup('Готово', `Сохранено ✅\nmeasurements_all: строка ${rowAll}\ncalc: строка ${rowCalc}`);
+  } catch (err) {
+    try { tg?.HapticFeedback?.notificationOccurred?.('error'); } catch(_) {}
+    showPopup('Ошибка', String(err && err.message || err));
+  } finally {
+    setSavingState(false);
+  }
+});
+
 
 
 /* ============================================================
