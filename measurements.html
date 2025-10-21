@@ -646,6 +646,65 @@ function getRowCalcForUser(uid){
 window.getRowCalcForUser = getRowCalcForUser;
 window.setRowCalcForUser = setRowCalcForUser;
 
+// === LAST MEASUREMENT TIME ===
+var LASTTIME_KEY_PREFIX = 'macros:last_measurement_time:';
+
+function lastTimeKey(uid){ 
+  return LASTTIME_KEY_PREFIX + String(uid); 
+}
+
+function setLastMeasurementTime(timestamp, uid){
+  if (typeof uid === 'undefined') uid = currentUserId();
+  try { 
+    localStorage.setItem(lastTimeKey(uid), String(timestamp)); 
+  } catch(e) { 
+    try { sessionStorage.setItem(lastTimeKey(uid), String(timestamp)); } catch(e2){} 
+  }
+  if (!window.__lastTimeByUid) window.__lastTimeByUid = {};
+  window.__lastTimeByUid[String(uid)] = Number(timestamp);
+  updateLastTimeDisplay(timestamp);
+}
+
+function getLastMeasurementTime(uid){
+  if (typeof uid === 'undefined') uid = currentUserId();
+  if (window.__lastTimeByUid && (String(uid) in window.__lastTimeByUid)) {
+    return window.__lastTimeByUid[String(uid)];
+  }
+  var v = null; 
+  try { v = localStorage.getItem(lastTimeKey(uid)); } 
+  catch(e) { try { v = sessionStorage.getItem(lastTimeKey(uid)); } catch(e2){} }
+  var n = (v == null) ? null : Number(v);
+  if (!window.__lastTimeByUid) window.__lastTimeByUid = {};
+  window.__lastTimeByUid[String(uid)] = isNaN(n) ? null : n;
+  return window.__lastTimeByUid[String(uid)];
+}
+
+function updateLastTimeDisplay(timestamp){
+  var el = document.getElementById('lastTime');
+  if (!el) return;
+  
+  if (!timestamp) {
+    el.textContent = 'Последний замер: нет данных';
+    return;
+  }
+  
+  var date = new Date(timestamp);
+  var dateStr = date.toLocaleDateString('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric'
+  });
+  var timeStr = date.toLocaleTimeString('ru-RU', {
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+  
+  el.textContent = 'Последний замер: ' + dateStr + ' ' + timeStr;
+}
+
+window.setLastMeasurementTime = setLastMeasurementTime;
+window.getLastMeasurementTime = getLastMeasurementTime;
+  
 // === UI ===
 function getSaveBtn(){ 
   return document.getElementById('saveBtn'); 
@@ -766,6 +825,7 @@ function handleSaveClick(e){
       console.log('✅ Успех');
       
       setRowCalcForUser(res.row_calc);
+      setLastMeasurementTime(Date.now());
       setSavingState(false);
       collapseAccordionSafe();
       
@@ -850,6 +910,15 @@ function toggleSectionByHeader(h){
     if (e.key==='Enter' || e.key===' '){ e.preventDefault(); toggleSectionByHeader(h); }
   });
   document.querySelectorAll('.section-h').forEach(setAriaExpanded);
+
+// Показываем последнее время при загрузке
+(function(){
+  var lastTime = getLastMeasurementTime();
+  if (lastTime) {
+    updateLastTimeDisplay(lastTime);
+  }
+})();
+
 })();
 </script>
 </body>
