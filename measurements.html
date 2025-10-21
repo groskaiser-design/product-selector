@@ -523,8 +523,7 @@ async function saveMeasurementsToDB(values){
     row_calc:  Number(json.row_calc)
   };
 }
-
-  /* ============================================================
+/* ============================================================
  * BLOCK D — UI: одна привязка «Сохранить», кулдаун, попапы
  * + per-user память row_calc + гарантированное сворачивание
  * ============================================================ */
@@ -532,8 +531,8 @@ async function saveMeasurementsToDB(values){
 const saveBtn = document.getElementById('saveBtn');
 let savingInFlight = false;
 
-/* --- клиентский кулдаун --- */
-const MIN_SAVE_INTERVAL_MS = 2500; // не давать жать «Сохранить» чаще этого
+/* --- клиентский кулдаун (чтоб показать попап «Слишком часто») --- */
+const MIN_SAVE_INTERVAL_MS = 2000;
 let __lastSaveTs = 0;
 
 /* --- per-user device memory for row_calc --- */
@@ -591,30 +590,42 @@ async function showPopupSafe(title, message){
   }
 }
 
-/* --- сворачивание аккордеона (надёжный fallback) --- */
-function collapseMeasuresSafe(){
-  // 1) если есть ваша функция — используем её
-  if (typeof window.collapseMeasures === 'function'){ try{ window.collapseMeasures(); return; }catch{} }
+/* --- гарантированное сворачивание аккордеона анкеты --- */
+function collapseAccordionSafe(){
+  // 0) если у вас уже есть функция — используем её
+  if (typeof window.collapseMeasures === 'function') { try{ window.collapseMeasures(); return; }catch{} }
 
-  // 2) иначе — пытаемся свернуть по id
-  const sec = document.getElementById('sec-measures') || document.querySelector('[data-section="measures"]');
-  if (sec){
-    sec.classList.add('collapsed');
-    sec.setAttribute('aria-hidden','true');
+  // 1) вариант <details open>
+  const details = document.querySelector('details#sec-measures, details[data-section="measures"], #sec-measures details');
+  if (details && details.hasAttribute('open')) { details.open = false; }
+
+  // 2) Bootstrap-подобный .collapse.show
+  const panel = document.querySelector('#sec-measures.collapse.show, [data-section="measures"].collapse.show, .accordion .collapse.show');
+  if (panel){
+    panel.classList.remove('show'); // визуально скрыть
+    panel.setAttribute('aria-hidden','true');
   }
-  // 3) если есть заголовок-тогглер — приводим aria-expanded к false и кликаем
-  const hdr = document.querySelector('[data-toggle="sec-measures"], [data-target="#sec-measures"], [aria-controls="sec-measures"]');
-  if (hdr){
-    hdr.setAttribute('aria-expanded','false');
-    // если ваш UI сворачивает по клику — эмулируем
-    try{ hdr.click(); }catch{}
+
+  // 3) общий случай: просто скрыть секцию
+  const section = document.getElementById('sec-measures') || document.querySelector('[data-section="measures"]');
+  if (section){
+    section.classList.add('collapsed');
+    section.setAttribute('aria-hidden','true');
+  }
+
+  // 4) «нажимаем» на активный тогглер, если он есть
+  const toggler =
+    document.querySelector('[data-bs-toggle="collapse"][data-bs-target="#sec-measures"]') ||
+    document.querySelector('[aria-controls="sec-measures"][aria-expanded="true"]') ||
+    document.querySelector('[data-toggle="sec-measures"][aria-expanded="true"]');
+  if (toggler){
+    try { toggler.setAttribute('aria-expanded','false'); toggler.click(); } catch {}
   }
 }
 
-/* --- чтение значений крутилок --- */
+/* --- сбор значений крутилок --- */
 function collectWheelValues(){
   if (typeof window._collectWheelValues === 'function') return window._collectWheelValues();
-
   const out = {};
   for (const cfg of FIELDS){
     const fieldEl = fieldByKey[cfg.key];
@@ -635,17 +646,18 @@ if (saveBtn){
   );
 }
 
-/* --- единый обработчик клика --- */
-if (saveBtn && !window.__saveHandlerBound){
-  window.__saveHandlerBound = true;
-  saveBtn.addEventListener('click', onSaveClick);
+/* --- единая привязка клика (с очисткой старого обработчика) --- */
+if (saveBtn){
+  if (window.__saveHandler) saveBtn.removeEventListener('click', window.__saveHandler);
+  window.__saveHandler = onSaveClick;
+  saveBtn.addEventListener('click', window.__saveHandler);
 }
 
 async function onSaveClick(e){
   e?.preventDefault?.();
   const tg = window.Telegram?.WebApp;
 
-  // клиентский кулдаун
+  // клиентский кулдаун для попапа «Слишком часто»
   const now = Date.now();
   if (now - __lastSaveTs < MIN_SAVE_INTERVAL_MS){
     try { tg?.HapticFeedback?.notificationOccurred?.('error'); } catch {}
@@ -653,51 +665,51 @@ async function onSaveClick(e){
     return;
   }
 
-  if (savingInFlight) return;
+  if (savingInFlight) return; // защита от двойного клика
   savingInFlight = true;
   setSavingState(true);
 
+  let success = false;
   try{
     try { tg?.HapticFeedback?.impactOccurred?.('light'); } catch {}
 
-    // 1) собрать значения
     const values = collectWheelValues();
+    const res    = await saveMeasurementsToDB(values);
 
-    // 2) сохранить
-    const res = await saveMeasurementsToDB(values);
-
-    // 3) пер-пользовательская память row_calc
+    // сохраняем row_calc per-user
     setRowCalcForUser(res.row_calc);
 
-    // 4) UX: остановить спиннер и свернуть аккордеон немедленно
-    setSavingState(false);
-    collapseMeasuresSafe();
+    success = true;
 
-    // 5) уведомление
+    // снимаем спиннер ДО схлопывания и попапа
+    setSavingState(false);
+
+    // гарантированно схлопываем аккордеон
+    collapseAccordionSafe();
+
     try { tg?.HapticFeedback?.notificationOccurred?.('success'); } catch {}
     await showPopupSafe('Готово', 'Данные сохранены.');
 
-    // 6) обновить таймер кулдауна — теперь можно сохранить снова через интервал
+    // обновляем кулдаун — можно снова жать после интервала
     __lastSaveTs = Date.now();
 
   }catch(err){
+    const msg = String(err && err.message || err);
     setSavingState(false);
 
-    const msg = String(err && err.message || err);
     if (/too many requests/i.test(msg) || err?.code === 429){
       try { tg?.HapticFeedback?.notificationOccurred?.('error'); } catch {}
       await showPopupSafe('Слишком часто', 'Подождите пару секунд и попробуйте снова.');
-      __lastSaveTs = Date.now(); // учитываем серверный лимит тоже
+      __lastSaveTs = Date.now(); // учитываем серверный лимит
     } else {
       try { tg?.HapticFeedback?.notificationOccurred?.('error'); } catch {}
       await showPopupSafe('Не сохранено', 'Произошла ошибка при сохранении.');
-      // не обновляем __lastSaveTs, чтобы можно было попытаться сразу
+      // кулдаун не ставим — можно повторить сразу
     }
   } finally {
-    savingInFlight = false;
+    savingInFlight = false; // критично для повторного сохранения в той же сессии
   }
 }
-
   
 
 /* ============================================================
