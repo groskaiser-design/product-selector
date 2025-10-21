@@ -541,56 +541,66 @@ async function saveMeasurementsToDB(values){
   };
 }
 
- /* ============================================================
+/* ============================================================
  * BLOCK D — один хендлер «Сохранить», ЖЁСТКИЙ кулдаун 10с,
- * попап при частых кликах, без disabled, схлоп аккордеона,
- * защита от pointer-events:none на .loading.
+ * попап при частых кликах, без disabled/pe:none,
+ * работает даже с оверлеями (хит-тест по координатам),
+ * гарантированное схлопывание аккордеона.
  * ============================================================ */
 
-let savingInFlight = false;
+var savingInFlight = false;
 
 /* --- жёсткий кулдаун: 10 000 мс между РАЗРЕШЁННЫМИ нажатиями --- */
-const COOLDOWN_MS = 10000;
-let __lastAllowedTs = 0; // когда последний раз реально запускали сохранение
+var COOLDOWN_MS = 10000;
+var __lastAllowedTs = 0; // когда последний раз реально запускали сохранение
 
 /* --- per-user device memory for row_calc --- */
-const ROWCALC_KEY_PREFIX = 'macros:last_row_calc:';
-function currentUserId(){ return (window.Telegram?.WebApp?.initDataUnsafe?.user?.id) ?? 'anon'; }
-function rowCalcKey(uid){ return ROWCALC_KEY_PREFIX + String(uid); }
-function setRowCalcForUser(rowCalc, uid = currentUserId()){
-  try { localStorage.setItem(rowCalcKey(uid), String(rowCalc)); }
-  catch { try { sessionStorage.setItem(rowCalcKey(uid), String(rowCalc)); } catch {} }
-  (window.__rowCalcByUid ||= {})[String(uid)] = Number(rowCalc);
+var ROWCALC_KEY_PREFIX = 'macros:last_row_calc:';
+function currentUserId(){ 
+  try { return (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe && window.Telegram.WebApp.initDataUnsafe.user && window.Telegram.WebApp.initDataUnsafe.user.id) || 'anon'; }
+  catch(e){ return 'anon'; }
 }
-function getRowCalcForUser(uid = currentUserId()){
-  if (window.__rowCalcByUid && String(uid) in window.__rowCalcByUid) return window.__rowCalcByUid[String(uid)];
-  let v = null; try { v = localStorage.getItem(rowCalcKey(uid)); } catch { try { v = sessionStorage.getItem(rowCalcKey(uid)); } catch {} }
-  const n = v == null ? null : Number(v);
-  (window.__rowCalcByUid ||= {})[String(uid)] = isNaN(n) ? null : n;
+function rowCalcKey(uid){ return ROWCALC_KEY_PREFIX + String(uid); }
+function setRowCalcForUser(rowCalc, uid){
+  if (typeof uid === 'undefined') uid = currentUserId();
+  try { localStorage.setItem(rowCalcKey(uid), String(rowCalc)); }
+  catch(e) { try { sessionStorage.setItem(rowCalcKey(uid), String(rowCalc)); } catch(e2){} }
+  if (!window.__rowCalcByUid) window.__rowCalcByUid = {};
+  window.__rowCalcByUid[String(uid)] = Number(rowCalc);
+}
+function getRowCalcForUser(uid){
+  if (typeof uid === 'undefined') uid = currentUserId();
+  if (window.__rowCalcByUid && (String(uid) in window.__rowCalcByUid)) {
+    return window.__rowCalcByUid[String(uid)];
+  }
+  var v = null;
+  try { v = localStorage.getItem(rowCalcKey(uid)); }
+  catch(e) { try { v = sessionStorage.getItem(rowCalcKey(uid)); } catch(e2){} }
+  var n = (v == null) ? null : Number(v);
+  if (!window.__rowCalcByUid) window.__rowCalcByUid = {};
+  window.__rowCalcByUid[String(uid)] = isNaN(n) ? null : n;
   return window.__rowCalcByUid[String(uid)];
 }
 window.getRowCalcForUser = getRowCalcForUser;
 window.setRowCalcForUser = setRowCalcForUser;
 
 /* --- кнопка --- */
-const SAVE_BTN_SELECTOR = '#saveBtn';
+var SAVE_BTN_SELECTOR = '#saveBtn';
 function getSaveBtn(){ return document.getElementById('saveBtn'); }
 
 function setSavingState(isSaving){
-  const btn = getSaveBtn(); if (!btn) return;
-  const label = btn.querySelector('.btn-label');
-  const sp    = btn.querySelector('.spinner');
+  var btn = getSaveBtn(); if (!btn) return;
+  var label = btn.querySelector('.btn-label');
+  var sp    = btn.querySelector('.spinner');
 
-  // ВАЖНО: НЕ используем btn.disabled — иначе не поймаем повторы
-  // Если у тебя .loading ставит pointer-events:none — перебиваем это.
+  // ВАЖНО: НЕ используем btn.disabled и не даём стилям вырубить события
   if (isSaving) {
     btn.classList.add('loading');
-    btn.style.setProperty('pointer-events', 'auto', 'important');
   } else {
     btn.classList.remove('loading');
-    // на всякий случай тоже оставим активным
-    btn.style.setProperty('pointer-events', 'auto', 'important');
   }
+  // На всякий случай держим активным
+  try { btn.style.setProperty('pointer-events', 'auto', 'important'); } catch(e){}
   btn.setAttribute('aria-busy', String(isSaving));
   btn.setAttribute('data-saving', String(isSaving));
 
@@ -598,93 +608,125 @@ function setSavingState(isSaving){
   if (label) label.textContent = isSaving ? 'Обработка…' : 'Сохранить';
 }
 
+/* --- popup helper --- */
 async function showPopupSafe(title, message){
-  const tg = window.Telegram?.WebApp;
-  if (!tg?.showPopup){ alert(`${title}\n\n${message}`); return; }
+  var tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
+  if (!(tg && tg.showPopup)){ alert(title + '\n\n' + message); return; }
   if (window.__popupOpen) return;
   window.__popupOpen = true;
   try{
-    await new Promise((resolve)=>{
-      const onClose = () => { try{tg.offEvent('popup_closed', onClose);}catch{} window.__popupOpen=false; resolve(); };
-      try{ tg.onEvent('popup_closed', onClose); }catch{}
-      tg.showPopup({ title, message, buttons:[{type:'ok'}] });
+    await new Promise(function(resolve){
+      var onClose = function(){ try{tg.offEvent('popup_closed', onClose);}catch(e){} window.__popupOpen=false; resolve(); };
+      try{ tg.onEvent('popup_closed', onClose); }catch(e){}
+      tg.showPopup({ title: title, message: message, buttons:[{type:'ok'}] });
     });
   }finally{ window.__popupOpen = false; }
 }
 
 /* --- схлоп аккордеона --- */
 function collapseAccordionSafe(){
-  const act = () => {
-    if (typeof window.collapseMeasures === 'function') { try{ window.collapseMeasures(); return; }catch{} }
-    document.querySelectorAll('details[open]#sec-measures, details[open][data-section="measures"], #sec-measures details[open]')
-      .forEach(d => { d.open = false; });
-    document.querySelectorAll('#sec-measures .collapse.show, [data-section="measures"] .collapse.show, .accordion .collapse.show')
-      .forEach(p => { p.classList.remove('show'); p.style.height=''; p.setAttribute('aria-hidden','true'); });
-    document.querySelectorAll('[data-bs-toggle="collapse"][aria-expanded="true"], [aria-controls="sec-measures"][aria-expanded="true"]')
-      .forEach(t => { t.setAttribute('aria-expanded','false'); try{ t.dispatchEvent(new Event('click',{bubbles:true})); }catch{} });
-    const section = document.getElementById('sec-measures') || document.querySelector('[data-section="measures"]');
+  var act = function(){
+    if (typeof window.collapseMeasures === 'function') { try{ window.collapseMeasures(); return; }catch(e){} }
+    var list1 = document.querySelectorAll('details[open]#sec-measures, details[open][data-section="measures"], #sec-measures details[open]');
+    Array.prototype.forEach.call(list1, function(d){ d.open = false; });
+    var list2 = document.querySelectorAll('#sec-measures .collapse.show, [data-section="measures"] .collapse.show, .accordion .collapse.show');
+    Array.prototype.forEach.call(list2, function(p){ p.classList.remove('show'); p.style.height=''; p.setAttribute('aria-hidden','true'); });
+    var list3 = document.querySelectorAll('[data-bs-toggle="collapse"][aria-expanded="true"], [aria-controls="sec-measures"][aria-expanded="true"]');
+    Array.prototype.forEach.call(list3, function(t){ t.setAttribute('aria-expanded','false'); try{ t.dispatchEvent(new Event('click',{bubbles:true})); }catch(e){} });
+    var section = document.getElementById('sec-measures') || document.querySelector('[data-section="measures"]');
     if (section){ section.classList.add('collapsed'); section.setAttribute('aria-hidden','true'); }
   };
-  try { requestAnimationFrame(() => requestAnimationFrame(act)); } catch { act(); }
+  try { requestAnimationFrame(function(){ requestAnimationFrame(act); }); } catch(e) { act(); }
 }
 
 /* --- сбор значений --- */
 function collectWheelValues(){
   if (typeof window._collectWheelValues === 'function') return window._collectWheelValues();
-  const out = {};
-  for (const cfg of FIELDS){
-    const fieldEl = fieldByKey[cfg.key];
-    const w  = (wheels[cfg.key] || ensureWheel(fieldEl, cfg));
-    const cb = fieldEl?.querySelector('#opt_' + cfg.key);
+  var out = {};
+  for (var i=0; i<FIELDS.length; i++){
+    var cfg = FIELDS[i];
+    var fieldEl = fieldByKey[cfg.key];
+    var w  = (wheels[cfg.key] || ensureWheel(fieldEl, cfg));
+    var cb = fieldEl ? fieldEl.querySelector('#opt_' + cfg.key) : null;
     out[cfg.key] = (cfg.optional && cb && cb.checked) ? null : w.value;
   }
   return out;
 }
 
-/* --- делегация + CAPTURE-гейт: показываем попап даже при «loading»/оверлеях --- */
+/* --- утилиты для гейта: хитовое попадание по кнопке --- */
+function _pointFromEvent(e){
+  try{
+    if (e && e.touches && e.touches[0]) return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    if (e && e.changedTouches && e.changedTouches[0]) return { x: e.changedTouches[0].clientX, y: e.changedTouches[0].clientY };
+    return { x: e.clientX, y: e.clientY };
+  }catch(ex){ return null; }
+}
+function _isEventOnSave(e){
+  var btn = getSaveBtn(); if (!btn) return false;
+
+  // 1) обычный случай: таргет внутри кнопки
+  var t = e.target;
+  if (t && t.closest) {
+    try { if (t.closest(SAVE_BTN_SELECTOR)) return true; } catch(ex){}
+  }
+  // 2) оверлей закрывает кнопку — проверяем координаты указателя против bbox кнопки
+  var p = _pointFromEvent(e);
+  if (!p) return false;
+  var r = btn.getBoundingClientRect();
+  if (!r) return false;
+  return (p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom);
+}
+
+/* --- делегация + CAPTURE-гейт: показываем попап всегда, даже с оверлеями --- */
 (function bindSaveDelegation(){
-  if (window.__saveDelegationInstalled) return; window.__saveDelegationInstalled = true;
+  if (window.__saveDelegationInstalled) return; 
+  window.__saveDelegationInstalled = true;
 
-  const gate = async (e) => {
-    const btn = e.target?.closest?.(SAVE_BTN_SELECTOR);
-    if (!btn) return;
-    const now = Date.now();
+  async function gate(e){
+    if (!_isEventOnSave(e)) return;
+    var now = Date.now();
     if (savingInFlight || (now - __lastAllowedTs) < COOLDOWN_MS){
-      // блокируем и сразу попап — до того как где-то отменят событие
-      e.preventDefault(); 
-      e.stopImmediatePropagation();
+      // блокируем и сразу попап — до того как кто-то отменит/поглотит событие
+      try { e.preventDefault(); } catch(ex){}
+      try { if (e.stopImmediatePropagation) e.stopImmediatePropagation(); else if (e.stopPropagation) e.stopPropagation(); } catch(ex){}
       await showPopupSafe('Слишком часто', 'Не чаще одного раза в 10 секунд.');
     }
-  };
-  // ловим ВСЕ основные входы
-  document.addEventListener('pointerdown', gate, {capture:true});
-  document.addEventListener('touchstart', gate, {capture:true, passive:false});
-  document.addEventListener('mousedown',  gate, {capture:true});
-  document.addEventListener('click',      gate, {capture:true});   // на всякий случай (клавиатура/програм.)
-  document.addEventListener('keydown', async (e)=>{                // доступность: Enter/Space
-    const btn = e.target?.closest?.(SAVE_BTN_SELECTOR);
-    if (!btn) return;
-    if (e.key !== 'Enter' && e.key !== ' ') return;
-    const now = Date.now();
-    if (savingInFlight || (now - __lastAllowedTs) < COOLDOWN_MS){
-      e.preventDefault(); e.stopImmediatePropagation();
-      await showPopupSafe('Слишком часто', 'Не чаще одного раза в 10 секунд.');
-    }
-  }, {capture:true});
+  }
 
-  // нормальные клики — запускаем сохранение
-  document.addEventListener('click', (e)=>{
-    const btn = e.target?.closest?.(SAVE_BTN_SELECTOR);
-    if (!btn) return;
+  // Ставим слушатели как можно раньше в цепочке (и на window, и на document)
+  ['pointerdown','touchstart','mousedown','click'].forEach(function(ev){
+    try { window.addEventListener(ev, gate, true); } catch(ex){}
+    try { document.addEventListener(ev, gate, true); } catch(ex2){}
+  });
+  // Доступность: Enter/Space
+  try {
+    document.addEventListener('keydown', async function(e){
+      if (!_isEventOnSave(e)) return;
+      if (!(e.key === 'Enter' || e.key === ' ' || e.code === 'Space')) return;
+      var now = Date.now();
+      if (savingInFlight || (now - __lastAllowedTs) < COOLDOWN_MS){
+        try { e.preventDefault(); } catch(ex){}
+        try { if (e.stopImmediatePropagation) e.stopImmediatePropagation(); else if (e.stopPropagation) e.stopPropagation(); } catch(ex2){}
+        await showPopupSafe('Слишком часто', 'Не чаще одного раза в 10 секунд.');
+      }
+    }, true);
+  } catch(ex3){}
+
+  // Нормальный запуск сохранения (пузырьковый клик)
+  document.addEventListener('click', function(e){
+    var t = e.target;
+    var inside = false;
+    if (t && t.closest) { try { inside = !!t.closest(SAVE_BTN_SELECTOR); } catch(ex){} }
+    if (!inside && !_isEventOnSave(e)) return; // хитовое попадание
     onSaveClick(e);
   });
 })();
 
 async function onSaveClick(e){
-  e?.preventDefault?.();
-  const now = Date.now();
+  if (e && e.preventDefault) try{ e.preventDefault(); }catch(ex){}
+  var now = Date.now();
 
-  // финальная защита (если что-то прошло мимо capture)
+  // финальная защита (если вдруг прошли мимо capture)
   if (savingInFlight || (now - __lastAllowedTs) < COOLDOWN_MS){
     await showPopupSafe('Слишком часто', 'Не чаще одного раза в 10 секунд.');
     return;
@@ -696,8 +738,8 @@ async function onSaveClick(e){
   setSavingState(true);
 
   try{
-    const values = collectWheelValues();
-    const res    = await saveMeasurementsToDB(values);
+    var values = collectWheelValues();
+    var res    = await saveMeasurementsToDB(values);
     setRowCalcForUser(res.row_calc);
 
     setSavingState(false);
@@ -705,10 +747,10 @@ async function onSaveClick(e){
     await showPopupSafe('Готово', 'Данные сохранены.');
   }catch(err){
     setSavingState(false);
-    // одно правило для всех кейсов
-    if (err?.code === 429 || /too\s*many\s*requests|rate[-_\s]*limit|слишком\s+часто|429/i.test(String(err?.message||err))){
+    var msg = String((err && err.message) || err || '');
+    if (err && err.code === 429 || /too\s*many\s*requests|rate[-_\s]*limit|слишком\s+часто|429/i.test(msg)){
       await showPopupSafe('Слишком часто', 'Не чаще одного раза в 10 секунд.');
-    } else if (err?.code === 408 || /timeout/i.test(String(err?.message||err))) {
+    } else if ((err && err.code === 408) || /timeout/i.test(msg)) {
       await showPopupSafe('Не сохранено', 'Сервер не ответил вовремя. Повторите позже.');
     } else {
       await showPopupSafe('Не сохранено', 'Произошла ошибка при сохранении.');
@@ -717,8 +759,6 @@ async function onSaveClick(e){
     savingInFlight = false;
   }
 }
-
-
   
 
 /* ============================================================
