@@ -549,7 +549,7 @@ async function saveMeasurementsToDB(values){
  * ============================================================ */
 
   /* ============================================================
- * BLOCK D — ЖЁСТКИЙ кулдаун 10с с ПЕРСИСТОМ
+ * BLOCK D — ОТЛАДОЧНАЯ ВЕРСИЯ
  * ============================================================ */
 
 var savingInFlight = false;
@@ -560,12 +560,24 @@ var __unlockAtMem = 0;
 function _getPersistUnlockAt(){
   var v = 0;
   try { v = Number(localStorage.getItem(COOLDOWN_KEY)) || 0; } catch(e){}
-  return Math.max(__unlockAtMem, v);
+  var result = Math.max(__unlockAtMem, v);
+  console.log('🔍 _getPersistUnlockAt:', {
+    localStorage: v,
+    memory: __unlockAtMem,
+    result: result,
+    resultDate: new Date(result).toLocaleTimeString()
+  });
+  return result;
 }
 
 function _setPersistUnlockAt(ts){
   __unlockAtMem = ts;
   try { localStorage.setItem(COOLDOWN_KEY, String(ts)); } catch(e){}
+  console.log('🔒 _setPersistUnlockAt:', {
+    timestamp: ts,
+    date: new Date(ts).toLocaleTimeString(),
+    storedInLocalStorage: localStorage.getItem(COOLDOWN_KEY)
+  });
 }
 
 /* --- per-user memory for row_calc --- */
@@ -611,13 +623,20 @@ function setSavingState(isSaving){
 
 /* --- popup --- */
 async function showPopupSafe(title, message, haptic){
+  console.log('📢 showPopupSafe:', title, message);
   try {
     var tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
     if (haptic && tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred) {
       tg.HapticFeedback.notificationOccurred(haptic);
     }
-    if (!(tg && tg.showPopup)){ alert(title + '\n\n' + message); return; }
-    if (window.__popupOpen) return;
+    if (!(tg && tg.showPopup)){ 
+      alert(title + '\n\n' + message); 
+      return; 
+    }
+    if (window.__popupOpen) {
+      console.log('⚠️ Попап уже открыт, пропускаем');
+      return;
+    }
     window.__popupOpen = true;
     try{
       await new Promise(function(resolve){
@@ -633,6 +652,7 @@ async function showPopupSafe(title, message, haptic){
       window.__popupOpen = false; 
     }
   } catch(e) {
+    console.error('❌ Ошибка showPopupSafe:', e);
     try { alert(title + '\n\n' + message); } catch(_) {}
   }
 }
@@ -685,15 +705,27 @@ function collectWheelValues(){
 
 /* --- ГЛАВНАЯ ФУНКЦИЯ: проверка кулдауна --- */
 function isCooldownActive(){
-  if (savingInFlight) return true;
   var now = Date.now();
   var unlockAt = _getPersistUnlockAt();
-  return now < unlockAt;
+  var active = savingInFlight || (now < unlockAt);
+  var remaining = Math.ceil((unlockAt - now) / 1000);
+  
+  console.log('🔍 isCooldownActive:', {
+    result: active,
+    savingInFlight: savingInFlight,
+    now: now,
+    unlockAt: unlockAt,
+    diff_ms: unlockAt - now,
+    remaining_sec: remaining
+  });
+  
+  return active;
 }
 
 /* --- ОБРАБОТЧИК КЛИКА ПО КНОПКЕ --- */
 async function handleSaveButtonClick(e){
-  // Всегда предотвращаем дефолтное поведение
+  console.log('🖱️ === КЛИК ПО КНОПКЕ СОХРАНЕНИЯ ===');
+  
   if (e && e.preventDefault) {
     try { e.preventDefault(); } catch(ex){}
   }
@@ -703,22 +735,12 @@ async function handleSaveButtonClick(e){
   
   // Проверка кулдауна
   if (isCooldownActive()){
-    var now = Date.now();
-    var unlockAt = _getPersistUnlockAt();
-    var remaining = Math.ceil((unlockAt - now) / 1000);
-    
-    console.log('🔴 БЛОКИРОВКА:', {
-      savingInFlight: savingInFlight,
-      now: now,
-      unlockAt: unlockAt,
-      remaining: remaining + 's'
-    });
-    
+    console.log('🔴 БЛОКИРОВКА: кулдаун активен!');
     await showPopupSafe('Too many requests', 'Не чаще одного раза в 10 секунд.', 'error');
     return;
   }
   
-  // Запуск сохранения
+  console.log('✅ Кулдаун НЕ активен, запускаем сохранение');
   await performSave();
 }
 
@@ -727,12 +749,14 @@ async function performSave(){
   var tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
   var now = Date.now();
   
-  console.log('✅ Начало сохранения:', new Date(now).toLocaleTimeString());
+  console.log('💾 Начало сохранения:', new Date(now).toLocaleTimeString());
   
   // Устанавливаем кулдаун СРАЗУ
   _setPersistUnlockAt(now + COOLDOWN_MS);
   savingInFlight = true;
   setSavingState(true);
+  
+  console.log('✅ Флаги установлены: savingInFlight=true, unlockAt=' + (now + COOLDOWN_MS));
   
   try { 
     if (tg && tg.HapticFeedback && tg.HapticFeedback.impactOccurred) {
@@ -742,7 +766,11 @@ async function performSave(){
 
   try {
     var values = collectWheelValues();
+    console.log('📊 Собраны значения:', values);
+    
     var res = await saveMeasurementsToDB(values);
+    console.log('📡 Ответ от сервера:', res);
+    
     setRowCalcForUser(res.row_calc);
 
     setSavingState(false);
@@ -760,6 +788,7 @@ async function performSave(){
     
   } catch(err) {
     setSavingState(false);
+    console.error('❌ Ошибка при сохранении:', err);
     
     var msg = String((err && err.message) || err || '');
     if ((err && err.code === 429) || /too\s*many\s*requests|rate[-_\s]*limit|слишком\s+часто|429/i.test(msg)){
@@ -769,17 +798,20 @@ async function performSave(){
     } else {
       await showPopupSafe('Не сохранено', 'Произошла ошибка при сохранении.', 'error');
     }
-    
-    console.error('❌ Ошибка сохранения:', err);
   } finally {
     savingInFlight = false;
-    console.log('✅ savingInFlight сброшен. Кулдаун активен до:', new Date(_getPersistUnlockAt()).toLocaleTimeString());
+    console.log('🔓 savingInFlight сброшен в false');
+    console.log('📍 Текущий статус кулдауна:');
+    isCooldownActive(); // вызываем для логирования
   }
 }
 
 /* --- ПРИВЯЗКА ОБРАБОТЧИКА К КНОПКЕ --- */
 (function bindSaveButton(){
-  if (window.__saveButtonBound) return;
+  if (window.__saveButtonBound) {
+    console.log('⚠️ Обработчик уже установлен, пропускаем');
+    return;
+  }
   window.__saveButtonBound = true;
   
   var btn = getSaveBtn();
@@ -788,10 +820,16 @@ async function performSave(){
     return;
   }
   
+  // Удаляем ВСЕ старые обработчики
+  var newBtn = btn.cloneNode(true);
+  btn.parentNode.replaceChild(newBtn, btn);
+  
   // Единственный обработчик клика
-  btn.addEventListener('click', handleSaveButtonClick, false);
+  newBtn.addEventListener('click', handleSaveButtonClick, false);
   
   console.log('✅ Обработчик кнопки сохранения установлен');
+  console.log('📍 Начальный статус:');
+  isCooldownActive(); // вызываем для логирования
 })();
 
 
