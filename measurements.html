@@ -1,4 +1,4 @@
-бэк новый, обновлен. вноси правки фронта сюда, отдай полный html. <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="ru">
 <head>
 <meta charset="UTF-8" />
@@ -438,6 +438,9 @@ async function fetchAIComment({ silent=false } = {}){
           if (next !== prev){
             writeAIToLocal(next);
             renderAIComment(next);
+          } else if (!silent && prev){
+            // если мы показывали лоадер и контент не изменился — вернём старый текст
+            renderAIComment(prev);
           }
           return;
         }
@@ -460,6 +463,8 @@ async function fetchAIComment({ silent=false } = {}){
           if (next !== prev){
             writeAIToLocal(next);
             renderAIComment(next);
+          } else if (!silent && prev){
+            renderAIComment(prev);
           }
           return;
         }
@@ -468,6 +473,62 @@ async function fetchAIComment({ silent=false } = {}){
   } finally {
     if (!readAIFromLocal()) setAILoading(false);
   }
+}
+
+/* >>> FAST_FETCH (мгновенная подгрузка по индексам из ответа save) */
+async function fastFetch(opts = {}){
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  const base = {
+    action: 'fast_fetch',
+    init_data: safeInitData(),
+    tz,
+    day_local: opts.dayLocal || undefined,
+    calc_row: opts.calc_row || undefined,
+    row_main: opts.row_main || undefined
+  };
+
+  // GET
+  try{
+    const qs = new URLSearchParams();
+    qs.set('action','fast_fetch');
+    qs.set('init_data', base.init_data);
+    qs.set('json', JSON.stringify(base));
+    qs.set('_t', String(Date.now()));
+    const r = await fetch(BACKEND_URL + '?' + qs.toString(), { cache:'no-cache' });
+    const tx = await r.text();
+    try{ return JSON.parse(tx); }catch(_){}
+  }catch(_){}
+
+  // POST fallback
+  try{
+    const rp = await fetch(BACKEND_URL, {
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=UTF-8'},
+      body: JSON.stringify(base),
+      keepalive:true, redirect:'follow', credentials:'omit', referrerPolicy:'no-referrer'
+    });
+    const tp = await rp.text();
+    try{ return JSON.parse(tp); }catch(_){}
+  }catch(_){}
+
+  return null;
+}
+
+async function fetchAICommentFast(opts = {}){
+  try{
+    const prev = readAIFromLocal();
+    const res = await fastFetch(opts);
+    if (res && res.ok && typeof res.ai_comment === 'string'){
+      const next = String(res.ai_comment || '');
+      if (next && next !== prev){
+        writeAIToLocal(next);
+        renderAIComment(next);
+      } else if (prev){
+        // если прислали такой же текст — восстановим его (снимем лоадер)
+        renderAIComment(prev);
+      }
+    }
+  }catch(_){}
 }
 
 /* >>> КОРОТКИЙ ДОГОН ПОСЛЕ "СОХРАНИТЬ" (до ~2.2 c) */
@@ -1010,6 +1071,9 @@ document.getElementById('saveBtn').addEventListener('click', async ()=>{
   setSavingState(true);
   try { tg?.MainButton?.showProgress?.(); } catch(e){}
 
+  // запомним, что было показано в ИИ до сохранения — чтобы при отсутствии изменений убрать лоадер
+  const prevAI = readAIFromLocal();
+
   try{
     const res = await callBackend('save', extra);
     if (res && res.ok){
@@ -1027,11 +1091,24 @@ document.getElementById('saveBtn').addEventListener('click', async ()=>{
       if (measuresSec) measuresSec.classList.add('collapsed');
       if (measuresHeader) measuresHeader.setAttribute('aria-expanded','false');
 
-      // >>> запросить свежий ИИ-комментарий после успешного сохранения:
-      //     показываем "Анализируем данные…" и догоняем до ~2.2 c
+      // >>> быстрый fetch по индексам из ответа save (мгновенная подгрузка ИИ)
       setAILoading(true);
-      fetchAIComment({ silent:true });
-      chaseAICommentShort();
+      if (res.calc_row && res.row_main){
+        await fetchAICommentFast({ dayLocal, calc_row: res.calc_row, row_main: res.row_main });
+      }
+
+      // >>> короткий догон на случай, если inline ещё не успел
+      await chaseAICommentShort();
+
+      // если за время догонки текст не изменился — вернём прежний контент, чтобы не висел лоадер
+      const nowAI = readAIFromLocal();
+      if (nowAI){
+        renderAIComment(nowAI);
+      } else if (prevAI){
+        renderAIComment(prevAI);
+      } else {
+        setAILoading(false);
+      }
 
       tg?.showPopup?.({title:'Сохранено', message:'Данные обновлены', buttons:[{type:'ok'}]});
     } else {
@@ -1084,4 +1161,4 @@ document.getElementById('saveBtn').addEventListener('click', async ()=>{
 })();
 </script>
 </body>
-</html> 
+</html>
