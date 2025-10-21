@@ -445,188 +445,137 @@ if (!document.getElementById('sec-measures').classList.contains('collapsed')){
 }
 
   
-  /* ============================================================
- *  BLOCK C — SAVE TO DB (Apps Script, no preflight)
- *  - читает значения из крутилок/инпутов (value, data-value, aria-valuenow, text)
- *  - пустые значения отправляются как '' (НЕ 0)
- *  - шлёт JSON как text/plain → без preflight OPTIONS
- *  - умеет в Telegram WebApp (использует window.Telegram.WebApp.initData)
- * ============================================================ */
+/* ===========================
+ * BLOCK C — SAVE TO DB (Apps Script, no preflight)
+ * =========================== */
 
-/*** CONFIG ***/
-const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbwjvkS5P7IcvTCFRbAb9jflLuD-R2IN3Azhg5_niKywHN3pJLDTBCL4kD2W-eDjKNnJmA/exec'; // TODO: подставь свой /exec
+// ← ОСТАВЬТЕ вашу ссылку как есть
+const BACKEND_URL = 'https://script.google.com/macros/s/AKfy.../exec';
 const APP_VERSION = 'frontend-2025-10-21';
 
-// на какой элемент вешаем "Сохранить"
-const SAVE_BUTTON_SELECTORS = [
-  '#btn-save', '#save', '.js-save', '[data-action="save"]'
-];
+// Какие кнопки считаем "Сохранить"
+const SAVE_BUTTON_SELECTORS = ['#saveBtn', '#btn-save', '#save', '.js-save', '[data-action="save"]'];
 
-/*** Мапа селекторов для полей анкеты (подправь при необходимости) ***/
-const FIELD_SELECTORS = {
-  weight:        '#weight, [name="weight"], [data-field="weight"]',
-  height:        '#height, [name="height"], [data-field="height"]',
-  fat:           '#fat, [name="fat"], [data-field="fat"]',
-  neck:          '#neck, [name="neck"], [data-field="neck"]',
-  shoulders:     '#shortders, #shoulders, [name="shoulders"], [data-field="shoulders"]',
-  chest:         '#chest, [name="chest"], [data-field="chest"]',
-  waist:         '#waist, [name="waist"], [data-field="waist"]',
-  bicep_l_rel:   '#bicep_l_rel, [name="bicep_l_rel"], [data-field="bicep_l_rel"]',
-  bicep_r_rel:   '#bicep_r_rel, [name="bicep_r_rel"], [data-field="bicep_r_rel"]',
-  bicep_l_flex:  '#bicep_l_flex, [name="bicep_l_flex"], [data-field="bicep_l_flex"]',
-  bicep_r_flex:  '#bicep_r_flex, [name="bicep_r_flex"], [data-field="bicep_r_flex"]',
-  thigh_l:       '#thigh_l, [name="thigh_l"], [data-field="thigh_l"]',
-  thigh_r:       '#thigh_r, [name="thigh_r"], [data-field="thigh_r"]',
-  calf_l:        '#calf_l, [name="calf_l"], [data-field="calf_l"]',
-  calf_r:        '#calf_r, [name="calf_r"], [data-field="calf_r"]',
-  hips:          '#hips, [name="hips"], [data-field="hips"]',
-  wrist:         '#wrist, [name="wrist"], [data-field="wrist"]',
-  knee:          '#knee, [name="knee"], [data-field="knee"]',
-  ankle:         '#ankle, [name="ankle"], [data-field="ankle"]',
-};
+// Утилиты
+function nowIso() { return new Date().toISOString(); }
+function todayLocalISO(tz) {
+  try {
+    const d = new Date();
+    const y = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric' }).format(d);
+    const m = new Intl.DateTimeFormat('en-CA', { timeZone: tz, month: '2-digit' }).format(d);
+    const da = new Intl.DateTimeFormat('en-CA', { timeZone: tz, day: '2-digit' }).format(d);
+    return `${y}-${m}-${da}`;
+  } catch { return new Date().toISOString().slice(0,10); }
+}
+function clientTZ() {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; }
+  catch { return 'UTC'; }
+}
+function genSaveId() { return Date.now() + '_' + Math.random().toString(36).slice(2,10); }
 
-/*** Утилиты ***/
-function uuidv4(){
-  return ([1e7]+-1e3+-4e3+-8e3+-1e11)
-    .replace(/[018]/g,c=>(c^crypto.getRandomValues(new Uint8Array(1))[0]&15>>c/4).toString(16));
-}
-function todayLocalYMD(d=new Date()){
-  const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), day=String(d.getDate()).padStart(2,'0');
-  return `${y}-${m}-${day}`;
-}
-function haptic(kind='light'){ try{ window.Telegram?.WebApp?.HapticFeedback?.impactOccurred(kind); }catch(_){} }
-function notifyOk(msg){
-  if (window?.Telegram?.WebApp?.showPopup) {
-    window.Telegram.WebApp.showPopup({title:'Готово', message: msg, buttons:[{type:'ok'}]});
-  } else { alert(msg); }
-}
-function notifyErr(msg){
-  if (window?.Telegram?.WebApp?.showPopup) {
-    window.Telegram.WebApp.showPopup({title:'Ошибка', message: msg, buttons:[{type:'ok'}]});
-  } else { alert(`Ошибка: ${msg}`); }
-}
-
-/*** Чтение значения крутилки/инпута ***/
-function _readRaw(el){
-  if (!el) return '';
-  let raw = '';
-  if ('value' in el && el.value != null) raw = String(el.value);
-  if (!raw) raw = el.getAttribute?.('data-value') || '';
-  if (!raw) raw = el.getAttribute?.('aria-valuenow') || '';
-  if (!raw) {
-    const inner = el.querySelector?.('[data-value],[aria-valuenow],input,output,.value,.val,.current,[contenteditable]');
-    if (inner) {
-      raw = ('value' in inner && inner.value != null) ? String(inner.value)
-           : (inner.getAttribute?.('data-value') || inner.getAttribute?.('aria-valuenow') || inner.textContent || '');
-    }
-  }
-  if (!raw) raw = el.textContent || '';
-  return String(raw).trim();
-}
-function readNumberFromControl(selector){
-  const el = document.querySelector(selector);
-  if (!el) return '';
-  let raw = _readRaw(el);
-  raw = raw.replace(',', '.').replace(/\s+/g,'');
-  if (!raw) return '';
-  const num = Number(raw);
-  if (!Number.isFinite(num)) return '';
-  return Math.round(num * 10) / 10; // до десятых
-}
-
-/*** Сбор всех полей анкеты ***/
-function collectFormData(){
-  const out = {};
-  for (const [field, sel] of Object.entries(FIELD_SELECTORS)) {
-    out[field] = readNumberFromControl(sel);
-  }
-  return out;
-}
-
-/*** Вызов бэкенда (без preflight) ***/
-async function saveToDB(){
+// Основной вызов
+async function saveMeasurementsToDB() {
   const tg = window.Telegram?.WebApp;
-  if (!tg || !tg.initData) throw new Error('Откройте форму из Telegram-мини-приложения');
+  const tz = clientTZ();
+  const dayLocal = todayLocalISO(tz);
+  const tClient = nowIso();
 
+  // 1) Собираем значения крутилок (использует ваш Block D -> collectWheelValues)
+  const data = (typeof collectWheelValues === 'function')
+    ? collectWheelValues()
+    : {};
+
+  // 2) Готовим полезную нагрузку под ваш Apps Script
   const payload = {
     action: 'save',
-    init_data: tg.initData,                              // строка WebApp initData для бэка
-    tz: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
-    client_day_local: todayLocalYMD(),
-    locale: navigator.language || '',
+    init_data: String(tg?.initData || ''),     // важно: именно raw init_data
+    tz,
+    client_day_local: dayLocal,
+    locale: tg?.initDataUnsafe?.user?.language_code || '',
     source: 'webapp',
     app_version: APP_VERSION,
-    data: collectFormData(),
-    save_id: uuidv4(),                                   // идемпотентность на бэке
+    t_client: tClient,
+    save_id: genSaveId(),                      // для идемпотентности на бэке
+    data
   };
 
-  const resp = await fetch(BACKEND_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=UTF-8' }, // ← без кастомных заголовков!
-    body: JSON.stringify(payload),
-    redirect: 'follow',
-  });
+  // 3) UI: спиннер/хаптика
+  try { tg?.HapticFeedback?.impactOccurred?.('light'); } catch {}
+  if (typeof setSavingState === 'function') setSavingState(true);
+  try { tg?.MainButton?.showProgress?.(); } catch {}
 
-  const text = await resp.text();
-  let json; try { json = JSON.parse(text); } catch { json = { ok:false, error:'Bad JSON' }; }
-  if (!resp.ok || !json.ok) {
-    throw new Error(json.error || `HTTP ${resp.status}`);
-  }
-  return json; // { ok, row_all, row_calc, day_local, ts_iso, ...}
-}
+  let ok = false, respJson = null, errMsg = '';
+  try {
+    const resp = await fetch(BACKEND_URL, {
+      method: 'POST',
+      // text/plain → не триггерит preflight в WebApp
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+      body: JSON.stringify(payload),
+      // не добавляем кастомные заголовки, чтобы не спровоцировать CORS-preflight
+      redirect: 'follow',
+      cache: 'no-store',
+      credentials: 'omit',
+      mode: 'cors'
+    });
 
-/*** Привязка к кнопке ***/
-function findSaveButton(){
-  for (const s of SAVE_BUTTON_SELECTING_ITER()) return s;
-  function* SAVE_BUTTON_SELECTING_ITER(){
-    for (const sel of SAVE_BUTTON_SELECTORS) {
-      const btn = document.querySelector(sel);
-      if (btn) { yield btn; break; }
+    const text = await Promise.resolve(resp.text());
+    try { respJson = text ? JSON.parse(text) : null; } catch { /* может прийти пусто/HTML при ошибке */ }
+
+    if (resp.ok && respJson && respJson.ok) {
+      ok = true;
+    } else {
+      errMsg = `HTTP ${resp.status} ${resp.statusText}` + (respJson?.error ? ` • ${respJson.error}` : '');
     }
-    // запасной вариант: кнопка по тексту
-    const guess = [...document.querySelectorAll('button, .button, [role="button"]')]
-      .find(el => /сохранить/i.test(el.textContent||''));
-    if (guess) yield guess;
+  } catch (e) {
+    errMsg = String(e && e.message || e);
+  } finally {
+    if (typeof setSavingState === 'function') setSavingState(false);
+    try { tg?.MainButton?.hideProgress?.(); } catch {}
   }
-}
-function bindSave(){
-  const btn = findSaveButton();
-  if (!btn) return console.warn('[SaveModule] кнопка "Сохранить" не найдена, поправьте SAVE_BUTTON_SELECTORS');
-  btn.addEventListener('click', async () => {
-    try{
-      btn.disabled = true;
-      haptic('light');
-      const res = await saveToDB();
-      haptic('medium');
-      notifyOk(`Сохранено ✅\nСтрока: ${res.row_all} (Calc: ${res.row_calc})`);
-      // тут можно вызвать свой код, например:
-      // window.lastSaveMeta = res;
-      // updateUIAfterSave(res);
-    }catch(e){
-      console.error(e);
-      haptic('heavy');
-      notifyErr(String(e.message || e));
-    }finally{
-      btn.disabled = false;
-    }
-  }, { once:false });
-}
 
-/*** Автозапуск при загрузке ***/
-(function initSaveModule(){
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', bindSave, { once:true });
+  if (ok) {
+    const rowAll  = respJson.row_all;
+    const rowCalc = respJson.row_calc;
+    window.__lastSave = { day_local: dayLocal, row_all: rowAll, row_calc: rowCalc, ts: tClient };
+    try { tg?.HapticFeedback?.notificationOccurred?.('success'); } catch {}
+    if (typeof showPopup === 'function') {
+      showPopup('Готово', `Сохранено.\nСтрока ALL: ${rowAll}\nСтрока CALC: ${rowCalc}`);
+    }
+    // Можно тут же сворачивать секцию с замерами
+    if (typeof collapseMeasures === 'function') collapseMeasures();
   } else {
-    bindSave();
+    try { tg?.HapticFeedback?.notificationOccurred?.('error'); } catch {}
+    if (typeof showPopup === 'function') {
+      showPopup('Ошибка', errMsg || 'Не удалось сохранить');
+    } else {
+      alert('Ошибка сохранения: ' + errMsg);
+    }
   }
-  // Сигнализируем Telegram-клиенту, что всё готово
-  try { window.Telegram?.WebApp?.ready(); } catch(_) {}
-})();
-</script>
+}
+
+// Привязка к кнопкам «Сохранить»
+function bindSaveButtons() {
+  const bound = new Set();
+  for (const sel of SAVE_BUTTON_SELECTORS) {
+    document.querySelectorAll(sel).forEach(btn => {
+      if (!bound.has(btn)) {
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          saveMeasurementsToDB();
+        }, { passive: true });
+        bound.add(btn);
+      }
+    });
+  }
+}
+
+// Инициализация
+document.addEventListener('DOMContentLoaded', () => {
+  bindSaveButtons();
+});
 
 
-
-<script>
+  
 /* ============================================================
  *  BLOCK D — Привязка кнопки "Сохранить" + UX
  *  Требует: определённой функции saveToDB() из Block C
@@ -699,7 +648,7 @@ function bindSave(){
     }
   });
 })();
-</script>
+
 
 /* ============================================================
  *  BLOCK E: Аккордеон
