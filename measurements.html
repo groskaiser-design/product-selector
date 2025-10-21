@@ -548,7 +548,7 @@ async function saveMeasurementsToDB(values){
  * + ПАТЧ: блокируем повторные клики (никаких POST) и показываем "Too many requests".
  * ============================================================ */
 /* ============================================================
- * BLOCK D — ПРОСТОЕ ЕБУЧЕЕ РЕШЕНИЕ БЕЗ ASYNC
+ * BLOCK D — КУЛДАУН С ДЕТАЛЬНЫМИ ЛОГАМИ
  * ============================================================ */
 
 // === ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ===
@@ -559,8 +559,12 @@ var COOLDOWN_KEY = 'save_unlock_time';
 // === ФУНКЦИИ КУЛДАУНА ===
 function getUnlockTime(){
   try {
-    return Number(localStorage.getItem(COOLDOWN_KEY)) || 0;
+    var val = localStorage.getItem(COOLDOWN_KEY);
+    var num = Number(val) || 0;
+    console.log('📖 getUnlockTime: localStorage["' + COOLDOWN_KEY + '"] =', val, '→', num);
+    return num;
   } catch(e) {
+    console.error('❌ getUnlockTime error:', e);
     return 0;
   }
 }
@@ -568,28 +572,38 @@ function getUnlockTime(){
 function setUnlockTime(time){
   try {
     localStorage.setItem(COOLDOWN_KEY, String(time));
-    console.log('🔒 Установлен кулдаун до:', new Date(time).toLocaleTimeString());
+    console.log('💾 setUnlockTime: сохранено', time, '(', new Date(time).toLocaleTimeString(), ')');
+    console.log('   Проверка записи:', localStorage.getItem(COOLDOWN_KEY));
   } catch(e) {
-    console.error('Ошибка localStorage:', e);
+    console.error('❌ setUnlockTime error:', e);
   }
 }
 
 function canSaveNow(){
+  console.log('🔍 === canSaveNow вызвана ===');
+  console.log('   SAVE_IN_PROGRESS =', SAVE_IN_PROGRESS);
+  
   if (SAVE_IN_PROGRESS) {
-    console.log('🔴 Блокировка: SAVE_IN_PROGRESS = true');
+    console.log('🔴 БЛОКИРОВКА: SAVE_IN_PROGRESS = true');
     return false;
   }
   
   var now = Date.now();
   var unlockAt = getUnlockTime();
+  var diff = unlockAt - now;
+  var remaining = Math.ceil(diff / 1000);
+  
+  console.log('   now =', now, '(', new Date(now).toLocaleTimeString(), ')');
+  console.log('   unlockAt =', unlockAt, '(', new Date(unlockAt).toLocaleTimeString(), ')');
+  console.log('   Разница:', diff, 'мс (', remaining, 'сек )');
+  console.log('   now < unlockAt?', now < unlockAt);
   
   if (now < unlockAt) {
-    var remaining = Math.ceil((unlockAt - now) / 1000);
-    console.log('🔴 Блокировка: осталось', remaining, 'сек');
+    console.log('🔴 БЛОКИРОВКА: осталось', remaining, 'сек');
     return false;
   }
   
-  console.log('✅ Можно сохранять');
+  console.log('✅ МОЖНО СОХРАНЯТЬ');
   return true;
 }
 
@@ -654,7 +668,7 @@ function setSavingState(isSaving){
 }
 
 function showPopup(title, message, haptic){
-  console.log('📢 Попап:', title);
+  console.log('📢 Показываем попап:', title, '-', message);
   var tg = window.Telegram && window.Telegram.WebApp;
   
   if (haptic && tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred) {
@@ -718,7 +732,9 @@ function collectWheelValues(){
 
 // === ГЛАВНАЯ ФУНКЦИЯ СОХРАНЕНИЯ ===
 function handleSaveClick(e){
-  console.log('🖱️ === КЛИК ===');
+  console.log('');
+  console.log('🖱️ ========== КЛИК ПО КНОПКЕ ==========');
+  console.log('   Время клика:', new Date().toLocaleTimeString());
   
   if (e && e.preventDefault) {
     try { e.preventDefault(); } catch(ex){}
@@ -726,22 +742,30 @@ function handleSaveClick(e){
   
   // ПРОВЕРКА КУЛДАУНА
   if (!canSaveNow()) {
+    console.log('🚫 Сохранение заблокировано - показываем попап');
     showPopup('Too many requests', 'Не чаще одного раза в 10 секунд.', 'error');
     return;
   }
   
   // НАЧИНАЕМ СОХРАНЕНИЕ
-  console.log('✅ Начинаем сохранение');
+  console.log('✅ Проверка пройдена - начинаем сохранение');
   
   var tg = window.Telegram && window.Telegram.WebApp;
   var now = Date.now();
   
   // УСТАНАВЛИВАЕМ БЛОКИРОВКУ
   SAVE_IN_PROGRESS = true;
-  setUnlockTime(now + COOLDOWN_MS);
+  var unlockTime = now + COOLDOWN_MS;
+  
+  console.log('🔒 УСТАНАВЛИВАЕМ БЛОКИРОВКУ:');
+  console.log('   now =', now);
+  console.log('   COOLDOWN_MS =', COOLDOWN_MS);
+  console.log('   unlockTime = now + COOLDOWN_MS =', unlockTime);
+  
+  setUnlockTime(unlockTime);
   setSavingState(true);
   
-  console.log('🔒 Флаги установлены: SAVE_IN_PROGRESS=true');
+  console.log('   SAVE_IN_PROGRESS =', SAVE_IN_PROGRESS);
   
   if (tg && tg.HapticFeedback && tg.HapticFeedback.impactOccurred) {
     try { tg.HapticFeedback.impactOccurred('light'); } catch(e){}
@@ -754,7 +778,7 @@ function handleSaveClick(e){
   // ОТПРАВЛЯЕМ НА СЕРВЕР
   saveMeasurementsToDB(values)
     .then(function(res){
-      console.log('📡 Успех:', res);
+      console.log('📡 Успех! Ответ от сервера:', res);
       
       setRowCalcForUser(res.row_calc);
       setSavingState(false);
@@ -768,10 +792,11 @@ function handleSaveClick(e){
       
       // СНИМАЕМ БЛОКИРОВКУ
       SAVE_IN_PROGRESS = false;
-      console.log('🔓 SAVE_IN_PROGRESS = false');
+      console.log('🔓 SAVE_IN_PROGRESS сброшен в false');
+      console.log('   Но кулдаун в localStorage остаётся до:', new Date(getUnlockTime()).toLocaleTimeString());
     })
     .catch(function(err){
-      console.error('❌ Ошибка:', err);
+      console.error('❌ ОШИБКА при сохранении:', err);
       
       setSavingState(false);
       
@@ -786,28 +811,31 @@ function handleSaveClick(e){
       
       // СНИМАЕМ БЛОКИРОВКУ
       SAVE_IN_PROGRESS = false;
-      console.log('🔓 SAVE_IN_PROGRESS = false (после ошибки)');
+      console.log('🔓 SAVE_IN_PROGRESS сброшен в false (после ошибки)');
     });
 }
 
 // === ИНИЦИАЛИЗАЦИЯ ===
 (function(){
-  console.log('🚀 Инициализация обработчика кнопки');
+  console.log('🚀 Инициализация обработчика кнопки сохранения');
   
   var btn = document.getElementById('saveBtn');
   if (!btn) {
-    console.error('❌ Кнопка не найдена!');
+    console.error('❌ Кнопка #saveBtn не найдена!');
     return;
   }
   
-  // Удаляем старые обработчики
+  // Удаляем старые обработчики через клонирование
   var newBtn = btn.cloneNode(true);
   btn.parentNode.replaceChild(newBtn, btn);
   
   // Ставим новый обработчик
   newBtn.addEventListener('click', handleSaveClick, false);
   
-  console.log('✅ Обработчик установлен');
+  console.log('✅ Обработчик установлен на кнопку');
+  console.log('📍 Начальное состояние:');
+  console.log('   SAVE_IN_PROGRESS =', SAVE_IN_PROGRESS);
+  console.log('   localStorage["' + COOLDOWN_KEY + '"] =', localStorage.getItem(COOLDOWN_KEY));
 })();
 
   
