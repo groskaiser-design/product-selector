@@ -548,7 +548,7 @@ async function saveMeasurementsToDB(values){
  * + ПАТЧ: блокируем повторные клики (никаких POST) и показываем "Too many requests".
  * ============================================================ */
 /* ============================================================
- * BLOCK D — КУЛДАУН (ФИНАЛЬНАЯ ВЕРСИЯ)
+ * BLOCK D — КУЛДАУН (ФИНАЛЬНОЕ РЕШЕНИЕ)
  * ============================================================ */
 
 (function(){
@@ -569,12 +569,6 @@ async function saveMeasurementsToDB(values){
       console.warn('localStorage недоступен:', e);
     }
     var result = Math.max(_unlockAtMem, fromStorage);
-    console.log('🔍 getUnlockTimestamp:', {
-      fromStorage: fromStorage,
-      fromMemory: _unlockAtMem,
-      result: result,
-      resultDate: new Date(result).toLocaleTimeString()
-    });
     return result;
   }
   
@@ -582,31 +576,23 @@ async function saveMeasurementsToDB(values){
     _unlockAtMem = timestamp;
     try { 
       localStorage.setItem(_COOLDOWN_KEY, String(timestamp)); 
-      console.log('🔒 setUnlockTimestamp:', {
-        timestamp: timestamp,
-        date: new Date(timestamp).toLocaleTimeString(),
-        savedToStorage: localStorage.getItem(_COOLDOWN_KEY)
-      });
+      console.log('🔒 Кулдаун установлен до:', new Date(timestamp).toLocaleTimeString());
     } catch(e){
       console.warn('Не удалось сохранить в localStorage:', e);
     }
   }
   
   function checkCooldown(){
-    if (_savingInFlight) {
-      console.log('🔴 Кулдаун активен: savingInFlight=true');
-      return true;
-    }
     var now = Date.now();
     var unlockAt = getUnlockTimestamp();
-    var isLocked = now < unlockAt;
+    var isLocked = _savingInFlight || (now < unlockAt);
     var remaining = Math.ceil((unlockAt - now) / 1000);
     
-    console.log('🔍 checkCooldown:', {
+    console.log('🔍 Проверка кулдауна:', {
       isLocked: isLocked,
+      savingInFlight: _savingInFlight,
       now: now,
       unlockAt: unlockAt,
-      diff_ms: unlockAt - now,
       remaining_sec: remaining
     });
     
@@ -675,7 +661,7 @@ async function saveMeasurementsToDB(values){
   }
   
   async function showPopupSafe(title, message, haptic){
-    console.log('📢 showPopupSafe:', title, message);
+    console.log('📢 Показываем попап:', title);
     try {
       var tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
       if (haptic && tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred) {
@@ -686,7 +672,7 @@ async function saveMeasurementsToDB(values){
         return; 
       }
       if (window.__popupOpen) {
-        console.log('⚠️ Попап уже открыт');
+        console.log('⚠️ Попап уже открыт, пропускаем');
         return;
       }
       window.__popupOpen = true;
@@ -764,33 +750,34 @@ async function saveMeasurementsToDB(values){
       try { e.stopPropagation(); } catch(ex){}
     }
     
-    // ПРОВЕРКА КУЛДАУНА
+    // ПРОВЕРКА КУЛДАУНА - БЕЗ AWAIT!
     if (checkCooldown()){
       console.log('🔴 БЛОКИРОВКА: кулдаун активен!');
-      await showPopupSafe('Too many requests', 'Не чаще одного раза в 10 секунд.', 'error');
-      return;
+      // ВАЖНО: НЕ используем await здесь!
+      showPopupSafe('Too many requests', 'Не чаще одного раза в 10 секунд.', 'error');
+      return; // ВАЖНО: выходим СРАЗУ
     }
     
     console.log('✅ Кулдаун НЕ активен, начинаем сохранение');
     
+    // Запускаем процесс сохранения
+    performSave();
+  }
+  
+  // === ПРОЦЕСС СОХРАНЕНИЯ ===
+  async function performSave(){
     var tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
     var now = Date.now();
     
     console.log('💾 Начало сохранения:', new Date(now).toLocaleTimeString());
     
-    // УСТАНАВЛИВАЕМ КУЛДАУН
+    // УСТАНАВЛИВАЕМ КУЛДАУН СРАЗУ
     var unlockTime = now + _COOLDOWN_MS;
-    console.log('🔒 Устанавливаем unlockAt =', unlockTime, '(now + 10000)');
-    console.log('🔒 now =', now);
-    console.log('🔒 COOLDOWN_MS =', _COOLDOWN_MS);
-    
     setUnlockTimestamp(unlockTime);
     _savingInFlight = true;
     setSavingState(true);
     
-    // Проверяем, что установилось
-    var check = getUnlockTimestamp();
-    console.log('✅ Проверка: unlockAt после установки =', check, ', разница с now =', (check - now));
+    console.log('✅ Флаги установлены: savingInFlight=true, unlockAt=', new Date(unlockTime).toLocaleTimeString());
     
     try { 
       if (tg && tg.HapticFeedback && tg.HapticFeedback.impactOccurred) {
@@ -816,11 +803,11 @@ async function saveMeasurementsToDB(values){
       } catch(_){}
       
       await showPopupSafe('Готово', 'Данные сохранены.', 'success');
-      console.log('✅ Сохранение завершено');
+      console.log('✅ Сохранение завершено успешно');
       
     } catch(err) {
       setSavingState(false);
-      console.error('❌ Ошибка:', err);
+      console.error('❌ Ошибка при сохранении:', err);
       
       var msg = String((err && err.message) || err || '');
       if ((err && err.code === 429) || /too\s*many\s*requests|rate[-_\s]*limit|слишком\s+часто|429/i.test(msg)){
@@ -832,9 +819,9 @@ async function saveMeasurementsToDB(values){
       }
     } finally {
       _savingInFlight = false;
-      console.log('🔓 savingInFlight сброшен');
-      console.log('📍 Финальная проверка:');
-      checkCooldown();
+      console.log('🔓 savingInFlight сброшен в false');
+      console.log('📍 Кулдаун активен до:', new Date(getUnlockTimestamp()).toLocaleTimeString());
+      checkCooldown(); // для логов
     }
   }
   
@@ -849,20 +836,19 @@ async function saveMeasurementsToDB(values){
     var btn = getSaveBtn();
     if (!btn) {
       console.error('❌ Кнопка #saveBtn не найдена!');
-      setTimeout(init, 500); // повтор через 500мс
+      setTimeout(init, 500);
       return;
     }
     
-    // Клонируем кнопку, чтобы удалить все старые обработчики
+    // Клонируем кнопку для удаления всех старых обработчиков
     var newBtn = btn.cloneNode(true);
     btn.parentNode.replaceChild(newBtn, btn);
     
     // Устанавливаем ЕДИНСТВЕННЫЙ обработчик
     newBtn.addEventListener('click', handleSaveClick, false);
     
-    console.log('✅ Обработчик установлен');
-    console.log('📍 Начальный статус:');
-    checkCooldown();
+    console.log('✅ Обработчик кнопки установлен');
+    console.log('📍 Начальный статус: кулдаун активен =', checkCooldown());
   })();
   
 })();
