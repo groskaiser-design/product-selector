@@ -390,16 +390,55 @@ window.__pendingInputs = window.__pendingInputs || {};
 function ensureWheel(fieldEl, cfg){
   let w = wheelMap.get(fieldEl);
   if (!w){
-    const initVal = cfg.initial;
+    // 1) Берём отложенные значения, если приходили раньше (из BLOCK E → apiLastInputs)
+    const pend = (window.__pendingInputs || {});
+    const hasPend = Object.prototype.hasOwnProperty.call(pend, cfg.key);
+    const pendVal = hasPend ? pend[cfg.key] : undefined;
+
+    // 2) Выбираем стартовое значение колеса:
+    //    - если прилетел number в pending — используем его
+    //    - иначе — cfg.initial (как было)
+    const initVal = (typeof pendVal === 'number') ? pendVal : cfg.initial;
+
+    // 3) Создаём колесо
     w = buildWheel(fieldEl, initVal);
     wheelMap.set(fieldEl, w);
     wheels[cfg.key] = w;
-// Если для этого ключа уже есть отложенное значение — применим его
-if (Object.prototype.hasOwnProperty.call(window.__pendingInputs, cfg.key) &&
-    typeof window.__pendingInputs[cfg.key] === 'number') {
-  w.setValue(window.__pendingInputs[cfg.key]);
-  delete window.__pendingInputs[cfg.key];
+
+    // 4) Опциональные поля — создаём чекбокс «нет данных» (как было),
+    //    и если в pending лежит null — сразу выключаем колесо и ставим чекбокс
+    let cb = null;
+    if (cfg.optional){
+      cb = fieldEl.querySelector('#opt_'+cfg.key);
+      if (!cb){
+        const opt = document.createElement('div');
+        opt.className = 'optline';
+        opt.innerHTML = `<label style="display:flex;align-items:center;gap:8px;opacity:.95">
+            <input type="checkbox" id="opt_${cfg.key}"> нет данных
+          </label>`;
+        fieldEl.appendChild(opt);
+        cb = opt.querySelector('input');
+      }
+      if (!cb._bound){
+        cb.addEventListener('change', ()=>{ w.setDisabled(cb.checked); }, {passive:true});
+        cb._bound = true;
+      }
+
+      // применяем null из pending
+      if (hasPend && pendVal == null){
+        cb.checked = true;
+        w.setDisabled(true, /*programmatic*/true);
+      }
+    }
+
+    // 5) Если применили числовой pending — очищаем его, чтобы не переигрывать позже
+    if (hasPend && typeof pendVal === 'number'){
+      delete pend[cfg.key];
+    }
+  }
+  return w;
 }
+
 
     if (cfg.optional){
       let cb = fieldEl.querySelector('#opt_'+cfg.key);
