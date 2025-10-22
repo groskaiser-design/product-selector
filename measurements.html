@@ -10,28 +10,33 @@
 <!-- === FORCE-FRESH HTML: каждый заход грузим с сети === -->
 <script>
 (function enforceFreshOnVisit(){
-  var url = new URL(location.href);
-  if (!url.searchParams.has('_nc')) {
-    url.searchParams.set('_nc', Date.now().toString(36));
-    location.replace(url.href);
-  }
-})();
-window.addEventListener('pageshow', function(e){
-  var nav = (performance && performance.getEntriesByType)
-    ? performance.getEntriesByType('navigation')[0]
-    : null;
-  var isBackForward = !!(nav && nav.type === 'back_forward');
-  if (e.persisted || isBackForward) {
+  try{
     var url = new URL(location.href);
-    url.searchParams.set('_nc', Date.now().toString(36));
-    location.replace(url.href);
-  }
+    if (!url.searchParams.has('_nc')) {
+      url.searchParams.set('_nc', Date.now().toString(36));
+      location.replace(url.href); // пробивает кеш и не засоряет историю
+    }
+  }catch(_){}
+})();
+
+window.addEventListener('pageshow', function(e){
+  try{
+    var nav = (performance && performance.getEntriesByType)
+      ? performance.getEntriesByType('navigation')[0]
+      : null;
+    var isBackForward = !!(nav && nav.type === 'back_forward');
+
+    if (e.persisted || isBackForward) {
+      var url = new URL(location.href);
+      url.searchParams.set('_nc', Date.now().toString(36));
+      location.replace(url.href);
+    }
+  }catch(_){}
 }, { once: true });
 </script>
 
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
-  /* === BLOCK A: DESIGN / UI === */
   :root{
     --bg: linear-gradient(135deg,#667eea 0%,#764ba2 100%);
     --cardA: rgba(255,255,255,.18);
@@ -76,7 +81,7 @@ window.addEventListener('pageshow', function(e){
     position:relative;display:flex;gap:6px;padding:12px;border-radius:14px;
     background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.24);
     max-width:320px;margin:8px auto 0;justify-content:center;
-    touch-action: pan-y; /* важно для мобильных */
+    touch-action: pan-y; /* важный фикс для свайпов по контейнеру */
   }
   .duo::after{
     content:"";position:absolute;left:4px;right:4px;top:50%;height:var(--row);
@@ -88,7 +93,7 @@ window.addEventListener('pageshow', function(e){
     overscroll-behavior: contain;scrollbar-width:none;scroll-snap-type:y mandatory;
     mask-image: linear-gradient(180deg, transparent, #000 18%, #000 82%, transparent);
     -webkit-mask-image: linear-gradient(180deg, transparent, #000 18%, #000 82%, transparent);
-    touch-action: pan-y; /* важно для мобильных */
+    touch-action: pan-y; /* важный фикс для свайпов по колонкам */
   }
   .col::-webkit-scrollbar{display:none}
   .option{height:var(--row);display:flex;align-items:center;justify-content:center;font-weight:900;font-size:18px;color:#eef2ff;opacity:.55;scroll-snap-align:center;}
@@ -98,7 +103,13 @@ window.addEventListener('pageshow', function(e){
   .optline input{width:18px;height:18px}
 
   .savebar{display:flex;justify-content:center;padding:12px;border-top:1px solid rgba(255,255,255,.14);padding-bottom: calc(12px + env(safe-area-inset-bottom));}
-  .btn{min-width:160px;padding:12px 16px;border:0;border-radius:14px;background:linear-gradient(135deg,var(--okA),var(--okB));color:#fff;font-weight:900;box-shadow:var(--shadow);transition: transform .08s ease, box-shadow .12s ease, filter .12s ease, opacity .12s ease;-webkit-tap-highlight-color:transparent;touch-action: manipulation;display:inline-flex;align-items:center;justify-content:center;gap:10px;}
+  .btn{
+    min-width:160px;padding:12px 16px;border:0;border-radius:14px;
+    background:linear-gradient(135deg,var(--okA),var(--okB));color:#fff;font-weight:900;
+    box-shadow:var(--shadow);transition: transform .08s ease, box-shadow .12s ease, filter .12s ease, opacity .12s ease;
+    -webkit-tap-highlight-color:transparent;touch-action: manipulation;
+    display:inline-flex;align-items:center;justify-content:center;gap:10px;
+  }
   .btn:focus-visible{outline:2px solid rgba(255,255,255,.7);outline-offset:2px;border-radius:16px}
   @media (prefers-reduced-motion: reduce){ .btn{transition:none;} }
   .btn.pressed{transform:translateY(1px) scale(.98);box-shadow:var(--shadow);filter:saturate(.95);}
@@ -171,12 +182,12 @@ window.addEventListener('pageshow', function(e){
 (function initTMA(){
   const tg = window.Telegram?.WebApp;
   if (!tg) return;
-  try { tg.ready(); tg.expand(); tg.setHeaderColor('secondary_bg_color'); } catch(e){}
+  try { tg.ready(); tg.expand(); tg.setHeaderColor('secondary_bg_color'); } catch(_){}
   try {
     tg.BackButton?.offClick?.();
     tg.BackButton?.show();
-    tg.BackButton?.onClick(()=>{ try{ window.location.href='router.html'; }catch(_){} });
-  } catch(e){}
+    tg.BackButton?.onClick(()=>{ try{ window.location.href='router.html'; }catch(_){ } });
+  } catch(_){}
 })();
 
 /* ============================================================
@@ -188,11 +199,8 @@ const pad = 4;
 const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
 
 /* ============================================================
- *  BLOCK A1: Компонент "колёса" + ensureWheel
+ *  BLOCK A1: Компонент "колёса" + ensureWheel (прод)
  * ============================================================ */
-const wheels = {};
-const wheelMap = new WeakMap();
-
 function buildWheel(fieldEl, initial){
   const min = +fieldEl.dataset.min;
   const max = +fieldEl.dataset.max;
@@ -223,17 +231,21 @@ function buildWheel(fieldEl, initial){
   function markActive(col){
     const idx = nearestIndex(col) + pad;
     const prev = lastActiveIdx.get(col);
+
+    // Тихий хаптик при смене активной цифры
     if (typeof prev === 'number' && prev !== idx && !isProgrammatic) {
-      try { window.Telegram?.WebApp?.HapticFeedback?.selectionChanged?.(); } catch(e){}
+      try { window.Telegram?.WebApp?.HapticFeedback?.selectionChanged?.(); } catch(_){}
     }
+
     if (typeof prev === 'number' && col.children[prev]) col.children[prev].classList.remove('active');
     const el = col.children[idx];
     if (el) el.classList.add('active');
     lastActiveIdx.set(col, idx);
   }
 
+  // Фолбек на скрытую секцию (clientHeight=0)
   const setScrollInstant = (col, idx) => {
-    const ch = col.clientHeight || rowH * 5;
+    const ch = col.clientHeight || rowH * 5; // «виртуальная» высота пока контейнер скрыт
     const top = (idx + pad) * rowH - (ch - rowH)/2;
     col.scrollTop = top;
     requestAnimationFrame(()=> markActive(col));
@@ -260,6 +272,7 @@ function buildWheel(fieldEl, initial){
   const supportsScrollEnd = ('onscrollend' in window);
   let disabled = false;
 
+  // Модельное значение независимо от DOM
   let modelValue = (typeof initial === 'number')
     ? clamp(+initial, min, max)
     : clamp(min + (max - min) / 2, min, max);
@@ -328,6 +341,7 @@ function buildWheel(fieldEl, initial){
     scheduleSnap();
   }
 
+  // Всегда иметь таймер-фолбек (scrollend — дополняет)
   function scheduleSnap(){
     clearTimeout(snapTimer);
     snapTimer = setTimeout(snapNow, 80);
@@ -356,7 +370,9 @@ function buildWheel(fieldEl, initial){
   }
 
   const initVal = (typeof initial==='number') ? initial : (min + (max - min) / 2);
-  requestAnimationFrame(()=>requestAnimationFrame(()=>{ setValue(initVal); }));
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{
+    setValue(initVal);
+  }));
 
   const api = {
     setValue,
@@ -382,19 +398,27 @@ function buildWheel(fieldEl, initial){
   return api;
 }
 
+const wheels = {};
+const wheelMap = new WeakMap();
+
 function ensureWheel(fieldEl, cfg){
   let w = wheelMap.get(fieldEl);
   if (w) return w;
 
+  // 1) Pending из префилла
   const pend = (window.__pendingInputs || {});
   const hasPend = Object.prototype.hasOwnProperty.call(pend, cfg.key);
   const pendVal = hasPend ? pend[cfg.key] : undefined;
+
+  // 2) Стартовое значение
   const initVal = (typeof pendVal === 'number') ? pendVal : cfg.initial;
 
+  // 3) Создаём колесо
   w = buildWheel(fieldEl, initVal);
   wheelMap.set(fieldEl, w);
   wheels[cfg.key] = w;
 
+  // 4) Опциональные поля
   if (cfg.optional){
     let cb = fieldEl.querySelector('#opt_'+cfg.key);
     if (!cb){
@@ -416,6 +440,7 @@ function ensureWheel(fieldEl, cfg){
     }
   }
 
+  // 5) Чистим pending
   if (hasPend && typeof pendVal === 'number'){
     delete pend[cfg.key];
   }
@@ -423,7 +448,7 @@ function ensureWheel(fieldEl, cfg){
 }
 
 /* ============================================================
- *  BLOCK B: Модель данных (конфиг полей + рендер)
+ *  BLOCK B: Конфиг полей + рендер + жёсткая инициализация
  * ============================================================ */
 const FIELDS = [
   { key:'weight', label:'Вес', unit:'кг', min:40, max:250, initial:70.0 },
@@ -456,6 +481,10 @@ const CFG = Object.fromEntries(FIELDS.map(f=>[f.key, f]));
 const fieldsWrap = document.getElementById('fields');
 const fieldByKey = Object.create(null);
 
+// Глобальный буфер для значений, если колёса ещё не инициализированы
+window.__pendingInputs = window.__pendingInputs || {};
+
+// Рендер карточек полей
 for (const cfg of FIELDS){
   const f = document.createElement('div');
   f.className = 'field';
@@ -478,23 +507,23 @@ for (const cfg of FIELDS){
   fieldByKey[cfg.key] = f;
 }
 
-/* ============================================================
- *  BLOCK A1.5: Принудительная (eager) инициализация колёс
- * ============================================================ */
-(function eagerInitWheels(){
-  requestAnimationFrame(()=>requestAnimationFrame(()=>{
-    try{
-      for (const cfg of FIELDS){
-        const el = fieldByKey[cfg.key];
-        if (el) ensureWheel(el, cfg);
-      }
-    }catch(e){}
-  }));
-})();
+// === ЕДИНОРАЗОВАЯ ЖЁСТКАЯ ИНИЦИАЛИЗАЦИЯ ВСЕХ КОЛЁС ===
+function ensureAllWheelsOnce(){
+  if (window.__wheelsInitDone) return;
+  for (const cfg of FIELDS){
+    const el = fieldByKey[cfg.key];
+    if (el) ensureWheel(el, cfg);
+  }
+  window.__wheelsInitDone = true;
+}
+ensureAllWheelsOnce();
+// Алиас на случай старых вызовов
+window.forceInitAllWheels = ensureAllWheelsOnce;
 
 /* ===========================
- * BLOCK C — SAVE TO DB (Apps Script, no preflight)
+ * BLOCK C — SAVE TO DB (Apps Script, no preflight, pure logic)
  * =========================== */
+
 const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbwjvkS5P7IcvTCFRbAb9jflLuD-R2IN3Azhg5_niKywHN3pJLDTBCL4kD2W-eDjKNnJmA/exec';
 const APP_VERSION  = 'frontend-2025-10-21';
 const REQUEST_TIMEOUT_MS = 15000;
@@ -515,10 +544,15 @@ function clientTZ(){
 }
 function genSaveId(){ return Date.now() + '_' + Math.random().toString(36).slice(2,10); }
 
+/**
+ * Отправка в Apps Script
+ * @param {Object} values — значения крутилок (обязательны)
+ */
 async function saveMeasurementsToDB(values){
   if (!values || typeof values !== 'object') {
     throw new Error('Нет данных для сохранения.');
   }
+
   const tg       = window.Telegram?.WebApp;
   const tz       = clientTZ();
   const dayLocal = todayLocalISO(tz);
@@ -543,7 +577,7 @@ async function saveMeasurementsToDB(values){
   try {
     resp = await fetch(BACKEND_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8' }, // без preflight
       body: JSON.stringify(payload),
       redirect: 'follow',
       cache: 'no-store',
@@ -558,8 +592,11 @@ async function saveMeasurementsToDB(values){
       const e = new Error('Сервер не ответил вовремя'); e.code = 408; throw e;
     }
     throw err;
-  } finally { clearTimeout(t); }
+  } finally {
+    clearTimeout(t);
+  }
 
+  // --- детект лимита ---
   const isRateLimited =
     resp?.status === 429 ||
     (json && (json.code === 429 || json.status === 429)) ||
@@ -584,39 +621,35 @@ async function saveMeasurementsToDB(values){
 }
 
 /* ============================================================
- * BLOCK D — КУЛДАУН + UI
+ * BLOCK D — Кулдаун, попапы, сохранение
  * ============================================================ */
 var SAVE_IN_PROGRESS = false;
 var COOLDOWN_MS = 60000;
 var COOLDOWN_KEY = 'save_unlock_time';
 
 function getUnlockTime(){
-  try { return Number(localStorage.getItem(COOLDOWN_KEY)) || 0; }
-  catch(e) { return 0; }
+  try { return Number(localStorage.getItem(COOLDOWN_KEY)) || 0; } catch(_) { return 0; }
 }
 function setUnlockTime(time){
-  try { localStorage.setItem(COOLDOWN_KEY, String(time)); }
-  catch(e){}
+  try { localStorage.setItem(COOLDOWN_KEY, String(time)); } catch(_){}
 }
 function canSaveNow(){
   if (SAVE_IN_PROGRESS) return false;
   var now = Date.now();
   var unlockAt = getUnlockTime();
-  if (unlockAt > now) return false;
-  return true;
+  return !(unlockAt > now);
 }
 
+// === PER-USER ROW_CALC ===
 var ROWCALC_KEY_PREFIX = 'macros:last_row_calc:';
 function currentUserId(){ 
-  try { 
-    return (window.Telegram?.WebApp?.initDataUnsafe?.user?.id) || 'anon'; 
-  } catch(e){ return 'anon'; }
+  try { return window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'anon'; } catch(_){ return 'anon'; }
 }
 function rowCalcKey(uid){ return ROWCALC_KEY_PREFIX + String(uid); }
 function setRowCalcForUser(rowCalc, uid){
   if (typeof uid === 'undefined') uid = currentUserId();
   try { localStorage.setItem(rowCalcKey(uid), String(rowCalc)); }
-  catch(e) { try { sessionStorage.setItem(rowCalcKey(uid), String(rowCalc)); } catch(e2){} }
+  catch(_) { try { sessionStorage.setItem(rowCalcKey(uid), String(rowCalc)); } catch(_){} }
   if (!window.__rowCalcByUid) window.__rowCalcByUid = {};
   window.__rowCalcByUid[String(uid)] = Number(rowCalc);
 }
@@ -625,31 +658,32 @@ function getRowCalcForUser(uid){
   if (window.__rowCalcByUid && (String(uid) in window.__rowCalcByUid)) return window.__rowCalcByUid[String(uid)];
   var v = null; 
   try { v = localStorage.getItem(rowCalcKey(uid)); } 
-  catch(e) { try { v = sessionStorage.getItem(rowCalcKey(uid)); } catch(e2){} }
+  catch(_) { try { v = sessionStorage.getItem(rowCalcKey(uid)); } catch(_){ } }
   var n = (v == null) ? null : Number(v);
   if (!window.__rowCalcByUid) window.__rowCalcByUid = {};
   window.__rowCalcByUid[String(uid)] = isNaN(n) ? null : n;
   return window.__rowCalcByUid[String(uid)];
 }
+window.getRowCalcForUser = getRowCalcForUser;
+window.setRowCalcForUser = setRowCalcForUser;
 
+// === LAST MEASUREMENT TIME ===
 var LASTTIME_KEY_PREFIX = 'macros:last_measurement_time:';
 function lastTimeKey(uid){ return LASTTIME_KEY_PREFIX + String(uid); }
 function setLastMeasurementTime(timestamp, uid){
   if (typeof uid === 'undefined') uid = currentUserId();
-  try { localStorage.setItem(lastTimeKey(uid), String(timestamp)); }
-  catch(e) { try { sessionStorage.setItem(lastTimeKey(uid), String(timestamp)); } catch(e2){} }
+  try { localStorage.setItem(lastTimeKey(uid), String(timestamp)); } 
+  catch(_) { try { sessionStorage.setItem(lastTimeKey(uid), String(timestamp)); } catch(_){} }
   if (!window.__lastTimeByUid) window.__lastTimeByUid = {};
   window.__lastTimeByUid[String(uid)] = Number(timestamp);
   updateLastTimeDisplay(timestamp);
 }
 function getLastMeasurementTime(uid){
   if (typeof uid === 'undefined') uid = currentUserId();
-  if (window.__lastTimeByUid && (String(uid) in window.__lastTimeByUid)) {
-    return window.__lastTimeByUid[String(uid)];
-  }
+  if (window.__lastTimeByUid && (String(uid) in window.__lastTimeByUid)) return window.__lastTimeByUid[String(uid)];
   var v = null; 
   try { v = localStorage.getItem(lastTimeKey(uid)); } 
-  catch(e) { try { v = sessionStorage.getItem(lastTimeKey(uid)); } catch(e2){} }
+  catch(_) { try { v = sessionStorage.getItem(lastTimeKey(uid)); } catch(_){} }
   var n = (v == null) ? null : Number(v);
   if (!window.__lastTimeByUid) window.__lastTimeByUid = {};
   window.__lastTimeByUid[String(uid)] = isNaN(n) ? null : n;
@@ -660,14 +694,18 @@ function updateLastTimeDisplay(timestamp){
   if (!el) return;
   if (!timestamp) { el.textContent = 'Последний замер: нет данных'; return; }
   var date = new Date(timestamp);
-  var dateStr = date.toLocaleDateString('ru-RU', {day:'2-digit',month:'2-digit',year:'numeric'});
-  var timeStr = date.toLocaleTimeString('ru-RU', {hour:'2-digit',minute:'2-digit'});
+  var dateStr = date.toLocaleDateString('ru-RU', { day:'2-digit', month:'2-digit', year:'numeric' });
+  var timeStr = date.toLocaleTimeString('ru-RU', { hour:'2-digit', minute:'2-digit' });
   el.textContent = 'Последний замер: ' + dateStr + ' ' + timeStr;
 }
+window.setLastMeasurementTime = setLastMeasurementTime;
+window.getLastMeasurementTime = getLastMeasurementTime;
 
+// === UI helpers ===
 function getSaveBtn(){ return document.getElementById('saveBtn'); }
 function setSavingState(isSaving){
-  var btn = getSaveBtn(); if (!btn) return;
+  var btn = getSaveBtn(); 
+  if (!btn) return;
   var label = btn.querySelector('.btn-label');
   var sp = btn.querySelector('.spinner');
   if (isSaving) btn.classList.add('loading'); else btn.classList.remove('loading');
@@ -677,19 +715,30 @@ function setSavingState(isSaving){
 }
 function showPopup(title, message, haptic){
   var tg = window.Telegram?.WebApp;
-  try { if (haptic) tg?.HapticFeedback?.notificationOccurred?.(haptic); } catch(e){}
-  if (tg?.showPopup) { tg.showPopup({ title, message, buttons:[{type:'ok'}] }); }
-  else { alert(title + '\n\n' + message); }
+  if (haptic && tg?.HapticFeedback?.notificationOccurred) {
+    try { tg.HapticFeedback.notificationOccurred(haptic); } catch(_){}
+  }
+  if (tg?.showPopup) {
+    tg.showPopup({ title, message, buttons: [{type:'ok'}] });
+  } else {
+    alert(title + '\n\n' + message);
+  }
 }
 function collapseAccordionSafe(){
   var act = function(){
-    var section = document.getElementById('sec-measures');
-    if (section){ section.classList.add('collapsed'); section.setAttribute('aria-hidden','true'); }
+    try{
+      var section = document.getElementById('sec-measures');
+      if (section){ section.classList.add('collapsed'); section.setAttribute('aria-hidden','true'); }
+      document.querySelectorAll('[data-toggle="sec-measures"]').forEach(function(h){
+        h.setAttribute('aria-expanded','false');
+      });
+    }catch(_){}
   };
-  try { requestAnimationFrame(()=>requestAnimationFrame(act)); } catch(e) { act(); }
+  try { requestAnimationFrame(function(){ requestAnimationFrame(act); }); } catch(_){ act(); }
 }
+
+// Собрать значения колёс
 function collectWheelValues(){
-  if (typeof window._collectWheelValues === 'function') return window._collectWheelValues();
   var out = {};
   for (var i=0; i<FIELDS.length; i++){
     var cfg = FIELDS[i];
@@ -701,29 +750,36 @@ function collectWheelValues(){
   return out;
 }
 
+// === ГЛАВНАЯ ФУНКЦИЯ ===
 function handleSaveClick(e){
-  if (e && e.preventDefault) { try { e.preventDefault(); } catch(ex){} }
+  if (e && e.preventDefault) { try { e.preventDefault(); } catch(_){} }
+
   if (!canSaveNow()) {
     showPopup('Too many requests', 'Не нужно так часто нажимать эту кнопку', 'error');
     return;
   }
+
   var tg = window.Telegram?.WebApp;
   var now = Date.now();
+
+  // Блокируем
   SAVE_IN_PROGRESS = true;
   setUnlockTime(now + COOLDOWN_MS);
   setSavingState(true);
-  try { tg?.HapticFeedback?.impactOccurred?.('light'); } catch(e){}
+
+  if (tg?.HapticFeedback?.impactOccurred) { try { tg.HapticFeedback.impactOccurred('light'); } catch(_){} }
 
   var values = collectWheelValues();
 
   saveMeasurementsToDB(values)
     .then(function(res){
       setRowCalcForUser(res.row_calc);
-      startFrontDataFlow(res.row_calc);
+      // сразу дергаем фронт-луп, чтобы подтянулся комментарий
+      startFrontDataFlow();
       setLastMeasurementTime(Date.parse(res.ts_iso));
       setSavingState(false);
       collapseAccordionSafe();
-      try { tg?.HapticFeedback?.notificationOccurred?.('success'); } catch(e){}
+      if (tg?.HapticFeedback?.notificationOccurred) { try { tg.HapticFeedback.notificationOccurred('success'); } catch(_){} }
       showPopup('Готово', 'Данные сохранены.', 'success');
       SAVE_IN_PROGRESS = false;
     })
@@ -733,18 +789,20 @@ function handleSaveClick(e){
       if ((err && err.code === 429) || /too\s*many\s*requests|rate[-_\s]*limit|слишком\s+часто|429/i.test(msg)){
         showPopup('Too many requests', 'Не нужно так часто нажимать эту кнопку', 'error');
       } else if ((err && err.code === 408) || /timeout/i.test(msg)) {
-        showPopup(
-          'Медленный ответ сервера',
-          'Запрос отправлен и может уже быть сохранён. Мы попробуем автоматически подтянуть обновления. Если через минуту их не видно — нажмите «Сохранить» ещё раз.'
-        );
-        try { startFrontDataFlow(); } catch(_) {}
+        // Важно: информируем, что данные могли сохраниться
+        showPopup('Не сохранено (возможно ушло)',
+          'Сервер не успел ответить вовремя. Возможно, данные уже сохранены. Проверьте "Последний замер" или историю. Повторить можно позже.',
+          'error');
+        // На всякий случай запускаем фронт-луп: если бэк успел сохранить — подтянется комментарий
+        try { startFrontDataFlow(); } catch(_){}
       } else {
-        showPopup('Не сохранено', 'Произошла ошибка при сохранении.', 'error');
+        showPopup('Не сохранено', 'Произошла ошибка при сохранении. Попробуйте ещё раз позже.', 'error');
       }
       SAVE_IN_PROGRESS = false;
     });
 }
 
+// === ИНИЦИАЛИЗАЦИЯ ===
 (function(){
   var btn = document.getElementById('saveBtn');
   if (!btn) return;
@@ -755,6 +813,8 @@ function handleSaveClick(e){
 
 /* ============================================================
  *  BLOCK E: Загрузка данных (AI-комментарий + префилл колёс)
+ *  ВАЖНО: аналитику значениями не заливаем — только плейсхолдер.
+ *  Вызовы к бэку без preflight. front_wait — БЕЗ row.
  * ============================================================ */
 (function frontDataFlowInit(){
   const tg = window.Telegram?.WebApp;
@@ -772,6 +832,7 @@ function handleSaveClick(e){
     host.innerHTML = `<div class="field"><div class="help">После сохранения появятся графики.</div></div>`;
   }
 
+  // === API (без preflight)
   async function apiFrontWait(timeoutSec){
     const payload = {
       action:'front_wait',
@@ -811,18 +872,11 @@ function handleSaveClick(e){
       : `<div class="field"><div class="help">Комментарий пока не готов…</div></div>`;
   }
 
-  function forceInitAllWheels(){
-    try {
-      for (const cfg of FIELDS){
-        const el = fieldByKey[cfg.key];
-        if (el) ensureWheel(el, cfg);
-      }
-    } catch(e) {}
-  }
-
   function applyInputsToWheels(inputs){
     if (!inputs || typeof inputs !== 'object') return;
-    forceInitAllWheels();
+
+    // Обеспечиваем наличие всех колёс
+    ensureAllWheelsOnce();
 
     for (const [k, v] of Object.entries(inputs)){
       const cfg = CFG[k]; if (!cfg) continue;
@@ -860,6 +914,7 @@ function handleSaveClick(e){
     }
   }
 
+  // === Лонг-полл только для AI-комментария (аналитику не трогаем)
   let _pollTimer = 0;
 
   async function pollOnce(){
@@ -885,25 +940,25 @@ function handleSaveClick(e){
     _pollTimer = setTimeout(()=>pollLoop(), r.wait);
   }
 
-  window.startFrontDataFlow = function(){
-    pollLoop();
-  };
+  window.startFrontDataFlow = function(){ pollLoop(); };
 
+  // Старт при загрузке
   setAIStatus('Ждём данные…');
   setAnalyticsPlaceholder();
   window.startFrontDataFlow();
 
+  // Подтянуть последние вводы и СРАЗУ заинициализировать колёса
   apiLastInputs()
     .then(r => {
       if (r && r.found && r.inputs) applyInputsToWheels(r.inputs);
-      else forceInitAllWheels();
+      else ensureAllWheelsOnce();
     })
-    .catch(()=>{ forceInitAllWheels(); });
+    .catch(()=>{ ensureAllWheelsOnce(); });
 
 })();
 
 /* ============================================================
- *  BLOCK Z: Аккордеон (минимальный, без ресинка колёс)
+ *  BLOCK Z: Аккордеон (минимальный) + подстраховка первого открытия
  * ============================================================ */
 function setAriaExpanded(h){
   const sec = document.getElementById(h.getAttribute('data-toggle'));
@@ -915,6 +970,23 @@ function toggleSectionByHeader(h){
   const sec = document.getElementById(id);
   const willBeCollapsed = sec.classList.toggle('collapsed');
   h.setAttribute('aria-expanded', String(!willBeCollapsed));
+
+  // Если открываем «Замеры» — на всякий случай убеждаемся, что колёса точно инициализированы
+  if (id === 'sec-measures' && !willBeCollapsed){
+    if (typeof ensureAllWheelsOnce === 'function') ensureAllWheelsOnce();
+
+    // Небольшая фиксация позиций после того, как контейнер стал видим:
+    requestAnimationFrame(()=>requestAnimationFrame(()=>{
+      try {
+        for (const cfg of FIELDS){
+          const w = wheels[cfg.key];
+          if (!w) continue;
+          const model = (typeof w.getModelValue === 'function') ? w.getModelValue() : w.value;
+          if (typeof w.setValue === 'function') w.setValue(model);
+        }
+      } catch(_){ }
+    }));
+  }
 }
 
 (function bindAccordion(){
@@ -944,7 +1016,6 @@ function toggleSectionByHeader(h){
     if (lastTime) updateLastTimeDisplay(lastTime);
   })();
 })();
-
 </script>
 </body>
 </html>
