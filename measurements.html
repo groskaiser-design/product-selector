@@ -1061,24 +1061,48 @@ function handleSaveClick(e){
 
   // === Форс-инициализация и префилл всех колёс (даже при закрытой секции)
   function forceInitAllWheels(){
+    console.log('🔄 === forceInitAllWheels START ===');
     try {
       for (const cfg of FIELDS){
         const el = fieldByKey[cfg.key];
-        if (el) ensureWheel(el, cfg); // создаём wheel, чекбокс и т.п.
+        if (el) {
+          console.log(`   Creating wheel for key="${cfg.key}"`);
+          ensureWheel(el, cfg);
+        }
       }
-    } catch(_) {}
+      console.log('✅ forceInitAllWheels DONE\n');
+    } catch(e) {
+      console.error('❌ forceInitAllWheels ERROR:', e);
+    }
   }
 
   function applyInputsToWheels(inputs){
-    if (!inputs || typeof inputs !== 'object') return;
+    console.log('🎨 === applyInputsToWheels START ===');
+    console.log('   Input data:', inputs);
+    
+    if (!inputs || typeof inputs !== 'object') {
+      console.log('   ❌ No valid inputs');
+      return;
+    }
 
     // Создаём ВСЕ колёса заранее, чтобы не было «пустоты» при раскрытии
+    console.log('   🔄 Calling forceInitAllWheels...');
     forceInitAllWheels();
+    console.log('   ✅ forceInitAllWheels done');
 
     for (const [k, v] of Object.entries(inputs)){
-      const cfg = CFG[k]; if (!cfg) continue;
+      console.log(`   🔧 Processing key="${k}", value=${v}`);
+      
+      const cfg = CFG[k]; 
+      if (!cfg) {
+        console.log(`      ⚠️ Config not found for key="${k}"`);
+        continue;
+      }
+      
       const el = fieldByKey[k];
-      const w  = wheels[k]; // после forceInitAllWheels он уже есть
+      const w  = wheels[k];
+      
+      console.log(`      wheel exists: ${!!w}, element exists: ${!!el}`);
 
       if (v == null){
         // Запомним pending=null на всякий (если что-то ещё не инициализировалось)
@@ -1104,13 +1128,17 @@ function handleSaveClick(e){
 
       if (typeof v === 'number'){
         if (w) {
+          console.log(`      ✅ Calling w.setValue(${v})`);
           w.setValue(v);
         } else {
+          console.log(`      ⚠️ Wheel not found, saving to pending`);
           window.__pendingInputs = window.__pendingInputs || {};
           window.__pendingInputs[k] = v;
         }
       }
     }
+    
+    console.log('🎨 === applyInputsToWheels END ===\n');
   }
 
   // === Лонг-полл только для AI-комментария (аналитику не трогаем)
@@ -1173,12 +1201,22 @@ function handleSaveClick(e){
   window.startFrontDataFlow();
 
   // Подтянуть последние вводы и СРАЗУ заинициализировать колёса
+  console.log('📡 === BLOCK E: Запрос apiLastInputs ===');
   apiLastInputs()
     .then(r => {
-      if (r && r.found && r.inputs) applyInputsToWheels(r.inputs);
-      else forceInitAllWheels(); // хотя бы создать, чтобы при раскрытии не было «пустоты»
+      console.log('📡 apiLastInputs SUCCESS:', r);
+      if (r && r.found && r.inputs) {
+        console.log('📦 Applying inputs:', r.inputs);
+        applyInputsToWheels(r.inputs);
+      } else {
+        console.log('⚠️ No inputs found, calling forceInitAllWheels');
+        forceInitAllWheels();
+      }
     })
-    .catch(()=>{ forceInitAllWheels(); /* тихо */ });
+    .catch((err)=>{ 
+      console.error('❌ apiLastInputs ERROR:', err);
+      forceInitAllWheels();
+    });
 
 })();
 
