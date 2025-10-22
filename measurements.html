@@ -162,7 +162,7 @@ const pad = 4;
 const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
 
 /* ============================================================
- *  BLOCK A1: Компонент "колёса"
+ *  BLOCK A1: Компонент "колёса" (С ЛОГАМИ)
  * ============================================================ */
 function buildWheel(fieldEl, initial){
   const min = +fieldEl.dataset.min;
@@ -170,11 +170,18 @@ function buildWheel(fieldEl, initial){
   const minInt = Math.floor(min);
   const maxInt = Math.floor(max);
   const intRange = maxInt - minInt;
+  const key = fieldEl.dataset.key;
+
+  console.log(`🔧 buildWheel START: key="${key}", initial=${initial}, min=${min}, max=${max}`);
 
   const intCol = fieldEl.querySelector('.col-int');
   const fracCol = fieldEl.querySelector('.col-frac');
   const duo = fieldEl.querySelector('.duo');
-  const key = fieldEl.dataset.key;
+
+  // Проверка видимости
+  const isVisible = intCol.offsetParent !== null;
+  const clientH = intCol.clientHeight;
+  console.log(`   👁️ Видимость: isVisible=${isVisible}, clientHeight=${clientH}`);
 
   const opt = t => { const d=document.createElement('div'); d.className='option'; d.textContent=t; return d; };
   function fillCol(col, from, to){
@@ -213,6 +220,7 @@ function buildWheel(fieldEl, initial){
 
   const setScrollInstant = (col, idx) => {
     const top = (idx + pad) * rowH - (col.clientHeight-rowH)/2;
+    console.log(`   📜 setScrollInstant: idx=${idx}, clientHeight=${col.clientHeight}, scrollTop=${top}`);
     col.scrollTop = top;
   };
 
@@ -252,6 +260,7 @@ function buildWheel(fieldEl, initial){
   }
 
   function setValue(v){
+    console.log(`   🎯 setValue called: key="${key}", value=${v}, isProgrammatic=${isProgrammatic}`);
     const clamped = clamp(+v, min, max);
     const rounded = Math.round(clamped * 10) / 10;
     const iVal = Math.trunc(rounded);
@@ -325,7 +334,11 @@ function buildWheel(fieldEl, initial){
   }
 
   const initVal = (typeof initial==='number') ? initial : (min + (max - min) / 2);
-  requestAnimationFrame(()=>requestAnimationFrame(()=>setValue(initVal)));
+  console.log(`   ⏰ Scheduling initial setValue(${initVal}) via double RAF`);
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{
+    console.log(`   ⏰ EXECUTING setValue(${initVal}) for key="${key}"`);
+    setValue(initVal);
+  }));
 
   const api = {
     setValue,
@@ -347,7 +360,69 @@ function buildWheel(fieldEl, initial){
       }
     }
   };
+  
+  console.log(`✅ buildWheel END: key="${key}"`);
   return api;
+}
+
+function ensureWheel(fieldEl, cfg){
+  console.log(`🔍 ensureWheel START: key="${cfg.key}"`);
+  
+  let w = wheelMap.get(fieldEl);
+  if (w) {
+    console.log(`   ♻️ Wheel already exists for key="${cfg.key}"`);
+    return w;
+  }
+
+  console.log(`   🆕 Creating NEW wheel for key="${cfg.key}"`);
+  
+  // 1) Берём отложенные значения
+  const pend = (window.__pendingInputs || {});
+  const hasPend = Object.prototype.hasOwnProperty.call(pend, cfg.key);
+  const pendVal = hasPend ? pend[cfg.key] : undefined;
+  
+  console.log(`   📦 Pending data: hasPend=${hasPend}, pendVal=${pendVal}`);
+
+  // 2) Выбираем стартовое значение колеса
+  const initVal = (typeof pendVal === 'number') ? pendVal : cfg.initial;
+  console.log(`   🎲 Initial value: ${initVal} (from ${typeof pendVal === 'number' ? 'pending' : 'cfg.initial'})`);
+
+  // 3) Создаём колесо
+  w = buildWheel(fieldEl, initVal);
+  wheelMap.set(fieldEl, w);
+  wheels[cfg.key] = w;
+
+  // 4) Опциональные поля
+  if (cfg.optional){
+    let cb = fieldEl.querySelector('#opt_'+cfg.key);
+    if (!cb){
+      const opt = document.createElement('div');
+      opt.className = 'optline';
+      opt.innerHTML = `<label style="display:flex;align-items:center;gap:8px;opacity:.95">
+          <input type="checkbox" id="opt_${cfg.key}"> нет данных
+        </label>`;
+      fieldEl.appendChild(opt);
+      cb = opt.querySelector('input');
+    }
+    if (!cb._bound){
+      cb.addEventListener('change', ()=>{ w.setDisabled(cb.checked); }, {passive:true});
+      cb._bound = true;
+    }
+    if (hasPend && pendVal == null){
+      console.log(`   ☑️ Setting optional checkbox for key="${cfg.key}"`);
+      cb.checked = true;
+      w.setDisabled(true, /*programmatic*/true);
+    }
+  }
+
+  // 5) Очищаем pending
+  if (hasPend && typeof pendVal === 'number'){
+    console.log(`   🗑️ Clearing pending for key="${cfg.key}"`);
+    delete pend[cfg.key];
+  }
+  
+  console.log(`✅ ensureWheel END: key="${cfg.key}"\n`);
+  return w;
 }
 
 /* ============================================================
