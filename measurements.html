@@ -191,7 +191,7 @@ function buildWheel(fieldEl, initial){
   const fracCol = fieldEl.querySelector('.col-frac');
   const duo = fieldEl.querySelector('.duo');
 
-  // Проверка видимости
+  // Проверка видимости (диагностика)
   const isVisible = intCol.offsetParent !== null;
   const clientH = intCol.clientHeight;
   console.log(`   👁️ Видимость: isVisible=${isVisible}, clientHeight=${clientH}`);
@@ -214,7 +214,7 @@ function buildWheel(fieldEl, initial){
   function markActive(col){
     const idx = nearestIndex(col) + pad;
     const prev = lastActiveIdx.get(col);
-    
+
     // Вибро отклик при смене активной цифры
     if (typeof prev === 'number' && prev !== idx && !isProgrammatic) {
       try {
@@ -224,7 +224,7 @@ function buildWheel(fieldEl, initial){
         }
       } catch(e){}
     }
-    
+
     if (typeof prev === 'number' && col.children[prev]) col.children[prev].classList.remove('active');
     const el = col.children[idx];
     if (el) el.classList.add('active');
@@ -255,8 +255,13 @@ function buildWheel(fieldEl, initial){
   let isProgrammatic = false;
   let rafInt = 0, rafFrac = 0;
   let snapTimer=null;
-  const supportsScrollEnd = 'onscrollend' in document;
+  const supportsScrollEnd = ('onscrollend' in window);
   let disabled = false;
+
+  // Модельное значение — хранится независимо от DOM/scroll
+  let modelValue = (typeof initial === 'number')
+    ? clamp(+initial, min, max)
+    : clamp(min + (max - min) / 2, min, max);
 
   function applyFracLock(iVal){
     if (disabled) return;
@@ -276,6 +281,8 @@ function buildWheel(fieldEl, initial){
     console.log(`   🎯 setValue called: key="${key}", value=${v}, isProgrammatic=${isProgrammatic}`);
     const clamped = clamp(+v, min, max);
     const rounded = Math.round(clamped * 10) / 10;
+    modelValue = rounded; // фиксируем модельное значение
+
     const iVal = Math.trunc(rounded);
     let f = Math.round((rounded - iVal) * 10);
     if (iVal === maxInt) f = 0;
@@ -297,6 +304,9 @@ function buildWheel(fieldEl, initial){
     let f = clamp(nearestIndex(fracCol), 0, 9);
     const iVal = minInt + iIdx;
     if (iVal === maxInt) f = 0;
+
+    // обновляем модельное значение по факту снапа
+    modelValue = +(iVal + f/10).toFixed(1);
 
     const prev = isProgrammatic; isProgrammatic = true;
     setScrollInstant(intCol, iIdx);
@@ -362,6 +372,7 @@ function buildWheel(fieldEl, initial){
       if (iVal === maxInt) f = 0;
       return +(iVal + f/10).toFixed(1);
     },
+    getModelValue(){ return modelValue; }, // новое API
     setDisabled,
     destroy(){
       clearTimeout(snapTimer);
@@ -373,7 +384,7 @@ function buildWheel(fieldEl, initial){
       }
     }
   };
-  
+
   console.log(`✅ buildWheel END: key="${key}"`);
   return api;
 }
@@ -381,7 +392,7 @@ function buildWheel(fieldEl, initial){
 // === KEEP THIS VERSION ===
 function ensureWheel(fieldEl, cfg){
   console.log(`🔍 ensureWheel START: key="${cfg.key}"`);
-  
+
   let w = wheelMap.get(fieldEl);
   if (w) {
     console.log(`   ♻️ Wheel already exists for key="${cfg.key}"`);
@@ -389,12 +400,12 @@ function ensureWheel(fieldEl, cfg){
   }
 
   console.log(`   🆕 Creating NEW wheel for key="${cfg.key}"`);
-  
+
   // 1) Берём отложенные значения
   const pend = (window.__pendingInputs || {});
   const hasPend = Object.prototype.hasOwnProperty.call(pend, cfg.key);
   const pendVal = hasPend ? pend[cfg.key] : undefined;
-  
+
   console.log(`   📦 Pending data: hasPend=${hasPend}, pendVal=${pendVal}`);
 
   // 2) Выбираем стартовое значение колеса
@@ -434,10 +445,12 @@ function ensureWheel(fieldEl, cfg){
     console.log(`   🗑️ Clearing pending for key="${cfg.key}"`);
     delete pend[cfg.key];
   }
-  
+
   console.log(`✅ ensureWheel END: key="${cfg.key}"\n`);
   return w;
 }
+
+
 
 /* ============================================================
  *  BLOCK B: Модель данных (конфиг полей + рендер)
@@ -1196,7 +1209,8 @@ function handleSaveClick(e){
 
   
 /* ============================================================
- *  BLOCK Z: Аккордеон + FIX для пересчёта scroll
+ *  BLOCK Z: Аккордеон + FIX для пересчёта scroll и применения
+ *           модельных значений при открытии секции
  * ============================================================ */
 function setAriaExpanded(h){
   const sec = document.getElementById(h.getAttribute('data-toggle'));
@@ -1208,28 +1222,67 @@ function toggleSectionByHeader(h){
   const sec = document.getElementById(id);
   const willBeCollapsed = sec.classList.toggle('collapsed');
   h.setAttribute('aria-expanded', String(!willBeCollapsed));
-  
+
   if (id === 'sec-measures' && !willBeCollapsed){
-    console.log('🔓 Секция открылась');
-    
+    // Секция «Замеры» стала видимой — обеспечиваем инициализацию колёс
     if (typeof fieldsWrap !== 'undefined' && !fieldsWrap._observed){
       observeFields();
       fieldsWrap._observed = true;
     }
-    
-    // === FIX: Пересчитать scroll когда секция становится видимой ===
+
+    // На видимом контейнере пересчитываем позиционирование,
+    // приоритетно применяя модельные значения.
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        console.log('♻️ Пересчитываем scroll...');
-        for (const cfg of FIELDS){
-          const w = wheels[cfg.key];
-          if (w && typeof w.setValue === 'function') {
-            const currentVal = w.value;
-            console.log(`   Fixing key="${cfg.key}", value=${currentVal}`);
-            w.setValue(currentVal);
+        try {
+          const pend = (window.__pendingInputs || {});
+          for (const cfg of FIELDS){
+            const el = fieldByKey[cfg.key];
+            // гарантируем наличие колеса
+            let w = wheels[cfg.key];
+            if (!w && el){
+              try { w = ensureWheel(el, cfg); } catch(_){}
+            }
+            if (!w) continue;
+
+            // выбираем «источник истины»:
+            // 1) модельное значение из колеса (новый API),
+            // 2) отложенные данные (__pendingInputs),
+            // 3) иначе просто «фиксируем» текущую позицию
+            let modelVal;
+            if (typeof w.getModelValue === 'function'){
+              modelVal = w.getModelValue();
+            } else if (Object.prototype.hasOwnProperty.call(pend, cfg.key)){
+              modelVal = pend[cfg.key];
+            }
+
+            if (modelVal == null){
+              // null => «нет данных» для optional-полей
+              if (cfg.optional){
+                const cb = el && el.querySelector ? el.querySelector('#opt_'+cfg.key) : null;
+                if (cb) cb.checked = true;
+                if (typeof w.setDisabled === 'function'){
+                  w.setDisabled(true, /*programmatic*/true);
+                }
+              } else {
+                // не optional — просто синхронизируем скролл с текущим значением
+                if (typeof w.setValue === 'function'){
+                  w.setValue(w.value);
+                }
+              }
+            } else if (typeof modelVal === 'number'){
+              if (typeof w.setDisabled === 'function') w.setDisabled(false, /*programmatic*/true);
+              if (typeof w.setValue === 'function') w.setValue(modelVal);
+            } else {
+              // на крайний случай — «фиксируем» текущий скролл
+              if (typeof w.setValue === 'function'){
+                w.setValue(w.value);
+              }
+            }
           }
+        } catch(e){
+          console.error('BLOCK Z resync error:', e);
         }
-        console.log('✅ Scroll пересчитан\n');
       });
     });
   }
@@ -1237,6 +1290,7 @@ function toggleSectionByHeader(h){
 
 (function bindAccordion(){
   const root = document;
+
   root.addEventListener('click', (e)=>{
     const h = e.target.closest ? e.target.closest('.section-h') : null;
     if (!h) return;
@@ -1245,24 +1299,25 @@ function toggleSectionByHeader(h){
     if (!h.hasAttribute('aria-controls')) h.setAttribute('aria-controls', h.getAttribute('data-toggle'));
     toggleSectionByHeader(h);
   }, {passive:true});
-  
+
   root.addEventListener('keydown', (e)=>{
     const h = e.target && e.target.closest ? e.target.closest('.section-h') : null;
     if (!h) return;
     if (e.key==='Enter' || e.key===' '){ e.preventDefault(); toggleSectionByHeader(h); }
   });
-  
+
+  // начальная инициализация aria-expanded для всех заголовков
   document.querySelectorAll('.section-h').forEach(setAriaExpanded);
 
-  // Показываем последнее время при загрузке
+  // Показываем «последний замер» при загрузке (функции определены выше)
   (function(){
-    var lastTime = getLastMeasurementTime();
+    var lastTime = getLastMeasurementTime && getLastMeasurementTime();
     if (lastTime) {
       updateLastTimeDisplay(lastTime);
     }
   })();
-
 })();
+
 </script>
 </body>
 </html>
