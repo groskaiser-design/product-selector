@@ -384,6 +384,8 @@ const fieldsWrap = document.getElementById('fields');
 const wheels = {};
 const wheelMap = new WeakMap();
 const fieldByKey = Object.create(null);
+// Глобальный буфер для значений, если колёса ещё не инициализированы
+window.__pendingInputs = window.__pendingInputs || {};
 
 function ensureWheel(fieldEl, cfg){
   let w = wheelMap.get(fieldEl);
@@ -392,6 +394,12 @@ function ensureWheel(fieldEl, cfg){
     w = buildWheel(fieldEl, initVal);
     wheelMap.set(fieldEl, w);
     wheels[cfg.key] = w;
+// Если для этого ключа уже есть отложенное значение — применим его
+if (Object.prototype.hasOwnProperty.call(window.__pendingInputs, cfg.key) &&
+    typeof window.__pendingInputs[cfg.key] === 'number') {
+  w.setValue(window.__pendingInputs[cfg.key]);
+  delete window.__pendingInputs[cfg.key];
+}
 
     if (cfg.optional){
       let cb = fieldEl.querySelector('#opt_'+cfg.key);
@@ -893,6 +901,7 @@ function handleSaveClick(e){
  *  - рендерит:
  *      #ai-comment  ← HTML из calc!AQ
  *      #analytics   ← значения «колёс» (по заголовкам из строки 2)
+ *  - префиллит «колёса» последними вводами (action:user_last_inputs)
  * ============================================================ */
 
 (function frontDataFlowInit(){
@@ -915,12 +924,9 @@ function handleSaveClick(e){
     host.innerHTML = `<div class="field"><div class="help">${text}</div></div>`;
   }
 
-  // API вызовы (без preflight, как в save)
+  // === API вызовы (без preflight, как в save) ===
   async function apiUserRow(){
-    const payload = {
-      action: 'user_row',
-      init_data: String(tg?.initData || '')
-    };
+    const payload = { action:'user_row', init_data: String(tg?.initData || '') };
     const resp = await fetch(BACKEND, {
       method: 'POST',
       headers: {'Content-Type':'text/plain;charset=UTF-8'},
@@ -956,7 +962,24 @@ function handleSaveClick(e){
     return json;
   }
 
-  // Рендеры
+  // NEW: получить последние вводы пользователя для префилла колёс
+  async function apiLastInputs(){
+    const payload = { action:'user_last_inputs', init_data: String(tg?.initData || '') };
+    const resp = await fetch(BACKEND, {
+      method:'POST',
+      headers:{ 'Content-Type':'text/plain;charset=UTF-8' },
+      body: JSON.stringify(payload),
+      cache:'no-store',
+      credentials:'omit',
+      mode:'cors'
+    });
+    const raw = await resp.text();
+    let json = null; try { json = raw ? JSON.parse(raw) : null; } catch(_){}
+    if (!resp.ok || !json || json.ok !== true) throw new Error(json?.error || `HTTP ${resp.status}`);
+    return json;
+  }
+
+  // === Рендеры ===
   function renderAIComment(html){
     const host = elAI(); if (!host) return;
     if (!html){
@@ -972,7 +995,6 @@ function handleSaveClick(e){
       setAnalyticsStatus('Нет данных для аналитики.');
       return;
     }
-    // упорядочим по исходным столбцам (letters)
     const letters = Array.isArray(pack.wheels_letters) ? pack.wheels_letters : [];
     const headers = pack.wheels_headers || [];
     const byLetter = pack.wheels_by_letter || {};
@@ -995,7 +1017,47 @@ function handleSaveClick(e){
     `;
   }
 
-  // Основная логика (лонг-полл)
+  // === Применить последние вводы к «колёсам» ===
+  function applyInputsToWheels(inputs){
+    if (!inputs || typeof inputs!=='object') return;
+    for (const [k, v] of Object.entries(inputs)){
+      const cfg = CFG[k]; if (!cfg) continue;
+      const el = fieldByKey[k];
+      const w  = (wheels[k] || (el ? ensureWheel(el, cfg) : null));
+
+      // Опциональные поля: если null — выключаем колесо и помечаем чекбокс «нет данных»
+      if (v == null){
+        if (cfg.optional && el){
+          let cb = el.querySelector('#opt_'+k);
+          if (!cb){
+            // на всякий случай — если опция ещё не создана
+            const opt = document.createElement('div');
+            opt.className = 'optline';
+            opt.innerHTML = `<label style="display:flex;align-items:center;gap:8px;opacity:.95">
+                <input type="checkbox" id="opt_${k}"> нет данных
+              </label>`;
+            el.appendChild(opt);
+            cb = opt.querySelector('input');
+          }
+          cb.checked = true;
+          if (w) w.setDisabled(true, /*programmatic*/true);
+        }
+        continue;
+      }
+
+      if (typeof v === 'number') {
+        if (w) {
+          w.setValue(v);
+        } else {
+          // колесо ещё не поднято — применим позже в ensureWheel
+          window.__pendingInputs = window.__pendingInputs || {};
+          window.__pendingInputs[k] = v;
+        }
+      }
+    }
+  }
+
+  // === Основная логика (лонг-полл) ===
   let _pollTimer = 0;
   let _activeRow = 0;
 
@@ -1012,7 +1074,7 @@ function handleSaveClick(e){
   async function pollOnce(row){
     try{
       const res = await apiFrontWait(row, 25);
-      // аналитика (колёса) — обновляем всегда «как есть»
+      // аналитика обновляется всегда «как есть»
       renderAnalyticsFromWheels({
         wheels_letters: res?.wheels_letters || [],
         wheels_headers: res?.wheels_headers || [],
@@ -1056,7 +1118,13 @@ function handleSaveClick(e){
   setAIStatus('Ждём данные…');
   setAnalyticsStatus('Ждём данные…');
   window.startFrontDataFlow(); // row берётся из локали или user_row
+
+  // NEW: подтянуть последние вводы и проставить в «колёса»
+  apiLastInputs()
+    .then(r => { if (r && r.found && r.inputs) applyInputsToWheels(r.inputs); })
+    .catch(()=>{ /* тихо игнорим */ });
 })();
+
 
   
 /* ============================================================
