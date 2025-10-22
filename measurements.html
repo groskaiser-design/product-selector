@@ -173,6 +173,39 @@ window.addEventListener('pageshow', function(e){
       </div>
     </section>
 
+    <!-- Раздел: Скорость работы (свёрнут по умолчанию, не влияет на логику) -->
+    <section class="section collapsed" id="sec-performance">
+      <div class="section-h" data-toggle="sec-performance" role="button" tabindex="0" aria-controls="sec-performance" aria-expanded="false">
+        <h2>Скорость работы</h2>
+        <div class="toggle" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M8 10l4 4 4-4" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+      </div>
+      <div class="section-content" id="perf-section">
+        <div class="field">
+          <div class="help" style="text-align:left">
+            <p><strong>Что сделано для скорости и надёжности:</strong></p>
+            <ul>
+              <li>Жёсткая одноразовая инициализация всех колёс при загрузке (без ленивых гонок).</li>
+              <li>События с <code>passive: true</code>, плавные скроллы, <code>touch-action: pan-y</code> на контейнерах.</li>
+              <li>Запросы к бэкенду без preflight (<code>Content-Type: text/plain</code>), с таймаутом и корректной обработкой 429/timeout.</li>
+              <li>Убран лишний код и шумные логи — меньше GC/рефлоу.</li>
+            </ul>
+            <hr>
+            <p><strong>Лёгкие метрики (на стороне клиента):</strong></p>
+            <ul>
+              <li>Инициализация колёс: <span id="perf-wheels">—</span> мс</li>
+              <li>Запрос последних вводов: <span id="perf-lastinputs">—</span> мс</li>
+              <li>Последний front_wait: <span id="perf-frontwait">—</span> мс</li>
+            </ul>
+            <div style="margin-top:8px;text-align:center">
+              <button class="btn" id="perfRefreshBtn" type="button"><span class="btn-label">Обновить метрики</span></button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
   </div>
 
 <script>
@@ -507,14 +540,19 @@ for (const cfg of FIELDS){
   fieldByKey[cfg.key] = f;
 }
 
-// === ЕДИНОРАЗОВАЯ ЖЁСТКАЯ ИНИЦИАЛИЗАЦИЯ ВСЕХ КОЛЁС ===
+// === ЕДИНОРАЗОВАЯ ЖЁСТКАЯ ИНИЦИАЛИЗАЦИЯ ВСЕХ КОЛЁС + метрика ===
 function ensureAllWheelsOnce(){
   if (window.__wheelsInitDone) return;
+  const t0 = (typeof performance!=='undefined' && performance.now) ? performance.now() : Date.now();
   for (const cfg of FIELDS){
     const el = fieldByKey[cfg.key];
     if (el) ensureWheel(el, cfg);
   }
+  const t1 = (typeof performance!=='undefined' && performance.now) ? performance.now() : Date.now();
+  window.__wheelsInitMs = Math.round(t1 - t0);
   window.__wheelsInitDone = true;
+  // сразу обновим UI метрик, если раздел открыт
+  try { if (typeof updatePerfUI === 'function') updatePerfUI(); } catch(_){}
 }
 ensureAllWheelsOnce();
 // Алиас на случай старых вызовов
@@ -839,6 +877,7 @@ function handleSaveClick(e){
       init_data:String(tg?.initData || ''),
       timeout_sec: Math.max(0, Math.min(25, Number(timeoutSec)||25))
     };
+    const t0 = (typeof performance!=='undefined' && performance.now) ? performance.now() : Date.now();
     const resp = await fetch(BACKEND, {
       method:'POST',
       headers:{'Content-Type':'text/plain;charset=UTF-8'},
@@ -847,12 +886,16 @@ function handleSaveClick(e){
     });
     const raw = await resp.text();
     let json = null; try{ json = raw ? JSON.parse(raw) : null; }catch(_){}
+    const t1 = (typeof performance!=='undefined' && performance.now) ? performance.now() : Date.now();
+    window.__frontWaitLastMs = Math.round(t1 - t0);
+    try { updatePerfUI(); } catch(_){}
     if (!resp.ok || !json) throw new Error(`HTTP ${resp.status}`);
     return json;
   }
 
   async function apiLastInputs(){
     const payload = { action:'user_last_inputs', init_data: String(tg?.initData || '') };
+    const t0 = (typeof performance!=='undefined' && performance.now) ? performance.now() : Date.now();
     const resp = await fetch(BACKEND, {
       method:'POST',
       headers:{'Content-Type':'text/plain;charset=UTF-8'},
@@ -861,6 +904,9 @@ function handleSaveClick(e){
     });
     const raw = await resp.text();
     let json = null; try{ json = raw ? JSON.parse(raw) : null; }catch(_){}
+    const t1 = (typeof performance!=='undefined' && performance.now) ? performance.now() : Date.now();
+    window.__lastInputsFetchMs = Math.round(t1 - t0);
+    try { updatePerfUI(); } catch(_){}
     if (!resp.ok || !json || json.ok !== true) throw new Error(json?.error || `HTTP ${resp.status}`);
     return json;
   }
@@ -971,7 +1017,7 @@ function toggleSectionByHeader(h){
   const willBeCollapsed = sec.classList.toggle('collapsed');
   h.setAttribute('aria-expanded', String(!willBeCollapsed));
 
-  // Если открываем «Замеры» — на всякий случай убеждаемся, что колёса точно инициализированы
+  // Если открываем «Замеры» — убеждаемся, что колёса точно инициализированы
   if (id === 'sec-measures' && !willBeCollapsed){
     if (typeof ensureAllWheelsOnce === 'function') ensureAllWheelsOnce();
 
@@ -1015,6 +1061,24 @@ function toggleSectionByHeader(h){
     var lastTime = (typeof getLastMeasurementTime === 'function') && getLastMeasurementTime();
     if (lastTime) updateLastTimeDisplay(lastTime);
   })();
+
+  // Раздел "Скорость работы": обновление метрик
+  window.updatePerfUI = function(){
+    try{
+      var w = document.getElementById('perf-wheels');
+      var li = document.getElementById('perf-lastinputs');
+      var fw = document.getElementById('perf-frontwait');
+      if (w) w.textContent  = (typeof window.__wheelsInitMs === 'number') ? window.__wheelsInitMs : '—';
+      if (li) li.textContent = (typeof window.__lastInputsFetchMs === 'number') ? window.__lastInputsFetchMs : '—';
+      if (fw) fw.textContent = (typeof window.__frontWaitLastMs === 'number') ? window.__frontWaitLastMs : '—';
+    }catch(_){}
+  };
+  try{
+    document.getElementById('perfRefreshBtn')?.addEventListener('click', function(e){
+      e?.preventDefault?.();
+      updatePerfUI();
+    }, {passive:true});
+  }catch(_){}
 })();
 </script>
 </body>
