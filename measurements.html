@@ -975,7 +975,8 @@ function handleSaveClick(e){
 
 /* ============================================================
  *  BLOCK E: Загрузка данных (AI-комментарий + префилл колёс)
- *  ВАЖНО: Аналитику значениями не заливаем — только плейсхолдер.
+ *  ВАЖНО: аналитику значениями не заливаем — только плейсхолдер.
+ *  Вызовы к бэку без preflight. front_wait — БЕЗ row (бэк сам решит).
  * ============================================================ */
 (function frontDataFlowInit(){
   const tg = window.Telegram?.WebApp;
@@ -999,8 +1000,10 @@ function handleSaveClick(e){
   async function apiUserRow(){
     const payload = { action:'user_row', init_data: String(tg?.initData || '') };
     const resp = await fetch(BACKEND, {
-      method:'POST', headers:{'Content-Type':'text/plain;charset=UTF-8'},
-      body:JSON.stringify(payload), cache:'no-store', credentials:'omit', mode:'cors'
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=UTF-8'},
+      body:JSON.stringify(payload),
+      cache:'no-store', credentials:'omit', mode:'cors'
     });
     const raw = await resp.text();
     let json = null; try{ json = raw ? JSON.parse(raw) : null; }catch(_){}
@@ -1008,16 +1011,18 @@ function handleSaveClick(e){
     return json;
   }
 
-  async function apiFrontWait(row, timeoutSec){
+  // ⚠️ row НЕ шлём — сервер сам берёт корректную строку из users_index и проверяет владельца
+  async function apiFrontWait(timeoutSec){
     const payload = {
       action:'front_wait',
       init_data:String(tg?.initData || ''),
-      row:Number(row)||0,
       timeout_sec: Math.max(0, Math.min(25, Number(timeoutSec)||25))
     };
     const resp = await fetch(BACKEND, {
-      method:'POST', headers:{'Content-Type':'text/plain;charset=UTF-8'},
-      body:JSON.stringify(payload), cache:'no-store', credentials:'omit', mode:'cors'
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=UTF-8'},
+      body:JSON.stringify(payload),
+      cache:'no-store', credentials:'omit', mode:'cors'
     });
     const raw = await resp.text();
     let json = null; try{ json = raw ? JSON.parse(raw) : null; }catch(_){}
@@ -1028,8 +1033,10 @@ function handleSaveClick(e){
   async function apiLastInputs(){
     const payload = { action:'user_last_inputs', init_data: String(tg?.initData || '') };
     const resp = await fetch(BACKEND, {
-      method:'POST', headers:{'Content-Type':'text/plain;charset=UTF-8'},
-      body:JSON.stringify(payload), cache:'no-store', credentials:'omit', mode:'cors'
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=UTF-8'},
+      body:JSON.stringify(payload),
+      cache:'no-store', credentials:'omit', mode:'cors'
     });
     const raw = await resp.text();
     let json = null; try{ json = raw ? JSON.parse(raw) : null; }catch(_){}
@@ -1040,57 +1047,36 @@ function handleSaveClick(e){
   // === Рендер комментария
   function renderAIComment(html){
     const host = elAI(); if (!host) return;
-    host.innerHTML = html ? `<div class="field">${html}</div>`
-                          : `<div class="field"><div class="help">Комментарий пока не готов…</div></div>`;
+    host.innerHTML = html
+      ? `<div class="field">${html}</div>`
+      : `<div class="field"><div class="help">Комментарий пока не готов…</div></div>`;
   }
 
   // === Форс-инициализация и префилл всех колёс (даже при закрытой секции)
   function forceInitAllWheels(){
-    console.log('🔄 === forceInitAllWheels START ===');
     try {
       for (const cfg of FIELDS){
         const el = fieldByKey[cfg.key];
-        if (el) {
-          console.log(`   Creating wheel for key="${cfg.key}"`);
-          ensureWheel(el, cfg);
-        }
+        if (el) ensureWheel(el, cfg);
       }
-      console.log('✅ forceInitAllWheels DONE\n');
     } catch(e) {
-      console.error('❌ forceInitAllWheels ERROR:', e);
+      console.error('forceInitAllWheels error:', e);
     }
   }
 
   function applyInputsToWheels(inputs){
-    console.log('🎨 === applyInputsToWheels START ===');
-    console.log('   Input data:', inputs);
-    
-    if (!inputs || typeof inputs !== 'object') {
-      console.log('   ❌ No valid inputs');
-      return;
-    }
+    if (!inputs || typeof inputs !== 'object') return;
 
     // Создаём ВСЕ колёса заранее, чтобы не было «пустоты» при раскрытии
-    console.log('   🔄 Calling forceInitAllWheels...');
     forceInitAllWheels();
-    console.log('   ✅ forceInitAllWheels done');
 
     for (const [k, v] of Object.entries(inputs)){
-      console.log(`   🔧 Processing key="${k}", value=${v}`);
-      
-      const cfg = CFG[k]; 
-      if (!cfg) {
-        console.log(`      ⚠️ Config not found for key="${k}"`);
-        continue;
-      }
-      
+      const cfg = CFG[k]; if (!cfg) continue;
       const el = fieldByKey[k];
       const w  = wheels[k];
-      
-      console.log(`      wheel exists: ${!!w}, element exists: ${!!el}`);
 
       if (v == null){
-        // Запомним pending=null на всякий (если что-то ещё не инициализировалось)
+        // pending=null (если какое-то колесо ещё не инициализировалось)
         window.__pendingInputs = window.__pendingInputs || {};
         window.__pendingInputs[k] = null;
 
@@ -1112,40 +1098,24 @@ function handleSaveClick(e){
       }
 
       if (typeof v === 'number'){
-        if (w) {
-          console.log(`      ✅ Calling w.setValue(${v})`);
-          w.setValue(v);
-        } else {
-          console.log(`      ⚠️ Wheel not found, saving to pending`);
+        if (w) w.setValue(v);
+        else {
           window.__pendingInputs = window.__pendingInputs || {};
           window.__pendingInputs[k] = v;
         }
       }
     }
-    
-    console.log('🎨 === applyInputsToWheels END ===\n');
   }
 
   // === Лонг-полл только для AI-комментария (аналитику не трогаем)
   let _pollTimer = 0;
-  let _activeRow = 0;
 
-  async function resolveRowCalc(currentRow){
-    if (Number(currentRow)) return Number(currentRow);
-    if (typeof getRowCalcForUser === 'function'){
-      const localRow = Number(getRowCalcForUser());
-      if (localRow) return localRow;
-    }
-    const r = await apiUserRow();
-    return Number(r?.row_calc || 0);
-  }
-
-  async function pollOnce(row){
+  async function pollOnce(){
     try{
-      const res = await apiFrontWait(row, 25);
+      const res = await apiFrontWait(25);
 
       // ⚠️ НЕ рисуем таблицу значений в аналитике
-      // Графики будут подключаться отдельным флагом/HTML — тут оставляем плейсхолдер.
+      // Графики подключим отдельно — тут оставляем плейсхолдер.
 
       if (res?.ready){
         renderAIComment(res.html || '');
@@ -1160,24 +1130,16 @@ function handleSaveClick(e){
     }
   }
 
-  async function pollLoop(row){
+  async function pollLoop(){
     clearTimeout(_pollTimer);
-    _activeRow = Number(row)||0;
-    if (!_activeRow){
-      setAIStatus('Нет последней записи — сохраните замеры.');
-      setAnalyticsPlaceholder();
-      return;
-    }
-    const r = await pollOnce(_activeRow);
+    const r = await pollOnce();
     if (r.done) return;
-    _pollTimer = setTimeout(()=>pollLoop(_activeRow), r.wait);
+    _pollTimer = setTimeout(()=>pollLoop(), r.wait);
   }
 
-  // Публичный перезапуск из save()
-  window.startFrontDataFlow = function(rowMaybe){
-    Promise.resolve()
-      .then(()=>resolveRowCalc(rowMaybe))
-      .then((row)=>pollLoop(row));
+  // Публичный перезапуск из save(); row не нужен — бэк сам определит «правильную» строку
+  window.startFrontDataFlow = function(){
+    pollLoop();
   };
 
   // Старт при загрузке
@@ -1186,24 +1148,15 @@ function handleSaveClick(e){
   window.startFrontDataFlow();
 
   // Подтянуть последние вводы и СРАЗУ заинициализировать колёса
-  console.log('📡 === BLOCK E: Запрос apiLastInputs ===');
   apiLastInputs()
     .then(r => {
-      console.log('📡 apiLastInputs SUCCESS:', r);
-      if (r && r.found && r.inputs) {
-        console.log('📦 Applying inputs:', r.inputs);
-        applyInputsToWheels(r.inputs);
-      } else {
-        console.log('⚠️ No inputs found, calling forceInitAllWheels');
-        forceInitAllWheels();
-      }
+      if (r && r.found && r.inputs) applyInputsToWheels(r.inputs);
+      else forceInitAllWheels();
     })
-    .catch((err)=>{ 
-      console.error('❌ apiLastInputs ERROR:', err);
-      forceInitAllWheels();
-    });
+    .catch(()=>{ forceInitAllWheels(); });
 
 })();
+
 
  
 
