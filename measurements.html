@@ -837,6 +837,7 @@ function handleSaveClick(e){
       console.log('✅ Успех');
       
       setRowCalcForUser(res.row_calc);
+      startFrontDataFlow(res.row_calc); // ← чтобы сразу получить AQ и колёса для только что сохранённой строки
       setLastMeasurementTime(Date.now());
       setSavingState(false);
       collapseAccordionSafe();
@@ -886,9 +887,180 @@ function handleSaveClick(e){
   console.log('✅ Готово');
 })();
 
+ /* ============================================================
+ *  BLOCK E: Загрузка данных (AQ + K:AC) из бэкенда (front_wait)
+ *  - safe long-poll: 25s запрос + 1s ретраи
+ *  - рендерит:
+ *      #ai-comment  ← HTML из calc!AQ
+ *      #analytics   ← значения «колёс» (по заголовкам из строки 2)
+ * ============================================================ */
+
+(function frontDataFlowInit(){
+  const tg = window.Telegram?.WebApp;
+  const BACKEND = (typeof BACKEND_URL !== 'undefined' && BACKEND_URL) ? BACKEND_URL : '';
+
+  // DOM помощники
+  const elAI = ()=>document.querySelector('#ai-comment .section-content') || document.getElementById('ai-comment');
+  const elAnalytics = ()=>document.getElementById('analytics');
+
+  // Быстрый прелоадер/статус
+  function setAIStatus(text){
+    const host = elAI();
+    if (!host) return;
+    host.innerHTML = `<div class="field"><div class="help">${text}</div></div>`;
+  }
+  function setAnalyticsStatus(text){
+    const host = elAnalytics();
+    if (!host) return;
+    host.innerHTML = `<div class="field"><div class="help">${text}</div></div>`;
+  }
+
+  // API вызовы (без preflight, как в save)
+  async function apiUserRow(){
+    const payload = {
+      action: 'user_row',
+      init_data: String(tg?.initData || '')
+    };
+    const resp = await fetch(BACKEND, {
+      method: 'POST',
+      headers: {'Content-Type':'text/plain;charset=UTF-8'},
+      body: JSON.stringify(payload),
+      cache: 'no-store',
+      credentials: 'omit',
+      mode: 'cors'
+    });
+    const raw = await resp.text();
+    let json = null; try{ json = raw ? JSON.parse(raw) : null; }catch(_){}
+    if (!resp.ok || !json || json.ok !== true) throw new Error(json?.error || `HTTP ${resp.status}`);
+    return json;
+  }
+
+  async function apiFrontWait(row, timeoutSec){
+    const payload = {
+      action: 'front_wait',
+      init_data: String(tg?.initData || ''),
+      row: Number(row)||0,
+      timeout_sec: Math.max(0, Math.min(25, Number(timeoutSec)||25))
+    };
+    const resp = await fetch(BACKEND, {
+      method: 'POST',
+      headers: {'Content-Type':'text/plain;charset=UTF-8'},
+      body: JSON.stringify(payload),
+      cache: 'no-store',
+      credentials: 'omit',
+      mode: 'cors'
+    });
+    const raw = await resp.text();
+    let json = null; try{ json = raw ? JSON.parse(raw) : null; }catch(_){}
+    if (!resp.ok || !json) throw new Error(`HTTP ${resp.status}`);
+    return json;
+  }
+
+  // Рендеры
+  function renderAIComment(html){
+    const host = elAI(); if (!host) return;
+    if (!html){
+      host.innerHTML = `<div class="field"><div class="help">Комментарий пока не готов…</div></div>`;
+      return;
+    }
+    host.innerHTML = `<div class="field">${html}</div>`;
+  }
+
+  function renderAnalyticsFromWheels(pack){
+    const host = elAnalytics(); if (!host) return;
+    if (!pack || !Array.isArray(pack.headers)){
+      setAnalyticsStatus('Нет данных для аналитики.');
+      return;
+    }
+    // упорядочим по исходным столбцам (letters)
+    const letters = Array.isArray(pack.wheels_letters) ? pack.wheels_letters : [];
+    const headers = pack.wheels_headers || [];
+    const byLetter = pack.wheels_by_letter || {};
+
+    const rowsHtml = letters.map((L, idx)=>{
+      const name = String(headers[idx] || L).trim() || L;
+      const val  = byLetter[L];
+      return `<tr><td>${name}</td><td style="text-align:right;font-weight:800">${(val ?? '')}</td></tr>`;
+    }).join('');
+
+    host.innerHTML = `
+      <div class="field">
+        <div class="help" style="margin-bottom:8px">Последние значения</div>
+        <div style="overflow:auto;">
+          <table style="width:100%;border-collapse:collapse">
+            <tbody>${rowsHtml}</tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  }
+
+  // Основная логика (лонг-полл)
+  let _pollTimer = 0;
+  let _activeRow = 0;
+
+  async function resolveRowCalc(currentRow){
+    if (Number(currentRow)) return Number(currentRow);
+    if (typeof getRowCalcForUser === 'function'){
+      const localRow = Number(getRowCalcForUser());
+      if (localRow) return localRow;
+    }
+    const r = await apiUserRow();
+    return Number(r?.row_calc || 0);
+  }
+
+  async function pollOnce(row){
+    try{
+      const res = await apiFrontWait(row, 25);
+      // аналитика (колёса) — обновляем всегда «как есть»
+      renderAnalyticsFromWheels({
+        wheels_letters: res?.wheels_letters || [],
+        wheels_headers: res?.wheels_headers || [],
+        wheels_by_letter: res?.wheels_by_letter || {},
+      });
+
+      if (res?.ready){
+        renderAIComment(res.html || '');
+        return {done:true};
+      }
+      setAIStatus('Обрабатываем… (ждём комментарий)');
+      const wait = Math.max(300, Math.min(2000, Number(res?.retry_after_ms) || 1000));
+      return {done:false, wait};
+    } catch(err){
+      setAIStatus('Не удалось загрузить данные. Попробуйте позже.');
+      return {done:false, wait:1500};
+    }
+  }
+
+  async function pollLoop(row){
+    clearTimeout(_pollTimer);
+    _activeRow = Number(row)||0;
+    if (!_activeRow){
+      setAIStatus('Нет последней записи — сохраните замеры.');
+      setAnalyticsStatus('Нет данных — сохраните замеры.');
+      return;
+    }
+    const r = await pollOnce(_activeRow);
+    if (r.done) return;
+    _pollTimer = setTimeout(()=>pollLoop(_activeRow), r.wait);
+  }
+
+  // Публичный запуск из других мест (например, после save)
+  window.startFrontDataFlow = function(rowMaybe){
+    Promise.resolve()
+      .then(()=>resolveRowCalc(rowMaybe))
+      .then((row)=>pollLoop(row));
+  };
+
+  // Автозапуск при загрузке страницы
+  setAIStatus('Ждём данные…');
+  setAnalyticsStatus('Ждём данные…');
+  window.startFrontDataFlow(); // row берётся из локали или user_row
+})();
+
   
 /* ============================================================
- *  BLOCK E: Аккордеон
+ *  BLOCK Z: Аккордеон
  * ============================================================ */
 function setAriaExpanded(h){
   const sec = document.getElementById(h.getAttribute('data-toggle'));
