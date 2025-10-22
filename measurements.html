@@ -74,9 +74,9 @@ window.addEventListener('pageshow', function(e){
   .unit{font-size:12px;opacity:.9}
   .help{margin-top:6px;text-align:center;font-size:12px;opacity:.8}
 
-  .duo{position:relative;display:flex;gap:6px;padding:12px;border-radius:14px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.24);max-width:320px;margin:8px auto 0;justify-content:center;}
+  .duo{position:relative;display:flex;gap:6px;padding:12px;border-radius:14px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.24);max-width:320px;margin:8px auto 0;justify-content:center;touch-action: pan-y; /* ← добавить эту строку */}
   .duo::after{content:"";position:absolute;left:4px;right:4px;top:50%;height:var(--row);transform:translateY(-50%);background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.35);border-radius:10px;pointer-events:none;}
-  .col{flex:0 0 92px;height:180px;overflow:auto;-webkit-overflow-scrolling:touch;overscroll-behavior: contain;scrollbar-width:none;scroll-snap-type:y mandatory;mask-image: linear-gradient(180deg, transparent, #000 18%, #000 82%, transparent);-webkit-mask-image: linear-gradient(180deg, transparent, #000 18%, #000 82%, transparent);}
+  .col{flex:0 0 92px;height:180px;overflow:auto;-webkit-overflow-scrolling:touch;overscroll-behavior: contain;scrollbar-width:none;scroll-snap-type:y mandatory;mask-image: linear-gradient(180deg, transparent, #000 18%, #000 82%, transparent);-webkit-mask-image: linear-gradient(180deg, transparent, #000 18%, #000 82%, transparent);touch-action: pan-y; /* добавлено */}
   .col::-webkit-scrollbar{display:none}
   .option{height:var(--row);display:flex;align-items:center;justify-content:center;font-weight:900;font-size:18px;color:#eef2ff;opacity:.55;scroll-snap-align:center;}
   .option.active{color:#fff;opacity:1;text-shadow:0 1px 0 rgba(0,0,0,.2);}
@@ -174,9 +174,10 @@ const rowH = ROW_VAR.endsWith('px') ? parseFloat(ROW_VAR) : (parseFloat(ROW_VAR)
 const pad = 4;
 const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
 
+
 /* ============================================================
- *  BLOCK A1: Компонент "колёса" (С ЛОГАМИ)
- * ============================================================ */
+  BLOCK A1: Компонент "колёса" + ensureWheel (исправленный)
+============================================================ */
 function buildWheel(fieldEl, initial){
   const min = +fieldEl.dataset.min;
   const max = +fieldEl.dataset.max;
@@ -191,7 +192,7 @@ function buildWheel(fieldEl, initial){
   const fracCol = fieldEl.querySelector('.col-frac');
   const duo = fieldEl.querySelector('.duo');
 
-  // Проверка видимости (диагностика)
+  // Диагностика видимости
   const isVisible = intCol.offsetParent !== null;
   const clientH = intCol.clientHeight;
   console.log(`   👁️ Видимость: isVisible=${isVisible}, clientHeight=${clientH}`);
@@ -208,20 +209,18 @@ function buildWheel(fieldEl, initial){
   fillCol(fracCol, 0, 9);
 
   const nearestIndex = col =>
-    Math.round((col.scrollTop + (col.clientHeight-rowH)/2)/rowH) - pad;
+    Math.round((col.scrollTop + (col.clientHeight - rowH)/2)/rowH) - pad;
 
   const lastActiveIdx = new WeakMap();
   function markActive(col){
     const idx = nearestIndex(col) + pad;
     const prev = lastActiveIdx.get(col);
 
-    // Вибро отклик при смене активной цифры
+    // Хаптик при смене активной цифры
     if (typeof prev === 'number' && prev !== idx && !isProgrammatic) {
       try {
         const tg = window.Telegram?.WebApp;
-        if (tg && tg.HapticFeedback && tg.HapticFeedback.selectionChanged) {
-          tg.HapticFeedback.selectionChanged();
-        }
+        tg?.HapticFeedback?.selectionChanged?.();
       } catch(e){}
     }
 
@@ -231,10 +230,13 @@ function buildWheel(fieldEl, initial){
     lastActiveIdx.set(col, idx);
   }
 
+  // Фолбек, если секция скрыта (clientHeight=0)
   const setScrollInstant = (col, idx) => {
-    const top = (idx + pad) * rowH - (col.clientHeight-rowH)/2;
-    console.log(`   📜 setScrollInstant: idx=${idx}, clientHeight=${col.clientHeight}, scrollTop=${top}`);
+    const ch = col.clientHeight || rowH * 5; // «виртуальная» высота пока скрыто
+    const top = (idx + pad) * rowH - (ch - rowH)/2;
+    console.log(`   📜 setScrollInstant: idx=${idx}, clientHeight=${col.clientHeight}, usedClientH=${ch}, scrollTop=${top}`);
     col.scrollTop = top;
+    requestAnimationFrame(()=> markActive(col));
   };
 
   function withNoSnap(fn){
@@ -258,7 +260,7 @@ function buildWheel(fieldEl, initial){
   const supportsScrollEnd = ('onscrollend' in window);
   let disabled = false;
 
-  // Модельное значение — хранится независимо от DOM/scroll
+  // Модельное значение независимо от DOM
   let modelValue = (typeof initial === 'number')
     ? clamp(+initial, min, max)
     : clamp(min + (max - min) / 2, min, max);
@@ -281,7 +283,7 @@ function buildWheel(fieldEl, initial){
     console.log(`   🎯 setValue called: key="${key}", value=${v}, isProgrammatic=${isProgrammatic}`);
     const clamped = clamp(+v, min, max);
     const rounded = Math.round(clamped * 10) / 10;
-    modelValue = rounded; // фиксируем модельное значение
+    modelValue = rounded;
 
     const iVal = Math.trunc(rounded);
     let f = Math.round((rounded - iVal) * 10);
@@ -305,7 +307,6 @@ function buildWheel(fieldEl, initial){
     const iVal = minInt + iIdx;
     if (iVal === maxInt) f = 0;
 
-    // обновляем модельное значение по факту снапа
     modelValue = +(iVal + f/10).toFixed(1);
 
     const prev = isProgrammatic; isProgrammatic = true;
@@ -328,8 +329,9 @@ function buildWheel(fieldEl, initial){
     rafFrac = requestAnimationFrame(()=>markActive(fracCol));
     scheduleSnap();
   }
+
+  // Всегда иметь таймер-фолбек (scrollend — дополняет)
   function scheduleSnap(){
-    if (supportsScrollEnd) return;
     clearTimeout(snapTimer);
     snapTimer = setTimeout(snapNow, 80);
   }
@@ -346,7 +348,7 @@ function buildWheel(fieldEl, initial){
     disabled = dis;
     duo.classList.toggle('disabled', dis);
     duo.setAttribute('aria-disabled', String(dis));
-    [intCol, fracCol].forEach(c=>c.style.pointerEvents = dis ? 'none':'auto');
+    [intCol, fracCol].forEach(c=>c.style.pointerEvents = dis ? 'none' : 'auto');
     if (!dis){
       const iIdx = clamp(nearestIndex(intCol), 0, intRange);
       const iVal = minInt + iIdx;
@@ -372,7 +374,7 @@ function buildWheel(fieldEl, initial){
       if (iVal === maxInt) f = 0;
       return +(iVal + f/10).toFixed(1);
     },
-    getModelValue(){ return modelValue; }, // новое API
+    getModelValue(){ return modelValue; },
     setDisabled,
     destroy(){
       clearTimeout(snapTimer);
@@ -389,7 +391,7 @@ function buildWheel(fieldEl, initial){
   return api;
 }
 
-// === KEEP THIS VERSION ===
+// === НЕ УДАЛЯТЬ. Правильная версия ensureWheel ===
 function ensureWheel(fieldEl, cfg){
   console.log(`🔍 ensureWheel START: key="${cfg.key}"`);
 
@@ -401,14 +403,13 @@ function ensureWheel(fieldEl, cfg){
 
   console.log(`   🆕 Creating NEW wheel for key="${cfg.key}"`);
 
-  // 1) Берём отложенные значения
+  // 1) Pending из префилла
   const pend = (window.__pendingInputs || {});
   const hasPend = Object.prototype.hasOwnProperty.call(pend, cfg.key);
   const pendVal = hasPend ? pend[cfg.key] : undefined;
-
   console.log(`   📦 Pending data: hasPend=${hasPend}, pendVal=${pendVal}`);
 
-  // 2) Выбираем стартовое значение колеса
+  // 2) Стартовое значение
   const initVal = (typeof pendVal === 'number') ? pendVal : cfg.initial;
   console.log(`   🎲 Initial value: ${initVal} (from ${typeof pendVal === 'number' ? 'pending' : 'cfg.initial'})`);
 
@@ -440,7 +441,7 @@ function ensureWheel(fieldEl, cfg){
     }
   }
 
-  // 5) Очищаем pending
+  // 5) Чистим pending
   if (hasPend && typeof pendVal === 'number'){
     console.log(`   🗑️ Clearing pending for key="${cfg.key}"`);
     delete pend[cfg.key];
@@ -1156,9 +1157,6 @@ function handleSaveClick(e){
     .catch(()=>{ forceInitAllWheels(); });
 
 })();
-
-
- 
 
   
 /* ============================================================
