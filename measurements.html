@@ -173,44 +173,15 @@ window.addEventListener('pageshow', function(e){
       </div>
     </section>
 
-    <!-- Раздел: Скорость работы (свёрнут по умолчанию, не влияет на логику) -->
-    <section class="section collapsed" id="sec-performance">
-      <div class="section-h" data-toggle="sec-performance" role="button" tabindex="0" aria-controls="sec-performance" aria-expanded="false">
-        <h2>Скорость работы</h2>
-        <div class="toggle" aria-hidden="true">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M8 10l4 4 4-4" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </div>
-      </div>
-      <div class="section-content" id="perf-section">
-        <div class="field">
-          <div class="help" style="text-align:left">
-            <p><strong>Что сделано для скорости и надёжности:</strong></p>
-            <ul>
-              <li>Жёсткая одноразовая инициализация всех колёс при загрузке (без ленивых гонок).</li>
-              <li>События с <code>passive: true</code>, плавные скроллы, <code>touch-action: pan-y</code> на контейнерах.</li>
-              <li>Запросы к бэкенду без preflight (<code>Content-Type: text/plain</code>), с таймаутом и корректной обработкой 429/timeout.</li>
-              <li>Убран лишний код и шумные логи — меньше GC/рефлоу.</li>
-            </ul>
-            <hr>
-            <p><strong>Лёгкие метрики (на стороне клиента):</strong></p>
-            <ul>
-              <li>Инициализация колёс: <span id="perf-wheels">—</span> мс</li>
-              <li>Запрос последних вводов: <span id="perf-lastinputs">—</span> мс</li>
-              <li>Последний front_wait: <span id="perf-frontwait">—</span> мс</li>
-            </ul>
-            <div style="margin-top:8px;text-align:center">
-              <button class="btn" id="perfRefreshBtn" type="button"><span class="btn-label">Обновить метрики</span></button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
+    <!-- Админский раздел «Скорость работы» больше не в DOM по умолчанию.
+         Он будет добавлен ниже динамически, если user_id == 196047220 -->
+    <div id="admin-section-anchor"></div>
 
   </div>
 
 <script>
 /* ============================================================
- *  BLOCK 0: TMA boot (цвета/назад)
+ *  BLOCK 0: TMA boot (цвета/назад) + admin detect
  * ============================================================ */
 (function initTMA(){
   const tg = window.Telegram?.WebApp;
@@ -222,6 +193,14 @@ window.addEventListener('pageshow', function(e){
     tg.BackButton?.onClick(()=>{ try{ window.location.href='router.html'; }catch(_){ } });
   } catch(_){}
 })();
+
+// — admin detection (UI-гейтинг секции метрик на фронте)
+function isAdmin(){
+  try{
+    const id = window.Telegram?.WebApp?.initDataUnsafe?.user?.id;
+    return Number(id) === 196047220;
+  }catch(_){ return false; }
+}
 
 /* ============================================================
  *  BLOCK A: Общие утилиты UI
@@ -551,7 +530,6 @@ function ensureAllWheelsOnce(){
   const t1 = (typeof performance!=='undefined' && performance.now) ? performance.now() : Date.now();
   window.__wheelsInitMs = Math.round(t1 - t0);
   window.__wheelsInitDone = true;
-  // сразу обновим UI метрик, если раздел открыт
   try { if (typeof updatePerfUI === 'function') updatePerfUI(); } catch(_){}
 }
 ensureAllWheelsOnce();
@@ -721,7 +699,7 @@ function getLastMeasurementTime(uid){
   if (window.__lastTimeByUid && (String(uid) in window.__lastTimeByUid)) return window.__lastTimeByUid[String(uid)];
   var v = null; 
   try { v = localStorage.getItem(lastTimeKey(uid)); } 
-  catch(_) { try { v = sessionStorage.getItem(lastTimeKey(uid)); } catch(_){} }
+  catch(_) { try { v = sessionStorage.getItem(lastTimeKey(uid)); } catch(_){ } }
   var n = (v == null) ? null : Number(v);
   if (!window.__lastTimeByUid) window.__lastTimeByUid = {};
   window.__lastTimeByUid[String(uid)] = isNaN(n) ? null : n;
@@ -888,7 +866,7 @@ function handleSaveClick(e){
     let json = null; try{ json = raw ? JSON.parse(raw) : null; }catch(_){}
     const t1 = (typeof performance!=='undefined' && performance.now) ? performance.now() : Date.now();
     window.__frontWaitLastMs = Math.round(t1 - t0);
-    try { updatePerfUI(); } catch(_){}
+    try { updatePerfUI && updatePerfUI(); } catch(_){}
     if (!resp.ok || !json) throw new Error(`HTTP ${resp.status}`);
     return json;
   }
@@ -906,7 +884,7 @@ function handleSaveClick(e){
     let json = null; try{ json = raw ? JSON.parse(raw) : null; }catch(_){}
     const t1 = (typeof performance!=='undefined' && performance.now) ? performance.now() : Date.now();
     window.__lastInputsFetchMs = Math.round(t1 - t0);
-    try { updatePerfUI(); } catch(_){}
+    try { updatePerfUI && updatePerfUI(); } catch(_){}
     if (!resp.ok || !json || json.ok !== true) throw new Error(json?.error || `HTTP ${resp.status}`);
     return json;
   }
@@ -1004,6 +982,83 @@ function handleSaveClick(e){
 })();
 
 /* ============================================================
+ *  BLOCK P (Admin): динамическая вставка секции «Скорость работы»
+ *  В DOM только если isAdmin() === true
+ * ============================================================ */
+(function maybeInjectAdminSection(){
+  function inject(){
+    if (!isAdmin()) return; // только для id = 196047220
+    const host = document.getElementById('admin-section-anchor');
+    if (!host) return;
+    if (document.getElementById('sec-performance')) return; // уже вставлено
+
+    const sec = document.createElement('section');
+    sec.className = 'section collapsed';
+    sec.id = 'sec-performance';
+    sec.innerHTML = `
+      <div class="section-h" data-toggle="sec-performance" role="button" tabindex="0" aria-controls="sec-performance" aria-expanded="false">
+        <h2>Скорость работы</h2>
+        <div class="toggle" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M8 10l4 4 4-4" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+      </div>
+      <div class="section-content" id="perf-section">
+        <div class="field">
+          <div class="help" style="text-align:left">
+            <p><strong>Что сделано для скорости и надёжности:</strong></p>
+            <ul>
+              <li>Жёсткая одноразовая инициализация всех колёс при загрузке (без ленивых гонок).</li>
+              <li>События с <code>passive: true</code>, плавные скроллы, <code>touch-action: pan-y</code> на контейнерах.</li>
+              <li>Запросы к бэкенду без preflight (<code>Content-Type: text/plain</code>), с таймаутом и обработкой 429/timeout.</li>
+              <li>Убран лишний код и шумные логи — меньше GC/рефлоу.</li>
+            </ul>
+            <hr>
+            <p><strong>Лёгкие метрики (клиент):</strong></p>
+            <ul>
+              <li>Инициализация колёс: <span id="perf-wheels">—</span> мс</li>
+              <li>Запрос последних вводов: <span id="perf-lastinputs">—</span> мс</li>
+              <li>Последний front_wait: <span id="perf-frontwait">—</span> мс</li>
+            </ul>
+            <div style="margin-top:8px;text-align:center">
+              <button class="btn" id="perfRefreshBtn" type="button"><span class="btn-label">Обновить метрики</span></button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    host.replaceWith(sec);
+
+    // Локальная версия UI-апдейтера: появится только у админа
+    window.updatePerfUI = function(){
+      try{
+        var w = document.getElementById('perf-wheels');
+        var li = document.getElementById('perf-lastinputs');
+        var fw = document.getElementById('perf-frontwait');
+        if (w) w.textContent  = (typeof window.__wheelsInitMs === 'number') ? window.__wheelsInitMs : '—';
+        if (li) li.textContent = (typeof window.__lastInputsFetchMs === 'number') ? window.__lastInputsFetchMs : '—';
+        if (fw) fw.textContent = (typeof window.__frontWaitLastMs === 'number') ? window.__frontWaitLastMs : '—';
+      }catch(_){}
+    };
+
+    // Кнопка «Обновить метрики»
+    try{
+      document.getElementById('perfRefreshBtn')?.addEventListener('click', function(e){
+        e?.preventDefault?.();
+        updatePerfUI();
+      }, {passive:true});
+    }catch(_){}
+
+    // Сразу показать актуальные значения
+    try { updatePerfUI(); } catch(_){}
+  }
+
+  // Пытаемся вставить сразу и повторно через небольшой интервал (на случай позднего initDataUnsafe)
+  inject();
+  setTimeout(inject, 300);
+  setTimeout(inject, 1200);
+})();
+
+/* ============================================================
  *  BLOCK Z: Аккордеон (минимальный) + подстраховка первого открытия
  * ============================================================ */
 function setAriaExpanded(h){
@@ -1061,24 +1116,6 @@ function toggleSectionByHeader(h){
     var lastTime = (typeof getLastMeasurementTime === 'function') && getLastMeasurementTime();
     if (lastTime) updateLastTimeDisplay(lastTime);
   })();
-
-  // Раздел "Скорость работы": обновление метрик
-  window.updatePerfUI = function(){
-    try{
-      var w = document.getElementById('perf-wheels');
-      var li = document.getElementById('perf-lastinputs');
-      var fw = document.getElementById('perf-frontwait');
-      if (w) w.textContent  = (typeof window.__wheelsInitMs === 'number') ? window.__wheelsInitMs : '—';
-      if (li) li.textContent = (typeof window.__lastInputsFetchMs === 'number') ? window.__lastInputsFetchMs : '—';
-      if (fw) fw.textContent = (typeof window.__frontWaitLastMs === 'number') ? window.__frontWaitLastMs : '—';
-    }catch(_){}
-  };
-  try{
-    document.getElementById('perfRefreshBtn')?.addEventListener('click', function(e){
-      e?.preventDefault?.();
-      updatePerfUI();
-    }, {passive:true});
-  }catch(_){}
 })();
 </script>
 </body>
