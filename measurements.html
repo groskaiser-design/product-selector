@@ -527,6 +527,67 @@ function ensureWheel(fieldEl, cfg){
   return w;
 }
 
+/*  ============================================================
+     BLOCK A1.5 — Инициализация колёс сразу (eager, без IntersectionObserver)
+     ЭТОТ БЛОК ПОДМЕНЯЕТ прежний "Lazy init колёс — только при раскрытии секции"
+     ============================================================ */
+
+(function initWheelsEager(){
+  try {
+    // Двойной RAF — даём DOMу промериться, чтобы scrollTop рассчитывался верно
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const pend = (window.__pendingInputs || {});
+
+      for (const cfg of FIELDS){
+        const el = fieldByKey[cfg.key];
+        if (!el) continue;
+
+        // Создаём колесо (если его ещё нет)
+        const w = ensureWheel(el, cfg);
+
+        // Применяем отложенные значения, если есть
+        if (Object.prototype.hasOwnProperty.call(pend, cfg.key)){
+          const v = pend[cfg.key];
+
+          if (v == null && cfg.optional){
+            // Помечаем "нет данных" и выключаем колесо программно
+            let cb = el.querySelector('#opt_'+cfg.key);
+            if (!cb){
+              const opt = document.createElement('div');
+              opt.className = 'optline';
+              opt.innerHTML = `<label style="display:flex;align-items:center;gap:8px;opacity:.95">
+                  <input type="checkbox" id="opt_${cfg.key}"> нет данных
+                </label>`;
+              el.appendChild(opt);
+              cb = opt.querySelector('input');
+            }
+            cb.checked = true;
+            if (w && typeof w.setDisabled === 'function'){
+              w.setDisabled(true, /*programmatic*/true);
+            }
+          } else if (typeof v === 'number'){
+            // Проставляем значение и включаем (на случай, если было disabled)
+            if (w && typeof w.setDisabled === 'function') {
+              w.setDisabled(false, /*programmatic*/true);
+            }
+            if (w && typeof w.setValue === 'function') {
+              w.setValue(v);
+            }
+          }
+        }
+      }
+
+      // Считаем, что «наблюдение» уже выполнено — чтобы код в BLOCK Z не дёргал observeFields
+      if (typeof fieldsWrap !== 'undefined') fieldsWrap._observed = true;
+    }));
+  } catch (e){
+    console.error('initWheelsEager error:', e);
+  }
+})();
+
+// (Заглушка на случай, если где-то ещё вызывается observeFields)
+function observeFields(){ /* eager-init уже сделал всё необходимое */ }
+
 
 
 /* ============================================================
