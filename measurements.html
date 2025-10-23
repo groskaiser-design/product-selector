@@ -128,7 +128,7 @@ window.addEventListener('pageshow', function(e){
     <section class="section collapsed" id="sec-measures">
       <div class="section-h" data-toggle="sec-measures" role="button" tabindex="0" aria-controls="sec-measures" aria-expanded="false">
         <h2>Замеры</h2>
-        <div class="meta" id="lastTime">Последний замер: нет данных</div>
+        <div class="meta" id="lastTime" aria-live="polite">Последний замер: нет данных</div>
         <div class="toggle" aria-hidden="true">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M8 10l4 4 4-4" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </div>
@@ -136,7 +136,7 @@ window.addEventListener('pageshow', function(e){
       <div class="section-content">
         <div id="fields"></div>
         <div class="savebar">
-          <button class="btn" id="saveBtn" aria-busy="false">
+          <button class="btn" id="saveBtn" type="button" aria-busy="false">
             <span class="btn-label">Сохранить</span>
             <span class="spinner" aria-hidden="true" hidden></span>
           </button>
@@ -163,7 +163,7 @@ window.addEventListener('pageshow', function(e){
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M8 10l4 4 4-4" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </div>
       </div>
-      <div class="section-content" id="ai-comment">
+      <div class="section-content" id="ai-comment" aria-live="polite">
         <div class="field"><div class="help">Подключите бэкенд — здесь будет текст.</div></div>
       </div>
     </section>
@@ -184,7 +184,10 @@ window.addEventListener('pageshow', function(e){
   try {
     tg.BackButton?.offClick?.();
     tg.BackButton?.show();
-    tg.BackButton?.onClick(()=>{ try{ window.location.href='router.html'; }catch(_){ } });
+    tg.BackButton?.onClick(()=>{ 
+      try{ window.location.href='router.html'; }catch(_){ }
+      try{ tg.close(); }catch(_){}
+    });
   } catch(_){}
 })();
 function isAdmin(){
@@ -574,9 +577,10 @@ async function saveMeasurementsToDB(values){
  * ============================================================ */
 var SAVE_IN_PROGRESS = false;
 var COOLDOWN_MS = 60000;
-var COOLDOWN_KEY = 'save_unlock_time';
-function getUnlockTime(){ try { return Number(localStorage.getItem(COOLDOWN_KEY)) || 0; } catch(_) { return 0; } }
-function setUnlockTime(time){ try { localStorage.setItem(COOLDOWN_KEY, String(time)); } catch(_){} }
+// per-user ключи кулдауна
+function cooldownKey(uid){ return 'save_unlock_time:' + String(uid || currentUserId()); }
+function getUnlockTime(uid){ try { return Number(localStorage.getItem(cooldownKey(uid))) || 0; } catch(_) { return 0; } }
+function setUnlockTime(time, uid){ try { localStorage.setItem(cooldownKey(uid), String(time)); } catch(_){} }
 function canSaveNow(){ if (SAVE_IN_PROGRESS) return false; var now = Date.now(); return !(getUnlockTime() > now); }
 
 var ROWCALC_KEY_PREFIX = 'macros:last_row_calc:';
@@ -675,6 +679,7 @@ function scrollTopNoJump(){
   }catch(_){}
 }
 
+/* мини-валидация значений */
 function collectWheelValues(){
   var out = {};
   for (var i=0; i<FIELDS.length; i++){
@@ -682,8 +687,9 @@ function collectWheelValues(){
     var fieldEl = fieldByKey[cfg.key];
     var w = (wheels[cfg.key] || ensureWheel(fieldEl, cfg));
     var cb = fieldEl ? fieldEl.querySelector('#opt_' + cfg.key) : null;
-    // важное замечание: для %жира при чекбоксе — оставляем null, чтобы не ломать бэк
-    out[cfg.key] = (cfg.optional && cb && cb.checked) ? null : w.value;
+    var v = (cfg.optional && cb && cb.checked) ? null : w.value;
+    if (v != null && !Number.isFinite(v)) { throw new Error('Некорректные данные: ' + cfg.label); }
+    out[cfg.key] = v;
   }
   return out;
 }
@@ -700,7 +706,15 @@ function handleSaveClick(e){
   setSavingState(true);
   if (tg?.HapticFeedback?.impactOccurred) { try { tg.HapticFeedback.impactOccurred('light'); } catch(_){ } }
 
-  var values = collectWheelValues();
+  var values;
+  try {
+    values = collectWheelValues();
+  } catch(err){
+    setSavingState(false);
+    showPopup('Проверьте поля', String(err && err.message || 'Некорректные данные'), 'error');
+    SAVE_IN_PROGRESS = false;
+    return;
+  }
 
   saveMeasurementsToDB(values)
     .then(function(res){
@@ -723,8 +737,10 @@ function handleSaveClick(e){
       } else if ((err && err.code === 408) || /timeout/i.test(msg)) {
         showPopup('Не сохранено (возможно ушло)','Сервер не успел ответить вовремя. Возможно, данные уже сохранены. Проверьте «Последний замер».','error');
         try { startFrontDataFlow(); } catch(_){}
+        setUnlockTime(Date.now() + 5000); // мягче при timeouts
       } else {
         showPopup('Не сохранено','Произошла ошибка при сохранении. Попробуйте позже.','error');
+        if (err && Number(err.code) >= 500) { setUnlockTime(Date.now() + 5000); } // мягче при 5xx
       }
       SAVE_IN_PROGRESS = false;
     });
@@ -736,6 +752,25 @@ function handleSaveClick(e){
   btn.parentNode.replaceChild(newBtn, btn);
   newBtn.addEventListener('click', handleSaveClick, false);
 })();
+
+/* ============================================================
+ *  Безопасный санитайз HTML для AI-комментария
+ * ============================================================ */
+function sanitize(html){
+  const t = document.createElement('template');
+  t.innerHTML = String(html || '');
+  t.content.querySelectorAll('script,style,link,iframe,object,embed,form').forEach(n=>n.remove());
+  t.content.querySelectorAll('*').forEach(el=>{
+    [...el.attributes].forEach(a=>{
+      if (/^on/i.test(a.name)) el.removeAttribute(a.name);
+      if (a.name === 'href' || a.name === 'src'){
+        const v = (el.getAttribute(a.name) || '').trim();
+        if (/^javascript:/i.test(v)) el.removeAttribute(a.name);
+      }
+    });
+  });
+  return t.innerHTML;
+}
 
 /* ============================================================
  *  BLOCK E: Front data flow (AI + last inputs)
@@ -798,8 +833,9 @@ function handleSaveClick(e){
 
   function renderAIComment(html){
     const host = elAI(); if (!host) return;
-    host.innerHTML = html
-      ? `<div class="field">${html}</div>`
+    const safe = sanitize(html);
+    host.innerHTML = safe
+      ? `<div class="field">${safe}</div>`
       : `<div class="field"><div class="help">Комментарий пока не готов…</div></div>`;
   }
 
@@ -870,6 +906,7 @@ function handleSaveClick(e){
   }
   async function pollLoop(){
     clearTimeout(_pollTimer);
+    if (document.hidden) return; // пауза, если вкладка не активна
     const r = await pollOnce();
     if (r.done) return;
     _pollTimer = setTimeout(()=>pollLoop(), r.wait);
@@ -886,6 +923,18 @@ function handleSaveClick(e){
 
 })();
 
+/* Пауза/возобновление поллинга по видимости */
+(function managePollingVisibility(){
+  let paused = false;
+  function onVis(){
+    if (document.hidden){
+      paused = true;
+    } else {
+      if (paused) { paused = false; window.startFrontDataFlow && window.startFrontDataFlow(); }
+    }
+  }
+  document.addEventListener('visibilitychange', onVis, {passive:true});
+})();
 
 /* ============================================================
  *  BLOCK P (Admin): «Скорость работы» (plain text, мс с десятыми)
@@ -947,13 +996,16 @@ function handleSaveClick(e){
  * ============================================================ */
 function setAriaExpanded(h){
   const sec = document.getElementById(h.getAttribute('data-toggle'));
-  h.setAttribute('aria-expanded', String(!sec.classList.contains('collapsed')));
+  const collapsed = sec.classList.contains('collapsed');
+  h.setAttribute('aria-expanded', String(!collapsed));
+  sec.setAttribute('aria-hidden', String(collapsed));
 }
 function toggleSectionByHeader(h){
   const id = h.getAttribute('data-toggle');
   const sec = document.getElementById(id);
   const willBeCollapsed = sec.classList.toggle('collapsed');
   h.setAttribute('aria-expanded', String(!willBeCollapsed));
+  sec.setAttribute('aria-hidden', String(willBeCollapsed));
   if (id === 'sec-measures' && !willBeCollapsed){
     if (typeof ensureAllWheelsOnce === 'function') ensureAllWheelsOnce();
     requestAnimationFrame(()=>requestAnimationFrame(()=>{
