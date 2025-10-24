@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Анкета — селекторы (как в макете)</title>
+  <style>
+    :root {
+      --bg: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      --cardA: rgba(255,255,255,.18);
+      --cardB: rgba(255,255,255,.16);
+      --border: rgba(255,255,255,.28);
+      --shadow: 0 8px 28px rgba(0,0,0,.18);
+      --okA: #fbbf24;
+      --okB: #f59e0b;
+      --row: 36px;         /* высота активной строки в колёсах */
+      --contentW: 420px;   /* ширина карточных списков */
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { min-height: 100vh; background: var(--bg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #fff; padding: 18px 14px; }
+    .container { max-width: 560px; margin: 0 auto; }
+
+    /* Каркас */
+    .section { background: linear-gradient(180deg, var(--cardA), var(--cardB)); border: 1px solid var(--border); border-radius: 18px; box-shadow: var(--shadow); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); overflow: hidden; }
+    .section + .section { margin-top: 14px; }
+    .section-h { display:flex; align-items:center; gap:10px; padding:14px 16px; cursor:pointer; user-select:none; }
+    .section-h h2 { font-size: 16px; font-weight: 800; flex: 1; }
+    .toggle { width:22px; height:22px; border-radius:50%; display:flex; align-items:center; justify-content:center; opacity:.9; }
+    .toggle svg { transition: transform .18s ease; }
+    .section.collapsed .toggle svg { transform: rotate(-90deg); }
+    .section-content { padding: 0; }
+    .section.collapsed .section-content { display: none; }
+
+    .field { padding: 12px; }
+    .field + .field { border-top: 1px solid rgba(255,255,255,.14); }
+    .row { display:flex; align-items:center; justify-content:space-between; }
+    .label { font-size: 13px; font-weight: 800; }
+    .unit { font-size: 12px; opacity: .9; }
+    .help { margin-top: 6px; text-align: center; font-size: 12px; opacity: .8; }
+
+    /* Бинарные кнопки (пол) */
+    .binary-choice { display:flex; gap:8px; padding:12px; border-radius:14px; background: rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.24); max-width: var(--contentW); width:100%; margin:8px auto 0; }
+    .binary-btn { flex:1; padding:10px 16px; border:0; border-radius:12px; background: rgba(255,255,255,.15); color:#fff; font-weight:700; font-size:14px; transition: all .2s ease; cursor:pointer; }
+    .binary-btn.active { background: linear-gradient(135deg, var(--okA), var(--okB)); box-shadow: 0 4px 12px rgba(251,191,36,.4), inset 0 1px 0 rgba(255,255,255,.3); transform: scale(1.02); }
+
+    /* Числовые колёса */
+    .duo { position:relative; display:flex; gap:6px; padding:12px; border-radius:14px; background: rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.24); max-width: var(--contentW); width:100%; margin:8px auto 0; justify-content:center; }
+    .duo::after { content:""; position:absolute; left:4px; right:4px; top:50%; height:var(--row); transform: translateY(-50%); background: rgba(255,255,255,.14); border:1px solid rgba(255,255,255,.35); border-radius:10px; pointer-events:none; }
+    .duo.disabled { opacity:.55; pointer-events:none; }
+    .col { flex:0 0 92px; height:180px; overflow:auto; overscroll-behavior:contain; scrollbar-width:none; scroll-snap-type:y mandatory; mask-image: linear-gradient(180deg, transparent, #000 18%, #000 82%, transparent); -webkit-mask-image: linear-gradient(180deg, transparent, #000 18%, #000 82%, transparent); }
+    .col::-webkit-scrollbar { display:none; }
+    .option { height: var(--row); display:flex; align-items:center; justify-content:center; font-weight:900; font-size:18px; color:#eef2ff; opacity:.55; scroll-snap-align:center; }
+    .option.active { color:#fff; opacity:1; text-shadow:0 1px 0 rgba(0,0,0,.2); }
+    .sep { display:flex; align-items:center; justify-content:center; width:10px; color:#e5e7eb; font-weight:800; }
+
+    .optline { margin-top:8px; display:flex; justify-content:center; gap:8px; align-items:center; opacity:.95; }
+
+    /* Списки выбора */
+    .choice-list{display:grid;grid-template-columns:1fr;gap:8px;padding:14px;border-radius:20px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.28);max-width:var(--contentW);width:100%;margin:8px auto 0;}
+    .choice-item{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:12px;background:transparent;border:0;cursor:pointer;transition:filter .15s ease, background .15s ease}
+    .choice-item:hover{background:rgba(255,255,255,.14)}
+    .choice-item span.label{font-weight:700;letter-spacing:.2px}
+
+    /* Радио-кнопка (оранжевое кольцо + белая точка) */
+    .radio-circle{width:22px;height:22px;border-radius:50%;border:2px solid rgba(255,255,255,.65);display:flex;align-items:center;justify-content:center;flex-shrink:0;background:transparent;transition:all .2s ease}
+    .radio-circle::after{content:"";width:10px;height:10px;border-radius:50%;background:#fff;opacity:0;transform:scale(0);transition:all .2s ease}
+    .choice-item.selected .radio-circle{background:linear-gradient(135deg,var(--okA),var(--okB));border-color:var(--okB)}
+    .choice-item.selected .radio-circle::after{opacity:1;transform:scale(1)}
+
+    /* Квадратные чекбоксы для мультивыбора (как в примере) */
+    .check-square{width:22px;height:22px;border-radius:6px;border:2px solid rgba(255,255,255,.65);display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .2s ease;background:transparent}
+    .check-square::after{content:"";width:12px;height:12px;border-radius:3px;background:#fff;opacity:0;transform:scale(.7);transition:all .2s ease}
+    .choice-item.selected .check-square{background:linear-gradient(135deg,var(--okA),var(--okB));border-color:var(--okB)}
+    .choice-item.selected .check-square::after{opacity:1;transform:scale(1)}
+
+    /* Отдельный чекбокс для «нет данных» */
+    .check{display:inline-flex;align-items:center;gap:10px;cursor:pointer;user-select:none}
+    .check .check-square{width:22px;height:22px}
+    .check .check-label{font-weight:700;letter-spacing:.2px}
+    .check.checked .check-square{background:linear-gradient(135deg,var(--okA),var(--okB));border-color:var(--okB)}
+    .check.checked .check-square::after{opacity:1;transform:scale(1)}
+
+    /* Кнопка действия */
+    .actions{padding:16px;display:flex;justify-content:center}
+    .primary-btn{display:inline-flex;align-items:center;gap:10px;padding:12px 18px;border:0;border-radius:12px;font-weight:800;background:linear-gradient(135deg,var(--okA),var(--okB));box-shadow:var(--shadow);cursor:pointer;transition:transform .15s ease,opacity .2s ease;color:#fff}
+    .primary-btn:hover{transform:translateY(-1px)}
+    .primary-btn:active{transform:translateY(0)}
+    .primary-btn[disabled]{opacity:.7;cursor:default}
+    .primary-btn .spinner{width:16px;height:16px;border:2px solid rgba(255,255,255,.6);border-top-color:#fff;border-radius:50%;display:none}
+    .primary-btn.loading .spinner{display:inline-block;animation:spin .9s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="section">
+      <div class="section-h" onclick="toggleSection(this)">
+        <h2>Анкета</h2>
+        <div class="toggle" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M8 10l4 4 4-4" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+      </div>
+      <div class="section-content">
+        <!-- 1) Пол -->
+        <div class="field">
+          <div class="row"><div class="label">Пол</div></div>
+          <div class="binary-choice" role="group" aria-label="Пол">
+            <button class="binary-btn" data-field="gender" data-value="male" aria-pressed="false">Мужской</button>
+            <button class="binary-btn" data-field="gender" data-value="female" aria-pressed="false">Женский</button>
+          </div>
+          <div class="help">Выберите один вариант</div>
+        </div>
+
+        <!-- 2) Возраст -->
+        <div class="field">
+          <div class="row"><div class="label">Возраст</div><div class="unit">лет</div></div>
+          <div class="duo" id="age-wheel" aria-label="Возраст (целые)">
+            <div class="col col-int"></div>
+          </div>
+          <div class="help">целые числа</div>
+        </div>
+
+        <!-- 3) Рост -->
+        <div class="field">
+          <div class="row"><div class="label">Рост</div><div class="unit">см</div></div>
+          <div class="duo" id="height-wheel" aria-label="Рост (см: целые и десятые)">
+            <div class="col col-int"></div>
+            <div class="sep">,</div>
+            <div class="col col-frac"></div>
+          </div>
+          <div class="help">см: целые и десятые</div>
+        </div>
+
+        <!-- 4) Вес -->
+        <div class="field">
+          <div class="row"><div class="label">Вес</div><div class="unit">кг</div></div>
+          <div class="duo" id="weight-wheel" aria-label="Вес (кг: целые и десятые)">
+            <div class="col col-int"></div>
+            <div class="sep">,</div>
+            <div class="col col-frac"></div>
+          </div>
+          <div class="help">кг: целые и десятые</div>
+        </div>
+
+        <!-- 5) % Жира + чекбокс нет данных (квадратный) -->
+        <div class="field">
+          <div class="row"><div class="label">Процент жира</div><div class="unit">%</div></div>
+          <div class="duo" id="fat-wheel" aria-label="Процент жира (целые и десятые)">
+            <div class="col col-int"></div>
+            <div class="sep">,</div>
+            <div class="col col-frac"></div>
+          </div>
+          <div class="optline">
+            <label class="check" id="bf-none-wrap">
+              <input type="checkbox" id="bf-none" hidden />
+              <span class="check-square" aria-hidden="true"></span>
+              <span class="check-label">нет данных</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- 6) Этничность -->
+        <div class="field">
+          <div class="row"><div class="label">Этническая принадлежность</div></div>
+          <div class="choice-list" data-type="single" data-field="ethnicity" role="radiogroup" aria-label="Этническая принадлежность">
+            <div class="choice-item" role="radio" aria-checked="false" data-value="european_mixed"><div class="radio-circle"></div><span class="label">Европеоидная или Смешанная</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="asian"><div class="radio-circle"></div><span class="label">Азиатская (Восточная или Юго-Восточная Азия)</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="african"><div class="radio-circle"></div><span class="label">Африканская</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="prefer_not_to_say"><div class="radio-circle"></div><span class="label">Предпочитаю не указывать</span></div>
+          </div>
+          <div class="help">Выберите один вариант</div>
+        </div>
+
+        <!-- 7) Визуальная оценка -->
+        <div class="field">
+          <div class="row"><div class="label">Визуальная оценка композиции тела</div></div>
+          <div class="choice-list" data-type="single" data-field="body_comp" role="radiogroup" aria-label="Визуальная оценка композиции тела">
+            <div class="choice-item" role="radio" aria-checked="false" data-value="very_low"><div class="radio-circle"></div><span class="label">Очень низкий процент жира (пресс, вены, рельеф)</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="athletic"><div class="radio-circle"></div><span class="label">Атлетичное (плоский живот, видна мускулатура)</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="average"><div class="radio-circle"></div><span class="label">Среднее (небольшой живот)</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="overweight"><div class="radio-circle"></div><span class="label">Избыточный вес (заметный живот)</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="obesity"><div class="radio-circle"></div><span class="label">Ожирение</span></div>
+          </div>
+          <div class="help">Выберите один вариант</div>
+        </div>
+
+        <!-- 8) Тип работы/учёбы -->
+        <div class="field">
+          <div class="row"><div class="label">Тип основной работы или учёбы</div></div>
+          <div class="choice-list" data-type="single" data-field="job_type" role="radiogroup" aria-label="Тип основной работы или учёбы">
+            <div class="choice-item" role="radio" aria-checked="false" data-value="sedentary"><div class="radio-circle"></div><span class="label">Сидячая (офис, водитель, программист)</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="moderately_active"><div class="radio-circle"></div><span class="label">Умеренно активная (учитель, продавец, врач)</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="physically_active"><div class="radio-circle"></div><span class="label">Активная физическая (строитель, курьер)</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="very_heavy"><div class="radio-circle"></div><span class="label">Очень тяжёлая (шахтёр, проф. спорт)</span></div>
+          </div>
+          <div class="help">Выберите один вариант</div>
+        </div>
+
+        <!-- 9) Шаги -->
+        <div class="field">
+          <div class="row"><div class="label">Среднее количество шагов в день</div></div>
+          <div class="choice-list" data-type="single" data-field="steps_per_day" role="radiogroup" aria-label="Среднее количество шагов в день">
+            <div class="choice-item" role="radio" aria-checked="false" data-value="lt_3000"><div class="radio-circle"></div><span class="label">Менее 3000</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="3000_4999"><div class="radio-circle"></div><span class="label">3000 до 4999</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="5000_7999"><div class="radio-circle"></div><span class="label">5000 до 7999</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="8000_9999"><div class="radio-circle"></div><span class="label">8000 до 9999</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="gt_10000"><div class="radio-circle"></div><span class="label">Более 10000</span></div>
+          </div>
+          <div class="help">Выберите один вариант</div>
+        </div>
+
+        <!-- 10) Частота тренировок -->
+        <div class="field">
+          <div class="row"><div class="label">Частота тренировок (раз в неделю)</div></div>
+          <div class="choice-list" data-type="single" data-field="workouts_per_week" role="radiogroup" aria-label="Частота тренировок (раз в неделю)">
+            <div class="choice-item" role="radio" aria-checked="false" data-value="none"><div class="radio-circle"></div><span class="label">Не тренируюсь</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="1_2"><div class="radio-circle"></div><span class="label">1 до 2 раза</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="3_4"><div class="radio-circle"></div><span class="label">3 до 4 раза</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="5_6"><div class="radio-circle"></div><span class="label">5 до 6 раз</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="7_plus"><div class="radio-circle"></div><span class="label">7 раз и более</span></div>
+          </div>
+          <div class="help">Выберите один вариант</div>
+        </div>
+
+        <!-- 11) Длительность -->
+        <div class="field">
+          <div class="row"><div class="label">Длительность одной тренировки (минуты)</div></div>
+          <div class="choice-list" data-type="single" data-field="workout_duration" role="radiogroup" aria-label="Длительность одной тренировки (минуты)">
+            <div class="choice-item" role="radio" aria-checked="false" data-value="none"><div class="radio-circle"></div><span class="label">Не тренируюсь</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="lt_30"><div class="radio-circle"></div><span class="label">Менее 30 минут</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="30_45"><div class="radio-circle"></div><span class="label">30 до 45 минут</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="45_60"><div class="radio-circle"></div><span class="label">45 до 60 минут</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="60_90"><div class="radio-circle"></div><span class="label">60 до 90 минут</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="gt_90"><div class="radio-circle"></div><span class="label">Более 90 минут</span></div>
+          </div>
+          <div class="help">Выберите один вариант</div>
+        </div>
+
+        <!-- 12) Интенсивность -->
+        <div class="field">
+          <div class="row"><div class="label">Интенсивность тренировок</div></div>
+          <div class="choice-list" data-type="single" data-field="workout_intensity" role="radiogroup" aria-label="Интенсивность тренировок">
+            <div class="choice-item" role="radio" aria-checked="false" data-value="none"><div class="radio-circle"></div><span class="label">Не тренируюсь</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="low"><div class="radio-circle"></div><span class="label">Низкая (йога, растяжка, ходьба)</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="moderate"><div class="radio-circle"></div><span class="label">Умеренная (силовые средней интенсивности, джоггинг)</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="high"><div class="radio-circle"></div><span class="label">Высокая (интенсивные силовые, бег, кроссфит, HIIT)</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="pro"><div class="radio-circle"></div><span class="label">Профессиональный спорт (2 и более тренировки в день)</span></div>
+          </div>
+          <div class="help">Выберите один вариант</div>
+        </div>
+
+        <!-- 13) NEAT -->
+        <div class="field">
+          <div class="row"><div class="label">Уровень спонтанной активности (NEAT)</div></div>
+          <div class="choice-list" data-type="single" data-field="neat_level" role="radiogroup" aria-label="Уровень спонтанной активности (NEAT)">
+            <div class="choice-item" role="radio" aria-checked="false" data-value="low"><div class="radio-circle"></div><span class="label">Низкий (сижу спокойно, мало двигаюсь дома)</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="medium"><div class="radio-circle"></div><span class="label">Средний (обычная бытовая активность)</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="high"><div class="radio-circle"></div><span class="label">Высокий (постоянно в движении, суетлив, много дел)</span></div>
+          </div>
+          <div class="help">Выберите один вариант</div>
+        </div>
+
+        <!-- 14) Сон -->
+        <div class="field">
+          <div class="row"><div class="label">Среднее количество сна (часов в ночь)</div></div>
+          <div class="choice-list" data-type="single" data-field="sleep_hours" role="radiogroup" aria-label="Среднее количество сна (часов в ночь)">
+            <div class="choice-item" role="radio" aria-checked="false" data-value="h7_9"><div class="radio-circle"></div><span class="label">7 до 9 часов</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="h6_7"><div class="radio-circle"></div><span class="label">6 до 7 часов</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="lt_6"><div class="radio-circle"></div><span class="label">Менее 6 часов</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="gt_9"><div class="radio-circle"></div><span class="label">Более 9 часов</span></div>
+          </div>
+          <div class="help">Выберите один вариант</div>
+        </div>
+
+        <!-- 15) История веса -->
+        <div class="field">
+          <div class="row"><div class="label">История изменения веса (последние 6 месяцев)</div></div>
+          <div class="choice-list" data-type="single" data-field="weight_history" role="radiogroup" aria-label="История изменения веса">
+            <div class="choice-item" role="radio" aria-checked="false" data-value="stable"><div class="radio-circle"></div><span class="label">Вес стабилен (±2 кг)</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="loss_3_5_deficit"><div class="radio-circle"></div><span class="label">Потеря веса 3 до 5 кг на дефиците</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="loss_gt5_deficit"><div class="radio-circle"></div><span class="label">Потеря веса более 5 кг на дефиците</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="long_lowcal"><div class="radio-circle"></div><span class="label">После длительной низкокалорийной диеты (более 3 месяцев)</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="gain_gt5"><div class="radio-circle"></div><span class="label">Набор веса более 5 кг</span></div>
+          </div>
+          <div class="help">Выберите один вариант</div>
+        </div>
+
+        <!-- 16) Основная цель -->
+        <div class="field">
+          <div class="row"><div class="label">Основная цель</div></div>
+          <div class="choice-list" data-type="single" data-field="main_goal" role="radiogroup" aria-label="Основная цель">
+            <div class="choice-item" role="radio" aria-checked="false" data-value="fat_loss"><div class="radio-circle"></div><span class="label">Снижение веса (жиросжигание)</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="maintenance"><div class="radio-circle"></div><span class="label">Поддержание текущего веса</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="muscle_gain"><div class="radio-circle"></div><span class="label">Набор мышечной массы</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="recomposition"><div class="radio-circle"></div><span class="label">Рекомпозиция (снижение жира и рост мышц)</span></div>
+          </div>
+          <div class="help">Выберите один вариант</div>
+        </div>
+
+        <!-- 17) Темп -->
+        <div class="field">
+          <div class="row"><div class="label">Темп достижения цели</div></div>
+          <div class="choice-list" data-type="single" data-field="goal_pace" role="radiogroup" aria-label="Темп достижения цели">
+            <div class="choice-item" role="radio" aria-checked="false" data-value="slow"><div class="radio-circle"></div><span class="label">Медленный</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="moderate"><div class="radio-circle"></div><span class="label">Умеренный</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="fast"><div class="radio-circle"></div><span class="label">Быстрый</span></div>
+          </div>
+          <div class="help">Выберите один вариант</div>
+        </div>
+
+        <!-- 18) Тип активности (для белка) -->
+        <div class="field">
+          <div class="row"><div class="label">Тип физической активности (для белка)</div></div>
+          <div class="choice-list" data-type="single" data-field="protein_activity" role="radiogroup" aria-label="Тип физической активности (для белка)">
+            <div class="choice-item" role="radio" aria-checked="false" data-value="sedentary_or_cardio"><div class="radio-circle"></div><span class="label">Сидячий образ жизни или только кардио</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="recreational_strength"><div class="radio-circle"></div><span class="label">Рекреационные силовые (поддержание формы)</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="active_strength"><div class="radio-circle"></div><span class="label">Активные силовые (набор массы, бодибилдинг)</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="intense_strength_deficit"><div class="radio-circle"></div><span class="label">Интенсивные силовые плюс дефицит калорий</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="professional"><div class="radio-circle"></div><span class="label">Профессиональный спорт или экстремальные нагрузки</span></div>
+          </div>
+          <div class="help">Выберите один вариант</div>
+        </div>
+
+        <!-- 19) Заболевания (мультивыбор, квадратные чекбоксы) -->
+        <div class="field">
+          <div class="row"><div class="label">Хронические заболевания <span class="unit" style="opacity:.9">(можно несколько)</span></div></div>
+          <div class="choice-list" data-type="multiple" data-field="chronic_conditions" role="group" aria-label="Хронические заболевания">
+            <div class="choice-item" role="checkbox" aria-checked="false" data-value="none"><div class="check-square"></div><span class="label">Нет</span></div>
+            <div class="choice-item" role="checkbox" aria-checked="false" data-value="t2d_ir"><div class="check-square"></div><span class="label">Диабет 2 типа или инсулинорезистентность</span></div>
+            <div class="choice-item" role="checkbox" aria-checked="false" data-value="ckd_3_5"><div class="check-square"></div><span class="label">ХБП (стадии 3 до 5)</span></div>
+            <div class="choice-item" role="checkbox" aria-checked="false" data-value="cvd_htn"><div class="check-square"></div><span class="label">Сердечно-сосудистые или гипертония</span></div>
+            <div class="choice-item" role="checkbox" aria-checked="false" data-value="hypothyroid"><div class="check-square"></div><span class="label">Гипотиреоз</span></div>
+          </div>
+          <div class="help">Можно отметить несколько</div>
+        </div>
+
+        <!-- 20) Беременность/лактация (скрывать для мужчин) -->
+        <div class="field" id="sec-preg" style="display:none">
+          <div class="row"><div class="label">Беременность или лактация</div></div>
+          <div class="choice-list" data-type="single" data-field="pregnancy_lactation" role="radiogroup" aria-label="Беременность или лактация">
+            <div class="choice-item" role="radio" aria-checked="false" data-value="none"><div class="radio-circle"></div><span class="label">Нет</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="preg_trim1"><div class="radio-circle"></div><span class="label">Беременность 1 триместр</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="preg_trim2"><div class="radio-circle"></div><span class="label">Беременность 2 триместр</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="preg_trim3"><div class="radio-circle"></div><span class="label">Беременность 3 триместр</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="lact_0_6"><div class="radio-circle"></div><span class="label">Лактация 0 до 6 месяцев</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="lact_6_12"><div class="radio-circle"></div><span class="label">Лактация 6 до 12 месяцев</span></div>
+          </div>
+          <div class="help">Выберите один вариант</div>
+        </div>
+
+        <!-- 21) Цикл (условно для женщин и только при «Нет») -->
+        <div class="field" id="sec-cycle" style="display:none">
+          <div class="row"><div class="label">Регулярность менструального цикла</div></div>
+          <div class="choice-list" data-type="single" data-field="cycle_regular" role="radiogroup" aria-label="Регулярность менструального цикла">
+            <div class="choice-item" role="radio" aria-checked="false" data-value="regular"><div class="radio-circle"></div><span class="label">Регулярный цикл</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="irregular"><div class="radio-circle"></div><span class="label">Нерегулярный или отсутствует</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="menopause"><div class="radio-circle"></div><span class="label">Менопауза</span></div>
+          </div>
+          <div class="help">Показывается только для женщин без беременности/лактации</div>
+        </div>
+
+        <!-- Действия -->
+        <div class="actions">
+          <button class="primary-btn" id="submit-btn" type="button" aria-live="polite">
+            <span class="spinner" aria-hidden="true"></span>
+            <span class="label">Сохранить</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Аккордеон
+    function toggleSection(h){ h.parentElement.classList.toggle('collapsed'); }
+
+    // Делегирование кликов (радио/чек/бинарные/нет-данных)
+    document.addEventListener('click', (e)=>{
+      const haptic=()=>{ if (navigator.vibrate) navigator.vibrate(12); };
+
+      // Пол — бинарные
+      const bbtn = e.target.closest('.binary-btn');
+      if (bbtn){
+        const field = bbtn.dataset.field;
+        document.querySelectorAll(`[data-field="${field}"]`).forEach(b=>{ b.classList.remove('active'); b.setAttribute('aria-pressed','false'); });
+        bbtn.classList.add('active'); bbtn.setAttribute('aria-pressed','true');
+        haptic();
+        updateCycleVisibility();
+        return;
+      }
+
+      // Элементы списков
+      const item = e.target.closest('.choice-item');
+      if (item){
+        const list = item.closest('.choice-list');
+        if (!list) return;
+        if (list.dataset.type === 'single'){
+          list.querySelectorAll('.choice-item').forEach(i=>{ i.classList.remove('selected'); i.setAttribute('aria-checked','false'); });
+          item.classList.add('selected');
+          item.setAttribute('aria-checked','true');
+          haptic();
+          if (list.dataset.field === 'pregnancy_lactation') updateCycleVisibility();
+          return;
+        }
+        if (list.dataset.type === 'multiple'){
+          const nowSel = item.classList.toggle('selected');
+          item.setAttribute('aria-checked', nowSel ? 'true' : 'false');
+          haptic();
+          // взаимоисключение «Нет»
+          if (list.dataset.field === 'chronic_conditions'){
+            if (item.dataset.value === 'none' && nowSel){
+              list.querySelectorAll('.choice-item').forEach(i=>{ if(i!==item){ i.classList.remove('selected'); i.setAttribute('aria-checked','false'); } });
+            } else if (item.dataset.value !== 'none' && nowSel){
+              const noneItem = list.querySelector('.choice-item[data-value="none"]');
+              noneItem?.classList.remove('selected'); noneItem?.setAttribute('aria-checked','false');
+            }
+          }
+          return;
+        }
+      }
+
+      // Чекбокс «нет данных» у % жира
+      const chk = e.target.closest('#bf-none-wrap');
+      if (chk){
+        const input = chk.querySelector('input');
+        input.checked = !input.checked;
+        chk.classList.toggle('checked', input.checked);
+        const fw = document.getElementById('fat-wheel');
+        fw?.classList.toggle('disabled', input.checked);
+        if (window.WHEELS && WHEELS.fat) WHEELS.fat.setDisabled?.(input.checked);
+        haptic();
+      }
+    }, {passive:true});
+
+    // Колёса
+    const pad = 4; const rowH = 36; const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+    function opt(t){ const d=document.createElement('div'); d.className='option'; d.textContent=t; return d; }
+    function fill(col, from, to){ const f=document.createDocumentFragment(); for(let i=0;i<pad;i++) f.appendChild(opt('')); for(let i=from;i<=to;i++) f.appendChild(opt(i)); for(let i=0;i<pad;i++) f.appendChild(opt('')); col.innerHTML=''; col.appendChild(f); }
+    const idx=(col)=>Math.round((col.scrollTop+col.clientHeight/2-rowH/2)/rowH)-pad;
+    function mark(col){ const i=clamp(idx(col),0,col.dataset.kind==='int'?(col._maxInt-col._minInt):9); [...col.children].forEach((o,n)=>o.classList.toggle('active',n===i+pad)); }
+    function snap(col,i){ col.scrollTop=(i+pad)*rowH-col.clientHeight/2+rowH/2; }
+
+    function buildDualWheel(root,min,max,init){
+      if(!root) return {get value(){return null}, setDisabled(){}};
+      const intCol=root.querySelector('.col-int'); const fracCol=root.querySelector('.col-frac'); if(!intCol||!fracCol) return {get value(){return null}, setDisabled(){}};
+      const minI=Math.floor(min), maxI=Math.floor(max); intCol.dataset.kind='int'; intCol._minInt=minI; intCol._maxInt=maxI; fill(intCol,minI,maxI); fill(fracCol,0,9);
+      let curI=0,curF=0;
+      function lock(iVal){ if(iVal===maxI){curF=0; fracCol.style.pointerEvents='none'; fracCol.style.opacity='0.5'; snap(fracCol,0); mark(fracCol);} else { fracCol.style.pointerEvents='auto'; fracCol.style.opacity='1'; } }
+      function update(){ curI=clamp(idx(intCol),0,maxI-minI); curF=clamp(idx(fracCol),0,9); const iVal=minI+curI; if(iVal===maxI) curF=0; snap(intCol,curI); snap(fracCol,curF); mark(intCol); mark(fracCol); lock(iVal);}    
+      intCol.addEventListener('scroll',()=>{ mark(intCol); lock(minI+clamp(idx(intCol),0,maxI-minI)); schedule('i'); },{passive:true});
+      fracCol.addEventListener('scroll',()=>{ mark(fracCol); schedule('f'); },{passive:true});
+      let ti=null, tf=null; function schedule(w){ if(w==='i'){ clearTimeout(ti); ti=setTimeout(update,120);} else { clearTimeout(tf); tf=setTimeout(update,120);} }
+      requestAnimationFrame(()=>{ const iI=clamp(Math.floor(init)-minI,0,maxI-minI); const iF=clamp(Math.round((init-Math.floor(init))*10),0,9); snap(intCol,iI); snap(fracCol,iF); mark(intCol); mark(fracCol); lock(minI+iI); curI=iI; curF=iF; });
+      return { get value(){ return +((minI+curI)+(curF/10)).toFixed(1); }, setDisabled(dis){ root.classList.toggle('disabled',!!dis);} };
+    }
+    function buildIntWheel(root,min,max,init){ if(!root) return {get value(){return null}, setDisabled(){}}; const col=root.querySelector('.col-int'); if(!col) return {get value(){return null}, setDisabled(){}}; const minI=Math.floor(min),maxI=Math.floor(max); col.dataset.kind='int'; col._minInt=minI; col._maxInt=maxI; fill(col,minI,maxI); let cur=0; function update(){ cur=clamp(idx(col),0,maxI-minI); snap(col,cur); mark(col);} let t=null; col.addEventListener('scroll',()=>{ mark(col); clearTimeout(t); t=setTimeout(update,120); },{passive:true}); requestAnimationFrame(()=>{ const iI=clamp(Math.floor(init)-minI,0,maxI-minI); snap(col,iI); mark(col); cur=iI;}); return { get value(){return (minI+cur)|0;}, setDisabled(dis){ root.classList.toggle('disabled',!!dis);} } }
+
+    // Инициализация
+    const WHEELS={
+      age:    buildIntWheel(document.getElementById('age-wheel'),    14, 90, 25),
+      height: buildDualWheel(document.getElementById('height-wheel'), 120, 230, 175.0),
+      weight: buildDualWheel(document.getElementById('weight-wheel'), 35, 250, 70.0),
+      fat:    buildDualWheel(document.getElementById('fat-wheel'),    0, 60, 18.0)
+    };
+    window.WHEELS = WHEELS; // для отладки
+
+    // Синхронизация «нет данных»
+    const fatNone=document.getElementById('bf-none');
+    if(fatNone){
+      const wrap=document.getElementById('bf-none-wrap');
+      wrap?.classList.toggle('checked', fatNone.checked);
+      document.getElementById('fat-wheel')?.classList.toggle('disabled', fatNone.checked);
+      fatNone.addEventListener('change', ()=>{
+        const c=fatNone.checked; wrap?.classList.toggle('checked',c); document.getElementById('fat-wheel')?.classList.toggle('disabled',c); WHEELS.fat?.setDisabled?.(c);
+      });
+    }
+
+    // Submit
+    (function(){
+      const btn=document.getElementById('submit-btn'); if(!btn) return;
+      const haptic=()=>{ if (navigator.vibrate) navigator.vibrate(12); };
+      btn.addEventListener('click',()=>{
+        if(btn.classList.contains('loading')) return;
+        const genderBtn=document.querySelector('.binary-btn.active');
+        const pick=(f)=>document.querySelector(`.choice-list[data-field="${f}"] .choice-item.selected`)?.dataset.value||null;
+        const pickMulti=(f)=>[...document.querySelectorAll(`.choice-list[data-field="${f}"] .choice-item.selected`)].map(i=>i.dataset.value);
+        const data={
+          gender:genderBtn?genderBtn.dataset.value:null,
+          age:WHEELS.age.value,
+          height_cm:WHEELS.height.value,
+          weight_kg:WHEELS.weight.value,
+          bodyfat_pct:(fatNone && fatNone.checked)?null:WHEELS.fat.value,
+          ethnicity:pick('ethnicity'),
+          body_comp:pick('body_comp'),
+          job_type:pick('job_type'),
+          steps_per_day:pick('steps_per_day'),
+          workouts_per_week:pick('workouts_per_week'),
+          workout_duration:pick('workout_duration'),
+          workout_intensity:pick('workout_intensity'),
+          neat_level:pick('neat_level'),
+          sleep_hours:pick('sleep_hours'),
+          weight_history:pick('weight_history'),
+          main_goal:pick('main_goal'),
+          goal_pace:pick('goal_pace'),
+          protein_activity:pick('protein_activity'),
+          chronic_conditions:pickMulti('chronic_conditions'),
+          pregnancy_lactation:pick('pregnancy_lactation'),
+          cycle_regular:document.getElementById('sec-cycle').style.display==='none'?null:pick('cycle_regular')
+        };
+        console.log('[FORM]', data);
+        haptic(); btn.classList.add('loading'); btn.disabled=true; setTimeout(()=>{ btn.classList.remove('loading'); btn.disabled=false; }, 900);
+      });
+    })();
+
+    // Показ/скрытие 20–21
+    function updateCycleVisibility(){
+      const isFemale=document.querySelector('.binary-btn.active[data-value="female"]');
+      const isMale  =document.querySelector('.binary-btn.active[data-value="male"]');
+      const secPreg=document.getElementById('sec-preg');
+      const secCycle=document.getElementById('sec-cycle');
+      if(!secPreg||!secCycle) return;
+      if(isMale){ // мужчины — скрыть оба
+        secPreg.style.display='none';
+        secCycle.style.display='none';
+        secPreg.querySelectorAll('.choice-item').forEach(i=>{ i.classList.remove('selected'); i.setAttribute('aria-checked','false'); });
+        secCycle.querySelectorAll('.choice-item').forEach(i=>{ i.classList.remove('selected'); i.setAttribute('aria-checked','false'); });
+        return;
+      }
+      // Женщины — показываем беременность/лактацию
+      secPreg.style.display = isFemale ? '' : 'none';
+      const preg=document.querySelector('.choice-list[data-field="pregnancy_lactation"] .choice-item.selected')?.dataset.value||null;
+      const showCycle=!!isFemale && (preg==='none');
+      secCycle.style.display=showCycle?'':'none';
+      if(!showCycle){ secCycle.querySelectorAll('.choice-item').forEach(i=>{ i.classList.remove('selected'); i.setAttribute('aria-checked','false'); }); }
+    }
+    // Вызвать при загрузке, чтобы скрыть блоки до выбора пола
+    updateCycleVisibility();
+
+    // --- Самотесты (T) ---
+    function runSelfTests(){
+      const assert=(cond,msg)=>{ if(!cond) console.error('[TEST FAIL]',msg); else console.log('[TEST OK]',msg); };
+      assert(!!document.getElementById('submit-btn'),'submit есть');
+      assert(!!document.getElementById('bf-none'),'bf-none есть');
+      const eth = document.querySelector('.choice-list[data-field="ethnicity"] .choice-item');
+      if(eth){ eth.click(); assert(eth.classList.contains('selected'),'radio кликается'); }
+      const cc = document.querySelector('.choice-list[data-field="chronic_conditions"]');
+      if(cc){ const none=cc.querySelector('[data-value="none"]'); const other=cc.querySelector('[data-value]:not([data-value="none"])'); if(none&&other){ other.click(); none.click(); assert(none.classList.contains('selected')&&!other.classList.contains('selected'),'«Нет» снимает другие'); } }
+      return true;
+    }
+    document.addEventListener('keydown',e=>{ if(e.key.toLowerCase()==='t'){ runSelfTests(); }});
+  </script>
+</body>
+</html>
