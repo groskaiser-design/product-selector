@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Анкета — селекторы (как в макете)</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     :root {
       --bg: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -90,14 +91,11 @@
     .primary-btn .spinner{width:16px;height:16px;border:2px solid rgba(255,255,255,.6);border-top-color:#fff;border-radius:50%;display:none}
     .primary-btn.loading .spinner{display:inline-block;animation:spin .9s linear infinite}
     @keyframes spin{to{transform:rotate(360deg)}}
+
+    /* Визуальный фолбэк хаптики для iOS Safari (если нет SDK и вибрации) */
+    .bump{animation:bump .08s ease}
+    @keyframes bump{0%{transform:scale(1)}50%{transform:scale(0.98)}100%{transform:scale(1)}}
   </style>
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <script>
-    (function initTMA(){
-      const tg = window.Telegram?.WebApp; if(!tg) return;
-      try{ tg.ready(); tg.expand(); tg.setHeaderColor('secondary_bg_color'); }catch(_){}
-    })();
-  </script>
 </head>
 <body>
   <div class="container">
@@ -359,7 +357,7 @@
         <!-- 21) Цикл (условно для женщин и только при «Нет») -->
         <div class="field" id="sec-cycle" style="display:none">
           <div class="row"><div class="label">Регулярность менструального цикла</div></div>
-          <div class="choice-list" data-type="single" data-field="cycle_regular" role="radiogroup" aria-label="Регулярность менструального цикла">
+          <div class="choice-list" data-type="single" data-field="cycle_regular" role="radiогруппа" aria-label="Регулярность менструального цикла">
             <div class="choice-item" role="radio" aria-checked="false" data-value="regular"><div class="radio-circle"></div><span class="label">Регулярный цикл</span></div>
             <div class="choice-item" role="radio" aria-checked="false" data-value="irregular"><div class="radio-circle"></div><span class="label">Нерегулярный или отсутствует</span></div>
             <div class="choice-item" role="radio" aria-checked="false" data-value="menopause"><div class="radio-circle"></div><span class="label">Менопауза</span></div>
@@ -379,252 +377,244 @@
   </div>
 
   <script>
-    // Аккордеон
-    function toggleSection(h){ h.parentElement.classList.toggle('collapsed'); }
+  'use strict';
+  // Обёртки хаптики (Telegram WebApp API с безопасными вызовами)
+  const TMA = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
+  try{ TMA && TMA.ready && TMA.ready(); }catch(_){/* no-op */}
+  const hapticImpact = (type='light') => { try{ TMA?.HapticFeedback?.impactOccurred?.(type); }catch(_){/* no-op */} };
+  const hapticSelect = () => { try{ TMA?.HapticFeedback?.selectionChanged?.(); }catch(_){/* no-op */} };
+  const hapticNotify = (kind='success') => { try{ TMA?.HapticFeedback?.notificationOccurred?.(kind); }catch(_){/* no-op */} };
 
-    // Haptics: Telegram WebApp API (iOS поддерживается) + fallback
-    function hapticImpact(type='light'){ try { window.Telegram?.WebApp?.HapticFeedback?.impactOccurred?.(type); } catch(_){} } catch(_) {}
-      try { navigator.vibrate?.(10); } catch(_) {}
+  // Универсальный bump-фолбэк, если API недоступен
+  const bump = (el) => { if(!el) return; el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); };
+
+  // Аккордеон
+  function toggleSection(h){ h.parentElement.classList.toggle('collapsed'); }
+
+  // Вибро/бамп на касание основных интерактивов
+  document.addEventListener('pointerdown', (e)=>{
+    const el = e.target.closest('.binary-btn, .choice-item, #bf-none-wrap, #submit-btn');
+    if (!el) return;
+    hapticImpact('light'); bump(el);
+  }, {passive:true});
+
+  // Делегирование кликов (радио/чек/бинарные/нет-данных)
+  document.addEventListener('click', (e)=>{
+    // Пол — бинарные
+    const bbtn = e.target.closest('.binary-btn');
+    if (bbtn){
+      const field = bbtn.dataset.field;
+      document.querySelectorAll(`[data-field="${field}"]`).forEach(b=>{ b.classList.remove('active'); b.setAttribute('aria-pressed','false'); });
+      bbtn.classList.add('active'); bbtn.setAttribute('aria-pressed','true');
+      hapticSelect();
+      updateCycleVisibility();
+      return;
     }
-    function hapticSelect(){ try { window.Telegram?.WebApp?.HapticFeedback?.selectionChanged?.(); } catch(_){} } catch(_) {}
-      try { navigator.vibrate?.(8); } catch(_) {}
-    }
-    function hapticNotify(kind='success'){ try { window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred?.(kind); } catch(_){} } catch(_) {}
-    }
 
-    // Ранний триггер на касание (ощущается на iOS в Telegram)
-    document.addEventListener('pointerdown', (e)=>{
-      if (e.target.closest('.binary-btn, .choice-item, #bf-none-wrap, #submit-btn')) hapticImpact('light');
-    }, {passive:true});
-    }, {passive:true});
-
-    // Делегирование кликов (радио/чек/бинарные/нет-данных)
-    document.addEventListener('click', (e)=>{
-      const haptic=()=>{ hapticImpact('light'); };
-
-      // Пол — бинарные
-      const bbtn = e.target.closest('.binary-btn');
-      if (bbtn){
-        const field = bbtn.dataset.field;
-        document.querySelectorAll(`[data-field="${field}"]`).forEach(b=>{ b.classList.remove('active'); b.setAttribute('aria-pressed','false'); });
-        bbtn.classList.add('active'); bbtn.setAttribute('aria-pressed','true');
-        haptic();
-        updateCycleVisibility();
+    // Элементы списков
+    const item = e.target.closest('.choice-item');
+    if (item){
+      const list = item.closest('.choice-list');
+      if (!list) return;
+      if (list.dataset.type === 'single'){
+        list.querySelectorAll('.choice-item').forEach(i=>{ i.classList.remove('selected'); i.setAttribute('aria-checked','false'); });
+        item.classList.add('selected');
+        item.setAttribute('aria-checked','true');
+        hapticSelect();
+        if (list.dataset.field === 'pregnancy_lactation') updateCycleVisibility();
         return;
       }
-
-      // Элементы списков
-      const item = e.target.closest('.choice-item');
-      if (item){
-        const list = item.closest('.choice-list');
-        if (!list) return;
-        if (list.dataset.type === 'single'){
-          list.querySelectorAll('.choice-item').forEach(i=>{ i.classList.remove('selected'); i.setAttribute('aria-checked','false'); });
-          item.classList.add('selected');
-          item.setAttribute('aria-checked','true');
-          haptic();
-          if (list.dataset.field === 'pregnancy_lactation') updateCycleVisibility();
-          return;
-        }
-        if (list.dataset.type === 'multiple'){
-          const nowSel = item.classList.toggle('selected');
-          item.setAttribute('aria-checked', nowSel ? 'true' : 'false');
-          haptic();
-          // взаимоисключение «Нет»
-          if (list.dataset.field === 'chronic_conditions'){
-            if (item.dataset.value === 'none' && nowSel){
-              list.querySelectorAll('.choice-item').forEach(i=>{ if(i!==item){ i.classList.remove('selected'); i.setAttribute('aria-checked','false'); } });
-            } else if (item.dataset.value !== 'none' && nowSel){
-              const noneItem = list.querySelector('.choice-item[data-value="none"]');
-              noneItem?.classList.remove('selected'); noneItem?.setAttribute('aria-checked','false');
-            }
+      if (list.dataset.type === 'multiple'){
+        const nowSel = item.classList.toggle('selected');
+        item.setAttribute('aria-checked', nowSel ? 'true' : 'false');
+        hapticSelect();
+        // взаимоисключение «Нет»
+        if (list.dataset.field === 'chronic_conditions'){
+          if (item.dataset.value === 'none' && nowSel){
+            list.querySelectorAll('.choice-item').forEach(i=>{ if(i!==item){ i.classList.remove('selected'); i.setAttribute('aria-checked','false'); } });
+          } else if (item.dataset.value !== 'none' && nowSel){
+            const noneItem = list.querySelector('.choice-item[data-value="none"]');
+            if (noneItem) { noneItem.classList.remove('selected'); noneItem.setAttribute('aria-checked','false'); }
           }
-          return;
         }
-      }
-
-      // Чекбокс «нет данных» у % жира
-      const chk = e.target.closest('#bf-none-wrap');
-      if (chk){
-        const input = chk.querySelector('input');
-        input.checked = !input.checked;
-        chk.classList.toggle('checked', input.checked);
-        const fw = document.getElementById('fat-wheel');
-        fw?.classList.toggle('disabled', input.checked);
-        if (window.WHEELS && WHEELS.fat) WHEELS.fat.setDisabled?.(input.checked);
-        updateBodyCompVisibility();
-        haptic();
-      }
-    }, {passive:true});
-
-    // Колёса
-    const pad = 4; const rowH = 36; const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
-    function opt(t){ const d=document.createElement('div'); d.className='option'; d.textContent=t; return d; }
-    function fill(col, from, to){ const f=document.createDocumentFragment(); for(let i=0;i<pad;i++) f.appendChild(opt('')); for(let i=from;i<=to;i++) f.appendChild(opt(i)); for(let i=0;i<pad;i++) f.appendChild(opt('')); col.innerHTML=''; col.appendChild(f); }
-    const idx=(col)=>Math.round((col.scrollTop+col.clientHeight/2-rowH/2)/rowH)-pad;
-    function mark(col){
-      const limit = col.dataset.kind==='int' ? (col._maxInt - col._minInt) : 9;
-      const i = clamp(idx(col), 0, limit);
-      const activeIndex = i + pad;
-      if (col._lastActive !== activeIndex) {
-        hapticSelect();
-        col._lastActive = activeIndex;
-      }
-      [...col.children].forEach((o,n)=>o.classList.toggle('active', n===activeIndex));
-    }
-    function snap(col,i){ col.scrollTop=(i+pad)*rowH-col.clientHeight/2+rowH/2; }
-
-    function buildDualWheel(root,min,max,init){
-      if(!root) return {get value(){return null}, setDisabled(){}};
-      const intCol=root.querySelector('.col-int'); const fracCol=root.querySelector('.col-frac'); if(!intCol||!fracCol) return {get value(){return null}, setDisabled(){}};
-      const minI=Math.floor(min), maxI=Math.floor(max); intCol.dataset.kind='int'; intCol._minInt=minI; intCol._maxInt=maxI; fill(intCol,minI,maxI); fill(fracCol,0,9);
-      let curI=0,curF=0;
-      function lock(iVal){ if(iVal===maxI){curF=0; fracCol.style.pointerEvents='none'; fracCol.style.opacity='0.5'; snap(fracCol,0); mark(fracCol);} else { fracCol.style.pointerEvents='auto'; fracCol.style.opacity='1'; } }
-      function update(){ curI=clamp(idx(intCol),0,maxI-minI); curF=clamp(idx(fracCol),0,9); const iVal=minI+curI; if(iVal===maxI) curF=0; snap(intCol,curI); snap(fracCol,curF); mark(intCol); mark(fracCol); lock(iVal);}    
-      intCol.addEventListener('scroll',()=>{ mark(intCol); lock(minI+clamp(idx(intCol),0,maxI-minI)); schedule('i'); },{passive:true});
-      fracCol.addEventListener('scroll',()=>{ mark(fracCol); schedule('f'); },{passive:true});
-      let ti=null, tf=null; function schedule(w){ if(w==='i'){ clearTimeout(ti); ti=setTimeout(update,120);} else { clearTimeout(tf); tf=setTimeout(update,120);} }
-      requestAnimationFrame(()=>{ const iI=clamp(Math.floor(init)-minI,0,maxI-minI); const iF=clamp(Math.round((init-Math.floor(init))*10),0,9); snap(intCol,iI); snap(fracCol,iF); mark(intCol); mark(fracCol); lock(minI+iI); curI=iI; curF=iF; });
-      return { get value(){ return +((minI+curI)+(curF/10)).toFixed(1); }, setDisabled(dis){ root.classList.toggle('disabled',!!dis);} };
-    }
-    function buildIntWheel(root,min,max,init){ if(!root) return {get value(){return null}, setDisabled(){}}; const col=root.querySelector('.col-int'); if(!col) return {get value(){return null}, setDisabled(){}}; const minI=Math.floor(min),maxI=Math.floor(max); col.dataset.kind='int'; col._minInt=minI; col._maxInt=maxI; fill(col,minI,maxI); let cur=0; function update(){ cur=clamp(idx(col),0,maxI-minI); snap(col,cur); mark(col);} let t=null; col.addEventListener('scroll',()=>{ mark(col); clearTimeout(t); t=setTimeout(update,120); },{passive:true}); requestAnimationFrame(()=>{ const iI=clamp(Math.floor(init)-minI,0,maxI-minI); snap(col,iI); mark(col); cur=iI;}); return { get value(){return (minI+cur)|0;}, setDisabled(dis){ root.classList.toggle('disabled',!!dis);} } }
-
-    // Инициализация
-    const WHEELS={
-      age:    buildIntWheel(document.getElementById('age-wheel'),    14, 90, 25),
-      height: buildDualWheel(document.getElementById('height-wheel'), 120, 230, 175.0),
-      weight: buildDualWheel(document.getElementById('weight-wheel'), 35, 250, 70.0),
-      fat:    buildDualWheel(document.getElementById('fat-wheel'),    0, 60, 18.0)
-    };
-    window.WHEELS = WHEELS; // для отладки
-
-    // Синхронизация «нет данных»
-    const fatNone=document.getElementById('bf-none');
-    if(fatNone){
-      const wrap=document.getElementById('bf-none-wrap');
-      wrap?.classList.toggle('checked', fatNone.checked);
-      document.getElementById('fat-wheel')?.classList.toggle('disabled', fatNone.checked);
-      fatNone.addEventListener('change', ()=>{
-        const c=fatNone.checked;
-        wrap?.classList.toggle('checked',c);
-        document.getElementById('fat-wheel')?.classList.toggle('disabled',c);
-        WHEELS.fat?.setDisabled?.(c);
-        updateBodyCompVisibility();
-        hapticSelect();
-      });
-    }
-
-    // Submit
-    (function(){
-      const btn=document.getElementById('submit-btn'); if(!btn) return;
-      const haptic=()=>{ try{ navigator.vibrate && navigator.vibrate(12);}catch(_){} };
-      btn.addEventListener('click',()=>{
-        if(btn.classList.contains('loading')) return;
-        const genderBtn=document.querySelector('.binary-btn.active');
-        const pick=(f)=>document.querySelector(`.choice-list[data-field="${f}"] .choice-item.selected`)?.dataset.value||null;
-        const pickMulti=(f)=>[...document.querySelectorAll(`.choice-list[data-field="${f}"] .choice-item.selected`)].map(i=>i.dataset.value);
-        const data={
-          gender:genderBtn?genderBtn.dataset.value:null,
-          age:WHEELS.age.value,
-          height_cm:WHEELS.height.value,
-          weight_kg:WHEELS.weight.value,
-          bodyfat_pct:(fatNone && fatNone.checked)?null:WHEELS.fat.value,
-          ethnicity:pick('ethnicity'),
-          body_comp:pick('body_comp'),
-          job_type:pick('job_type'),
-          steps_per_day:pick('steps_per_day'),
-          workouts_per_week:pick('workouts_per_week'),
-          workout_duration:pick('workout_duration'),
-          workout_intensity:pick('workout_intensity'),
-          neat_level:pick('neat_level'),
-          sleep_hours:pick('sleep_hours'),
-          weight_history:pick('weight_history'),
-          main_goal:pick('main_goal'),
-          goal_pace:pick('goal_pace'),
-          protein_activity:pick('protein_activity'),
-          chronic_conditions:pickMulti('chronic_conditions'),
-          pregnancy_lactation:pick('pregnancy_lactation'),
-          cycle_regular:document.getElementById('sec-cycle').style.display==='none'?null:pick('cycle_regular')
-        };
-        console.log('[FORM]', data);
-        haptic(); btn.classList.add('loading'); btn.disabled=true; setTimeout(()=>{ btn.classList.remove('loading'); btn.disabled=false; }, 900);
-      });
-    })();
-
-    // Показ/скрытие 20–21
-    function updateCycleVisibility(){
-      const isFemale=document.querySelector('.binary-btn.active[data-value="female"]');
-      const isMale  =document.querySelector('.binary-btn.active[data-value="male"]');
-      const secPreg=document.getElementById('sec-preg');
-      const secCycle=document.getElementById('sec-cycle');
-      if(!secPreg||!secCycle) return;
-      if(isMale){ // мужчины — скрыть оба
-        secPreg.style.display='none';
-        secCycle.style.display='none';
-        secPreg.querySelectorAll('.choice-item').forEach(i=>{ i.classList.remove('selected'); i.setAttribute('aria-checked','false'); });
-        secCycle.querySelectorAll('.choice-item').forEach(i=>{ i.classList.remove('selected'); i.setAttribute('aria-checked','false'); });
         return;
       }
-      // Женщины — показываем беременность/лактацию
-      secPreg.style.display = isFemale ? '' : 'none';
-      const preg=document.querySelector('.choice-list[data-field="pregnancy_lactation"] .choice-item.selected')?.dataset.value||null;
-      const showCycle=!!isFemale && (preg==='none');
-      secCycle.style.display=showCycle?'':'none';
-      if(!showCycle){ secCycle.querySelectorAll('.choice-item').forEach(i=>{ i.classList.remove('selected'); i.setAttribute('aria-checked','false'); }); }
     }
 
-    // Показ/скрытие блока 7 по чекбоксу «нет данных» (% жира)
-    function updateBodyCompVisibility(){
-      const sec=document.getElementById('sec-bodycomp');
-      const none=document.getElementById('bf-none');
-      if(!sec||!none) return;
-      const show=!!none.checked;
-      sec.style.display=show?'':'none';
-      if(!show){ sec.querySelectorAll('.choice-item').forEach(i=>{ i.classList.remove('selected'); i.setAttribute('aria-checked','false'); }); }
+    // Чекбокс «нет данных» у % жира
+    const chk = e.target.closest('#bf-none-wrap');
+    if (chk){
+      const input = chk.querySelector('input');
+      input.checked = !input.checked;
+      chk.classList.toggle('checked', input.checked);
+      const fw = document.getElementById('fat-wheel');
+      if (fw) fw.classList.toggle('disabled', input.checked);
+      if (window.WHEELS && WHEELS.fat && WHEELS.fat.setDisabled) WHEELS.fat.setDisabled(input.checked);
+      updateBodyCompVisibility();
+      hapticSelect();
+    }
+  }, {passive:true});
+
+  // Колёса
+  const pad = 4; const rowH = 36; const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+  function opt(t){ const d=document.createElement('div'); d.className='option'; d.textContent=t; return d; }
+  function fill(col, from, to){ const f=document.createDocumentFragment(); for(let i=0;i<pad;i++) f.appendChild(opt('')); for(let i=from;i<=to;i++) f.appendChild(opt(i)); for(let i=0;i<pad;i++) f.appendChild(opt('')); col.innerHTML=''; col.appendChild(f); }
+  const idx=(col)=>Math.round((col.scrollTop+col.clientHeight/2-rowH/2)/rowH)-pad;
+  function mark(col){
+    const limit = col.dataset.kind==='int' ? (col._maxInt - col._minInt) : 9;
+    const i = clamp(idx(col), 0, limit);
+    const activeIndex = i + pad;
+    if (col._lastActive !== activeIndex) { hapticSelect(); col._lastActive = activeIndex; }
+    [...col.children].forEach((o,n)=>o.classList.toggle('active', n===activeIndex));
+  }
+  function snap(col,i){ col.scrollTop=(i+pad)*rowH-col.clientHeight/2+rowH/2; }
+
+  function buildDualWheel(root,min,max,init){
+    if(!root) return {get value(){return null}, setDisabled(){}};
+    const intCol=root.querySelector('.col-int'); const fracCol=root.querySelector('.col-frac'); if(!intCol||!fracCol) return {get value(){return null}, setDisabled(){}};
+    const minI=Math.floor(min), maxI=Math.floor(max); intCol.dataset.kind='int'; intCol._minInt=minI; intCol._maxInt=maxI; fill(intCol,minI,maxI); fill(fracCol,0,9);
+    let curI=0,curF=0;
+    function lock(iVal){ if(iVal===maxI){curF=0; fracCol.style.pointerEvents='none'; fracCol.style.opacity='0.5'; snap(fracCol,0); mark(fracCol);} else { fracCol.style.pointerEvents='auto'; fracCol.style.opacity='1'; } }
+    function update(){ curI=clamp(idx(intCol),0,maxI-minI); curF=clamp(idx(fracCol),0,9); const iVal=minI+curI; if(iVal===maxI) curF=0; snap(intCol,curI); snap(fracCol,curF); mark(intCol); mark(fracCol); lock(iVal);}
+    intCol.addEventListener('scroll',()=>{ mark(intCol); lock(minI+clamp(idx(intCol),0,maxI-minI)); schedule('i'); },{passive:true});
+    fracCol.addEventListener('scroll',()=>{ mark(fracCol); schedule('f'); },{passive:true});
+    let ti=null, tf=null; function schedule(w){ if(w==='i'){ clearTimeout(ti); ti=setTimeout(update,120);} else { clearTimeout(tf); tf=setTimeout(update,120);} }
+    requestAnimationFrame(()=>{ const iI=clamp(Math.floor(init)-minI,0,maxI-minI); const iF=clamp(Math.round((init-Math.floor(init))*10),0,9); snap(intCol,iI); snap(fracCol,iF); mark(intCol); mark(fracCol); lock(minI+iI); curI=iI; curF=iF; });
+    return { get value(){ return +((minI+curI)+(curF/10)).toFixed(1); }, setDisabled(dis){ root.classList.toggle('disabled',!!dis);} };
+  }
+  function buildIntWheel(root,min,max,init){ if(!root) return {get value(){return null}, setDisabled(){}}; const col=root.querySelector('.col-int'); if(!col) return {get value(){return null}, setDisabled(){}}; const minI=Math.floor(min),maxI=Math.floor(max); col.dataset.kind='int'; col._minInt=minI; col._maxInt=maxI; fill(col,minI,maxI); let cur=0; function update(){ cur=clamp(idx(col),0,maxI-minI); snap(col,cur); mark(col);} let t=null; col.addEventListener('scroll',()=>{ mark(col); clearTimeout(t); t=setTimeout(update,120); },{passive:true}); requestAnimationFrame(()=>{ const iI=clamp(Math.floor(init)-minI,0,maxI-minI); snap(col,iI); mark(col); cur=iI;}); return { get value(){return (minI+cur)|0;}, setDisabled(dis){ root.classList.toggle('disabled',!!dis);} } }
+
+  // Инициализация
+  const WHEELS={
+    age:    buildIntWheel(document.getElementById('age-wheel'),    14, 90, 25),
+    height: buildDualWheel(document.getElementById('height-wheel'), 120, 230, 175.0),
+    weight: buildDualWheel(document.getElementById('weight-wheel'), 35, 250, 70.0),
+    fat:    buildDualWheel(document.getElementById('fat-wheel'),    0, 60, 18.0)
+  };
+  window.WHEELS = WHEELS; // для отладки
+
+  // Синхронизация «нет данных»
+  const fatNone=document.getElementById('bf-none');
+  if(fatNone){
+    const wrap=document.getElementById('bf-none-wrap');
+    if (wrap) wrap.classList.toggle('checked', fatNone.checked);
+    const fatWheel = document.getElementById('fat-wheel');
+    if (fatWheel) fatWheel.classList.toggle('disabled', fatNone.checked);
+    fatNone.addEventListener('change', ()=>{
+      const c=fatNone.checked;
+      if (wrap) wrap.classList.toggle('checked',c);
+      if (fatWheel) fatWheel.classList.toggle('disabled',c);
+      if (WHEELS.fat && WHEELS.fat.setDisabled) WHEELS.fat.setDisabled(c);
+      updateBodyCompVisibility();
+      hapticSelect();
+    });
+  }
+
+  // Submit
+  (function(){
+    const btn=document.getElementById('submit-btn'); if(!btn) return;
+    btn.addEventListener('click',()=>{
+      if(btn.classList.contains('loading')) return;
+      const genderBtn=document.querySelector('.binary-btn.active');
+      const pick=(f)=>document.querySelector(`.choice-list[data-field="${f}"] .choice-item.selected`)?.dataset.value||null;
+      const pickMulti=(f)=>[...document.querySelectorAll(`.choice-list[data-field="${f}"] .choice-item.selected`)].map(i=>i.dataset.value);
+      const data={
+        gender:genderBtn?genderBtn.dataset.value:null,
+        age:WHEELS.age.value,
+        height_cm:WHEELS.height.value,
+        weight_kg:WHEELS.weight.value,
+        bodyfat_pct:(fatNone && fatNone.checked)?null:WHEELS.fat.value,
+        ethnicity:pick('ethnicity'),
+        body_comp:pick('body_comp'),
+        job_type:pick('job_type'),
+        steps_per_day:pick('steps_per_day'),
+        workouts_per_week:pick('workouts_per_week'),
+        workout_duration:pick('workout_duration'),
+        workout_intensity:pick('workout_intensity'),
+        neat_level:pick('neat_level'),
+        sleep_hours:pick('sleep_hours'),
+        weight_history:pick('weight_history'),
+        main_goal:pick('main_goal'),
+        goal_pace:pick('goal_pace'),
+        protein_activity:pick('protein_activity'),
+        chronic_conditions:pickMulti('chronic_conditions'),
+        pregnancy_lactation:pick('pregnancy_lactation'),
+        cycle_regular:document.getElementById('sec-cycle').style.display==='none'?null:pick('cycle_regular')
+      };
+      console.log('[FORM]', data);
+      hapticImpact('light');
+      btn.classList.add('loading'); btn.disabled=true; setTimeout(()=>{ btn.classList.remove('loading'); btn.disabled=false; hapticNotify('success'); }, 900);
+    });
+  })();
+
+  // Показ/скрытие 20–21
+  function updateCycleVisibility(){
+    const isFemale=document.querySelector('.binary-btn.active[data-value="female"]');
+    const isMale  =document.querySelector('.binary-btn.active[data-value="male"]');
+    const secPreg=document.getElementById('sec-preg');
+    const secCycle=document.getElementById('sec-cycle');
+    if(!secPreg||!secCycle) return;
+    if(isMale){ // мужчины — скрыть оба
+      secPreg.style.display='none';
+      secCycle.style.display='none';
+      secPreg.querySelectorAll('.choice-item').forEach(i=>{ i.classList.remove('selected'); i.setAttribute('aria-checked','false'); });
+      secCycle.querySelectorAll('.choice-item').forEach(i=>{ i.classList.remove('selected'); i.setAttribute('aria-checked','false'); });
+      return;
+    }
+    // Женщины — показываем беременность/лактацию
+    secPreg.style.display = isFemale ? '' : 'none';
+    const preg=document.querySelector('.choice-list[data-field="pregnancy_lactation"] .choice-item.selected')?.dataset.value||null;
+    const showCycle=!!isFemale && (preg==='none');
+    secCycle.style.display=showCycle?'':'none';
+    if(!showCycle){ secCycle.querySelectorAll('.choice-item').forEach(i=>{ i.classList.remove('selected'); i.setAttribute('aria-checked','false'); }); }
+  }
+
+  // Показ/скрытие блока 7 по чекбоксу «нет данных» (% жира)
+  function updateBodyCompVisibility(){
+    const sec=document.getElementById('sec-bodycomp');
+    const none=document.getElementById('bf-none');
+    if(!sec||!none) return;
+    const show=!!none.checked;
+    sec.style.display=show?'':'none';
+    if(!show){ sec.querySelectorAll('.choice-item').forEach(i=>{ i.classList.remove('selected'); i.setAttribute('aria-checked','false'); }); }
+  }
+
+  // Инициализация состояния
+  updateCycleVisibility();
+  updateBodyCompVisibility();
+
+  // --- Самотесты (T) ---
+  function runSelfTests(){
+    const assert=(cond,msg)=>{ if(!cond) console.error('[TEST FAIL]',msg); else console.log('[TEST OK]',msg); };
+    assert(!!document.getElementById('submit-btn'),'submit есть');
+    assert(!!document.getElementById('bf-none'),'bf-none есть');
+    const eth = document.querySelector('.choice-list[data-field="ethnicity"] .choice-item');
+    if(eth){ eth.click(); assert(eth.classList.contains('selected'),'radio кликается'); }
+    const cc = document.querySelector('.choice-list[data-field="chronic_conditions"]');
+    if(cc){ const none=cc.querySelector('[data-value="none"]'); const other=cc.querySelector('[data-value]:not([data-value="none"])'); if(none&&other){ other.click(); none.click(); assert(none.classList.contains('selected')&&!other.classList.contains('selected'),'«Нет» снимает другие'); } }
+
+    // Проверка показа Q7 при «нет данных»
+    const wrap = document.getElementById('bf-none-wrap');
+    if (wrap) {
+      const sec = document.getElementById('sec-bodycomp');
+      wrap.click(); assert(sec && sec.style.display !== 'none', 'Q7 показывается при включенном «нет данных»');
+      wrap.click(); assert(sec && sec.style.display === 'none', 'Q7 скрывается при выключенном «нет данных»');
     }
 
-    // Инициализация состояния
-    updateCycleVisibility();
-    updateBodyCompVisibility();
-
-    // --- Самотесты (T) ---
-    function runSelfTests(){
-      const assert=(cond,msg)=>{ if(!cond) console.error('[TEST FAIL]',msg); else console.log('[TEST OK]',msg); };
-      assert(!!document.getElementById('submit-btn'),'submit есть');
-      assert(!!document.getElementById('bf-none'),'bf-none есть');
-      const eth = document.querySelector('.choice-list[data-field="ethnicity"] .choice-item');
-      if(eth){ eth.click(); assert(eth.classList.contains('selected'),'radio кликается'); }
-      const cc = document.querySelector('.choice-list[data-field="chronic_conditions"]');
-      if(cc){ const none=cc.querySelector('[data-value="none"]'); const other=cc.querySelector('[data-value]:not([data-value="none"])'); if(none&&other){ other.click(); none.click(); assert(none.classList.contains('selected')&&!other.classList.contains('selected'),'«Нет» снимает другие'); } }
-
-      // NEW: проверка показа Q7 при «нет данных»
-      const wrap = document.getElementById('bf-none-wrap');
-      if (wrap) {
-        const sec = document.getElementById('sec-bodycomp');
-        // включаем
-        wrap.click();
-        assert(sec && sec.style.display !== 'none', 'Q7 показывается при включенном «нет данных»');
-        // выключаем
-        wrap.click();
-        assert(sec && sec.style.display === 'none', 'Q7 скрывается при выключенном «нет данных»');
-      }
-
-      // NEW: проверка логики пола и 20–21
-      const maleBtn = document.querySelector('.binary-btn[data-value="male"]');
-      const femBtn  = document.querySelector('.binary-btn[data-value="female"]');
-      const secPreg = document.getElementById('sec-preg');
-      const secCycle= document.getElementById('sec-cycle');
-      if (maleBtn && femBtn && secPreg && secCycle){
-        maleBtn.click();
-        assert(secPreg.style.display==='none' && secCycle.style.display==='none','Для мужчин 20–21 скрыты');
-        femBtn.click();
-        assert(secPreg.style.display!=='none','Для женщин 20 показан');
-        const pregNone = document.querySelector('.choice-list[data-field="pregnancy_lactation"] .choice-item[data-value="none"]');
-        if (pregNone){ pregNone.click(); assert(secCycle.style.display!=='none','21 показывается при «Нет» в 20'); }
-      }
-      return true;
+    // Проверка логики пола и 20–21
+    const maleBtn = document.querySelector('.binary-btn[data-value="male"]');
+    const femBtn  = document.querySelector('.binary-btn[data-value="female"]');
+    const secPreg = document.getElementById('sec-preg');
+    const secCycle= document.getElementById('sec-cycle');
+    if (maleBtn && femBtn && secPreg && secCycle){
+      maleBtn.click(); assert(secPreg.style.display==='none' && secCycle.style.display==='none','Для мужчин 20–21 скрыты');
+      femBtn.click(); assert(secPreg.style.display!=='none','Для женщин 20 показан');
+      const pregNone = document.querySelector('.choice-list[data-field="pregnancy_lactation"] .choice-item[data-value="none"]');
+      if (pregNone){ pregNone.click(); assert(secCycle.style.display!=='none','21 показывается при «Нет» в 20'); }
     }
-    document.addEventListener('keydown',e=>{ if(e.key.toLowerCase()==='t'){ runSelfTests(); }});
+    return true;
+  }
+  document.addEventListener('keydown',e=>{ if(e.key.toLowerCase()==='t'){ runSelfTests(); }});
   </script>
 </body>
 </html>
