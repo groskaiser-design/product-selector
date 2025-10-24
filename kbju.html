@@ -455,34 +455,96 @@
     }
   }, {passive:true});
 
-  // Колёса
+  // Колёса — оптимизация под плавность
   const pad = 4; const rowH = 36; const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
   function opt(t){ const d=document.createElement('div'); d.className='option'; d.textContent=t; return d; }
   function fill(col, from, to){ const f=document.createDocumentFragment(); for(let i=0;i<pad;i++) f.appendChild(opt('')); for(let i=from;i<=to;i++) f.appendChild(opt(i)); for(let i=0;i<pad;i++) f.appendChild(opt('')); col.innerHTML=''; col.appendChild(f); }
   const idx=(col)=>Math.round((col.scrollTop+col.clientHeight/2-rowH/2)/rowH)-pad;
-  function mark(col){
-    const limit = col.dataset.kind==='int' ? (col._maxInt - col._minInt) : 9;
-    const i = clamp(idx(col), 0, limit);
-    const activeIndex = i + pad;
-    if (col._lastActive !== activeIndex) { hapticSelect(); col._lastActive = activeIndex; }
-    [...col.children].forEach((o,n)=>o.classList.toggle('active', n===activeIndex));
+
+  // Меняем class только у двух элементов: старого и нового — вместо перебора всего списка
+  function setActive(col, idxWithPad){
+    if (col._lastActive === idxWithPad) return;
+    const prevEl = col.children[col._lastActive];
+    if (prevEl) prevEl.classList.remove('active');
+    const nextEl = col.children[idxWithPad];
+    if (nextEl) nextEl.classList.add('active');
+    col._lastActive = idxWithPad;
+    // лёгкий тик только при реальной смене
+    hapticSelect();
   }
   function snap(col,i){ col.scrollTop=(i+pad)*rowH-col.clientHeight/2+rowH/2; }
 
   function buildDualWheel(root,min,max,init){
     if(!root) return {get value(){return null}, setDisabled(){}};
     const intCol=root.querySelector('.col-int'); const fracCol=root.querySelector('.col-frac'); if(!intCol||!fracCol) return {get value(){return null}, setDisabled(){}};
-    const minI=Math.floor(min), maxI=Math.floor(max); intCol.dataset.kind='int'; intCol._minInt=minI; intCol._maxInt=maxI; fill(intCol,minI,maxI); fill(fracCol,0,9);
-    let curI=0,curF=0;
-    function lock(iVal){ if(iVal===maxI){curF=0; fracCol.style.pointerEvents='none'; fracCol.style.opacity='0.5'; snap(fracCol,0); mark(fracCol);} else { fracCol.style.pointerEvents='auto'; fracCol.style.opacity='1'; } }
-    function update(){ curI=clamp(idx(intCol),0,maxI-minI); curF=clamp(idx(fracCol),0,9); const iVal=minI+curI; if(iVal===maxI) curF=0; snap(intCol,curI); snap(fracCol,curF); mark(intCol); mark(fracCol); lock(iVal);}
-    intCol.addEventListener('scroll',()=>{ mark(intCol); lock(minI+clamp(idx(intCol),0,maxI-minI)); schedule('i'); },{passive:true});
-    fracCol.addEventListener('scroll',()=>{ mark(fracCol); schedule('f'); },{passive:true});
-    let ti=null, tf=null; function schedule(w){ if(w==='i'){ clearTimeout(ti); ti=setTimeout(update,120);} else { clearTimeout(tf); tf=setTimeout(update,120);} }
-    requestAnimationFrame(()=>{ const iI=clamp(Math.floor(init)-minI,0,maxI-minI); const iF=clamp(Math.round((init-Math.floor(init))*10),0,9); snap(intCol,iI); snap(fracCol,iF); mark(intCol); mark(fracCol); lock(minI+iI); curI=iI; curF=iF; });
+    const minI=Math.floor(min), maxI=Math.floor(max);
+    intCol.dataset.kind='int'; intCol._minInt=minI; intCol._maxInt=maxI; fill(intCol,minI,maxI); fill(fracCol,0,9);
+    intCol._lastActive = -1; fracCol._lastActive = -1;
+
+    let curI=0,curF=0, ti=null, tf=null;
+    function lock(iVal){ if(iVal===maxI){ curF=0; fracCol.style.pointerEvents='none'; fracCol.style.opacity='0.5'; snap(fracCol,0); setActive(fracCol, pad); } else { fracCol.style.pointerEvents='auto'; fracCol.style.opacity='1'; } }
+
+    // Обновляем активные элементы без тяжёлых переборов
+    function updateMarkers(){
+      const iI = clamp(idx(intCol),0,maxI-minI);
+      const iF = clamp(idx(fracCol),0,9);
+      setActive(intCol, iI+pad);
+      setActive(fracCol, iF+pad);
+      lock(minI+iI);
+    }
+
+    // Снэпим к ближайшему значению в конце инерции
+    function snapToNearest(){
+      curI = clamp(idx(intCol),0,maxI-minI);
+      curF = clamp(idx(fracCol),0,9);
+      const iVal = minI+curI;
+      if (iVal===maxI) curF=0;
+      snap(intCol,curI); snap(fracCol,curF);
+      setActive(intCol, curI+pad);
+      setActive(fracCol, curF+pad);
+      lock(iVal);
+    }
+
+    // rAF-троттлинг скролла (минимум расчётов на событие)
+    function onScroll(col, which){
+      if (col._raf) return;
+      col._raf = requestAnimationFrame(()=>{ col._raf = 0; updateMarkers(); });
+      if (which==='i'){ clearTimeout(ti); ti=setTimeout(snapToNearest,120); }
+      else { clearTimeout(tf); tf=setTimeout(snapToNearest,120); }
+    }
+
+    intCol.addEventListener('scroll',()=>onScroll(intCol,'i'),{passive:true});
+    fracCol.addEventListener('scroll',()=>onScroll(fracCol,'f'),{passive:true});
+
+    requestAnimationFrame(()=>{
+      const iI=clamp(Math.floor(init)-minI,0,maxI-minI);
+      const iF=clamp(Math.round((init-Math.floor(init))*10),0,9);
+      snap(intCol,iI); snap(fracCol,iF);
+      setActive(intCol, iI+pad); setActive(fracCol, iF+pad);
+      lock(minI+iI); curI=iI; curF=iF;
+    });
+
     return { get value(){ return +((minI+curI)+(curF/10)).toFixed(1); }, setDisabled(dis){ root.classList.toggle('disabled',!!dis);} };
   }
-  function buildIntWheel(root,min,max,init){ if(!root) return {get value(){return null}, setDisabled(){}}; const col=root.querySelector('.col-int'); if(!col) return {get value(){return null}, setDisabled(){}}; const minI=Math.floor(min),maxI=Math.floor(max); col.dataset.kind='int'; col._minInt=minI; col._maxInt=maxI; fill(col,minI,maxI); let cur=0; function update(){ cur=clamp(idx(col),0,maxI-minI); snap(col,cur); mark(col);} let t=null; col.addEventListener('scroll',()=>{ mark(col); clearTimeout(t); t=setTimeout(update,120); },{passive:true}); requestAnimationFrame(()=>{ const iI=clamp(Math.floor(init)-minI,0,maxI-minI); snap(col,iI); mark(col); cur=iI;}); return { get value(){return (minI+cur)|0;}, setDisabled(dis){ root.classList.toggle('disabled',!!dis);} } }
+
+  function buildIntWheel(root,min,max,init){
+    if(!root) return {get value(){return null}, setDisabled(){}};
+    const col=root.querySelector('.col-int'); if(!col) return {get value(){return null}, setDisabled(){}};
+    const minI=Math.floor(min),maxI=Math.floor(max);
+    col.dataset.kind='int'; col._minInt=minI; col._maxInt=maxI; fill(col,minI,maxI); col._lastActive = -1;
+    let cur=0, t=null;
+
+    function updateMarkers(){ const i=clamp(idx(col),0,maxI-minI); setActive(col, i+pad); }
+    function snapToNearest(){ cur=clamp(idx(col),0,maxI-minI); snap(col,cur); setActive(col, cur+pad); }
+
+    col.addEventListener('scroll',()=>{
+      if (!col._raf) { col._raf = requestAnimationFrame(()=>{ col._raf=0; updateMarkers(); }); }
+      clearTimeout(t); t=setTimeout(snapToNearest,120);
+    },{passive:true});
+
+    requestAnimationFrame(()=>{ const iI=clamp(Math.floor(init)-minI,0,maxI-minI); snap(col,iI); setActive(col, iI+pad); cur=iI;});
+    return { get value(){return (minI+cur)|0;}, setDisabled(dis){ root.classList.toggle('disabled',!!dis);} }
+  }
 
   // Инициализация
   const WHEELS={
