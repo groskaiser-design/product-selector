@@ -91,6 +91,13 @@
     .primary-btn.loading .spinner{display:inline-block;animation:spin .9s linear infinite}
     @keyframes spin{to{transform:rotate(360deg)}}
   </style>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script>
+    (function initTMA(){
+      const tg = window.Telegram?.WebApp; if(!tg) return;
+      try{ tg.ready(); tg.expand(); tg.setHeaderColor('secondary_bg_color'); }catch(_){}
+    })();
+  </script>
 </head>
 <body>
   <div class="container">
@@ -376,26 +383,24 @@
     function toggleSection(h){ h.parentElement.classList.toggle('collapsed'); }
 
     // Haptics: Telegram WebApp API (iOS поддерживается) + fallback
-    function hapticImpact(type='light'){
-      try { window.Telegram?.WebApp?.HapticFeedback?.impactOccurred(type); } catch(_) {}
+    function hapticImpact(type='light'){ try { window.Telegram?.WebApp?.HapticFeedback?.impactOccurred?.(type); } catch(_){} } catch(_) {}
       try { navigator.vibrate?.(10); } catch(_) {}
     }
-    function hapticSelect(){
-      try { window.Telegram?.WebApp?.HapticFeedback?.selectionChanged(); } catch(_) {}
+    function hapticSelect(){ try { window.Telegram?.WebApp?.HapticFeedback?.selectionChanged?.(); } catch(_){} } catch(_) {}
       try { navigator.vibrate?.(8); } catch(_) {}
     }
-    function hapticNotify(kind='success'){
-      try { window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred(kind); } catch(_) {}
+    function hapticNotify(kind='success'){ try { window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred?.(kind); } catch(_){} } catch(_) {}
     }
 
     // Ранний триггер на касание (ощущается на iOS в Telegram)
     document.addEventListener('pointerdown', (e)=>{
       if (e.target.closest('.binary-btn, .choice-item, #bf-none-wrap, #submit-btn')) hapticImpact('light');
     }, {passive:true});
+    }, {passive:true});
 
     // Делегирование кликов (радио/чек/бинарные/нет-данных)
     document.addEventListener('click', (e)=>{
-      const haptic=()=>{ hapticSelect(); };
+      const haptic=()=>{ hapticImpact('light'); };
 
       // Пол — бинарные
       const bbtn = e.target.closest('.binary-btn');
@@ -457,7 +462,16 @@
     function opt(t){ const d=document.createElement('div'); d.className='option'; d.textContent=t; return d; }
     function fill(col, from, to){ const f=document.createDocumentFragment(); for(let i=0;i<pad;i++) f.appendChild(opt('')); for(let i=from;i<=to;i++) f.appendChild(opt(i)); for(let i=0;i<pad;i++) f.appendChild(opt('')); col.innerHTML=''; col.appendChild(f); }
     const idx=(col)=>Math.round((col.scrollTop+col.clientHeight/2-rowH/2)/rowH)-pad;
-    function mark(col){ const i=clamp(idx(col),0,col.dataset.kind==='int'?(col._maxInt-col._minInt):9); [...col.children].forEach((o,n)=>o.classList.toggle('active',n===i+pad)); }
+    function mark(col){
+      const limit = col.dataset.kind==='int' ? (col._maxInt - col._minInt) : 9;
+      const i = clamp(idx(col), 0, limit);
+      const activeIndex = i + pad;
+      if (col._lastActive !== activeIndex) {
+        hapticSelect();
+        col._lastActive = activeIndex;
+      }
+      [...col.children].forEach((o,n)=>o.classList.toggle('active', n===activeIndex));
+    }
     function snap(col,i){ col.scrollTop=(i+pad)*rowH-col.clientHeight/2+rowH/2; }
 
     function buildDualWheel(root,min,max,init){
