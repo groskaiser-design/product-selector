@@ -173,7 +173,7 @@
         </div>
 
         <!-- 7) Визуальная оценка -->
-        <div class="field">
+        <div class="field" id="sec-bodycomp" style="display:none">
           <div class="row"><div class="label">Визуальная оценка композиции тела</div></div>
           <div class="choice-list" data-type="single" data-field="body_comp" role="radiogroup" aria-label="Визуальная оценка композиции тела">
             <div class="choice-item" role="radio" aria-checked="false" data-value="very_low"><div class="radio-circle"></div><span class="label">Очень низкий процент жира (пресс, вены, рельеф)</span></div>
@@ -182,7 +182,7 @@
             <div class="choice-item" role="radio" aria-checked="false" data-value="overweight"><div class="radio-circle"></div><span class="label">Избыточный вес (заметный живот)</span></div>
             <div class="choice-item" role="radio" aria-checked="false" data-value="obesity"><div class="radio-circle"></div><span class="label">Ожирение</span></div>
           </div>
-          <div class="help">Выберите один вариант</div>
+          <div class="help">Показывается, если в % жира выбрано «нет данных»</div>
         </div>
 
         <!-- 8) Тип работы/учёбы -->
@@ -375,9 +375,19 @@
     // Аккордеон
     function toggleSection(h){ h.parentElement.classList.toggle('collapsed'); }
 
+    // Haptics: Telegram WebApp API (iOS поддерживается) + fallback
+    function hapticImpact(type='light'){ try{ window.Telegram?.WebApp?.HapticFeedback?.impactOccurred(type); }catch(_){} try{ navigator.vibrate?.(10); }catch(_){} }
+    function hapticSelect(){ try{ window.Telegram?.WebApp?.HapticFeedback?.selectionChanged(); }catch(_){} try{ navigator.vibrate?.(8); }catch(_){} }
+    function hapticNotify(kind='success'){ try{ window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred(kind); }catch(_){} }
+
+    // Ранний триггер на касание (ощущается на iOS в Telegram)
+    document.addEventListener('pointerdown', (e)=>{
+      if (e.target.closest('.binary-btn, .choice-item, #bf-none-wrap, #submit-btn')) hapticImpact('light');
+    }, {passive:true});
+
     // Делегирование кликов (радио/чек/бинарные/нет-данных)
     document.addEventListener('click', (e)=>{
-      const haptic=()=>{ if (navigator.vibrate) navigator.vibrate(12); };
+      const haptic=()=>{ hapticSelect(); };
 
       // Пол — бинарные
       const bbtn = e.target.closest('.binary-btn');
@@ -429,6 +439,7 @@
         const fw = document.getElementById('fat-wheel');
         fw?.classList.toggle('disabled', input.checked);
         if (window.WHEELS && WHEELS.fat) WHEELS.fat.setDisabled?.(input.checked);
+        updateBodyCompVisibility();
         haptic();
       }
     }, {passive:true});
@@ -472,8 +483,14 @@
       wrap?.classList.toggle('checked', fatNone.checked);
       document.getElementById('fat-wheel')?.classList.toggle('disabled', fatNone.checked);
       fatNone.addEventListener('change', ()=>{
-        const c=fatNone.checked; wrap?.classList.toggle('checked',c); document.getElementById('fat-wheel')?.classList.toggle('disabled',c); WHEELS.fat?.setDisabled?.(c);
+        const c=fatNone.checked;
+        wrap?.classList.toggle('checked',c);
+        document.getElementById('fat-wheel')?.classList.toggle('disabled',c);
+        WHEELS.fat?.setDisabled?.(c);
+        updateBodyCompVisibility();
+        hapticSelect();
       });
+    });
     }
 
     // Submit
@@ -534,8 +551,20 @@
       secCycle.style.display=showCycle?'':'none';
       if(!showCycle){ secCycle.querySelectorAll('.choice-item').forEach(i=>{ i.classList.remove('selected'); i.setAttribute('aria-checked','false'); }); }
     }
-    // Вызвать при загрузке, чтобы скрыть блоки до выбора пола
+
+    // Показ/скрытие блока 7 по чекбоксу «нет данных» (% жира)
+    function updateBodyCompVisibility(){
+      const sec=document.getElementById('sec-bodycomp');
+      const none=document.getElementById('bf-none');
+      if(!sec||!none) return;
+      const show=!!none.checked;
+      sec.style.display=show?'':'none';
+      if(!show){ sec.querySelectorAll('.choice-item').forEach(i=>{ i.classList.remove('selected'); i.setAttribute('aria-checked','false'); }); }
+    }
+
+    // Инициализация состояния
     updateCycleVisibility();
+    updateBodyCompVisibility();
 
     // --- Самотесты (T) ---
     function runSelfTests(){
