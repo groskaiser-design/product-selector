@@ -31,18 +31,6 @@ window.addEventListener('pageshow', function(e){
     }
   }catch(_){}
 }, { once: true });
-<script>
-// PERF baseline: one time at page start (after FORCE-FRESH)
-(function(){
-  try{
-    window.__perf = window.__perf || {};
-    window.__perf.tLaunch = performance.now();
-    window.__perf.metrics = { p2w:null, p2c:null, saveSpeed:null, saveToComment:null };
-    window.__perf.flags   = { commentSeenOnce:false, waitingAfterSave:false };
-  }catch(_){}
-})();
-</script>
-
 </script>
 
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
@@ -508,10 +496,50 @@ function ensureAllWheelsOnce(){
 ensureAllWheelsOnce();
 window.forceInitAllWheels = ensureAllWheelsOnce;
 
+/* ===== PERF (4 метрики) — единая шкала performance.now() (navigationStart) ===== */
+(function(){
+  window.__perf = {
+    t0: 0, // baseline = navigationStart → performance.now() - 0 == с начала загрузки
+    page_to_wheel_ms: null,      // PageLaunch→UpdateWheel
+    page_to_comment_ms: null,    // PageLaunch→UpdateComment
+    save_ms: null,               // Save speed
+    save_to_comment_ms: null,    // Save→UpdateComment
+    waitAfterSave: false,
+    tSaveClick: 0,
+    tSaveResp: 0
+  };
+})();
+function perfUpdateUI(){ try{ if (typeof updatePerfUI==='function') updatePerfUI(); }catch(_){} }
+function perfMarkWheelReadyOnce(){
+  const p = window.__perf; if (!p) return;
+  if (p.page_to_wheel_ms == null){ p.page_to_wheel_ms = performance.now() - p.t0; perfUpdateUI(); }
+}
+function perfOnComment(html){
+  if (!html) return;
+  const p = window.__perf; if (!p) return;
+  if (p.page_to_comment_ms == null){ p.page_to_comment_ms = performance.now() - p.t0; }
+  if (p.waitAfterSave && p.tSaveResp){
+    p.save_to_comment_ms = performance.now() - p.tSaveResp;
+    p.waitAfterSave = false;
+  }
+  perfUpdateUI();
+}
+function perfOnSaveStart(){
+  const p = window.__perf; if (!p) return;
+  p.tSaveClick = performance.now();
+}
+function perfOnSaveSuccess(){
+  const p = window.__perf; if (!p) return;
+  p.tSaveResp = performance.now();
+  p.save_ms   = p.tSaveResp - p.tSaveClick;
+  p.waitAfterSave = true;
+  perfUpdateUI();
+}
+
 /* ===========================
  * BLOCK C — SAVE (Apps Script)
  * =========================== */
-const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbxrpgwhtELPQs8BR67jWZ5xXItiW5vG33XIH_NzjCU9Prozw-QOBtxqcXVFnPB3OjOOvg/exec';
+const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbwfo3QDFii0Z2YDOw34Th5UB0uYkFe0789ArEQlQZFG_Eezo-bPqImJDAPKDmAkTZrxuA/exec';
 const APP_VERSION  = 'frontend-2025-10-21';
 const REQUEST_TIMEOUT_MS = 15000;
 function nowIso(){ return new Date().toISOString(); }
@@ -711,12 +739,13 @@ function handleSaveClick(e){
   setUnlockTime(now + COOLDOWN_MS);
   setSavingState(true);
   if (tg?.HapticFeedback?.impactOccurred) { try { tg.HapticFeedback.impactOccurred('light'); } catch(_){ } }
-  try{ if (window.__perf){ __perf.tSaveClick = performance.now(); } }catch(_){ }
 
   var values = collectWheelValues();
+  try { perfOnSaveStart(); } catch(_){}
 
   saveMeasurementsToDB(values)
     .then(function(res){
+      try { perfOnSaveSuccess(); } catch(_){}
       setRowCalcForUser(res.row_calc);
       startFrontDataFlow();
       setLastMeasurementTime(Date.parse(res.ts_iso));
@@ -814,6 +843,7 @@ function handleSaveClick(e){
     host.innerHTML = html
       ? `<div class="field">${html}</div>`
       : `<div class="field"><div class="help">Комментарий пока не готов…</div></div>`;
+    try { perfOnComment(html); } catch(_){}
   }
 
   function applyInputsToWheels(inputs){
@@ -852,6 +882,8 @@ function handleSaveClick(e){
         }
       }
     }
+    // основная фиксация готовности «колёс»
+    try { perfMarkWheelReadyOnce(); } catch(_){}
   }
 
   let _pollTimer = 0;
@@ -894,36 +926,24 @@ function handleSaveClick(e){
   window.startFrontDataFlow();
 
   apiLastInputs()
-    .then(r => { if (r && r.found && r.inputs) applyInputsToWheels(r.inputs); else ensureAllWheelsOnce(); })
-    .catch(()=>{ ensureAllWheelsOnce(); });
-
-
-  try{
-    if (window.__perf && !__perf.metrics.p2w){
-      __perf.metrics.p2w = performance.now() - __perf.tLaunch;
-      if (typeof updatePerfUI === 'function') updatePerfUI();
-    }
-  }catch(_){}
-
-  try{
-    if (html && window.__perf){
-      const now = performance.now();
-      if (!__perf.flags.commentSeenOnce){
-        __perf.metrics.p2c = now - __perf.tLaunch;
-        __perf.flags.commentSeenOnce = true;
+    .then(r => {
+      if (r && r.found && r.inputs) {
+        applyInputsToWheels(r.inputs);
+      } else {
+        ensureAllWheelsOnce();
+        try { perfMarkWheelReadyOnce(); } catch(_){}
       }
-      if (__perf.flags.waitingAfterSave && typeof __perf.tSaveResp === 'number'){
-        __perf.metrics.saveToComment = now - __perf.tSaveResp;
-        __perf.flags.waitingAfterSave = false;
-      }
-      if (typeof updatePerfUI === 'function') updatePerfUI();
-    }
-  }catch(_){}
+    })
+    .catch(()=>{
+      ensureAllWheelsOnce();
+      try { perfMarkWheelReadyOnce(); } catch(_){}
+    });
+
 })();
 
 
 /* ============================================================
- *  BLOCK P (Admin): «Скорость работы» (plain text, мс с десятыми)
+ *  BLOCK P (Admin): «Скорость работы» (plain text, секунды)
  * ============================================================ */
 (function maybeInjectAdminSection(){
   function inject(){
@@ -945,35 +965,23 @@ function handleSaveClick(e){
       <div class="section-content" id="perf-section">
         <div class="field">
           <div class="help" id="perfText" style="white-space:pre-line;text-align:left"></div>
-          <div style="margin-top:8px;text-align:center">
-            <button class="btn" id="perfRefreshBtn" type="button"><span class="btn-label">Обновить метрики</span></button>
-          </div>
         </div>
       </div>
     `;
     host.replaceWith(sec);
 
     window.updatePerfUI = function(){
-            try{
-        const m = (window.__perf && __perf.metrics) ? __perf.metrics : {};
-        const toSec = v => (typeof v === 'number') ? (v/1000).toFixed(3) + ' s' : '—';
-        const block =
-`PageLaunch→UpdateWheel: ${toSec(m.p2w)}
-PageLaunch→UpdateComment: ${toSec(m.p2c)}
-Save speed: ${toSec(m.saveSpeed)}
-Save→UpdateComment: ${toSec(m.saveToComment)}`;
-        const el = document.getElementById('perfText');
-        if (el) el.textContent = block;
-      }catch(_){}
+      const p = window.__perf || {};
+      const s = v => (typeof v === 'number') ? (v/1000).toFixed(3) : '—';
+      const block =
+`PageLaunch→UpdateWheel: ${s(p.page_to_wheel_ms)} s
+PageLaunch→UpdateComment: ${s(p.page_to_comment_ms)} s
+Save speed: ${s(p.save_ms)} s
+Save→UpdateComment: ${s(p.save_to_comment_ms)} s`;
+      const el = document.getElementById('perfText');
+      if (el) el.textContent = block;
     };
 
-    try{
-      document.getElementById('perfRefreshBtn')?.addEventListener('click', function(e){
-        e?.preventDefault?.();
-        try { window.Telegram?.WebApp?.HapticFeedback?.impactOccurred?.('light'); } catch(_){}
-        updatePerfUI();
-      }, {passive:true});
-    }catch(_){}
     try { updatePerfUI(); } catch(_){}
   }
   inject(); setTimeout(inject, 300); setTimeout(inject, 1200);
@@ -1026,7 +1034,5 @@ function toggleSectionByHeader(h){
   })();
 })();
 </script>
-
-
 </body>
 </html>
