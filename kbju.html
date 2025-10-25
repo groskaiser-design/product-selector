@@ -12,7 +12,7 @@
 // 🔔 КРИТИЧНО: Фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
 
-const APP_HTML_VERSION = 'v2025-01-24-003'; // ← МЕНЯЙ ЭТУ СТРОКУ ПРИ КАЖДОМ ОБНОВЛЕНИИ
+const APP_HTML_VERSION = 'v2025-01-24-004'; // ← МЕНЯЙ ЭТУ СТРОКУ ПРИ КАЖДОМ ОБНОВЛЕНИИ
 
 (function smartVersionCheck(){
   try {
@@ -144,7 +144,7 @@ window.addEventListener('pageshow', function(e){
 .choice-item.selected .radio-circle{background:linear-gradient(135deg,var(--okA),var(--okB));border-color:var(--okB)}
 .choice-item.selected .radio-circle::after{opacity:1;transform:scale(1)}
 
-.check-square{width:22px;height:22px;border-radius:6px;border:2px solid rgba(255,255,255,.65);display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .2s ease;background:transparent}
+.check-square{width:22px;height:22px;border-radius:6px;border:2px solid rgba(255,255,255,.65);display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .2s.ease;background:transparent}
 .check-square::after{content:"";width:12px;height:12px;border-radius:3px;background:#fff;opacity:0;transform:scale(.7);transition:all .2s ease}
 .choice-item.selected .check-square{background:linear-gradient(135deg,var(--okA),var(--okB));border-color:var(--okB)}
 .choice-item.selected .check-square::after{opacity:1;transform:scale(1)}
@@ -743,7 +743,7 @@ window.forceInitAllWheels = ensureAllWheelsOnce;
 /* ===========================
  * BLOCK C — SAVE (Apps Script)
  * =========================== */
-const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbwNlujRhXMvxwN2lKPI2EWlgo_fX8nULyDVyuW7jaKJXm1aZt_MRE5DzUOqtylXUx5fQA/exec';
+const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbwYbVwpGxWf_V58dCiZFGsqfeJlXKsN20DFiZCz6qppMLke15LCa74v-f_DDWj279AAqw/exec';
 const APP_VERSION  = 'frontend-2025-10-21';
 const REQUEST_TIMEOUT_MS = 15000;
 function nowIso(){ return new Date().toISOString(); }
@@ -814,7 +814,7 @@ async function saveMeasurementsToDB(values){
 }
 
 /* ============================================================
- * BLOCK D — Кулдаун, попапы, сохранение
+ *  BLOCK D — Кулдаун, попапы, сохранение
  * ============================================================ */
 var SAVE_IN_PROGRESS = false;
 var COOLDOWN_MS = 60000;
@@ -919,6 +919,7 @@ function scrollTopNoJump(){
   }catch(_){}
 }
 
+/* === СБОР КОЛЁС === */
 function collectWheelValues(){
   var out = {};
   for (var i=0; i<FIELDS.length; i++){
@@ -929,6 +930,68 @@ function collectWheelValues(){
     // важное замечание: для %жира при чекбоксе — оставляем null, чтобы не ломать бэк
     out[cfg.key] = (cfg.optional && cb && cb.checked) ? null : w.value;
   }
+  return out;
+}
+
+/* === СБОР АНКЕТЫ === */
+function collectSurveyValues(){
+  const out = {};
+
+  // helper: видимость секции
+  const isHidden = (node) => {
+    if (!node) return true;
+    const field = node.closest?.('.field') || node;
+    const cs = field && getComputedStyle(field);
+    return !field || cs.display === 'none' || cs.visibility === 'hidden';
+  };
+
+  // binary
+  const g = document.querySelector('.binary-btn.active[data-field="gender"]');
+  out.gender = g ? g.dataset.value : null;
+
+  // single & multiple
+  const single = (field) => {
+    const list = document.querySelector(`.choice-list[data-type="single"][data-field="${field}"]`);
+    if (!list || isHidden(list)) return null;
+    const sel = list.querySelector('.choice-item.selected');
+    return sel ? sel.dataset.value : null;
+  };
+  const multiple = (field) => {
+    const list = document.querySelector(`.choice-list[data-type="multiple"][data-field="${field}"]`);
+    if (!list || isHidden(list)) return null;
+    const vals = [...list.querySelectorAll('.choice-item.selected')].map(i=>i.dataset.value);
+    if (!vals.length) return null;
+    if (vals.includes('none')) return ['none']; // эксклюзивность «Нет»
+    return vals;
+  };
+
+  out.body_comp           = single('body_comp');
+  out.ethnicity           = single('ethnicity');
+  out.job_type            = single('job_type');
+  out.steps_per_day       = single('steps_per_day');
+  out.workouts_per_week   = single('workouts_per_week');
+  out.workout_duration    = single('workout_duration');
+  out.workout_intensity   = single('workout_intensity');
+  out.neat_level          = single('neat_level');
+  out.sleep_hours         = single('sleep_hours');
+  out.weight_history      = single('weight_history');
+  out.main_goal           = single('main_goal');
+  out.goal_pace           = single('goal_pace');
+  out.chronic_conditions  = multiple('chronic_conditions');
+  out.pregnancy_lactation = single('pregnancy_lactation');
+  out.cycle_regular       = single('cycle_regular');
+
+  // пол = male → гинекологические поля не отправляем
+  if (out.gender === 'male'){ out.pregnancy_lactation = null; out.cycle_regular = null; }
+
+  // body_comp только если у жира отмечено «нет данных»
+  try{
+    const bf = document.getElementById('bf-none');
+    const sys = document.getElementById('opt_fat');
+    const noFat = (bf && bf.checked) || (sys && sys.checked);
+    if (!noFat) out.body_comp = null;
+  }catch(_){}
+
   return out;
 }
 
@@ -944,7 +1007,7 @@ function handleSaveClick(e){
   setSavingState(true);
   if (tg?.HapticFeedback?.impactOccurred) { try { tg.HapticFeedback.impactOccurred('light'); } catch(_){ } }
 
-  var values = collectWheelValues();
+  var values = { ...collectWheelValues(), ...collectSurveyValues() };
 
   saveMeasurementsToDB(values)
     .then(function(res){
@@ -1110,6 +1173,69 @@ function handleSaveClick(e){
     }
   }
 
+  /* === Применение анкеты из last_inputs === */
+  function applyInputsToSurvey(inputs){
+    if (!inputs || typeof inputs !== 'object') return;
+
+    // gender
+    if (typeof inputs.gender === 'string'){
+      document.querySelectorAll('.binary-btn[data-field="gender"]').forEach(b=>{
+        const on = b.dataset.value === inputs.gender;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-pressed', on ? 'true':'false');
+      });
+    }
+
+    const selectSingle = (field, val) => {
+      const list = document.querySelector(`.choice-list[data-field="${field}"][data-type="single"]`);
+      if (!list) return;
+      list.querySelectorAll('.choice-item').forEach(i=>{
+        const on = String(i.dataset.value) === String(val);
+        i.classList.toggle('selected', on);
+        i.setAttribute('aria-checked', on ? 'true':'false');
+      });
+    };
+    const selectMultiple = (field, arr) => {
+      const list = document.querySelector(`.choice-list[data-field="${field}"][data-type="multiple"]`);
+      if (!list) return;
+      const set = new Set(Array.isArray(arr) ? arr : []);
+      if (set.has('none')){
+        list.querySelectorAll('.choice-item').forEach(i=>{
+          const on = i.dataset.value === 'none';
+          i.classList.toggle('selected', on);
+          i.setAttribute('aria-checked', on ? 'true':'false');
+        });
+        return;
+      }
+      list.querySelectorAll('.choice-item').forEach(i=>{
+        const on = set.has(i.dataset.value);
+        i.classList.toggle('selected', on);
+        i.setAttribute('aria-checked', on ? 'true':'false');
+      });
+    };
+
+    [
+      'body_comp','ethnicity','job_type','steps_per_day','workouts_per_week','workout_duration',
+      'workout_intensity','neat_level','sleep_hours','weight_history','main_goal','goal_pace',
+      'pregnancy_lactation','cycle_regular'
+    ].forEach(k=>{ if (inputs[k] != null) selectSingle(k, inputs[k]); });
+
+    if (inputs.chronic_conditions) selectMultiple('chronic_conditions', inputs.chronic_conditions);
+
+    // синхронизация стилизованного «нет данных» для %жира с системным чекбоксом
+    try{
+      const sys = document.getElementById('opt_fat');
+      const bfn = document.getElementById('bf-none');
+      const duo = document.querySelector('.field[data-key="fat"] .duo');
+      if (sys && bfn){
+        bfn.checked = !!sys.checked;
+        if (duo) duo.classList.toggle('disabled', bfn.checked);
+      }
+    }catch(_){}
+
+    try { updateCycleVisibility(); updateBodyCompVisibility(); } catch(_){}
+  }
+
   let _pollTimer = 0;
   async function pollOnce(){
     try{
@@ -1150,7 +1276,14 @@ function handleSaveClick(e){
   window.startFrontDataFlow();
 
   apiLastInputs()
-    .then(r => { if (r && r.found && r.inputs) applyInputsToWheels(r.inputs); else ensureAllWheelsOnce(); })
+    .then(r => {
+      if (r && r.found && r.inputs){
+        applyInputsToWheels(r.inputs);
+        applyInputsToSurvey(r.inputs);
+      } else {
+        ensureAllWheelsOnce();
+      }
+    })
     .catch(()=>{ ensureAllWheelsOnce(); });
 
 })();
@@ -1349,9 +1482,10 @@ function toggleSectionByHeader(h){
 
   window.updateBodyCompVisibility = function(){
     const sec  = document.getElementById('sec-bodycomp');
-    const none = document.getElementById('bf-none');
-    if (!sec || !none) return;
-    const show = !!none.checked;
+    if (!sec) return;
+    const bf = document.getElementById('bf-none');
+    const sys = document.getElementById('opt_fat'); // резервный источник
+    const show = (bf && bf.checked) || (sys && sys.checked);
     sec.style.display = show ? '' : 'none';
     if (!show){ sec.querySelectorAll('.choice-item.selected').forEach(i=>i.classList.remove('selected')); }
   };
