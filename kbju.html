@@ -1,3 +1,6 @@
+Готово! Ниже — полный файл с добавленным колесом `age` (целые годы), стоящим сразу после выбора пола и перед весом. Возраст передаётся на бэк вместе с остальными полями и подтягивается из last_inputs, если есть. Версию HTML поднял для кэш-бастинга.
+
+```html
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -12,7 +15,7 @@
 // 🔔 КРИТИЧНО: Фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
 
-const APP_HTML_VERSION = 'v2025-01-24-004'; // ← МЕНЯЙ ЭТУ СТРОКУ ПРИ КАЖДОМ ОБНОВЛЕНИИ
+const APP_HTML_VERSION = 'v2025-01-24-005'; // ← МЕНЯЙ ЭТУ СТРОКУ ПРИ КАЖДОМ ОБНОВЛЕНИИ
 
 (function smartVersionCheck(){
   try {
@@ -175,6 +178,9 @@ window.addEventListener('pageshow', function(e){
 /* 2) Remove heavy bold inside selector items */
 .choice-list .choice-item span.label{ font-weight: 600 !important; }
 
+/* 3) Возраст — только целые: скрываем десятые */
+.field[data-key="age"] .col-frac,
+.field[data-key="age"] .sep { display:none; }
 </style>
 </head>
 <body>
@@ -467,6 +473,7 @@ function buildWheel(fieldEl, initial){
   const maxInt = Math.floor(max);
   const intRange = maxInt - minInt;
   const key = fieldEl.dataset.key;
+  const onlyInt = fieldEl.dataset.onlyInt === '1' || fieldEl.dataset.onlyInt === 'true';
 
   const intCol = fieldEl.querySelector('.col-int');
   const fracCol = fieldEl.querySelector('.col-frac');
@@ -481,7 +488,7 @@ function buildWheel(fieldEl, initial){
     col.innerHTML=''; col.appendChild(frag);
   }
   fillCol(intCol, minInt, maxInt);
-  fillCol(fracCol, 0, 9);
+  fillCol(fracCol, 0, onlyInt ? 0 : 9); // ← возраст: только ноль в дробях
 
   const nearestIndex = col =>
     Math.round((col.scrollTop + (col.clientHeight - rowH)/2)/rowH) - pad;
@@ -533,7 +540,7 @@ function buildWheel(fieldEl, initial){
 
   function applyFracLock(iVal){
     if (disabled) return;
-    const lock = (iVal === maxInt);
+    const lock = onlyInt || (iVal === maxInt);
     fracCol.style.pointerEvents = lock ? 'none' : 'auto';
     fracCol.style.opacity = lock ? 0.5 : 1;
   }
@@ -547,11 +554,11 @@ function buildWheel(fieldEl, initial){
 
   function setValue(v){
     const clamped = clamp(+v, min, max);
-    const rounded = Math.round(clamped * 10) / 10;
+    const rounded = onlyInt ? Math.round(clamped) : Math.round(clamped * 10) / 10;
     modelValue = rounded;
 
     const iVal = Math.trunc(rounded);
-    let f = Math.round((rounded - iVal) * 10);
+    let f = onlyInt ? 0 : Math.round((rounded - iVal) * 10);
     if (iVal === maxInt) f = 0;
     const iIdx = iVal - minInt;
 
@@ -568,11 +575,11 @@ function buildWheel(fieldEl, initial){
   function snapNow(){
     if (isProgrammatic) return;
     let iIdx = clamp(nearestIndex(intCol), 0, intRange);
-    let f = clamp(nearestIndex(fracCol), 0, 9);
+    let f = onlyInt ? 0 : clamp(nearestIndex(fracCol), 0, 9);
     const iVal = minInt + iIdx;
     if (iVal === maxInt) f = 0;
 
-    modelValue = +(iVal + f/10).toFixed(1);
+    modelValue = onlyInt ? (iVal) : +(iVal + f/10).toFixed(1);
 
     const prev = isProgrammatic; isProgrammatic = true;
     setScrollInstant(intCol, iIdx);
@@ -589,7 +596,7 @@ function buildWheel(fieldEl, initial){
     scheduleSnap();
   }
   function onScrollFrac(){
-    if (isProgrammatic) return;
+    if (isProgrammatic || onlyInt) return; // ← возраст: игнорим скролл дробей
     if (rafFrac) cancelAnimationFrame(rafFrac);
     rafFrac = requestAnimationFrame(()=>markActive(fracCol));
     scheduleSnap();
@@ -604,7 +611,7 @@ function buildWheel(fieldEl, initial){
   fracCol.addEventListener('scroll', onScrollFrac, {passive:true});
   if (supportsScrollEnd){
     intCol.addEventListener('scrollend', snapNow, {passive:true});
-    fracCol.addEventListener('scrollend', snapNow, {passive:true});
+    if (!onlyInt) fracCol.addEventListener('scrollend', snapNow, {passive:true});
   }
 
   function setDisabled(dis, programmatic=false){
@@ -629,10 +636,10 @@ function buildWheel(fieldEl, initial){
     setValue,
     get value(){
       const iIdx = clamp(nearestIndex(intCol), 0, intRange);
-      let f = clamp(nearestIndex(fracCol), 0, 9);
+      let f = onlyInt ? 0 : clamp(nearestIndex(fracCol), 0, 9);
       const iVal = minInt + iIdx;
       if (iVal === maxInt) f = 0;
-      return +(iVal + f/10).toFixed(1);
+      return onlyInt ? iVal : +(iVal + f/10).toFixed(1);
     },
     getModelValue(){ return modelValue; },
     setDisabled,
@@ -642,7 +649,7 @@ function buildWheel(fieldEl, initial){
       fracCol.removeEventListener('scroll', onScrollFrac);
       if (supportsScrollEnd){
         intCol.removeEventListener('scrollend', snapNow);
-        fracCol.removeEventListener('scrollend', snapNow);
+        if (!onlyInt) fracCol.removeEventListener('scrollend', snapNow);
       }
     }
   };
@@ -691,6 +698,9 @@ function ensureWheel(fieldEl, cfg){
  *  BLOCK B: Fields + render + hard init
  * ============================================================ */
 const FIELDS = [
+  // ← age сразу после пола
+  { key:'age',    label:'Возраст', unit:'лет', min:14, max:90, initial:30, onlyInt:true },
+
   { key:'weight', label:'Вес', unit:'кг', min:40, max:250, initial:70.0 },
   { key:'height', label:'Рост', unit:'см', min:120, max:230, initial:175.0 },
   { key:'fat',    label:'% жира', unit:'%', min:3,  max:60,  initial:18.0, optional:true }
@@ -705,15 +715,17 @@ for (const cfg of FIELDS){
   f.dataset.key = cfg.key;
   f.dataset.min = cfg.min;
   f.dataset.max = cfg.max;
+  if (cfg.onlyInt) f.dataset.onlyInt = '1'; // маркер для buildWheel
   f.innerHTML = `
     <div class="row"><div class="label">${cfg.label}</div><div class="unit">${cfg.unit}</div></div>
     <div class="duo"><div class="col col-int"></div><div class="sep">,</div><div class="col col-frac"></div></div>
   `;
   const h = document.createElement('div');
   h.className = 'help';
-  h.textContent = cfg.unit==='кг' ? 'кг: целые и десятые' :
+  h.textContent = cfg.onlyInt ? 'целые годы' :
+                  (cfg.unit==='кг' ? 'кг: целые и десятые' :
                   cfg.unit==='см' ? 'см: целые и десятые (1 десятая = 1 мм)' :
-                  'проценты: целые и десятые';
+                  'проценты: целые и десятые');
   f.appendChild(h);
   fieldsWrap.appendChild(f);
   fieldByKey[cfg.key] = f;
@@ -743,7 +755,7 @@ window.forceInitAllWheels = ensureAllWheelsOnce;
 /* ===========================
  * BLOCK C — SAVE (Apps Script)
  * =========================== */
-const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbxaGyjvZgIrZbg0bXe3ybxsyGvlFT-Rt5oR8MqRcTugG_degVSNVJJvnUOTK-_IOPhqiw/exec';
+const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbxFTog__wMK9ywSIVP62xy_D7uC22far6_bkwtECOocgvPvo8N_0UlwxjynzNgDo7FUew/exec';
 const APP_VERSION  = 'frontend-2025-10-21';
 const REQUEST_TIMEOUT_MS = 15000;
 function nowIso(){ return new Date().toISOString(); }
@@ -930,6 +942,10 @@ function collectWheelValues(){
     // важное замечание: для %жира при чекбоксе — оставляем null, чтобы не ломать бэк
     out[cfg.key] = (cfg.optional && cb && cb.checked) ? null : w.value;
   }
+
+  // Возраст всегда целым
+  if (typeof out.age === 'number') out.age = Math.round(out.age);
+
   return out;
 }
 
@@ -1158,10 +1174,18 @@ function handleSaveClick(e){
       }
 
       if (typeof v === 'number'){
-        if (w) w.setValue(v);
-        else {
-          window.__pendingInputs = window.__pendingInputs || {};
-          window.__pendingInputs[k] = v;
+        if (k === 'age') { // возраст как целое
+          if (w && typeof w.setValue === 'function') w.setValue(Math.round(v));
+          else {
+            window.__pendingInputs = window.__pendingInputs || {};
+            window.__pendingInputs[k] = Math.round(v);
+          }
+        } else {
+          if (w) w.setValue(v);
+          else {
+            window.__pendingInputs = window.__pendingInputs || {};
+            window.__pendingInputs[k] = v;
+          }
         }
       }
     }
@@ -1527,3 +1551,4 @@ function toggleSectionByHeader(h){
 </script>
 </body>
 </html>
+```
