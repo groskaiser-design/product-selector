@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Router</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root{
+    --sbi: env(safe-area-inset-bottom,0px);
+    --tile: 64px;
+    --tile-gap: 16px;
+    --tile-radius: 18px;
+    --tile-bg: calc(var(--tile) + 4px);
+    --tile-bg-radius: calc(var(--tile-radius) + 4px);
+    --spawn-distance: 128px;
+    --ripple-scale: 20;
+  }
+
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%;scrollbar-gutter:stable both-edges}
+  html, body, button, .tile, .icon { -webkit-tap-highlight-color: transparent; }
+  button { background: transparent; border: 0; }
+
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+    min-height:100vh;
+    background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);
+    padding:20px 16px calc(24px + var(--sbi)) 16px;
+    color:#111;
+    user-select:none;
+  }
+  .container{max-width:520px;margin:0 auto}
+
+  .profile-card{
+    background:rgba(255,255,255,.15);
+    backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+    border-radius:24px;padding:20px 22px;margin-bottom:20px;
+    border:1px solid rgba(255,255,255,.22);
+    box-shadow:0 8px 32px rgba(0,0,0,.12),inset 0 1px 0 rgba(255,255,255,.35)
+  }
+  .profile-header{display:flex;gap:14px;align-items:center}
+  .profile-photo{
+    width:88px;height:88px;border-radius:50%;overflow:hidden;position:relative;flex:0 0 88px;
+    display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:28px;
+    background:linear-gradient(135deg,rgba(255,255,255,.35),rgba(255,255,255,.15));
+    border:2px solid rgba(255,255,255,.28);
+    box-shadow:0 10px 24px rgba(0,0,0,.22), inset 0 2px 6px rgba(255,255,255,.25)
+  }
+  .profile-photo::before{
+    content:"";position:absolute;inset:0;border-radius:50%;
+    background:radial-gradient(120% 120% at 50% -10%,rgba(255,255,255,.35),transparent 60%)
+  }
+  .avatar-img{width:100%;height:100%;display:block;border-radius:50%;object-fit:cover;object-position:50% 35%}
+  .profile-name{color:#fff;font-weight:800;font-size:20px;line-height:1.15}
+  .profile-id{margin-top:6px;font-size:12px;display:inline-block;color:rgba(255,255,255,.9);
+    background:rgba(255,255,255,.14);padding:4px 8px;border-radius:8px}
+
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--tile-gap);position:relative}
+  .tile{position:relative;text-align:center;cursor:pointer;overflow:visible;
+    transition:transform .18s ease, filter .22s ease, opacity .22s ease}
+  .icon-wrap{width:var(--tile);height:var(--tile);margin:0 auto 8px;position:relative}
+  .icon-bg{
+    position:absolute;left:-2px;top:-2px;width:var(--tile-bg);height:var(--tile-bg);border-radius:var(--tile-bg-radius);
+    background:linear-gradient(135deg,rgba(255,255,255,.4),rgba(255,255,255,.1));opacity:.6;transition:opacity .2s,transform .2s
+  }
+  .icon{
+    position:absolute;inset:0;margin:auto;width:var(--tile);height:var(--tile);border-radius:var(--tile-radius);
+    background:rgba(255,255,255,.22);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+    border:1.5px solid rgba(255,255,255,.45);display:flex;align-items:center;justify-content:center;
+    box-shadow:0 8px 24px rgba(0,0,0,.12),inset 0 1px 0 rgba(255,255,255,.55);
+    transition:transform .18s ease,box-shadow .18s ease
+  }
+  .icon-img{width:34px;height:34px;display:block}
+  .label{font-size:12px;font-weight:700;color:#fff;text-shadow:0 2px 4px rgba(0,0,0,.25)}
+  .tile:active .icon{transform:scale(.92)}
+
+  .grid .tile:hover > .icon-wrap > .icon{
+    transform:translateY(-6px) scale(1.04);
+    box-shadow:0 14px 28px rgba(0,0,0,.18),inset 0 1px 0 rgba(255,255,255,.6),0 0 22px rgba(102,126,234,.35)
+  }
+  .grid .tile:hover > .icon-wrap > .icon-bg{opacity:1;transform:scale(1.05)}
+
+  .r{
+    position:absolute;width:12px;height:12px;border-radius:999px;background:rgba(255,255,255,.35);
+    left:0;top:0;transform:translate(-50%,-50%) scale(0);pointer-events:none;filter:blur(1px);
+    animation:rr .6s ease-out forwards;will-change:transform,opacity
+  }
+  @keyframes rr{to{transform:translate(-50%,-50%) scale(var(--ripple-scale));opacity:0}}
+
+  #startB{z-index:3}
+  .spawn{
+    position:absolute;left:50%;top:50%;width:90px;height:104px;
+    transform:translate(-50%,-50%);
+    opacity:0;pointer-events:none;background:transparent;padding:0;appearance:none;-webkit-appearance:none
+  }
+  .spawn .icon-wrap{width:var(--tile);height:var(--tile)}
+  .spawn .label{margin-top:2px}
+
+  .open-b .spawn{pointer-events:auto}
+  .open-b .spawn.s1{opacity:1;transform:translate(-50%,-50%) rotate(-24deg) translate(var(--spawn-distance)) rotate(24deg)}
+  .open-b .spawn.s2{opacity:1;transform:translate(-50%,-50%) rotate(24deg) translate(var(--spawn-distance)) rotate(-24deg)}
+  .open-b #startB > .icon-wrap > .icon{transform:scale(.9)}
+
+  .grid.focus .tile{filter:blur(2px) saturate(.85);opacity:.18;transform:translateY(8px)}
+  .grid.focus #startB{filter:none;opacity:1;transform:none}
+
+  .backdrop{position:fixed;inset:0;display:none}
+  .backdrop.show{display:block}
+
+  /* ===== Инструкция (модалка + слайды) ===== */
+  .manual-overlay{
+    position:fixed; inset:0; display:none;
+    align-items:center; justify-content:center;
+    background:rgba(0,0,0,.45); backdrop-filter:blur(6px);
+    z-index:1000; padding:20px;
+  }
+  .manual-overlay.show{display:flex}
+  .manual{
+    position:relative; width:min(520px,92vw); max-height:86vh; background:#fff; border-radius:16px;
+    box-shadow:0 22px 60px rgba(0,0,0,.35); overflow:hidden; display:flex; flex-direction:column;
+    margin:auto;
+  }
+  .manual-header{padding:12px 16px 8px;border-bottom:1px solid #eee;display:flex;align-items:center;justify-content:space-between}
+  .manual-title{font-weight:800;font-size:16px;color:#333}
+  .manual-close{border:none;background:transparent;font-size:28px;line-height:1;padding:6px;cursor:pointer;color:#555}
+
+  .manual-body{position:relative;overflow:hidden;height: calc(86vh - 56px - 44px);}
+  .slides{display:flex;transition:transform .28s ease;height:100%;will-change:transform}
+  .slide{
+    flex:0 0 100%; overflow:auto; padding:14px 16px 18px;
+    -webkit-overflow-scrolling:touch; scrollbar-gutter:stable;
+  }
+
+  /* системные скроллбары */
+  .slide::-webkit-scrollbar{width:8px}
+  .slide::-webkit-scrollbar-thumb{background:#c5c9d2;border-radius:8px}
+  .slide::-webkit-scrollbar-track{background:transparent}
+  .slide{scrollbar-width:thin; scrollbar-color:#c5c9d2 transparent}
+
+  .slide h3{margin:2px 0 10px;font-size:18px;color:#222}
+  .slide .img-wrap{margin:6px 0 10px}
+  .slide .img-wrap img{width:100%;height:auto;display:block;border-radius:10px}
+  .slide p{white-space:pre-wrap;line-height:1.6;color:#333}
+
+  .manual-footer{display:flex;align-items:center;justify-content:center;gap:8px;padding:10px}
+  .dot{width:8px;height:8px;border-radius:999px;background:#d1d5db;cursor:pointer}
+  .dot.active{background:#6366f1}
+
+  /* ===== Прелоадер ===== */
+  .manual-loader{
+    position:absolute; inset:0;
+    display:none; align-items:center; justify-content:center;
+    background:#fff; /* как на продуктах — поверх контента в модалке */
+    gap:10px;
+  }
+  .manual-loader.show{display:flex}
+  .spinner{
+    width:28px; height:28px; border-radius:999px;
+    border:3px solid #e5e7eb; border-top-color:#6366f1;
+    animation:spin 0.8s linear infinite;
+  }
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .loading-text{font-weight:700;color:#4b5563}
+</style>
+</head>
+<body>
+  <div class="container">
+    <div class="profile-card">
+      <div class="profile-header">
+        <div class="profile-photo" id="userPhoto">A</div>
+        <div class="profile-main">
+          <div class="profile-name" id="userName">Загрузка...</div>
+          <div class="profile-id" id="userId">ID: ---</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid" id="gridB">
+      <div class="tile" data-module="manual">
+        <div class="icon-wrap"><div class="icon-bg"></div>
+          <div class="icon"><img class="icon-img" id="ico-manual" alt="Инструкция"></div>
+        </div>
+        <div class="label">Инструкция</div>
+      </div>
+
+      <div class="tile" id="startB">
+        <div class="icon-wrap"><div class="icon-bg"></div>
+          <div class="icon"><img class="icon-img" id="ico-start" alt="Старт"></div>
+        </div>
+        <div class="label">Старт</div>
+
+        <button class="spawn s1" id="btnProducts" aria-label="Выбор продуктов">
+          <div class="icon-wrap"><div class="icon-bg"></div>
+            <div class="icon"><img class="icon-img" id="ico-products" alt="Выбор продуктов"></div>
+          </div>
+          <div class="label">Выбор продуктов</div>
+        </button>
+
+        <button class="spawn s2" id="btnKbju" aria-label="Анкета КБЖУ">
+          <div class="icon-wrap"><div class="icon-bg"></div>
+            <div class="icon"><img class="icon-img" id="ico-kbju" alt="Анкета КБЖУ"></div>
+          </div>
+          <div class="label">Анкета КБЖУ</div>
+        </button>
+      </div>
+
+      <!-- ВСТАВЛЕНА ССЫЛКА ДЛЯ ПЛИТКИ "ЗАМЕРЫ" -->
+      <div class="tile" data-module="measurements" data-href="https://groskaiser-design.github.io/product-selector/measurements.html">
+        <div class="icon-wrap"><div class="icon-bg"></div>
+          <div class="icon"><img class="icon-img" id="ico-measurements" alt="Замеры"></div>
+        </div>
+        <div class="label">Замеры</div>
+      </div>
+
+      <div class="tile" data-module="menu">
+        <div class="icon-wrap"><div class="icon-bg"></div>
+          <div class="icon"><img class="icon-img" id="ico-menu" alt="Рацион"></div>
+        </div>
+        <div class="label">Рацион</div>
+      </div>
+
+      <div class="tile" data-module="diary">
+        <div class="icon-wrap"><div class="icon-bg"></div>
+          <div class="icon"><img class="icon-img" id="ico-diary" alt="Отчёт"></div>
+        </div>
+        <div class="label">Отчёт</div>
+      </div>
+
+      <div class="tile" data-module="ai">
+        <div class="icon-wrap"><div class="icon-bg"></div>
+          <div class="icon"><img class="icon-img" id="ico-ai" alt="AI-Коуч"></div>
+        </div>
+        <div class="label">AI-Коуч</div>
+      </div>
+
+      <div class="tile" data-module="analytics">
+        <div class="icon-wrap"><div class="icon-bg"></div>
+          <div class="icon"><img class="icon-img" id="ico-analytics" alt="Аналитика"></div>
+        </div>
+        <div class="label">Аналитика</div>
+      </div>
+
+      <div class="tile" data-module="profile">
+        <div class="icon-wrap"><div class="icon-bg"></div>
+          <div class="icon"><img class="icon-img" id="ico-profile" alt="Профиль"></div>
+        </div>
+        <div class="label">Профиль</div>
+      </div>
+
+      <div class="tile" data-module="subscription">
+        <div class="icon-wrap"><div class="icon-bg"></div>
+          <div class="icon"><img class="icon-img" id="ico-subscription" alt="Подписка"></div>
+        </div>
+        <div class="label">Подписка</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="backdrop" id="backdrop"></div>
+  <div id="toast" style="position:fixed;left:50%;bottom:86px;transform:translateX(-50%);background:rgba(0,0,0,.82);color:#fff;padding:10px 14px;border-radius:10px;font-weight:700;z-index:1000;opacity:0;transition:opacity .2s"></div>
+
+  <!-- POPUP – Инструкция -->
+  <div class="manual-overlay" id="manualOverlay" aria-hidden="true">
+    <div class="manual" role="dialog" aria-modal="true" aria-labelledby="manualTitle">
+      <div class="manual-header">
+        <div class="manual-title" id="manualTitle">Инструкция</div>
+        <button class="manual-close" id="manualClose" aria-label="Закрыть">×</button>
+      </div>
+      <div class="manual-body">
+        <!-- Прелоадер внутри модалки -->
+        <div class="manual-loader" id="manualLoader">
+          <div class="spinner"></div>
+          <div class="loading-text">Загрузка…</div>
+        </div>
+        <div class="slides" id="slides"></div>
+      </div>
+      <div class="manual-footer" id="dots"></div>
+    </div>
+  </div>
+
+<script>
+  /* ====== КОНФИГ ====== */
+  const LOG_URL  = 'https://script.google.com/macros/s/AKfycbxiAK2m6ms2ckXFQGHB9m3Lvb2tgv1TnS4wYVOGCm_-Hvc-ranLbQeKfQM_lnOkEQUH/exec';
+  const ICON_BASE = 'https://groskaiser-design.github.io/icons/';
+
+  const ICONS = {
+    manual:'question.svg', start:'play.svg', products:'cart.svg', kbju:'clipboard.svg',
+    measurements:'scales.svg', menu:'menu.svg', diary:'diary.svg', ai:'ai.svg',
+    analytics:'analytics.svg', profile:'profile.svg', subscription:'rub.svg'
+  };
+
+  /* Telegram env */
+  var tg=(window.Telegram&&window.Telegram.WebApp)?window.Telegram.WebApp:{
+    initData:'',initDataUnsafe:{},ready:function(){},expand:function(){},
+    BackButton:{show:function(){},hide:function(){},onClick:function(){}},
+    HapticFeedback:{
+      impactOccurred:function(){},
+      selectionChanged:function(){},
+      notificationOccurred:function(){}
+    },
+    showAlert:function(m){console.log(m)}
+  };
+  try{tg.ready();tg.expand();}catch(e){}
+
+  // === HAPTICS HELPERS (как в стандарте) ===
+  function hImpact(type='light'){ try{ tg.HapticFeedback?.impactOccurred?.(type); } catch(_){} }
+  function hSelect(){ try{ tg.HapticFeedback?.selectionChanged?.(); } catch(_){} }
+  function hNotify(type='success'){ try{ tg.HapticFeedback?.notificationOccurred?.(type); } catch(_){} }
+
+  /* ====== ЛОГИ (в один лист: events) ====== */
+  function baseUser(){
+    const u = (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) || {};
+    return {
+      user_id:  u.id || '',
+      username: ((u.first_name||'') + (u.last_name ? ' '+u.last_name : '') || u.username || '').trim()
+    };
+  }
+  function pixelFallback(body){
+    try{
+      const q = new URLSearchParams({
+        action:'log',
+        module: body.module || 'router',
+        page: body.page || (location.pathname.split('/').pop()||'router.html'),
+        event: body.event || '',
+        user_id: body.user_id || '',
+        username: body.username || '',
+        client_ts: body.client_ts || new Date().toISOString(),
+        payload: btoa(unescape(encodeURIComponent(JSON.stringify(body.payload||{}))))
+      }).toString();
+      const img = new Image();
+      img.src = LOG_URL + '?' + q + '&_t=' + Date.now();
+    }catch(_){}}
+  function _sendLog(body){
+    try{
+      if(navigator.sendBeacon){
+        const blob = new Blob([JSON.stringify(body)], {type:'application/json'});
+        navigator.sendBeacon(LOG_URL, blob);
+      }
+    }catch(_){ }
+    // всегда дублируем пикселем, чтобы не терять события
+    pixelFallback(body);
+  }
+  function logEvent(event, payload){
+    try{
+      const body = {
+        action:'log', module:'router',
+        page:(location.pathname.split('/').pop()||'router.html'),
+        event:String(event||''), ...baseUser(),
+        payload:payload||{}, client_ts:new Date().toISOString()
+      };
+      _sendLog(body);
+    }catch(_){}
+  }
+  function logManual(event, payload){ logEvent(event, payload); }
+
+  /* ====== ИКОНКИ ====== */
+  (function attachIcons(){
+    const map = [
+      ['ico-manual',       ICONS.manual],
+      ['ico-start',        ICONS.start],
+      ['ico-products',     ICONS.products],
+      ['ico-kbju',         ICONS.kbju],
+      ['ico-measurements', ICONS.measurements],
+      ['ico-menu',         ICONS.menu],
+      ['ico-diary',        ICONS.diary],
+      ['ico-ai',           ICONS.ai],
+      ['ico-analytics',    ICONS.analytics],
+      ['ico-profile',      ICONS.profile],
+      ['ico-subscription', ICONS.subscription],
+    ];
+    map.forEach(([id, file])=>{
+      const el = document.getElementById(id);
+      if(el){ el.src = ICON_BASE + file; el.decoding='async'; el.loading='eager'; }
+    });
+  })();
+
+  // === Глобальная хаптика на ВСЕ иконки ===
+  document.addEventListener('pointerdown', (e)=>{
+    const host = e.target.closest?.('.icon');
+    if(!host) return;
+    hImpact('light');
+  }, {passive:true});
+
+  /* ====== Профиль ====== */
+  (function(){
+    try{
+      var u=(tg&&tg.initDataUnsafe&&tg.initDataUnsafe.user)?tg.initDataUnsafe.user:null;
+      var nameEl=document.getElementById('userName');
+      var idEl=document.getElementById('userId');
+      var photoEl=document.getElementById('userPhoto');
+      if(u){
+        var full=((u.first_name||'')+' '+(u.last_name||'')).trim()||'Пользователь';
+        nameEl.textContent=full; idEl.textContent='ID: '+(u.id||'---');
+        if(u.photo_url){
+          var img=new Image(); img.src=u.photo_url; img.alt=full; img.className='avatar-img';
+          photoEl.textContent=''; photoEl.appendChild(img);
+        } else {
+          photoEl.textContent=(full.charAt(0)||'A').toUpperCase();
+        }
+        logEvent('profile_loaded', { has_photo: !!u.photo_url });
+      } else {
+        nameEl.textContent='Александр Петров'; idEl.textContent='ID: 123456789'; photoEl.textContent='А';
+        logEvent('profile_loaded_demo', {});
+      }
+    }catch(e){}
+  })();
+
+  function toast(msg){
+    var t=document.getElementById('toast');
+    t.textContent=msg; t.style.opacity='1';
+    hNotify('success'); // тактильное уведомление как в стандарте
+    setTimeout(function(){t.style.opacity='0';},1200);
+  }
+
+  /* ====== Ripple ====== */
+  function rippleIn(target, e){
+    try{
+      var host = (target.closest && target.closest('.icon')) || (target.querySelector && target.querySelector('.icon')) || null;
+      if(!host){ return; }
+      const prev = host.querySelector('.r'); if (prev) prev.remove();
+      var r=document.createElement('span'); r.className='r';
+      var b=host.getBoundingClientRect();
+      var pt = (e.touches && e.touches[0]) ? e.touches[0] : e;
+      r.style.left=(pt.clientX-b.left)+'px'; r.style.top=(pt.clientY-b.top)+'px';
+      host.appendChild(r);
+      r.addEventListener('animationend',function(){ r.remove(); },false);
+    }catch(_){}}
+
+  function bindTap(el, handler){
+    let lastTouch = 0;
+    if (window.PointerEvent){
+      el.addEventListener('pointerdown', function(e){
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
+        handler(e);
+      });
+    } else {
+      el.addEventListener('touchstart', function(e){ lastTouch = Date.now(); handler(e); }, {passive:true});
+      el.addEventListener('click', function(e){ if (Date.now() - lastTouch < 500) return; handler(e); });
+    }
+  }
+
+  /* ====== Меню/плитки + Инструкция ====== */
+  (function(){
+    var grid=document.getElementById('gridB');
+    var start=document.getElementById('startB');
+    var btnProducts=document.getElementById('btnProducts');
+    var btnKbju=document.getElementById('btnKbju');
+    var backdrop=document.getElementById('backdrop');
+    var opened=false, backHandler=null;
+
+    function openMenu(){
+      if(opened) return; 
+      opened=true;
+      start.classList.add('open-b'); grid.classList.add('focus'); backdrop.classList.add('show');
+      logEvent('menu_open', {});
+      try{ 
+        tg.BackButton.show(); 
+        if(tg.BackButton.onClick){ 
+          backHandler=function(){ closeMenu(); }; 
+          tg.BackButton.onClick(backHandler);
+        } 
+      }catch(_){}
+    }
+    function closeMenu(){ if(!opened) return; opened=false;
+      start.classList.remove('open-b'); grid.classList.remove('focus'); backdrop.classList.remove('show');
+      logEvent('menu_close', {});
+      try{ tg.BackButton.hide(); if(backHandler){ tg.BackButton.onClick(function(){}); backHandler=null; } }catch(_){}
+    }
+
+    bindTap(start, function(e){
+      hImpact('light');
+      rippleIn(e.target, e);
+      logEvent('start_tap', { was_opened: opened });
+      (opened ? closeMenu : openMenu)();
+    });
+
+    function goAfterRipple(url, name, e){
+      hImpact('light');
+      rippleIn(e.target, e);
+      logEvent('spawn_tap', { target: name, was_opened: opened });
+      if (opened) closeMenu();
+      setTimeout(function(){ logEvent('navigate', { to: url }); window.location.href=url; }, 90);
+    }
+    bindTap(btnProducts, function(e){ e.stopPropagation(); goAfterRipple('products.html', 'products', e); });
+    bindTap(btnKbju,     function(e){ e.stopPropagation(); goAfterRipple('kbju.html',     'kbju',     e); });
+
+    bindTap(backdrop, function(){ logEvent('backdrop_tap', {}); closeMenu(); });
+    document.addEventListener('keydown',function(e){ if(e.key==='Escape'){ logEvent('press_escape', {}); closeMenu(); } });
+
+    var tiles=document.querySelectorAll('.tile[data-module]');
+    tiles.forEach(function(t){
+      const mod = t.getAttribute('data-module');
+      if(mod==='manual') return;
+      bindTap(t, function(ev){
+        hImpact('light');
+        rippleIn(ev.target, ev);
+        logEvent('tile_tap', { module: mod, was_opened: opened });
+
+        // === ДОБАВЛЕНО: прямой переход, если у плитки задан data-href ===
+        const href = t.dataset.href;
+        if (opened) { closeMenu(); } // на всякий случай закрываем плавающее меню
+        if (href) {
+          setTimeout(function(){
+            logEvent('navigate', { to: href, module: mod });
+            window.location.href = href;
+          }, 90);
+          return;
+        }
+        // === /добавлено ===
+
+        toast('Раздел в разработке');
+      });
+    });
+
+    // === Инструкция ===
+    const manualTile = document.querySelector('.tile[data-module="manual"]');
+    const overlay = document.getElementById('manualOverlay');
+    const slidesEl = document.getElementById('slides');
+    const dotsEl   = document.getElementById('dots');
+    const closeBtn = document.getElementById('manualClose');
+    const loaderEl = document.getElementById('manualLoader');
+
+    let slidesCache = null;
+    let cur = 0;
+
+    const showManualLoader = () => {
+      loaderEl.classList.add('show');
+      slidesEl.style.visibility = 'hidden';
+      dotsEl.style.visibility = 'hidden';
+    };
+    const hideManualLoader = () => {
+      loaderEl.classList.remove('show');
+      slidesEl.style.visibility = '';
+      dotsEl.style.visibility = '';
+    };
+
+    function escapeHtml(s){ return (s||'').replace(/[&<>\"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]||m)); }
+
+    function renderSlides(slides){
+      slidesEl.innerHTML=''; dotsEl.innerHTML='';
+      slides.forEach((s,i)=>{
+        const card = document.createElement('div'); card.className='slide';
+        const parts=[];
+        if (s.title) parts.push(`<h3>${escapeHtml(s.title)}</h3>`);
+        if (s.image) parts.push(`<div class="img-wrap"><img src="${s.image}" alt=""></div>`);
+        if (s.text)  parts.push(`<p class="slide-text">${s.text}</p>`);
+        if (!parts.length) parts.push(`<p style="color:#6B7280">Пустой слайд #${i+1}</p>`);
+        card.innerHTML = parts.join('');
+        slidesEl.appendChild(card);
+
+        const dot=document.createElement('div');
+        dot.className='dot'; if(i===0) dot.classList.add('active');
+        dot.addEventListener('pointerdown', ()=>hImpact('light'), {passive:true}); // хаптика на точке
+        dot.addEventListener('click',()=>goTo(i));
+        dotsEl.appendChild(dot);
+      });
+      cur=0; applyTransform(); logManual('manual_slide_view',{index:0});
+      hideManualLoader();
+    }
+    function applyTransform(){
+      slidesEl.style.transform = `translateX(${-100*cur}%)`;
+      Array.from(dotsEl.children).forEach((d,i)=>d.classList.toggle('active', i===cur));
+    }
+    function goTo(n){ if(!slidesCache) return; const max=slidesCache.length; const old=cur; cur=Math.max(0,Math.min(max-1,n)); if(cur!==old){ applyTransform(); hSelect(); logManual('manual_slide_view',{index:cur}); } }
+    function next(){ if(!slidesCache) return; if(cur<slidesCache.length-1){ cur++; applyTransform(); hSelect(); logManual('manual_next',{index:cur}); } }
+    function prev(){ if(!slidesCache) return; if(cur>0){ cur--; applyTransform(); hSelect(); logManual('manual_prev',{index:cur}); } }
+
+    function openManual(){
+      if (opened) closeMenu();
+      hImpact('light'); // хаптика при открытии модалки
+      overlay.classList.add('show'); overlay.setAttribute('aria-hidden','false');
+      logManual('manual_open',{});
+
+      showManualLoader();
+      if (slidesCache){
+        renderSlides(slidesCache);
+        return;
+      }
+      fetch(`${LOG_URL}?action=get_manual`, {cache:'no-cache'})
+        .then(r=>r.json()).then(j=>{
+          const slides = (j && j.ok && Array.isArray(j.slides)) ? j.slides : [];
+          slidesCache = slides.length ? slides.slice(0,50) :
+            [{title:'Инструкция недоступна', text:'Добавьте контент в лист "Manual" файла Router Logger.'}];
+          renderSlides(slidesCache);
+        }).catch(err=>{
+          slidesCache = [{title:'Ошибка', text:escapeHtml(String(err))}];
+          renderSlides(slidesCache);
+        });
+    }
+    function closeManual(){
+      hImpact('light'); // хаптика при закрытии модалки
+      overlay.classList.remove('show'); overlay.setAttribute('aria-hidden','true');
+      logManual('manual_close',{index:cur});
+    }
+
+    // жесты/клавиатура
+    let touchX=null;
+    slidesEl.addEventListener('touchstart', e=>{ touchX=e.touches[0].clientX; }, {passive:true});
+    slidesEl.addEventListener('touchmove', e=>{
+      if(touchX==null) return;
+      const dx=e.touches[0].clientX-touchX;
+      if(Math.abs(dx)>40){ dx<0?next():prev(); touchX=null; }
+    }, {passive:true});
+    slidesEl.addEventListener('touchend', ()=>{ touchX=null; });
+    document.addEventListener('keydown', e=>{
+      if (!overlay.classList.contains('show')) return;
+      if (e.key==='ArrowRight') next();
+      if (e.key==='ArrowLeft')  prev();
+      if (e.key==='Escape')     closeManual();
+    });
+
+    bindTap(closeBtn, ()=>closeManual());
+    bindTap(manualTile, e=>{ rippleIn(e.target,e); openManual(); });
+
+    // стартовые события
+    logEvent('app_open', {});
+    logEvent('ping', {version:'router-logger-v3'});
+  })();
+
+  // тех.ошибки
+  window.addEventListener('error', function(e){
+    logEvent('js_error', { message: e.message, file: e.filename, line: e.lineno, col: e.colno });
+  });
+  window.addEventListener('unhandledrejection', function(e){
+    logEvent('promise_rejection', { reason: (e.reason && (e.reason.stack || e.reason.message)) || String(e.reason) });
+  });
+
+  /* ====== SMOKE TESTS (optional; run with ?test=1) ====== */
+  (function runSmokeTests(){
+    try{
+      const p = new URLSearchParams(location.search);
+      if (p.get('test') !== '1') return;
+      console.group('%cRouter smoke tests','color:#6366f1;font-weight:700');
+      try{ hImpact('light'); hSelect(); hNotify('success'); console.log('✓ haptics helpers callable'); }catch(e){ console.error('✗ haptics', e); }
+      try{ 
+        const btn = document.createElement('button'); document.body.appendChild(btn);
+        let fired=false; bindTap(btn, ()=>{ fired=true; });
+        btn.dispatchEvent(new (window.PointerEvent||MouseEvent)('pointerdown', {bubbles:true}));
+        console.assert(fired, 'bindTap should fire on pointerdown');
+        btn.remove();
+        console.log('✓ bindTap basic');
+      }catch(e){ console.error('✗ bindTap', e); }
+      console.groupEnd();
+    }catch(_){/* ignore */}
+  })();
+</script>
+</body>
+</html>
