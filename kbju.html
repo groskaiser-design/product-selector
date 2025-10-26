@@ -1023,63 +1023,73 @@ function handleSaveClick(e){
   const saveId = genSaveId();
 
   SAVE_IN_PROGRESS = true;
-  setUnlockTime(Date.now() + COOLDOWN_MS); // ← как в стандарте: блокируем спам на время операции
+  setUnlockTime(Date.now() + COOLDOWN_MS); // блокируем спам на время операции
   setSavingState(true);
   try { tg?.HapticFeedback?.impactOccurred?.('light'); } catch(_){}
 
   const values = { ...collectWheelValues(), ...collectSurveyValues() };
 
-  saveMeasurementsToDB(values, saveId)
+  // ВАЖНО: общий finally, чтобы точно снять спиннер/флаг
+  Promise.resolve()
+    .then(() => saveMeasurementsToDB(values, saveId))
     .then(function(res){
       setRowCalcForUser(res.row_calc);
       setLastMeasurementTime(Date.parse(res.ts_iso));
-      setSavingState(false);
-      setUnlockTime(Date.now() + 4000);
+
+      // свернуть анкету и подправить скролл
       collapseAccordionSafe();
       requestAnimationFrame(()=>requestAnimationFrame(scrollTopNoJump));
+
+      // перезапуск потоков
       try { startFrontDataFlow(); } catch(_){}
       try { startMacrosFlow(true); } catch(_){}
 
       try { tg?.HapticFeedback?.notificationOccurred?.('success'); } catch(_){}
       showPopup('Готово','Данные сохранены.','success');
-      SAVE_IN_PROGRESS = false;
     })
     .catch(async function(err){
-      setSavingState(false);
       const msg = String((err && err.message) || err || '');
 
+      // Таймаут — пробуем «пост-чек»
       if ((err && err.code === 408) || /timeout|network/i.test(msg)) {
         const confirmed = await confirmSavedAfterTimeout(prevRowCalc).catch(()=>null);
         if (confirmed != null) {
           setRowCalcForUser(confirmed);
           setLastMeasurementTime(Date.now());
           setUnlockTime(Date.now() + 4000);
+
+          // 🔧 ДОБАВЛЕНО: свернуть + скролл и перезапуски потоков
+          collapseAccordionSafe();
+          requestAnimationFrame(()=>requestAnimationFrame(scrollTopNoJump));
           try { startFrontDataFlow(); } catch(_){}
           try { startMacrosFlow(true); } catch(_){}
+
           try { tg?.HapticFeedback?.notificationOccurred?.('success'); } catch(_){}
           showPopup('Готово','Данные сохранены.','success');
-          SAVE_IN_PROGRESS = false;
           return;
         }
         setUnlockTime(Date.now() + 2000);
         showPopup('Не сохранено (возможно ушло)','Сервер не успел ответить вовремя. Возможно, данные уже сохранены. Проверьте «Последний замер».','error');
         try { startFrontDataFlow(); } catch(_){}
-        SAVE_IN_PROGRESS = false;
         return;
       }
 
+      // Rate limit
       if ((err && err.code === 429) || /too\s*many\s*requests|rate[-_\s]*limit|слишком\s+часто|429/i.test(msg)){
         setUnlockTime(Date.now() + 4000);
         showPopup('Too many requests','Не нужно так часто нажимать эту кнопку','error');
-        SAVE_IN_PROGRESS = false;
         return;
       }
 
       setUnlockTime(Date.now() + 2000);
       showPopup('Не сохранено','Произошла ошибка при сохранении. Попробуйте позже.','error');
+    })
+    .finally(() => {
+      setSavingState(false);
       SAVE_IN_PROGRESS = false;
     });
 }
+
 (function(){
   var btn = document.getElementById('saveBtn');
   if (!btn) return;
