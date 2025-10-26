@@ -165,6 +165,21 @@ window.addEventListener('pageshow', function(e){
   /* 3) Возраст — только целые: скрываем десятые (визуально) */
   .field[data-key="age"] .col-frac,
   .field[data-key="age"] .sep { display:none; }
+
+  /* === Analytics: macros cards === */
+  .macros-grid{
+  display:grid;grid-template-columns:repeat(2,1fr);gap:8px;padding:12px
+  }
+  .macro-card{
+  border:1px solid rgba(255,255,255,.24);border-radius:14px;
+  background:rgba(255,255,255,.12);padding:12px;text-align:center
+  }
+  .macro-card .m-label{font-size:12px;opacity:.9;margin-bottom:6px;font-weight:700}
+  .macro-card .m-value{font-size:24px;font-weight:900;line-height:1}
+  .macro-card .m-unit{font-size:12px;opacity:.85;margin-top:2px}
+  .macro-hint{margin:4px 12px 12px;text-align:center;font-size:12px;opacity:.8}
+
+
 </style>
 </head>
 <body>
@@ -1023,6 +1038,8 @@ function handleSaveClick(e){
       collapseAccordionSafe();
       requestAnimationFrame(()=>requestAnimationFrame(scrollTopNoJump));
       try { startFrontDataFlow(); } catch(_){}
+      try { startMacrosFlow(true); } catch(_){}
+
       try { tg?.HapticFeedback?.notificationOccurred?.('success'); } catch(_){}
       showPopup('Готово','Данные сохранены.','success');
       SAVE_IN_PROGRESS = false;
@@ -1038,6 +1055,7 @@ function handleSaveClick(e){
           setLastMeasurementTime(Date.now());
           setUnlockTime(Date.now() + 4000);
           try { startFrontDataFlow(); } catch(_){}
+          try { startMacrosFlow(true); } catch(_){}
           try { tg?.HapticFeedback?.notificationOccurred?.('success'); } catch(_){}
           showPopup('Готово','Данные сохранены.','success');
           SAVE_IN_PROGRESS = false;
@@ -1539,6 +1557,147 @@ function toggleSectionByHeader(h){
   }
   requestAnimationFrame(ensureFatOptlineStyled);
 })();
+
+
+/* ============================================================
+ *  BLOCK E1 — Analytics Macros (BX:CA → kcal/protein/fat/carbs)
+ *  - Быстрый рендер 4 чисел сразу (partial поддерживается)
+ *  - Поллинг backend action: "front_macros"
+ *  - Память: localStorage по user_id (мгновенная отрисовка при повторном запуске)
+ *  - Автозапуск на загрузке + ручной запуск после сохранения: startMacrosFlow(true)
+ * ============================================================ */
+
+(function macrosAnalyticsInit(){
+  const tg = window.Telegram?.WebApp;
+  const BACKEND = (typeof BACKEND_URL !== 'undefined' && BACKEND_URL) ? BACKEND_URL : '';
+  const host = () => document.getElementById('analytics');
+
+  /* --- Ключи кэша в localStorage --- */
+  const MACROS_KEY_PREFIX = 'macros:vals:';
+  function currentUserId(){ try { return window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'anon'; } catch(_){ return 'anon'; } }
+  function macrosKey(uid){ return MACROS_KEY_PREFIX + String(uid); }
+  function saveMacrosCache(obj, uid){
+    try { localStorage.setItem(macrosKey(uid ?? currentUserId()), JSON.stringify(obj)); } catch(_){}
+  }
+  function loadMacrosCache(uid){
+    try {
+      const raw = localStorage.getItem(macrosKey(uid ?? currentUserId()));
+      return raw ? JSON.parse(raw) : null;
+    } catch(_) { return null; }
+  }
+
+  /* --- UI helpers --- */
+  function fmtInt(v){ return (v==null || isNaN(v)) ? '—' : String(Math.round(Number(v))); }
+  function renderSkeleton(){
+    const el = host(); if (!el) return;
+    el.innerHTML = `
+      <div class="field">
+        <div class="macros-grid" id="macros-cards">
+          <div class="macro-card"><div class="m-label">Калории</div><div class="m-value" id="m_kcal">—</div><div class="m-unit">ккал</div></div>
+          <div class="macro-card"><div class="m-label">Белки</div><div class="m-value" id="m_protein">—</div><div class="m-unit">г</div></div>
+          <div class="macro-card"><div class="m-label">Жиры</div><div class="m-value" id="m_fat">—</div><div class="m-unit">г</div></div>
+          <div class="macro-card"><div class="m-label">Углеводы</div><div class="m-value" id="m_carbs">—</div><div class="m-unit">г</div></div>
+        </div>
+        <div class="macro-hint" id="macros-hint">После сохранения появятся расчёты.</div>
+      </div>`;
+  }
+  function renderValues(macros, opts){
+    const o = opts || {};
+    const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = fmtInt(val); };
+    set('m_kcal',   macros?.kcal);
+    set('m_protein',macros?.protein_g);
+    set('m_fat',    macros?.fat_g);
+    set('m_carbs',  macros?.carbs_g);
+
+    const hint = document.getElementById('macros-hint');
+    if (!hint) return;
+    if (o.status === 'READY'){ hint.textContent = 'Готово.'; }
+    else if (o.status === 'PARTIAL'){ hint.textContent = 'Обновляем… часть значений уже готова.'; }
+    else if (o.status === 'WAITING'){ hint.textContent = 'Считаем…'; }
+    else if (o.status === 'NO_ROW'){ hint.textContent = 'Сначала заполните анкету и сохраните.'; }
+    else { hint.textContent = '—'; }
+  }
+
+  /* --- API --- */
+  async function apiFrontMacros(requestedRow){
+    const payload = {
+      action: 'front_macros',
+      init_data: String(tg?.initData || ''),
+      row: Number(requestedRow || 0) || undefined
+    };
+    const resp = await fetch(BACKEND, {
+      method:'POST',
+      headers:{ 'Content-Type':'text/plain;charset=UTF-8' },
+      body: JSON.stringify(payload),
+      cache:'no-store', credentials:'omit', mode:'cors'
+    });
+    const raw = await resp.text();
+    let json = null; try { json = raw ? JSON.parse(raw) : null; } catch(_){}
+    if (!resp.ok || !json) throw new Error(`HTTP ${resp.status}`);
+    return json;
+  }
+
+  /* --- Основной цикл --- */
+  let _macrosTimer = 0;
+  async function pollOnce(){
+    const reqRow = (typeof getRowCalcForUser === 'function') ? getRowCalcForUser() : null;
+    try{
+      const res = await apiFrontMacros(reqRow);
+      if (res?.row && res.row !== reqRow && typeof setRowCalcForUser === 'function'){
+        // если сервер говорит, что актуальная строка другая — починим локально
+        setRowCalcForUser(res.row);
+      }
+
+      // показываем, что есть (partial → сразу на экран)
+      renderValues(res?.macros || {}, { status: res?.status });
+
+      // кэшируем только полностью готовые значения (чтобы при повторном запуске показать мгновенно)
+      if (res?.ready){
+        saveMacrosCache({ row: res.row, macros: res.macros, updated_at: res.updated_at });
+        return { done:true };
+      }
+
+      const wait = Math.max(300, Math.min(2000, Number(res?.retry_after_ms) || 600));
+      return { done:false, wait };
+    } catch(_){
+      const wait = 1200;
+      return { done:false, wait };
+    }
+  }
+  async function pollLoop(){
+    clearTimeout(_macrosTimer);
+    const r = await pollOnce();
+    if (r.done) return;
+    _macrosTimer = setTimeout(pollLoop, r.wait);
+  }
+
+  /* --- Публичный запуск (можно дергать после save) --- */
+  window.startMacrosFlow = function(forceRestart=false){
+    renderSkeleton();
+
+    // мгновенный показ из памяти (если есть) — «быстро отдавать при повторном запуске»
+    const cached = loadMacrosCache();
+    if (cached && cached.macros){
+      renderValues(cached.macros, { status:'READY' });
+    }
+
+    if (forceRestart){
+      // после нового сохранения: сразу перезапуск опроса
+      clearTimeout(_macrosTimer);
+      pollLoop();
+    } else {
+      // первый запуск на странице
+      clearTimeout(_macrosTimer);
+      pollLoop();
+    }
+  };
+
+  // автозапуск при загрузке страницы
+  window.startMacrosFlow(false);
+})();
+
+
+
 </script>
 </body>
 </html>
