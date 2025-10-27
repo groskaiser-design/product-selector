@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0017'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0018'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -1591,7 +1591,22 @@ PageLaunch→UpdateComment: ${comment} s`;
     else { hint.textContent = '—'; }
   }
 
-  async function apiFrontMacros(requestedRow){
+  // === ДОБАВЛЕНО: статусный приоритет и «охранник» запуска ===
+  let _macrosTimer = 0;
+  let _macrosRunId = 0;
+  let _macrosAbort = null;
+  let _macrosStatus = 'INIT';
+  const STATUS_RANK = { INIT:0, NO_ROW:1, WAITING:2, PARTIAL:3, READY:4 };
+
+  function renderValuesSafe(macros, nextStatus){
+    const cur = STATUS_RANK[_macrosStatus] ?? 0;
+    const nxt = STATUS_RANK[nextStatus] ?? 0;
+    if (nxt < cur) return;             // не даём «откатить» UI
+    renderValues(macros, { status: nextStatus });
+    _macrosStatus = nextStatus;
+  }
+
+  async function apiFrontMacros(requestedRow, signal){
     const payload = {
       action: 'front_macros',
       init_data: String(tg?.initData || ''),
@@ -1601,7 +1616,8 @@ PageLaunch→UpdateComment: ${comment} s`;
       method:'POST',
       headers:{ 'Content-Type':'text/plain;charset=UTF-8' },
       body: JSON.stringify(payload),
-      cache:'no-store', credentials:'omit', mode:'cors'
+      cache:'no-store', credentials:'omit', mode:'cors',
+      signal
     });
     const raw = await resp.text();
     let json = null; try { json = raw ? JSON.parse(raw) : null; } catch(_){}
@@ -1609,43 +1625,77 @@ PageLaunch→UpdateComment: ${comment} s`;
     return json;
   }
 
-  let _macrosTimer = 0;
-  async function pollOnce(){
+  async function pollOnce(runId){
+    if (runId !== _macrosRunId) return { done:true };
     const reqRow = (typeof getRowCalcForUser === 'function') ? getRowCalcForUser() : null;
+
+    // отменяем прошлый запрос, чтобы старый ответ не «догонял»
+    if (_macrosAbort) { try{ _macrosAbort.abort(); }catch(_){ } }
+    const controller = new AbortController();
+    _macrosAbort = controller;
+
     try{
-      const res = await apiFrontMacros(reqRow);
+      const res = await apiFrontMacros(reqRow, controller.signal);
+      if (runId !== _macrosRunId) return { done:true };
+
       if (res?.row && res.row !== reqRow && typeof setRowCalcForUser === 'function'){
         setRowCalcForUser(res.row);
       }
-      renderValues(res?.macros || {}, { status: res?.status });
+
+      renderValuesSafe(res?.macros || {}, res?.status || 'WAITING');
+
       if (res?.ready){
         saveMacrosCache({ row: res.row, macros: res.macros, updated_at: res.updated_at });
         return { done:true };
       }
-      const wait = Math.max(300, Math.min(2000, Number(res?.retry_after_ms) || 600));
+      const wait = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
       return { done:false, wait };
-    } catch(_){
-      const wait = 1200;
-      return { done:false, wait };
+    } catch(err){
+      // тихо выходим, если это отмена; иначе мягко продолжаем
+      if (err?.name === 'AbortError') return { done:true };
+      if (runId !== _macrosRunId) return { done:true };
+      return { done:false, wait: 1000 };
     }
   }
-  async function pollLoop(){
+
+  async function pollLoop(runId){
+    if (runId !== _macrosRunId) return;
     clearTimeout(_macrosTimer);
-    const r = await pollOnce();
-    if (r.done) return;
-    _macrosTimer = setTimeout(pollLoop, r.wait);
+    const r = await pollOnce(runId);
+    if (r.done || runId !== _macrosRunId) return;
+    _macrosTimer = setTimeout(()=>pollLoop(runId), r.wait);
   }
 
-  window.startMacrosFlow = function(forceRestart=false){
+  // публичный запуск с «меткой» и полной зачисткой
+  window.startMacrosFlow = function forceStart(){
+    _macrosRunId += 1;
+    const runId = _macrosRunId;
+    _macrosStatus = 'INIT';
+
     renderSkeleton();
     const cached = loadMacrosCache();
-    if (cached && cached.macros){ renderValues(cached.macros, { status:'READY' }); }
+    if (cached && cached.macros){ renderValuesSafe(cached.macros, 'READY'); }
+
     clearTimeout(_macrosTimer);
-    pollLoop();
+    if (_macrosAbort){ try{ _macrosAbort.abort(); }catch(_){ } _macrosAbort = null; }
+
+    pollLoop(runId);
   };
 
-  window.startMacrosFlow(false);
+  // автопауза/ресюм при смене видимости (бережём сеть и всегда свежие данные после возврата)
+  document.addEventListener('visibilitychange', ()=>{
+    if (document.visibilityState === 'hidden'){
+      clearTimeout(_macrosTimer);
+      if (_macrosAbort){ try{ _macrosAbort.abort(); }catch(_){ } _macrosAbort = null; }
+    } else {
+      window.startMacrosFlow();
+    }
+  });
+
+  // первый запуск
+  window.startMacrosFlow();
 })();
+
 
 
 // ============================================================
