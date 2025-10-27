@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0014'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0015'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -446,7 +446,7 @@ const rowH = ROW_VAR.endsWith('px') ? parseFloat(ROW_VAR) : (parseFloat(ROW_VAR)
 const pad = 4;
 const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
 
-// --- helpers: строгая нормализация чисел и массивов из бэкенда ---
+/** Универсальная нормализация чисел из бэка/локального стейта */
 function numOrNull(v){
   if (v == null) return null;
   if (typeof v === 'number') return Number.isFinite(v) ? v : null;
@@ -459,17 +459,7 @@ function numOrNull(v){
   return null;
 }
 
-function normalizeMultiple(v){
-  if (v == null) return null;
-  if (Array.isArray(v)) return v.map(x => String(x));
-  if (typeof v === 'string'){
-    const parts = v.split(/[,\s;]+/).map(x=>x.trim()).filter(Boolean);
-    return parts.length ? parts : null;
-  }
-  return null;
-}
   
-
 /* ============================================================
  *  BLOCK A1: Wheels + ensureWheel
  * ============================================================ */
@@ -593,7 +583,7 @@ function buildWheel(fieldEl, initial){
     setScrollInstant(fracCol, f);
     applyFracLock(iVal);
     markActive(intCol); markActive(fracCol);
-    requestAnimationFrame(()=>{ isProgramromatic = prev; dispatchChange(); });
+    requestAnimationFrame(()=>{ isProgrammatic = prev; dispatchChange(); });
   }
 
   function onScrollInt(){
@@ -633,8 +623,78 @@ function buildWheel(fieldEl, initial){
       applyFracLock(iVal);
     }
     dispatchChange();
-   
+    isProgrammatic = prev;
+  }
 
+  const initVal = (typeof initial==='number') ? initial : (min + (max - min) / 2);
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{ setValue(initVal); }));
+
+  const api = {
+    setValue,
+    get value(){
+      const iIdx = clamp(nearestIndex(intCol), 0, intRange);
+      let f = onlyInt ? 0 : clamp(nearestIndex(fracCol), 0, 9);
+      const iVal = minInt + iIdx;
+      if (iVal === maxInt) f = 0;
+      return onlyInt ? iVal : +(iVal + f/10).toFixed(1);
+    },
+    getModelValue(){ return modelValue; },
+    setDisabled,
+    destroy(){
+      clearTimeout(snapTimer);
+      intCol.removeEventListener('scroll', onScrollInt);
+      fracCol.removeEventListener('scroll', onScrollFrac);
+      if (supportsScrollEnd){
+        intCol.removeEventListener('scrollend', snapNow);
+        if (!onlyInt) fracCol.removeEventListener('scrollend', snapNow);
+      }
+    }
+  };
+  return api;
+}
+const wheels = {};
+const wheelMap = new WeakMap();
+function ensureWheel(fieldEl, cfg){
+  let w = wheelMap.get(fieldEl);
+  if (w) return w;
+
+  const pend = (window.__pendingInputs || {});
+  const hasPend = Object.prototype.hasOwnProperty.call(pend, cfg.key);
+  const pendVal = hasPend ? pend[cfg.key] : undefined;
+  const parsed  = numOrNull(pendVal);
+  const initVal = (parsed != null) ? parsed : cfg.initial;
+
+  w = buildWheel(fieldEl, initVal);
+  wheelMap.set(fieldEl, w);
+  wheels[cfg.key] = w;
+
+  if (cfg.optional){
+    let cb = fieldEl.querySelector('#opt_'+cfg.key);
+    if (!cb){
+      const opt = document.createElement('div');
+      opt.className = 'optline';
+      opt.innerHTML = `<label style="display:flex;align-items:center;gap:8px;opacity:.95">
+          <input type="checkbox" id="opt_${cfg.key}"> нет данных
+        </label>`;
+      fieldEl.appendChild(opt);
+      cb = opt.querySelector('input');
+    }
+    if (!cb._bound){
+      cb.addEventListener('change', ()=>{ w.setDisabled(cb.checked); }, {passive:true});
+      cb._bound = true;
+    }
+    if (hasPend && pendVal == null){
+      cb.checked = true;
+      w.setDisabled(true, /*programmatic*/true);
+    }
+  }
+
+  if (hasPend && parsed != null){
+    delete pend[cfg.key];
+  }
+  return w;
+}
+   
 
 /* ============================================================
  *  BLOCK B: Fields + render + hard init
@@ -1126,59 +1186,65 @@ function handleSaveClick(e){
       : `<div class="field"><div class="help">Комментарий пока не готов…</div></div>`;
   }
 
-  function applyInputsToWheels(inputs){
-    if (!inputs || typeof inputs !== 'object') return;
-    ensureAllWheelsOnce();
-    for (const [k, v] of Object.entries(inputs)){
-      const cfg = CFG[k]; if (!cfg) continue;
-      const el = fieldByKey[k];
-      const w  = wheels[k];
+ function applyInputsToWheels(inputs){
+  if (!inputs || typeof inputs !== 'object') return;
+  ensureAllWheelsOnce();
 
-      if (v == null){
-        window.__pendingInputs = window.__pendingInputs || {};
-        window.__pendingInputs[k] = null;
-        if (cfg.optional && el){
-          let cb = el.querySelector('#opt_'+k);
-          if (!cb){
-            const opt = document.createElement('div');
-            opt.className = 'optline';
-            opt.innerHTML = `<label style="display:flex;align-items:center;gap:8px;opacity:.95">
-                <input type="checkbox" id="opt_${k}"> нет данных
-              </label>`;
-            el.appendChild(opt);
-            cb = opt.querySelector('input');
-          }
-          cb.checked = true;
-          if (w) w.setDisabled(true, /*programmatic*/true);
-        }
-        continue;
-      }
+  for (const [k, vRaw] of Object.entries(inputs)){
+    const cfg = CFG[k]; if (!cfg) continue;               // только age/weight/height/fat
+    const el  = fieldByKey[k];
+    const w   = wheels[k];
 
-      if (typeof v === 'number'){
-        const cur = (w && typeof w.getModelValue === 'function') ? w.getModelValue() : (w ? w.value : null);
-        const changed = (cur == null) || Math.abs(Number(cur) - Number(v)) > 0.001;
-        if (changed){
-          if (k === 'age') {
-            if (w && typeof w.setValue === 'function') w.setValue(Math.round(v));
-            else {
-              window.__pendingInputs = window.__pendingInputs || {};
-              window.__pendingInputs[k] = Math.round(v);
-            }
-          } else {
-            if (w) w.setValue(v);
-            else {
-              window.__pendingInputs = window.__pendingInputs || {};
-              window.__pendingInputs[k] = v;
-            }
-          }
+    const v = numOrNull(vRaw);
+
+    // Нет данных → для опциональных полей отмечаем чекбокс и дизейблим колесо
+    if (v == null){
+      window.__pendingInputs = window.__pendingInputs || {};
+      window.__pendingInputs[k] = null;
+      if (cfg.optional && el){
+        let cb = el.querySelector('#opt_'+k);
+        if (!cb){
+          const opt = document.createElement('div');
+          opt.className = 'optline';
+          opt.innerHTML = `<label style="display:flex;align-items:center;gap:8px;opacity:.95">
+              <input type="checkbox" id="opt_${k}"> нет данных
+            </label>`;
+          el.appendChild(opt);
+          cb = opt.querySelector('input');
         }
+        cb.checked = true;
+        if (w && w.setDisabled) w.setDisabled(true, /*programmatic*/true);
       }
+      continue;
     }
-    if (isAdmin() && typeof window.__pageLaunchToUpdateWheel !== 'number') {
-      window.__pageLaunchToUpdateWheel = performance.now() - window.__pageLoadTime;
-      if (typeof window.updatePerfUI === 'function') window.updatePerfUI();
+
+    // Есть значение → снимаем "нет данных", если оно стояло
+    if (cfg.optional && el){
+      const cb = el.querySelector('#opt_'+k);
+      if (cb){ cb.checked = false; }
+      if (w && w.setDisabled) w.setDisabled(false, /*programmatic*/true);
+    }
+
+    const target = (k === 'age') ? Math.round(v) : v;
+    const cur = (w && typeof w.getModelValue === 'function') ? w.getModelValue() : (w ? w.value : null);
+    const changed = (cur == null) || Math.abs(Number(cur) - Number(target)) > 0.001;
+
+    if (changed){
+      if (w) {
+        w.setValue(target);
+      } else {
+        window.__pendingInputs = window.__pendingInputs || {};
+        window.__pendingInputs[k] = target;
+      }
     }
   }
+
+  if (isAdmin() && typeof window.__pageLaunchToUpdateWheel === 'number' === false) {
+    window.__pageLaunchToUpdateWheel = performance.now() - window.__pageLoadTime;
+    try { updatePerfUI && updatePerfUI(); } catch(_){}
+  }
+}
+
 
   function applyInputsToSurvey(inputs){
     if (!inputs || typeof inputs !== 'object') return;
