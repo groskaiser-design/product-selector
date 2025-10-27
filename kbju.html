@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0022'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0023'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -1029,10 +1029,118 @@ function collectSurveyValues(){
   return out;
 }
 
+
+
+// ============================================================
+// ПРОСТАЯ РЕАКТИВНАЯ ВАЛИДАЦИЯ С БЛОКИРОВКОЙ КНОПКИ
+// Вставить ПЕРЕД функцией handleSaveClick (строка ~1034)
+// ============================================================
+
+/**
+ * Проверяет, все ли обязательные поля заполнены
+ */
+function isFormValid() {
+  try {
+    const wheels = collectWheelValues();
+    const survey = collectSurveyValues();
+    
+    // 1) Колёса: возраст, вес, рост
+    if (!wheels.age || wheels.age === 0) return false;
+    if (!wheels.weight || wheels.weight === 0) return false;
+    if (!wheels.height || wheels.height === 0) return false;
+    
+    // 2) Пол
+    if (!survey.gender) return false;
+    
+    // 3) % жира ИЛИ телосложение
+    const hasFat = wheels.fat !== null && wheels.fat !== 0;
+    const hasBodyComp = survey.body_comp !== null;
+    if (!hasFat && !hasBodyComp) return false;
+    
+    // 4) Все селекторы анкеты
+    const required = [
+      'ethnicity', 'job_type', 'steps_per_day', 'workouts_per_week',
+      'workout_duration', 'workout_intensity', 'neat_level', 'sleep_hours',
+      'weight_history', 'main_goal', 'goal_pace', 'chronic_conditions'
+    ];
+    for (const field of required) {
+      if (!survey[field]) return false;
+    }
+    
+    // 5) Условные поля для женщин
+    if (survey.gender === 'female') {
+      if (!survey.pregnancy_lactation) return false;
+      if (survey.pregnancy_lactation === 'none' && !survey.cycle_regular) return false;
+    }
+    
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * Обновляет состояние кнопки "Сохранить"
+ */
+function updateSaveButton() {
+  const btn = document.getElementById('saveBtn');
+  if (!btn) return;
+  
+  const isValid = isFormValid();
+  btn.disabled = !isValid;
+  
+  if (!isValid) {
+    btn.classList.add('disabled');
+    btn.style.cursor = 'not-allowed';
+  } else {
+    btn.classList.remove('disabled');
+    btn.style.cursor = 'pointer';
+  }
+}
+
+// ============================================================
+// СЛУШАТЕЛИ ДЛЯ РЕАКТИВНОЙ ПРОВЕРКИ
+// Вставить ПОСЛЕ функции updateSaveButton()
+// ============================================================
+
+(function setupValidation() {
+  // Проверка при загрузке
+  setTimeout(updateSaveButton, 100);
+  
+  // Слушаем изменения колёс (уже есть событие wheelchange)
+  document.addEventListener('wheelchange', () => {
+    requestAnimationFrame(updateSaveButton);
+  });
+  
+  // Слушаем клики по всей форме (binary-btn, choice-item)
+  document.addEventListener('click', (e) => {
+    if (e.target?.closest?.('.binary-btn') || e.target?.closest?.('.choice-item')) {
+      setTimeout(updateSaveButton, 50);
+    }
+  }, { passive: true });
+  
+  // Слушаем чекбоксы "нет данных"
+  const bfNone = document.getElementById('bf-none');
+  const optFat = document.getElementById('opt_fat');
+  if (bfNone) bfNone.addEventListener('change', updateSaveButton);
+  if (optFat) optFat.addEventListener('change', updateSaveButton);
+  
+  // Периодическая проверка (для надёжности)
+  setInterval(updateSaveButton, 1000);
+})();
+  
 /* === КНОПКА СОХРАНЕНИЯ: Сохраняем ВЕСЬ ПАКЕТ === */
 function handleSaveClick(e){
   if (e && e.preventDefault) { try { e.preventDefault(); } catch(_){} }
   if (!canSaveNow()) { showPopup('Too many requests','Не нужно так часто нажимать эту кнопку','error'); return; }
+
+  // ✅ ВАЛИДАЦИЯ: проверяем форму перед отправкой
+  if (!isFormValid()) {
+    const tg = window.Telegram?.WebApp;
+    try { tg?.HapticFeedback?.notificationOccurred?.('error'); } catch(_){}
+    showPopup('Не все поля заполнены', 'Заполните все обязательные поля анкеты.', 'error');
+    return;
+  }
 
   const tg = window.Telegram?.WebApp;
   const prevRowCalc = getRowCalcForUser();
