@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-01-24-009'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0010'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -1657,28 +1657,75 @@ function toggleSectionByHeader(h){
   window.startMacrosFlow(false);
 })();
 
-/* ============================================================
- *  BLOCK Z+: Аккордеон и подстраховка первого открытия
- * ============================================================ */
+/*============================================================
+*  BLOCK Z: Аккордеон (единственный, без дублей)
+============================================================*/
+
 function setAriaExpanded(h){
   const sec = document.getElementById(h.getAttribute('data-toggle'));
   h.setAttribute('aria-expanded', String(!sec.classList.contains('collapsed')));
 }
-(function bindAccordion(){
-  const root = document;
-  root.addEventListener('click', (e)=>{
-    const h = e.target.closest?.('.section-h'); if (!h) return;
-    if (!h.hasAttribute('role')) h.setAttribute('role','button');
-    if (!h.hasAttribute('tabindex')) h.setAttribute('tabindex','0');
-    if (!h.hasAttribute('aria-controls')) h.setAttribute('aria-controls', h.getAttribute('data-toggle'));
-    toggleSectionByHeader(h);
-  }, {passive:true});
-  root.addEventListener('keydown', (e)=>{
-    const h = e.target?.closest?.('.section-h'); if (!h) return;
-    if (e.key==='Enter' || e.key===' '){ e.preventDefault(); toggleSectionByHeader(h); }
-  });
-  document.querySelectorAll('.section-h').forEach(setAriaExpanded);
-})();
+
+function toggleSectionByHeader(h){
+  const id = h.getAttribute('data-toggle');
+  const sec = document.getElementById(id);
+  if (!sec) return;
+  const willBeCollapsed = sec.classList.toggle('collapsed');
+  h.setAttribute('aria-expanded', String(!willBeCollapsed));
+
+  // При первом раскрытии анкеты — дожимаем инициализацию колёс
+  if (id === 'sec-measures' && !willBeCollapsed){
+    if (typeof ensureAllWheelsOnce === 'function') ensureAllWheelsOnce();
+    requestAnimationFrame(()=>requestAnimationFrame(()=>{
+      try {
+        for (const cfg of (window.FIELDS || [])){
+          const w = window.wheels?.[cfg.key];
+          if (w?.setValue){
+            const model = (typeof w.getModelValue === 'function') ? w.getModelValue() : w.value;
+            w.setValue(model);
+          }
+        }
+      } catch(_){}
+    }));
+  }
+}
+
+// Защита от двойной подписки
+if (!window.__accordionBound){
+  window.__accordionBound = true;
+
+  (function bindAccordion(){
+    const root = document;
+    root.addEventListener('click', (e)=>{
+      const h = e.target.closest?.('.section-h');
+      if (!h) return;
+      if (!h.hasAttribute('role')) h.setAttribute('role','button');
+      if (!h.hasAttribute('tabindex')) h.setAttribute('tabindex','0');
+      if (!h.hasAttribute('aria-controls')) h.setAttribute('aria-controls', h.getAttribute('data-toggle'));
+      toggleSectionByHeader(h);
+    }, {passive:true});
+
+    root.addEventListener('keydown', (e)=>{
+      const h = e.target?.closest?.('.section-h'); 
+      if (!h) return;
+      if (e.key==='Enter' || e.key===' '){
+        e.preventDefault();
+        toggleSectionByHeader(h);
+      }
+    });
+
+    // Проставляем корректный aria-expanded при загрузке
+    document.querySelectorAll('.section-h').forEach(setAriaExpanded);
+
+    // Отрисовать «Последний замер» при загрузке (если есть)
+    try{
+      const lastTime = (typeof getLastMeasurementTime === 'function') && getLastMeasurementTime();
+      if (lastTime) updateLastTimeDisplay(lastTime);
+    }catch(_){}
+  })();
+}
+
+  
 </script>
 </body>
 </html>
