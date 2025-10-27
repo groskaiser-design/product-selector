@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0010'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0011'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -1660,70 +1660,85 @@ function toggleSectionByHeader(h){
 /*============================================================
 *  BLOCK Z: Аккордеон (единственный, без дублей)
 ============================================================*/
-
-function setAriaExpanded(h){
-  const sec = document.getElementById(h.getAttribute('data-toggle'));
-  h.setAttribute('aria-expanded', String(!sec.classList.contains('collapsed')));
-}
-
-function toggleSectionByHeader(h){
-  const id = h.getAttribute('data-toggle');
-  const sec = document.getElementById(id);
-  if (!sec) return;
-  const willBeCollapsed = sec.classList.toggle('collapsed');
-  h.setAttribute('aria-expanded', String(!willBeCollapsed));
-
-  // При первом раскрытии анкеты — дожимаем инициализацию колёс
-  if (id === 'sec-measures' && !willBeCollapsed){
-    if (typeof ensureAllWheelsOnce === 'function') ensureAllWheelsOnce();
-    requestAnimationFrame(()=>requestAnimationFrame(()=>{
-      try {
-        for (const cfg of (window.FIELDS || [])){
-          const w = window.wheels?.[cfg.key];
-          if (w?.setValue){
-            const model = (typeof w.getModelValue === 'function') ? w.getModelValue() : w.value;
-            w.setValue(model);
-          }
-        }
-      } catch(_){}
-    }));
+// ============================================================
+// SINGLE accordion binder (idempotent, без дублей)
+// ============================================================
+(function(){
+  function setAriaExpanded(h){
+    const secId = h.getAttribute('data-toggle');
+    const sec = document.getElementById(secId);
+    if (!sec) return;
+    h.setAttribute('aria-controls', secId);
+    h.setAttribute('role', 'button');
+    if (!h.hasAttribute('tabindex')) h.setAttribute('tabindex','0');
+    h.setAttribute('aria-expanded', String(!sec.classList.contains('collapsed')));
   }
-}
 
-// Защита от двойной подписки
-if (!window.__accordionBound){
-  window.__accordionBound = true;
+  function toggleSectionByHeader(h){
+    const id = h.getAttribute('data-toggle');
+    const sec = document.getElementById(id);
+    if (!sec) return;
+    const willBeCollapsed = sec.classList.toggle('collapsed');
+    h.setAttribute('aria-expanded', String(!willBeCollapsed));
 
-  (function bindAccordion(){
-    const root = document;
-    root.addEventListener('click', (e)=>{
-      const h = e.target.closest?.('.section-h');
-      if (!h) return;
-      if (!h.hasAttribute('role')) h.setAttribute('role','button');
-      if (!h.hasAttribute('tabindex')) h.setAttribute('tabindex','0');
-      if (!h.hasAttribute('aria-controls')) h.setAttribute('aria-controls', h.getAttribute('data-toggle'));
+    // При первом раскрытии анкеты — дозапуск колёс
+    if (id === 'sec-measures' && !willBeCollapsed){
+      try { typeof ensureAllWheelsOnce === 'function' && ensureAllWheelsOnce(); } catch(_){}
+      requestAnimationFrame(()=>requestAnimationFrame(()=>{
+        try {
+          for (const cfg of (window.FIELDS || [])){
+            const w = window.wheels?.[cfg.key];
+            if (w?.setValue){
+              const model = (typeof w.getModelValue === 'function') ? w.getModelValue() : w.value;
+              w.setValue(model);
+            }
+          }
+        } catch(_){}
+      }));
+    }
+  }
+
+  // ——— гарантированно один обработчик: снимаем старые, ставим новые ———
+  const root = document;
+
+  if (window.__accordionClickHandler){
+    root.removeEventListener('click', window.__accordionClickHandler, true);
+    root.removeEventListener('click', window.__accordionClickHandler, false);
+  }
+  if (window.__accordionKeyHandler){
+    root.removeEventListener('keydown', window.__accordionKeyHandler, false);
+  }
+
+  window.__accordionClickHandler = function(e){
+    const h = e.target.closest?.('.section-h');
+    if (!h) return;
+    // не даём дубль-тогглу от вложенных кнопок/ссылок
+    if (e.defaultPrevented) return;
+    toggleSectionByHeader(h);
+  };
+  window.__accordionKeyHandler = function(e){
+    const h = e.target?.closest?.('.section-h');
+    if (!h) return;
+    if (e.key === 'Enter' || e.key === ' '){
+      e.preventDefault();
       toggleSectionByHeader(h);
-    }, {passive:true});
+    }
+  };
 
-    root.addEventListener('keydown', (e)=>{
-      const h = e.target?.closest?.('.section-h'); 
-      if (!h) return;
-      if (e.key==='Enter' || e.key===' '){
-        e.preventDefault();
-        toggleSectionByHeader(h);
-      }
-    });
+  root.addEventListener('click', window.__accordionClickHandler, {passive:true});
+  root.addEventListener('keydown', window.__accordionKeyHandler, false);
 
-    // Проставляем корректный aria-expanded при загрузке
-    document.querySelectorAll('.section-h').forEach(setAriaExpanded);
+  // Инициализация aria
+  document.querySelectorAll('.section-h').forEach(setAriaExpanded);
 
-    // Отрисовать «Последний замер» при загрузке (если есть)
-    try{
-      const lastTime = (typeof getLastMeasurementTime === 'function') && getLastMeasurementTime();
-      if (lastTime) updateLastTimeDisplay(lastTime);
-    }catch(_){}
-  })();
-}
+  // Подтянуть «Последний замер», если был
+  try {
+    const lastTime = (typeof getLastMeasurementTime === 'function') && getLastMeasurementTime();
+    if (lastTime) updateLastTimeDisplay(lastTime);
+  } catch(_){}
+})();
+
+
 
   
 </script>
