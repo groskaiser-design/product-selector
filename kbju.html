@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0018'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0019'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -1029,7 +1029,7 @@ function collectSurveyValues(){
   return out;
 }
 
-/* === КНОПКА СОХРАНЕНИЯ: Сохраняем ВЕСЬ ПАКЕТ === */
+// === КНОПКА СОХРАНЕНИЯ: Сохраняем ВЕСЬ ПАКЕТ ===
 function handleSaveClick(e){
   if (e && e.preventDefault) { try { e.preventDefault(); } catch(_){} }
   if (!canSaveNow()) { showPopup('Too many requests','Не нужно так часто нажимать эту кнопку','error'); return; }
@@ -1048,7 +1048,9 @@ function handleSaveClick(e){
   Promise.resolve()
     .then(() => saveMeasurementsToDB(values, saveId))
     .then(function(res){
-      setRowCalcForUser(res.row_calc);
+      // ⚠️ ВАЖНО: направляем поллер на НОВУЮ строку сохранения
+      // (а не на последнюю посчитанную)
+      setRowCalcForUser(res.row_all);
       setLastMeasurementTime(Date.parse(res.ts_iso));
 
       // свернуть анкету и подправить скролл
@@ -1104,6 +1106,8 @@ function handleSaveClick(e){
     });
 }
 
+
+
 (function bindSave(){
   var btn = document.getElementById('saveBtn');
   if (!btn) return;
@@ -1128,6 +1132,7 @@ function handleSaveClick(e){
   }
   function setAnalyticsPlaceholder(){
     const host = elAnalytics(); if (!host) return;
+    if (host.dataset && host.dataset.owner === 'macros') return; // защита от гонок
     host.innerHTML = `<div class="field"><div class="help">После сохранения появятся графики.</div></div>`;
   }
 
@@ -1546,8 +1551,10 @@ PageLaunch→UpdateComment: ${comment} s`;
   requestAnimationFrame(ensureFatOptlineStyled);
 })();
 
+
 /* ============================================================
  *  BLOCK E1 — Analytics Macros (poll + cache)
+ *  ЗАМЕНА ЦЕЛИКОМ
  * ============================================================ */
 (function macrosAnalyticsInit(){
   const tg = window.Telegram?.WebApp;
@@ -1561,8 +1568,11 @@ PageLaunch→UpdateComment: ${comment} s`;
   function loadMacrosCache(uid){ try { const raw = localStorage.getItem(macrosKey(uid ?? currentUserId())); return raw ? JSON.parse(raw) : null; } catch(_) { return null; } }
 
   function fmtInt(v){ return (v==null || isNaN(v)) ? '—' : String(Math.round(Number(v))); }
+
+  // ⬇️ контейнер помечаем владельцем, чтобы никто его не затирал
   function renderSkeleton(){
     const el = host(); if (!el) return;
+    el.dataset.owner = 'macros';
     el.innerHTML = `
       <div class="field">
         <div class="macros-grid" id="macros-cards">
@@ -1574,6 +1584,7 @@ PageLaunch→UpdateComment: ${comment} s`;
         <div class="macro-hint" id="macros-hint">После сохранения появятся расчёты.</div>
       </div>`;
   }
+
   function renderValues(macros, opts){
     const o = opts || {};
     const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = fmtInt(val); };
@@ -1591,19 +1602,24 @@ PageLaunch→UpdateComment: ${comment} s`;
     else { hint.textContent = '—'; }
   }
 
-  // === ДОБАВЛЕНО: статусный приоритет и «охранник» запуска ===
+  // === Статусы + «свежесть» данных ===
   let _macrosTimer = 0;
   let _macrosRunId = 0;
   let _macrosAbort = null;
   let _macrosStatus = 'INIT';
+  let _lastRenderedAt = 0; // unix ms времени последних отрисованных данных
   const STATUS_RANK = { INIT:0, NO_ROW:1, WAITING:2, PARTIAL:3, READY:4 };
 
-  function renderValuesSafe(macros, nextStatus){
+  function renderValuesSafe(macros, nextStatus, updatedAt){
     const cur = STATUS_RANK[_macrosStatus] ?? 0;
     const nxt = STATUS_RANK[nextStatus] ?? 0;
-    if (nxt < cur) return;             // не даём «откатить» UI
+    const ts  = Number(new Date(updatedAt || 0));
+    // Рисуем, если статус не хуже, ИЛИ данные свежее последних отрисованных
+    if (nxt < cur && !(ts && ts > _lastRenderedAt)) return;
+
     renderValues(macros, { status: nextStatus });
     _macrosStatus = nextStatus;
+    if (ts && !Number.isNaN(ts)) _lastRenderedAt = ts;
   }
 
   async function apiFrontMacros(requestedRow, signal){
@@ -1629,7 +1645,7 @@ PageLaunch→UpdateComment: ${comment} s`;
     if (runId !== _macrosRunId) return { done:true };
     const reqRow = (typeof getRowCalcForUser === 'function') ? getRowCalcForUser() : null;
 
-    // отменяем прошлый запрос, чтобы старый ответ не «догонял»
+    // Отменяем прошлый запрос, чтобы старый ответ не «догонял»
     if (_macrosAbort) { try{ _macrosAbort.abort(); }catch(_){ } }
     const controller = new AbortController();
     _macrosAbort = controller;
@@ -1642,7 +1658,8 @@ PageLaunch→UpdateComment: ${comment} s`;
         setRowCalcForUser(res.row);
       }
 
-      renderValuesSafe(res?.macros || {}, res?.status || 'WAITING');
+      // ⬇️ передаём updated_at для логики «свежести»
+      renderValuesSafe(res?.macros || {}, res?.status || 'WAITING', res?.updated_at);
 
       if (res?.ready){
         saveMacrosCache({ row: res.row, macros: res.macros, updated_at: res.updated_at });
@@ -1651,7 +1668,6 @@ PageLaunch→UpdateComment: ${comment} s`;
       const wait = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
       return { done:false, wait };
     } catch(err){
-      // тихо выходим, если это отмена; иначе мягко продолжаем
       if (err?.name === 'AbortError') return { done:true };
       if (runId !== _macrosRunId) return { done:true };
       return { done:false, wait: 1000 };
@@ -1666,15 +1682,18 @@ PageLaunch→UpdateComment: ${comment} s`;
     _macrosTimer = setTimeout(()=>pollLoop(runId), r.wait);
   }
 
-  // публичный запуск с «меткой» и полной зачисткой
+  // Публичный запуск
   window.startMacrosFlow = function forceStart(){
     _macrosRunId += 1;
     const runId = _macrosRunId;
     _macrosStatus = 'INIT';
+    _lastRenderedAt = 0;
 
     renderSkeleton();
     const cached = loadMacrosCache();
-    if (cached && cached.macros){ renderValuesSafe(cached.macros, 'READY'); }
+    if (cached && cached.macros){
+      renderValuesSafe(cached.macros, 'READY', cached.updated_at);
+    }
 
     clearTimeout(_macrosTimer);
     if (_macrosAbort){ try{ _macrosAbort.abort(); }catch(_){ } _macrosAbort = null; }
@@ -1682,7 +1701,7 @@ PageLaunch→UpdateComment: ${comment} s`;
     pollLoop(runId);
   };
 
-  // автопауза/ресюм при смене видимости (бережём сеть и всегда свежие данные после возврата)
+  // Автопауза/резюм при смене видимости (бережём сеть и всегда свежие данные после возврата)
   document.addEventListener('visibilitychange', ()=>{
     if (document.visibilityState === 'hidden'){
       clearTimeout(_macrosTimer);
@@ -1692,10 +1711,9 @@ PageLaunch→UpdateComment: ${comment} s`;
     }
   });
 
-  // первый запуск
+  // Первый запуск
   window.startMacrosFlow();
 })();
-
 
 
 // ============================================================
