@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0013'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0014'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -446,6 +446,30 @@ const rowH = ROW_VAR.endsWith('px') ? parseFloat(ROW_VAR) : (parseFloat(ROW_VAR)
 const pad = 4;
 const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
 
+// --- helpers: строгая нормализация чисел и массивов из бэкенда ---
+function numOrNull(v){
+  if (v == null) return null;
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  if (typeof v === 'string'){
+    const s = v.trim();
+    if (!s || /^null$/i.test(s)) return null;
+    const n = Number(s.replace(',', '.'));
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function normalizeMultiple(v){
+  if (v == null) return null;
+  if (Array.isArray(v)) return v.map(x => String(x));
+  if (typeof v === 'string'){
+    const parts = v.split(/[,\s;]+/).map(x=>x.trim()).filter(Boolean);
+    return parts.length ? parts : null;
+  }
+  return null;
+}
+  
+
 /* ============================================================
  *  BLOCK A1: Wheels + ensureWheel
  * ============================================================ */
@@ -569,7 +593,7 @@ function buildWheel(fieldEl, initial){
     setScrollInstant(fracCol, f);
     applyFracLock(iVal);
     markActive(intCol); markActive(fracCol);
-    requestAnimationFrame(()=>{ isProgrammatic = prev; dispatchChange(); });
+    requestAnimationFrame(()=>{ isProgramromatic = prev; dispatchChange(); });
   }
 
   function onScrollInt(){
@@ -609,73 +633,8 @@ function buildWheel(fieldEl, initial){
       applyFracLock(iVal);
     }
     dispatchChange();
-    isProgrammatic = prev;
-  }
+   
 
-  const initVal = (typeof initial==='number') ? initial : (min + (max - min) / 2);
-  requestAnimationFrame(()=>requestAnimationFrame(()=>{ setValue(initVal); }));
-
-  const api = {
-    setValue,
-    get value(){
-      const iIdx = clamp(nearestIndex(intCol), 0, intRange);
-      let f = onlyInt ? 0 : clamp(nearestIndex(fracCol), 0, 9);
-      const iVal = minInt + iIdx;
-      if (iVal === maxInt) f = 0;
-      return onlyInt ? iVal : +(iVal + f/10).toFixed(1);
-    },
-    getModelValue(){ return modelValue; },
-    setDisabled,
-    destroy(){
-      clearTimeout(snapTimer);
-      intCol.removeEventListener('scroll', onScrollInt);
-      fracCol.removeEventListener('scroll', onScrollFrac);
-      if (supportsScrollEnd){
-        intCol.removeEventListener('scrollend', snapNow);
-        if (!onlyInt) fracCol.removeEventListener('scrollend', snapNow);
-      }
-    }
-  };
-  return api;
-}
-const wheels = {};
-const wheelMap = new WeakMap();
-function ensureWheel(fieldEl, cfg){
-  let w = wheelMap.get(fieldEl);
-  if (w) return w;
-
-  const pend = (window.__pendingInputs || {});
-  const hasPend = Object.prototype.hasOwnProperty.call(pend, cfg.key);
-  const pendVal = hasPend ? pend[cfg.key] : undefined;
-  const initVal = (typeof pendVal === 'number') ? pendVal : cfg.initial;
-
-  w = buildWheel(fieldEl, initVal);
-  wheelMap.set(fieldEl, w);
-  wheels[cfg.key] = w;
-
-  if (cfg.optional){
-    let cb = fieldEl.querySelector('#opt_'+cfg.key);
-    if (!cb){
-      const opt = document.createElement('div');
-      opt.className = 'optline';
-      opt.innerHTML = `<label style="display:flex;align-items:center;gap:8px;opacity:.95">
-          <input type="checkbox" id="opt_${cfg.key}"> нет данных
-        </label>`;
-      fieldEl.appendChild(opt);
-      cb = opt.querySelector('input');
-    }
-    if (!cb._bound){
-      cb.addEventListener('change', ()=>{ w.setDisabled(cb.checked); }, {passive:true});
-      cb._bound = true;
-    }
-    if (hasPend && pendVal == null){
-      cb.checked = true;
-      w.setDisabled(true, /*programmatic*/true);
-    }
-  }
-  if (hasPend && typeof pendVal === 'number') delete pend[cfg.key];
-  return w;
-}
 
 /* ============================================================
  *  BLOCK B: Fields + render + hard init
