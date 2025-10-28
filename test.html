@@ -11,21 +11,22 @@
         #ui {
             position: absolute; top: 20px; left: 20px; background: rgba(0,0,0,0.75); color: #fff;
             padding: 15px; border-radius: 12px; max-width: 320px; backdrop-filter: blur(12px);
-            border: 1px solid rgba(255,255,255,0.1);
+            border: 1px solid rgba(255,255,255,0.1); display: none;
         }
         #ui h2 { margin: 0 0 10px; font-size: 18px; color: #4CAF50; }
         #ui p { margin: 5px 0; font-size: 14px; }
         #slider { width: 100%; margin: 15px 0; height: 8px; }
         .label { font-weight: bold; color: #4CAF50; }
-        #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-                   color: #fff; font-size: 18px; background: rgba(0,0,0,0.7); padding: 20px; border-radius: 10px; }
+        #loading { 
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: #fff; font-size: 18px; background: rgba(0,0,0,0.7); padding: 20px; border-radius: 10px; 
+        }
     </style>
 </head>
 <body>
 
 <div id="loading">Загрузка 3D модели...</div>
-
-<div id="ui" style="display:none;">
+<div id="ui">
     <h2>Трансформация тела</h2>
     <p>Рост: <span class="label">192 см</span></p>
     <p id="status">Состояние: <span class="label">До</span></p>
@@ -33,12 +34,12 @@
     <p style="font-size:12px; opacity:0.8;">Двигай слайдер → от "До" к "После"</p>
 </div>
 
-<!-- Three.js из CDN (GitHub Pages разрешает) -->
+<!-- ВАЖНО: three.js ДО OrbitControls -->
 <script src="https://cdn.jsdelivr.net/npm/three@0.167.1/build/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.167.1/examples/js/controls/OrbitControls.js"></script>
 
 <script>
-// === ПАРАМЕТРЫ ===
+// === ПАРАМЕТРЫ "ДО" и "ПОСЛЕ" ===
 const A = { shoulder:128, waist:93.5, chest:115, neck:42, bicep:40.5, forearm:31, thigh:57, calf:34, glute:102 };
 const B = { shoulder:135, waist:90, chest:115, neck:39, bicep:44, forearm:33, thigh:62, calf:41, glute:102 };
 
@@ -47,6 +48,12 @@ let scene, camera, renderer, controls, body;
 let sliderValue = 0;
 
 function init() {
+    // Проверка: THREE должен быть определён
+    if (typeof THREE === 'undefined') {
+        document.getElementById('loading').innerHTML = 'Ошибка: THREE.js не загрузился.<br>Обнови страницу.';
+        return;
+    }
+
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x111111);
 
@@ -62,12 +69,11 @@ function init() {
     controls.enableDamping = true;
 
     // Свет
-    const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 1);
-    scene.add(hemi);
-    const dir = new THREE.DirectionalLight(0xffffff, 1);
-    dir.position.set(10, 20, 10);
-    dir.castShadow = true;
-    scene.add(dir);
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1));
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+    dirLight.position.set(10, 20, 10);
+    dirLight.castShadow = true;
+    scene.add(dirLight);
 
     // Пол
     const floor = new THREE.Mesh(
@@ -86,7 +92,7 @@ function init() {
     document.getElementById('loading').style.display = 'none';
     document.getElementById('ui').style.display = 'block';
 
-    updateBody();
+    updateBody(0);
     animate();
 
     // Слайдер
@@ -94,7 +100,7 @@ function init() {
     const status = document.getElementById('status');
     slider.addEventListener('input', () => {
         sliderValue = slider.value / 100;
-        updateBody();
+        updateBody(sliderValue);
         const percent = slider.value;
         const state = percent < 30 ? 'До' : percent < 70 ? 'В процессе' : 'После';
         status.innerHTML = `Состояние: <span class="label">${state}</span> (${percent}%)`;
@@ -103,21 +109,22 @@ function init() {
 
 function lerp(a, b, t) { return a + (b - a) * t; }
 
-function updateBody() {
+function updateBody(t) {
     while (body.children.length) body.remove(body.children[0]);
 
-    const s = sliderValue;
     const h = 19.2; // 192 см
-    const sw = lerp(A.shoulder, B.shoulder, s) / 20;
-    const ww = lerp(A.waist, B.waist, s) / 20;
-    const cw = lerp(A.chest, B.chest, s) / 20;
-    const nr = lerp(A.neck, B.neck, s) / 40;
-    const br = lerp(A.bicep, B.bicep, s) / 40;
-    const fr = lerp(A.forearm, B.forearm, s) / 40;
-    const tr = lerp(A.thigh, B.thigh, s) / 40;
-    const cr = lerp(A.calf, B.calf, s) / 40;
+    const sw = lerp(A.shoulder, B.shoulder, t) / 20;
+    const ww = lerp(A.waist, B.waist, t) / 20;
+    const cw = lerp(A.chest, B.chest, t) / 20;
+    const nr = lerp(A.neck, B.neck, t) / 40;
+    const br = lerp(A.bicep, B.bicep, t) / 40;
+    const fr = lerp(A.forearm, B.forearm, t) / 40;
+    const tr = lerp(A.thigh, B.thigh, t) / 40;
+    const cr = lerp(A.calf, B.calf, t) / 40;
 
-    const skin = new THREE.MeshStandardMaterial({ color: 0xf1c27d, roughness: 0.8, metalness: 0.1 });
+    const skin = new THREE.MeshStandardMaterial({ 
+        color: 0xf1c27d, roughness: 0.8, metalness: 0.1 
+    });
 
     const add = (geo) => {
         const mesh = new THREE.Mesh(geo, skin);
@@ -127,23 +134,19 @@ function updateBody() {
     };
 
     // Голова
-    const head = add(new THREE.SphereGeometry(2.2, 32, 32));
-    head.position.y = h/2 - 2.2;
+    add(new THREE.SphereGeometry(2.2, 32, 32)).position.y = h/2 - 2.2;
 
     // Шея
-    const neck = add(new THREE.CylinderGeometry(nr, nr, 1.5, 32));
-    neck.position.y = h/2 - 3.7;
+    add(new THREE.CylinderGeometry(nr, nr, 1.5, 32)).position.y = h/2 - 3.7;
 
-    // Торс
-    const torso1 = add(new THREE.CylinderGeometry(sw, cw, 5, 32));
-    torso1.position.y = h/2 - 7;
+    // Верх торса
+    add(new THREE.CylinderGeometry(sw, cw, 5, 32)).position.y = h/2 - 7;
 
-    const torso2 = add(new THREE.CylinderGeometry(cw, ww, 4, 32));
-    torso2.position.y = h/2 - 11;
+    // Талия
+    add(new THREE.CylinderGeometry(cw, ww, 4, 32)).position.y = h/2 - 11;
 
     // Бёдра
-    const hips = add(new THREE.BoxGeometry(ww*1.8, 2, ww*1.5));
-    hips.position.y = h/2 - 13.5;
+    add(new THREE.BoxGeometry(ww*1.8, 2, ww*1.5)).position.y = h/2 - 13.5;
 
     // Руки
     [-1, 1].forEach(side => {
@@ -174,14 +177,19 @@ function animate() {
     renderer.render(scene, camera);
 }
 
-window.addEventListener('resize', () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
+// === АВТОМАТИЧЕСКИЙ ЗАПУСК ПОСЛЕ ЗАГРУЗКИ ===
+window.addEventListener('load', () => {
+    setTimeout(init, 500); // небольшая задержка для CDN
 });
 
-// Запуск
-window.onload = init;
+// Ресайз
+window.addEventListener('resize', () => {
+    if (camera && renderer) {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+});
 </script>
 
 </body>
