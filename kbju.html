@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0025'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0026'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -1699,11 +1699,253 @@ PageLaunch→UpdateComment: ${comment} s`;
 
 
 /* ============================================================
+ *  BLOCK — ГРАФИК ДИНАМИКА БЖУ
+ * ============================================================ */
+(()=>{
+  // Public API: window.renderKBJU7(host, data, { visible?:7, shape?: 'clip-capsule'|'flat'|'rounded-segments' })
+  function renderKBJU7(host, data, opts={}){
+    const root = typeof host === 'string' ? document.getElementById(host) : host; if (!root) { console.warn('KBJU: host not found'); return; }
+    const scr  = root.querySelector('#kbju7-scroll');
+    let svg = root.querySelector('#kbju7-svg');
+    if (!svg) { const s = document.createElementNS('http://www.w3.org/2000/svg','svg'); s.setAttribute('id','kbju7-svg'); (scr || root).appendChild(s); svg = s; }
+    const infP = root.querySelector('#kbju7-p');
+    const infF = root.querySelector('#kbju7-f');
+    const infC = root.querySelector('#kbju7-c');
+
+    const list = (data||[]).slice().sort((a,b)=> new Date(a.date) - new Date(b.date));
+    if (!list.length){ svg.innerHTML = '<text x="8" y="20" fill="#fff" opacity=".8">Нет данных</text>'; return; }
+
+    const H = 160;                          // px (viewBox height)
+    const DATE_PAD = 18;                    // зона под датой под столбиком
+    const LIFT = 8; const TOP_PAD = Math.max(12, LIFT + 6); // подъём выбранного столбца (px)
+    const visible = Number(opts.visible||7);
+    const shape = opts.shape || 'clip-capsule';
+
+    function computeBarW(){
+      const W = (scr && scr.clientWidth) || root.clientWidth || 320;
+      const gap = 8;                        // px
+      const bar = Math.max(12, Math.floor((W - gap*(visible+1)) / visible));
+      return { bar, gap };
+    }
+
+    function fmtD(d){ try{ return new Date(d).toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit'}); }catch{ return d; } }
+
+    function draw(){
+      const { bar:BAR, gap:GAP } = computeBarW();
+      const outerR = parseFloat(getComputedStyle(root).getPropertyValue('--r')) || 18; // outer radius for bars/selection
+      const contentW = list.length * (BAR + GAP) + GAP;   // полная ширина дорожки
+      const filter = root.getAttribute('data-filter') || 'all';
+
+      // Масштабы: в соло-режиме берём максимум по выбранному нутриенту
+      let gramsMax;
+      if (filter==='prot') gramsMax = Math.max(50, ...list.map(d => (d.protein_g||0)));
+      else if (filter==='fat') gramsMax = Math.max(50, ...list.map(d => (d.fat_g||0)));
+      else if (filter==='carb') gramsMax = Math.max(50, ...list.map(d => (d.carbs_g||0)));
+      else gramsMax = Math.max(50, ...list.map(d => (d.protein_g||0)+(d.fat_g||0)+(d.carbs_g||0)));
+
+      const yG = v => (H - TOP_PAD - DATE_PAD - 4) * (v/gramsMax);      // высота (px)
+
+      // Настройка SVG
+      svg.setAttribute('viewBox', `0 0 ${contentW} ${H}`);
+      svg.setAttribute('width', contentW);
+      svg.setAttribute('height', H);
+
+      // Слои
+      const defs = document.createElementNS('http://www.w3.org/2000/svg','defs');
+      const gBars = document.createElementNS('http://www.w3.org/2000/svg','g');
+      const gSel  = document.createElementNS('http://www.w3.org/2000/svg','g');
+      const gHit  = document.createElementNS('http://www.w3.org/2000/svg','g');
+
+      // Коллекции
+      const groups=[]; const dates=[]; const outlines=[];
+
+      // База
+      const yBase = H-2-DATE_PAD;          // низ столбца
+      const yDate = H-6;                    // текст даты
+
+      // Рисуем столбцы
+      list.forEach((d, i)=>{
+        const x = GAP + i*(BAR + GAP);
+        let gC = (d.carbs_g||0), gP = (d.protein_g||0), gF = (d.fat_g||0);
+        if (filter==='prot'){ gC = 0; gF = 0; }
+        else if (filter==='fat'){ gC = 0; gP = 0; }
+        else if (filter==='carb'){ gP = 0; gF = 0; }
+
+        const hC = yG(gC);
+        const hP = yG(gP);
+        const hF = yG(gF);
+        const sum = hC+hP+hF;
+        const topY = yBase - Math.max(sum, 0);
+
+        // Silhouette (clip pill)
+        let clipId = null;
+        if (shape === 'clip-capsule'){
+          clipId = `clip_${i}`;
+          const cp = document.createElementNS('http://www.w3.org/2000/svg','clipPath');
+          cp.setAttribute('id', clipId);
+          const pill = rect(x, Math.max(TOP_PAD, topY), BAR, Math.max(sum, 0.0001), outerR);
+          cp.appendChild(pill);
+          defs.appendChild(cp);
+        }
+
+        const group = document.createElementNS('http://www.w3.org/2000/svg','g');
+        if (clipId) group.setAttribute('clip-path', `url(#${clipId})`);
+        group.style.transition = 'transform .2s ease';
+
+        const rc = rect(x, yBase - hC, BAR, hC, shape==='rounded-segments' ? 6 : 0); rc.setAttribute('fill', 'rgba(52,211,153,.85)');
+        const rp = rect(x, yBase - (hC + hP), BAR, hP, shape==='rounded-segments' ? 6 : 0); rp.setAttribute('fill', 'rgba(96,165,250,.85)');
+        const rf = rect(x, yBase - (hC + hP + hF), BAR, hF, shape==='rounded-segments' ? 6 : 0); rf.setAttribute('fill', 'rgba(245,158,11,.85)');
+        rc.classList.add('bar-anim','seg','carb'); rp.classList.add('bar-anim','seg','prot'); rf.classList.add('bar-anim','seg','fat');
+        group.appendChild(rc); group.appendChild(rp); group.appendChild(rf);
+        gBars.appendChild(group);
+        groups.push(group);
+
+        // Подпись граммов в соло-режиме
+        if (filter !== 'all'){
+          const gSelVal = filter==='prot' ? (d.protein_g||0) : filter==='fat' ? (d.fat_g||0) : (d.carbs_g||0);
+          const hSel = filter==='prot' ? hP : filter==='fat' ? hF : hC;
+          if (hSel > 22){
+            const tx = document.createElementNS('http://www.w3.org/2000/svg','text');
+            tx.textContent = String(Math.round(gSelVal));
+            tx.setAttribute('x', x + BAR/2);
+            tx.setAttribute('y', yBase - (hSel * 0.75));
+            tx.setAttribute('text-anchor','middle');
+            tx.setAttribute('font-size','14');
+            tx.setAttribute('font-weight','900');
+            tx.setAttribute('fill','#fff');
+            tx.setAttribute('opacity','0.98');
+            tx.style.pointerEvents = 'none';
+            tx.style.dominantBaseline = 'middle';
+            group.appendChild(tx);
+          }
+        }
+
+        // Дата под выбранным
+        const tDate = document.createElementNS('http://www.w3.org/2000/svg','text');
+        tDate.textContent = fmtD(d.date);
+        tDate.setAttribute('x', x + BAR/2);
+        tDate.setAttribute('y', yDate);
+        tDate.setAttribute('text-anchor','middle');
+        tDate.setAttribute('font-size','12');
+        tDate.setAttribute('font-weight','700');
+        tDate.setAttribute('fill','rgba(255,255,255,.9)');
+        tDate.style.opacity = '0';
+        tDate.style.transition = 'opacity .18s ease';
+        tDate.style.pointerEvents = 'none';
+        gBars.appendChild(tDate);
+        dates.push(tDate);
+
+        // Выделение + hit-area
+        const selOutline = rect(x-1, topY, BAR+2, Math.max(sum,2), outerR);
+        selOutline.setAttribute('class','sel-outline'); selOutline.style.opacity = '0';
+        selOutline.style.transition = 'transform .2s ease, opacity .12s ease';
+        gSel.appendChild(selOutline);
+        outlines.push(selOutline);
+
+        const hit = rect(x, 0, BAR, H, outerR); hit.setAttribute('fill','transparent'); hit.style.cursor='pointer';
+        hit.addEventListener('click', ()=> select(i, d));
+        gHit.appendChild(hit);
+      });
+
+      // Сборка
+      svg.innerHTML = '';
+      svg.appendChild(defs);
+      svg.appendChild(gBars);
+      svg.appendChild(gSel);
+      svg.appendChild(gHit);
+
+      // Анимация
+      requestAnimationFrame(()=>{
+        svg.querySelectorAll('.bar-anim').forEach(el=> el.classList.add('show'));
+      });
+
+      // Выбор последнего дня + автоскролл
+      select(list.length-1, list[list.length-1]);
+      if (scr){ scr.scrollLeft = scr.scrollWidth; }
+
+      function select(idx, d){
+        if (infP) infP.textContent = Math.round(d.protein_g||0);
+        if (infF) infF.textContent = Math.round(d.fat_g||0);
+        if (infC) infC.textContent = Math.round(d.carbs_g||0);
+
+        outlines.forEach((o,i)=>{ o.style.opacity = (i===idx ? '1' : '0'); o.style.transform = (i===idx ? `translateY(-${LIFT}px)` : 'translateY(0)'); });
+        groups.forEach((g,i)=>{ g.style.transform = (i===idx ? `translateY(-${LIFT}px)` : 'translateY(0)'); });
+        dates.forEach((t,i)=>{ t.style.opacity = (i===idx ? '1' : '0'); });
+
+        try{ window.Telegram?.WebApp?.HapticFeedback?.selectionChanged?.(); }catch(_){ }
+      }
+
+      function rect(x,y,w,h,r=0){
+        const e = document.createElementNS('http://www.w3.org/2000/svg','rect');
+        e.setAttribute('x', x); e.setAttribute('y', Math.max(0,y));
+        e.setAttribute('width', w); e.setAttribute('height', Math.max(0,h));
+        if (r){ e.setAttribute('rx', r); e.setAttribute('ry', r); }
+        return e;
+      }
+    }
+
+    // resize: переотрисовка, без дублирования обработчика
+    if (window.__kbjuGlobalResizeBound !== true){
+      window.__kbjuGlobalResizeBound = true;
+      window.addEventListener('resize', ()=> {
+        document.querySelectorAll('.kbju7').forEach(root=>{
+          try{
+            const svg = root.querySelector('#kbju7-svg');
+            if (!svg) return;
+            // Триггерим перерасчёт просто через повторный вызов API,
+            // E1 сам вызовет renderKBJU7 снова при обновлении данных.
+          }catch(_){}
+        });
+      }, { passive:true });
+    }
+
+    // Кнопки-легенда (solo фильтр)
+    function bindLegend(root){
+      if (!root || root.__legendBound) return;
+      const info = root.querySelector('#kbju7-info'); if (!info) return;
+      info.addEventListener('click', (e)=>{
+        const btn = e.target.closest('.legend-tap');
+        if (!btn) return;
+        const key = btn.dataset.key;
+        const cur = root.getAttribute('data-filter') || 'all';
+        const next = (cur === key) ? 'all' : key;
+        root.setAttribute('data-filter', next);
+        info.querySelectorAll('.legend-tap').forEach(b=>{
+          const on = (next === b.dataset.key);
+          b.classList.toggle('active', on);
+          b.setAttribute('aria-pressed', String(on));
+        });
+        // перерисовка через повторный вызов
+        const kbjuHost = root;
+        const svg = kbjuHost.querySelector('#kbju7-svg');
+        if (svg && svg.__lastData){
+          renderKBJU7(kbjuHost, svg.__lastData, { visible:7, shape:'clip-capsule' });
+        }
+      }, { passive: true });
+      root.__legendBound = true;
+    }
+
+    // Экспорт
+    window.renderKBJU7 = function(host, data, opts={}){
+      const root = (typeof host === 'string') ? document.getElementById(host) : host;
+      if (!root) return;
+      bindLegend(root);
+      // запоминаем данные на svg, чтобы фильтр мог перерисовать
+      try{
+        const svg = root.querySelector('#kbju7-svg');
+        if (svg) svg.__lastData = Array.isArray(data) ? data.slice() : [];
+      }catch(_){}
+      return renderKBJU7(host, data, opts);
+    };
+  })();
+
+/* ============================================================
  *  BLOCK E1 — Analytics Macros (poll + cache)  (FULL REPLACEMENT)
  *  — рендер карточек КБЖУ + мини-график Б/Ж/У (новый дизайн)
  *  — получение данных из бэкенда, кэширование и безопасный поллинг
  * ============================================================ */
-(function macrosAnalyticsInit(){
+
+  (function macrosAnalyticsInit(){
   const tg = window.Telegram?.WebApp;
   const BACKEND = (typeof BACKEND_URL !== 'undefined' && BACKEND_URL) ? BACKEND_URL : '';
   const host = () => document.getElementById('analytics');
