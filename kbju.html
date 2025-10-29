@@ -7,7 +7,408 @@
 <meta name="tma:home-hash" content="" />
 <title>Замеры — анкета</title>
 
-<script>
+<!-- ===== 1. TELEGRAM SDK (обязательно!) ===== -->
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+<!-- ===== 2. CSS СТИЛИ (весь блок <style>) ===== -->
+<style>
+  :root{
+    --bg: linear-gradient(135deg,#667eea 0%,#764ba2 100%);
+    --cardA: rgba(255,255,255,.18);
+    --cardB: rgba(255,255,255,.16);
+    --border: rgba(255,255,255,.28);
+    --shadow: 0 8px 28px rgba(0,0,0,.18);
+    --okA:#fbbf24; --okB:#f59e0b;
+    --row: 36px;
+    --contentW: 420px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  html{background:transparent;}
+  body{
+    min-height:100svh;background:transparent;
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;
+    color:#fff;position:relative;isolation:isolate;
+  }
+  body::before{content:"";position:fixed;inset:0;background:var(--bg);z-index:0;pointer-events:none;transform:translateZ(0);}
+  .page{max-width:560px;margin:0 auto;padding:18px 14px 24px;position:relative;z-index:1}
+
+  .section{background:linear-gradient(180deg,var(--cardA),var(--cardB));border:1px solid var(--border);border-radius:18px;box-shadow:var(--shadow);backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);overflow:hidden;margin-bottom:14px;}
+  .section-h{display:flex;align-items:center;gap:10px;padding:14px 16px;cursor:pointer;user-select:none}
+  .section-h h2{font-size:16px;font-weight:800;flex:1}
+  .meta{font-size:11px;opacity:.9}
+  .toggle{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;opacity:.9}
+  .toggle svg{transition:transform .18s ease}
+  .section.collapsed .toggle svg{transform:rotate(-90deg)}
+  .section-content{padding:0}
+  .section.collapsed .section-content{display:none}
+
+  .field{padding:12px}
+  .field + .field{border-top:1px solid rgba(255,255,255,.14)}
+  .row{display:flex;align-items:center;justify-content:space-between}
+  .label{font-size:13px;font-weight:800}
+  .unit{font-size:12px;opacity:.9}
+  .help{margin-top:6px;text-align:center;font-size:12px;opacity:.8}
+
+  .duo{
+    position:relative;display:flex;gap:6px;padding:12px;border-radius:14px;
+    background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.24);
+    max-width:var(--contentW);width:100%;margin:8px auto 0;justify-content:center;
+    touch-action: pan-y;
+  }
+  .duo::after{
+    content:"";position:absolute;left:4px;right:4px;top:50%;height:var(--row);
+    transform:translateY(-50%);background:rgba(255,255,255,.14);
+    border:1px solid rgba(255,255,255,.35);border-radius:10px;pointer-events:none;
+  }
+  .col{
+    flex:0 0 92px;height:180px;overflow:auto;-webkit-overflow-scrolling:touch;
+    overscroll-behavior: contain;scrollbar-width:none;scroll-snap-type:y mandatory;
+    mask-image: linear-gradient(180deg, transparent, #000 18%, #000 82%, transparent);
+    -webkit-mask-image: linear-gradient(180deg, transparent, #000 18%, #000 82%, transparent);
+    touch-action: pan-y;
+  }
+  .col::-webkit-scrollbar{display:none}
+  .option{height:var(--row);display:flex;align-items:center;justify-content:center;font-weight:900;font-size:18px;color:#eef2ff;opacity:.55;scroll-snap-align:center;}
+  .option.active{color:#fff;opacity:1;text-shadow:0 1px 0 rgba(0,0,0,.2);}
+  .sep{display:flex;align-items:center;justify-content:center;width:10px;color:#e5e7eb;font-weight:800}
+  .optline{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:8px}
+  .optline input{width:18px;height:18px}
+
+  .savebar{display:flex;justify-content:center;padding:12px;border-top:1px solid rgba(255,255,255,.14);padding-bottom: calc(12px + env(safe-area-inset-bottom));}
+  .btn{
+    min-width:160px;padding:12px 16px;border:0;border-radius:14px;
+    background:linear-gradient(135deg,var(--okA),var(--okB));color:#fff;font-weight:900;
+    box-shadow:var(--shadow);transition: transform .08s ease, box-shadow .12s ease, filter .12s ease, opacity .12s ease;
+    -webkit-tap-highlight-color:transparent;touch-action: manipulation;
+    display:inline-flex;align-items:center;justify-content:center;gap:10px;
+  }
+  .btn:focus-visible{outline:2px solid rgba(255,255,255,.7);outline-offset:2px;border-radius:16px}
+  @media (prefers-reduced-motion: reduce){ .btn{transition:none;} }
+  .btn.pressed{transform:translateY(1px) scale(.98);box-shadow:var(--shadow);filter:saturate(.95);}
+  .btn.loading{opacity:.9;pointer-events:none;}
+  .spinner{width:16px;height:16px;border:2px solid rgba(255,255,255,.55);border-top-color:#fff;border-radius:50%;animation:spin .8s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  .disabled{opacity:.4;filter:saturate(.6)}
+
+  #ai-comment .field h4{margin:8px 0 6px;font-weight:900;}
+  #ai-comment .field h3{margin:10px 0 6px;font-weight:900;}
+  #ai-comment .field p{margin:8px 0;}
+  #ai-comment .field ul,#ai-comment .field ol{margin:8px 0 8px 18px;}
+  #ai-comment .field li{margin:4px 0;}
+  #ai-comment .field hr{border:0;border-top:1px solid rgba(255,255,255,.22);margin:10px 0;}
+  #ai-comment .field a{color:#fff;text-decoration:underline;}
+
+  .binary-choice{display:flex;gap:8px;padding:12px;border-radius:14px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.24);max-width:var(--contentW);width:100%;margin:8px auto 0}
+  .binary-btn{flex:1;padding:10px 16px;border:0;border-radius:12px;background:rgba(255,255,255,.15);color:#fff;font-weight:700;font-size:14px;transition:all .2s ease;cursor:pointer}
+  .binary-btn.active{background:linear-gradient(135deg,var(--okA),var(--okB));box-shadow:0 4px 12px rgba(251,191,36,.4),inset 0 1px 0 rgba(255,255,255,.3);transform:scale(1.02)}
+
+  .choice-list{display:grid;grid-template-columns:1fr;gap:8px;padding:14px;border-radius:20px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.28);max-width:var(--contentW);width:100%;margin:8px auto 0}
+  .choice-item{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:12px;background:transparent;border:0;cursor:pointer;transition:filter .15s ease,background .15s ease}
+  .choice-item:hover{background:rgba(255,255,255,.14)}
+  .choice-item span.label{font-weight:600}
+
+  .radio-circle{width:22px;height:22px;border-radius:50%;border:2px solid rgba(255,255,255,.65);display:flex;align-items:center;justify-content:center;flex-shrink:0;background:transparent;transition:all .2s ease}
+  .radio-circle::after{content:"";width:10px;height:10px;border-radius:50%;background:#fff;opacity:0;transform:scale(0);transition:all .2s ease}
+  .choice-item.selected .radio-circle{background:linear-gradient(135deg,var(--okA),var(--okB));border-color:var(--okB)}
+  .choice-item.selected .radio-circle::after{opacity:1;transform:scale(1)}
+
+  .check-square{width:22px;height:22px;border-radius:6px;border:2px solid rgba(255,255,255,.65);display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .2s ease;background:transparent}
+  .check-square::after{content:"";width:12px;height:12px;border-radius:3px;background:#fff;opacity:0;transform:scale(.7);transition:all .2s ease}
+  .choice-item.selected .check-square{background:linear-gradient(135deg,var(--okA),var(--okB));border-color:var(--okB)}
+  .choice-item.selected .check-square::after{opacity:1;transform:scale(1)}
+
+  .check{display:inline-flex;align-items:center;gap:10px;cursor:pointer;user-select:none}
+  .check .check-square{width:22px;height:22px}
+  .check .check-label{font-weight:700;letter-spacing:.2px}
+  .check.checked .check-square{background:linear-gradient(135deg,var(--okA),var(--okB));border-color:var(--okB)}
+  .check.checked .check-square::after{opacity:1;transform:scale(1)}
+
+  .field[data-key="fat"] .optline{ display:flex !important; justify-content:center; margin-top:8px; }
+  .field[data-key="fat"] .optline #bf-none-wrap{ display:inline-flex; }
+  .field[data-key="fat"] .optline label:not(#bf-none-wrap){ display:none !important; }
+
+  .bump{animation:bump .08s ease}
+  @keyframes bump{0%{transform:scale(1)}50%{transform:scale(.98)}100%{transform:scale(1)}}
+
+  .duo{ max-width: var(--contentW) !important; width: 100% !important; margin: 8px auto 0 !important; }
+  .field[data-key="age"] .col-frac, .field[data-key="age"] .sep { display:none; }
+
+  .macros-grid{ display:grid;grid-template-columns:repeat(2,1fr);gap:8px;padding:12px }
+  .macro-card{ border:1px solid rgba(255,255,255,.24);border-radius:14px;background:rgba(255,255,255,.12);padding:12px;text-align:center }
+  .macro-card .m-label{font-size:12px;opacity:.9;margin-bottom:6px;font-weight:700}
+  .macro-card .m-value{font-size:24px;font-weight:900;line-height:1}
+  .macro-card .m-unit{font-size:12px;opacity:.85;margin-top:2px}
+  .macro-hint{margin:4px 12px 12px;text-align:center;font-size:12px;opacity:.8}
+
+  .kbju7{ --h:160; --gap:8; --ink:#fff; --c-carb:#34d399; --c-prot:#60a5fa; --c-fat:#f59e0b; position:relative }
+  .kbju7-card{
+    background:linear-gradient(180deg,var(--cardA), var(--cardB));
+    border:1px solid var(--border);
+    border-radius:18px; backdrop-filter:blur(10px);
+    box-shadow:0 8px 24px rgba(0,0,0,.18); color:var(--ink)
+  }
+  .kbju7-viewport{position:relative;padding:6px 8px 4px}
+  .kbju7-scroll{position:relative;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;scrollbar-width:none;touch-action: pan-x}
+  .kbju7-scroll::-webkit-scrollbar{display:none}
+
+  .kbju7-info{display:flex;align-items:center;justify-content:center;gap:14px;border-top:1px solid rgba(255,255,255,.16);padding:10px 16px;white-space:nowrap;min-height:46px;font-size:16px;font-variant-numeric:tabular-nums}
+  .kbju7-info .v{display:inline-block;min-width:3.8ch;text-align:right}
+  .legend-tap{display:inline-flex;align-items:center;gap:6px;padding:8px 10px;border:1px solid rgba(255,255,255,.9);background:transparent;color:inherit;font:inherit;border-radius:12px;min-height:36px;min-width:44px;cursor:pointer;justify-content:center}
+  .legend-tap .dot{width:10px;height:10px;border-radius:50%}
+  .legend-tap[data-key="prot"] .dot{background: var(--c-prot)}
+  .legend-tap[data-key="fat"]  .dot{background: var(--c-fat)}
+  .legend-tap[data-key="carb"] .dot{background: var(--c-carb)}
+  .legend-tap.active{background:rgba(255,255,255,.12);border-color:transparent}
+
+  .bar-anim{transform:scaleY(0); transform-origin:bottom; transform-box: fill-box; transition: transform .35s ease;}
+  .bar-anim.show{transform:scaleY(1)}
+  .sel-outline{fill:none;stroke:#fff;stroke-width:2;rx:18;ry:18}
+
+  .kbju7[data-filter="prot"] .legend-tap:not([data-key="prot"]),
+  .kbju7[data-filter="fat"]  .legend-tap:not([data-key="fat"]),
+  .kbju7[data-filter="carb"] .legend-tap:not([data-key="carb"]){opacity:.7}
+</style>
+</head>
+
+<!-- ===== 3. HTML BODY (вся разметка) ===== -->
+<body>
+  <div class="page">
+
+    <section class="section collapsed" id="sec-measures">
+      <div class="section-h" data-toggle="sec-measures" role="button" tabindex="0">
+        <h2>Анкета</h2>
+        <div class="meta" id="lastTime">Последний замер: нет данных</div>
+        <div class="toggle">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M8 10l4 4 4-4" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+      </div>
+      <div class="section-content">
+        
+        <!-- Пол -->
+        <div class="field">
+          <div class="row"><div class="label">Пол</div></div>
+          <div class="binary-choice">
+            <button class="binary-btn" data-field="gender" data-value="male">Мужской</button>
+            <button class="binary-btn" data-field="gender" data-value="female">Женский</button>
+          </div>
+          <div class="help">Выберите один вариант</div>
+        </div>
+
+        <div id="fields"></div>
+
+        <!-- Визуальная оценка -->
+        <div class="field" id="sec-bodycomp" style="display:none">
+          <div class="row"><div class="label">Визуальная оценка композиции тела</div></div>
+          <div class="choice-list" data-type="single" data-field="body_comp">
+            <div class="choice-item" data-value="very_low"><div class="radio-circle"></div><span class="label">Очень низкий процент жира</span></div>
+            <div class="choice-item" data-value="athletic"><div class="radio-circle"></div><span class="label">Атлетичное</span></div>
+            <div class="choice-item" data-value="average"><div class="radio-circle"></div><span class="label">Среднее</span></div>
+            <div class="choice-item" data-value="overweight"><div class="radio-circle"></div><span class="label">Избыточный вес</span></div>
+            <div class="choice-item" data-value="obesity"><div class="radio-circle"></div><span class="label">Ожирение</span></div>
+          </div>
+        </div>
+
+        <!-- Этничность -->
+        <div class="field">
+          <div class="row"><div class="label">Этническая принадлежность</div></div>
+          <div class="choice-list" data-type="single" data-field="ethnicity">
+            <div class="choice-item" data-value="european_mixed"><div class="radio-circle"></div><span class="label">Европеоидная или Смешанная</span></div>
+            <div class="choice-item" data-value="asian"><div class="radio-circle"></div><span class="label">Азиатская</span></div>
+            <div class="choice-item" data-value="african"><div class="radio-circle"></div><span class="label">Африканская</span></div>
+            <div class="choice-item" data-value="prefer_not_to_say"><div class="radio-circle"></div><span class="label">Предпочитаю не указывать</span></div>
+          </div>
+        </div>
+
+        <!-- Тип работы -->
+        <div class="field">
+          <div class="row"><div class="label">Тип основной работы или учёбы</div></div>
+          <div class="choice-list" data-type="single" data-field="job_type">
+            <div class="choice-item" data-value="sedentary"><div class="radio-circle"></div><span class="label">Сидячая</span></div>
+            <div class="choice-item" data-value="moderately_active"><div class="radio-circle"></div><span class="label">Умеренно активная</span></div>
+            <div class="choice-item" data-value="physically_active"><div class="radio-circle"></div><span class="label">Активная физическая</span></div>
+            <div class="choice-item" data-value="very_heavy"><div class="radio-circle"></div><span class="label">Очень тяжёлая</span></div>
+          </div>
+        </div>
+
+        <!-- Шаги -->
+        <div class="field">
+          <div class="row"><div class="label">Среднее количество шагов в день</div></div>
+          <div class="choice-list" data-type="single" data-field="steps_per_day">
+            <div class="choice-item" data-value="lt_3000"><div class="radio-circle"></div><span class="label">Менее 3000</span></div>
+            <div class="choice-item" data-value="3000_4999"><div class="radio-circle"></div><span class="label">3000 до 4999</span></div>
+            <div class="choice-item" data-value="5000_7999"><div class="radio-circle"></div><span class="label">5000 до 7999</span></div>
+            <div class="choice-item" data-value="8000_9999"><div class="radio-circle"></div><span class="label">8000 до 9999</span></div>
+            <div class="choice-item" data-value="gt_10000"><div class="radio-circle"></div><span class="label">Более 10000</span></div>
+          </div>
+        </div>
+
+        <!-- Частота тренировок -->
+        <div class="field">
+          <div class="row"><div class="label">Частота тренировок (раз в неделю)</div></div>
+          <div class="choice-list" data-type="single" data-field="workouts_per_week">
+            <div class="choice-item" data-value="none"><div class="radio-circle"></div><span class="label">Не тренируюсь</span></div>
+            <div class="choice-item" data-value="1_2"><div class="radio-circle"></div><span class="label">1 до 2 раза</span></div>
+            <div class="choice-item" data-value="3_4"><div class="radio-circle"></div><span class="label">3 до 4 раза</span></div>
+            <div class="choice-item" data-value="5_6"><div class="radio-circle"></div><span class="label">5 до 6 раз</span></div>
+            <div class="choice-item" data-value="7_plus"><div class="radio-circle"></div><span class="label">7 раз и более</span></div>
+          </div>
+        </div>
+
+        <!-- Длительность -->
+        <div class="field">
+          <div class="row"><div class="label">Длительность одной тренировки (минуты)</div></div>
+          <div class="choice-list" data-type="single" data-field="workout_duration">
+            <div class="choice-item" data-value="none"><div class="radio-circle"></div><span class="label">Не тренируюсь</span></div>
+            <div class="choice-item" data-value="lt_30"><div class="radio-circle"></div><span class="label">Менее 30 минут</span></div>
+            <div class="choice-item" data-value="30_45"><div class="radio-circle"></div><span class="label">30 до 45 минут</span></div>
+            <div class="choice-item" data-value="45_60"><div class="radio-circle"></div><span class="label">45 до 60 минут</span></div>
+            <div class="choice-item" data-value="60_90"><div class="radio-circle"></div><span class="label">60 до 90 минут</span></div>
+            <div class="choice-item" data-value="gt_90"><div class="radio-circle"></div><span class="label">Более 90 минут</span></div>
+          </div>
+        </div>
+
+        <!-- Интенсивность -->
+        <div class="field">
+          <div class="row"><div class="label">Интенсивность тренировок</div></div>
+          <div class="choice-list" data-type="single" data-field="workout_intensity">
+            <div class="choice-item" data-value="none"><div class="radio-circle"></div><span class="label">Не тренируюсь</span></div>
+            <div class="choice-item" data-value="low"><div class="radio-circle"></div><span class="label">Низкая</span></div>
+            <div class="choice-item" data-value="moderate"><div class="radio-circle"></div><span class="label">Умеренная</span></div>
+            <div class="choice-item" data-value="high"><div class="radio-circle"></div><span class="label">Высокая</span></div>
+            <div class="choice-item" data-value="pro"><div class="radio-circle"></div><span class="label">Профессиональный спорт</span></div>
+          </div>
+        </div>
+
+        <!-- NEAT -->
+        <div class="field">
+          <div class="row"><div class="label">Уровень спонтанной активности (NEAT)</div></div>
+          <div class="choice-list" data-type="single" data-field="neat_level">
+            <div class="choice-item" data-value="low"><div class="radio-circle"></div><span class="label">Низкий</span></div>
+            <div class="choice-item" data-value="medium"><div class="radio-circle"></div><span class="label">Средний</span></div>
+            <div class="choice-item" data-value="high"><div class="radio-circle"></div><span class="label">Высокий</span></div>
+          </div>
+        </div>
+
+        <!-- Сон -->
+        <div class="field">
+          <div class="row"><div class="label">Среднее количество сна (часов в ночь)</div></div>
+          <div class="choice-list" data-type="single" data-field="sleep_hours">
+            <div class="choice-item" data-value="h7_9"><div class="radio-circle"></div><span class="label">7 до 9 часов</span></div>
+            <div class="choice-item" data-value="h6_7"><div class="radio-circle"></div><span class="label">6 до 7 часов</span></div>
+            <div class="choice-item" data-value="lt_6"><div class="radio-circle"></div><span class="label">Менее 6 часов</span></div>
+            <div class="choice-item" data-value="gt_9"><div class="radio-circle"></div><span class="label">Более 9 часов</span></div>
+          </div>
+        </div>
+
+        <!-- История веса -->
+        <div class="field">
+          <div class="row"><div class="label">История изменения веса (последние 6 месяцев)</div></div>
+          <div class="choice-list" data-type="single" data-field="weight_history">
+            <div class="choice-item" data-value="stable"><div class="radio-circle"></div><span class="label">Вес стабилен (±2 кг)</span></div>
+            <div class="choice-item" data-value="loss_3_5_deficit"><div class="radio-circle"></div><span class="label">Потеря 3–5 кг на дефиците</span></div>
+            <div class="choice-item" data-value="loss_gt5_deficit"><div class="radio-circle"></div><span class="label">Потеря >5 кг на дефиците</span></div>
+            <div class="choice-item" data-value="long_lowcal"><div class="radio-circle"></div><span class="label">Длительная низкокалорийная диета</span></div>
+            <div class="choice-item" data-value="gain_gt5"><div class="radio-circle"></div><span class="label">Набор &gt;5 кг</span></div>
+          </div>
+        </div>
+
+        <!-- Основная цель -->
+        <div class="field">
+          <div class="row"><div class="label">Основная цель</div></div>
+          <div class="choice-list" data-type="single" data-field="main_goal">
+            <div class="choice-item" data-value="fat_loss"><div class="radio-circle"></div><span class="label">Снижение веса</span></div>
+            <div class="choice-item" data-value="maintenance"><div class="radio-circle"></div><span class="label">Поддержание веса</span></div>
+            <div class="choice-item" data-value="muscle_gain"><div class="radio-circle"></div><span class="label">Набор мышц</span></div>
+            <div class="choice-item" data-value="recomposition"><div class="radio-circle"></div><span class="label">Рекомпозиция</span></div>
+          </div>
+        </div>
+
+        <!-- Темп -->
+        <div class="field">
+          <div class="row"><div class="label">Темп достижения цели</div></div>
+          <div class="choice-list" data-type="single" data-field="goal_pace">
+            <div class="choice-item" data-value="slow"><div class="radio-circle"></div><span class="label">Медленный</span></div>
+            <div class="choice-item" data-value="moderate"><div class="radio-circle"></div><span class="label">Умеренный</span></div>
+            <div class="choice-item" data-value="fast"><div class="radio-circle"></div><span class="label">Быстрый</span></div>
+          </div>
+        </div>
+
+        <!-- Заболевания -->
+        <div class="field">
+          <div class="row"><div class="label">Хронические заболевания</div></div>
+          <div class="choice-list" data-type="multiple" data-field="chronic_conditions">
+            <div class="choice-item" data-value="none"><div class="check-square"></div><span class="label">Нет</span></div>
+            <div class="choice-item" data-value="t2d_ir"><div class="check-square"></div><span class="label">Диабет 2 типа / ИР</span></div>
+            <div class="choice-item" data-value="ckd_3_5"><div class="check-square"></div><span class="label">ХБП (3–5)</span></div>
+            <div class="choice-item" data-value="cvd_htn"><div class="check-square"></div><span class="label">ССЗ / гипертония</span></div>
+            <div class="choice-item" data-value="hypothyroid"><div class="check-square"></div><span class="label">Гипотиреоз</span></div>
+          </div>
+        </div>
+
+        <!-- Беременность/лактация -->
+        <div class="field" id="sec-preg" style="display:none">
+          <div class="row"><div class="label">Беременность или лактация</div></div>
+          <div class="choice-list" data-type="single" data-field="pregnancy_lactation">
+            <div class="choice-item" data-value="none"><div class="radio-circle"></div><span class="label">Нет</span></div>
+            <div class="choice-item" data-value="preg_trim1"><div class="radio-circle"></div><span class="label">Беременность 1 триместр</span></div>
+            <div class="choice-item" data-value="preg_trim2"><div class="radio-circle"></div><span class="label">Беременность 2 триместр</span></div>
+            <div class="choice-item" data-value="preg_trim3"><div class="radio-circle"></div><span class="label">Беременность 3 триместр</span></div>
+            <div class="choice-item" data-value="lact_0_6"><div class="radio-circle"></div><span class="label">Лактация 0–6 мес</span></div>
+            <div class="choice-item" data-value="lact_6_12"><div class="radio-circle"></div><span class="label">Лактация 6–12 мес</span></div>
+          </div>
+        </div>
+
+        <!-- Цикл -->
+        <div class="field" id="sec-cycle" style="display:none">
+          <div class="row"><div class="label">Регулярность менструального цикла</div></div>
+          <div class="choice-list" data-type="single" data-field="cycle_regular">
+            <div class="choice-item" data-value="regular"><div class="radio-circle"></div><span class="label">Регулярный</span></div>
+            <div class="choice-item" data-value="irregular"><div class="radio-circle"></div><span class="label">Нерегулярный / нет</span></div>
+            <div class="choice-item" data-value="menopause"><div class="radio-circle"></div><span class="label">Менопауза</span></div>
+          </div>
+        </div>
+
+        <div class="savebar">
+          <button class="btn" id="saveBtn">
+            <span class="btn-label">Сохранить</span>
+            <span class="spinner" hidden></span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="sec-analytics">
+      <div class="section-h" data-toggle="sec-analytics">
+        <h2>Аналитика</h2>
+        <div class="toggle">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M8 10l4 4 4-4" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+      </div>
+      <div class="section-content" id="analytics">
+        <div class="field"><div class="help">После сохранения появятся графики.</div></div>
+      </div>
+    </section>
+
+    <section class="section" id="sec-ai">
+      <div class="section-h" data-toggle="sec-ai">
+        <h2>Комментарий</h2>
+        <div class="toggle">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M8 10l4 4 4-4" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+      </div>
+      <div class="section-content" id="ai-comment">
+        <div class="field"><div class="help">Подключите бэкенд — здесь будет текст.</div></div>
+      </div>
+    </section>
+
+    <div id="admin-section-anchor"></div>
+
+  </div>
+
+<!-- ===== 4. JAVASCRIPT (ваш новый код) ===== -->
+
+  <script>
 /* ============================================================
  *  SMART VERSION CONTROL
  * ============================================================ */
@@ -36,7 +437,7 @@ window.addEventListener('pageshow', (e)=>{
  *  GLOBAL CONSTANTS & UTILITIES
  * ============================================================ */
 const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbwvp2MZDJNuVx3t5qQ_XtFNzDZdt37WI5gYyBB9Ykx4Oag9gS-MlVYxw8h67YKC7oa8_A/exec';
-const APP_VERSION = 'frontend-2025-10-32';
+const APP_VERSION = 'frontend-2025-10-21';
 const REQUEST_TIMEOUT_MS = 30000;
 const COOLDOWN_MS = 60000;
 
@@ -2137,7 +2538,6 @@ if (document.readyState === 'loading') {
 } else {
   initApp();
 }
-
 </script>
 </body>
 </html>
