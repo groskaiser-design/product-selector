@@ -1174,6 +1174,7 @@ function handleSaveClick(e){
       // перезапуск потоков (если подключены)
       try { startFrontDataFlow(); } catch(_){}
       try { window.startMacrosFlow(); } catch(_){}
+      try { window.startChartFlow(); } catch(_){}
 
       try { tg?.HapticFeedback?.notificationOccurred?.('success'); } catch(_){}
       showPopup('Готово','Данные сохранены.','success');
@@ -1194,6 +1195,7 @@ function handleSaveClick(e){
           
           try { startFrontDataFlow(); } catch(_){}
           try { window.startMacrosFlow(); } catch(_){}
+          try { window.startChartFlow(); } catch(_){}
 
           try { tg?.HapticFeedback?.notificationOccurred?.('success'); } catch(_){}
           showPopup('Готово','Данные сохранены.','success');
@@ -1814,7 +1816,186 @@ PageLaunch→UpdateComment: ${comment} s`;
   window.startMacrosFlow();
 })();
 
+/* ============================================================
+ *  BLOCK E2 — Analytics Chart Data (poll + cache)
+ * ============================================================ */
+(function chartDataInit(){
+  const tg = window.Telegram?.WebApp;
+  const BACKEND = (typeof BACKEND_URL !== 'undefined' && BACKEND_URL) ? BACKEND_URL : '';
+  const host = () => document.getElementById('analytics');
 
+  const CHART_KEY_PREFIX = 'chart:data:';
+  function currentUserId(){ try { return window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'anon'; } catch(_){ return 'anon'; } }
+  function chartKey(uid){ return CHART_KEY_PREFIX + String(uid); }
+  function saveChartCache(obj, uid){ try { localStorage.setItem(chartKey(uid ?? currentUserId()), JSON.stringify(obj)); } catch(_){} }
+  function loadChartCache(uid){ try { const raw = localStorage.getItem(chartKey(uid ?? currentUserId())); return raw ? JSON.parse(raw) : null; } catch(_) { return null; } }
+
+  function renderChartPlaceholder(){
+    const el = host(); if (!el) return;
+    const existing = el.querySelector('#chart-container');
+    if (existing) return; // уже есть
+    
+    const chartHtml = `
+      <div class="field" style="margin-top:12px">
+        <div id="chart-container">
+          <div class="help" id="chart-hint">Загружаем график…</div>
+          <canvas id="chart-canvas" style="display:none;max-width:100%;height:300px"></canvas>
+        </div>
+      </div>`;
+    el.insertAdjacentHTML('beforeend', chartHtml);
+  }
+
+  function renderChart(data, status){
+    const hint = document.getElementById('chart-hint');
+    const canvas = document.getElementById('chart-canvas');
+    
+    if (status === 'READY' && data && data.length > 0){
+      if (hint) hint.style.display = 'none';
+      if (canvas) {
+        canvas.style.display = 'block';
+        drawChart(canvas, data);
+      }
+    } else if (status === 'EMPTY' || status === 'WAITING'){
+      if (hint) hint.textContent = 'Обрабатываем данные…';
+      if (canvas) canvas.style.display = 'none';
+    } else if (status === 'NO_ROW'){
+      if (hint) hint.textContent = 'Сначала заполните анкету и сохраните.';
+      if (canvas) canvas.style.display = 'none';
+    }
+  }
+
+  function drawChart(canvas, data){
+    // Простейшая отрисовка через Canvas API (замените на Chart.js если нужно)
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width = canvas.offsetWidth;
+    const h = canvas.height = 300;
+    ctx.clearRect(0, 0, w, h);
+    
+    if (!data || data.length === 0) return;
+    
+    // Простой line chart для белков (замените на свою логику)
+    const max = Math.max(...data.map(d => d.protein || 0));
+    const step = w / (data.length - 1);
+    
+    ctx.strokeStyle = '#fbbf24';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    data.forEach((point, i) => {
+      const x = i * step;
+      const y = h - (point.protein / max * h * 0.8) - 20;
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+    
+    // Подписи дат (упрощённо)
+    ctx.fillStyle = '#fff';
+    ctx.font = '11px monospace';
+    ctx.textAlign = 'center';
+    data.forEach((point, i) => {
+      if (i % Math.ceil(data.length / 5) === 0) {
+        ctx.fillText(point.date || '', i * step, h - 5);
+      }
+    });
+  }
+
+  let _chartTimer = 0;
+  let _chartRunId = 0;
+  let _chartAbort = null;
+  let _chartStatus = 'INIT';
+  const STATUS_RANK = { INIT:0, NO_ROW:1, WAITING:2, EMPTY:3, READY:4 };
+
+  function renderChartSafe(data, nextStatus){
+    const cur = STATUS_RANK[_chartStatus] ?? 0;
+    const nxt = STATUS_RANK[nextStatus] ?? 0;
+    if (nxt < cur) return;
+    renderChart(data, nextStatus);
+    _chartStatus = nextStatus;
+  }
+
+  async function apiFrontChartData(requestedRow, signal){
+    const payload = {
+      action: 'front_chart_data',
+      init_data: String(tg?.initData || ''),
+      row: Number(requestedRow || 0) || undefined
+    };
+    const resp = await fetch(BACKEND, {
+      method:'POST',
+      headers:{ 'Content-Type':'text/plain;charset=UTF-8' },
+      body: JSON.stringify(payload),
+      cache:'no-store', credentials:'omit', mode:'cors',
+      signal
+    });
+    const raw = await resp.text();
+    let json = null; try { json = raw ? JSON.parse(raw) : null; } catch(_){}
+    if (!resp.ok || !json) throw new Error(`HTTP ${resp.status}`);
+    return json;
+  }
+
+  async function pollOnce(runId){
+    if (runId !== _chartRunId) return { done:true };
+    const reqRow = (typeof getRowCalcForUser === 'function') ? getRowCalcForUser() : null;
+
+    if (_chartAbort) { try{ _chartAbort.abort(); }catch(_){ } }
+    const controller = new AbortController();
+    _chartAbort = controller;
+
+    try{
+      const res = await apiFrontChartData(reqRow, controller.signal);
+      if (runId !== _chartRunId) return { done:true };
+
+      if (res?.row && res.row !== reqRow && typeof setRowCalcForUser === 'function'){
+        setRowCalcForUser(res.row);
+      }
+
+      renderChartSafe(res?.data || [], res?.status || 'WAITING');
+
+      if (res?.ready){
+        saveChartCache({ row: res.row, data: res.data, updated_at: res.updated_at });
+        return { done:true };
+      }
+      const wait = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
+      return { done:false, wait };
+    } catch(err){
+      if (err?.name === 'AbortError') return { done:true };
+      if (runId !== _chartRunId) return { done:true };
+      return { done:false, wait: 1000 };
+    }
+  }
+
+  async function pollLoop(runId){
+    if (runId !== _chartRunId) return;
+    clearTimeout(_chartTimer);
+    const r = await pollOnce(runId);
+    if (r.done || runId !== _chartRunId) return;
+    _chartTimer = setTimeout(()=>pollLoop(runId), r.wait);
+  }
+
+  window.startChartFlow = function(){
+    _chartRunId += 1;
+    const runId = _chartRunId;
+    _chartStatus = 'INIT';
+
+    renderChartPlaceholder();
+    const cached = loadChartCache();
+    if (cached && cached.data){ renderChartSafe(cached.data, 'READY'); }
+
+    clearTimeout(_chartTimer);
+    if (_chartAbort){ try{ _chartAbort.abort(); }catch(_){ } _chartAbort = null; }
+
+    pollLoop(runId);
+  };
+
+  document.addEventListener('visibilitychange', ()=>{
+    if (document.visibilityState === 'hidden'){
+      clearTimeout(_chartTimer);
+      if (_chartAbort){ try{ _chartAbort.abort(); }catch(_){ } _chartAbort = null; }
+    } else {
+      window.startChartFlow();
+    }
+  });
+
+  window.startChartFlow();
+})();
 
 // ============================================================
 // BLOCK Z — Аккордеон: один-единственный обработчик (idempotent)
