@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0024'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0025'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -168,6 +168,39 @@ window.addEventListener('pageshow', (e)=>{
   .macro-card .m-value{font-size:24px;font-weight:900;line-height:1}
   .macro-card .m-unit{font-size:12px;opacity:.85;margin-top:2px}
   .macro-hint{margin:4px 12px 12px;text-align:center;font-size:12px;opacity:.8}
+
+  /* === KBJU-7 (миникарта БЖУ) — новый дизайн === */
+.kbju7{ --h:160; --gap:8; --ink:#fff; --c-carb:#34d399; --c-prot:#60a5fa; --c-fat:#f59e0b; position:relative }
+.kbju7-card{
+  background:linear-gradient(180deg,var(--cardA), var(--cardB));
+  border:1px solid var(--border);
+  border-radius:18px; backdrop-filter:blur(10px);
+  box-shadow:0 8px 24px rgba(0,0,0,.18); color:var(--ink)
+}
+.kbju7-viewport{position:relative;padding:6px 8px 4px}
+.kbju7-scroll{position:relative;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;scrollbar-width:none;touch-action: pan-x}
+.kbju7-scroll::-webkit-scrollbar{display:none}
+
+/* нижняя панель-легенда в виде кнопок */
+.kbju7-info{display:flex;align-items:center;justify-content:center;gap:14px;border-top:1px solid rgba(255,255,255,.16);padding:10px 16px;white-space:nowrap;min-height:46px;font-size:16px;font-variant-numeric:tabular-nums}
+.kbju7-info .v{display:inline-block;min-width:3.8ch;text-align:right}
+.legend-tap{display:inline-flex;align-items:center;gap:6px;padding:8px 10px;border:1px solid rgba(255,255,255,.9);background:transparent;color:inherit;font:inherit;border-radius:12px;min-height:36px;min-width:44px;cursor:pointer;justify-content:center}
+.legend-tap .dot{width:10px;height:10px;border-radius:50%}
+.legend-tap[data-key="prot"] .dot{background: var(--c-prot)}
+.legend-tap[data-key="fat"]  .dot{background: var(--c-fat)}
+.legend-tap[data-key="carb"] .dot{background: var(--c-carb)}
+.legend-tap.active{background:rgba(255,255,255,.12);border-color:transparent}
+
+/* анимация/подсветка */
+.bar-anim{transform:scaleY(0); transform-origin:bottom; transform-box: fill-box; transition: transform .35s ease;}
+.bar-anim.show{transform:scaleY(1)}
+.sel-outline{fill:none;stroke:#fff;stroke-width:2;rx:18;ry:18}
+
+/* затемняем неактивные кнопки при фильтре */
+.kbju7[data-filter="prot"] .legend-tap:not([data-key="prot"]),
+.kbju7[data-filter="fat"]  .legend-tap:not([data-key="fat"]),
+.kbju7[data-filter="carb"] .legend-tap:not([data-key="carb"]){opacity:.7}
+
 </style>
 </head>
 <body>
@@ -1664,21 +1697,68 @@ PageLaunch→UpdateComment: ${comment} s`;
   requestAnimationFrame(ensureFatOptlineStyled);
 })();
 
+
 /* ============================================================
- *  BLOCK E1 — Analytics Macros (poll + cache)
+ *  BLOCK E1 — Analytics Macros (poll + cache)  (FULL REPLACEMENT)
+ *  — рендер карточек КБЖУ + мини-график Б/Ж/У (новый дизайн)
+ *  — получение данных из бэкенда, кэширование и безопасный поллинг
  * ============================================================ */
 (function macrosAnalyticsInit(){
   const tg = window.Telegram?.WebApp;
   const BACKEND = (typeof BACKEND_URL !== 'undefined' && BACKEND_URL) ? BACKEND_URL : '';
   const host = () => document.getElementById('analytics');
 
+  /* === KBJU series state + helpers (для мини-графика) === */
+  let _seriesAbort = null;
+  const _seriesCacheByRow = Object.create(null);
+
+  function pickKbjuSeriesFrom(res){
+    // ожидаем массив объектов: [{ date:'YYYY-MM-DD', protein_g, fat_g, carbs_g }, ...]
+    return res?.kbju_series || res?.kbju || res?.series_kbju || res?.days_kbju || null;
+  }
+
+  async function fetchKbjuSeries(row, signal){
+    if (!BACKEND) return null;
+    const payload = {
+      action: 'front_kbju_series',
+      init_data: String(tg?.initData || ''),
+      row: Number(row || 0) || undefined
+    };
+    const resp = await fetch(BACKEND, {
+      method:'POST',
+      headers:{ 'Content-Type':'text/plain;charset=UTF-8' },
+      body: JSON.stringify(payload),
+      cache:'no-store', credentials:'omit', mode:'cors',
+      signal
+    });
+    const raw = await resp.text();
+    let json = null; try{ json = raw ? JSON.parse(raw) : null; }catch(_){}
+    if (!resp.ok || !json) throw new Error(`HTTP ${resp.status}`);
+    return pickKbjuSeriesFrom(json);
+  }
+
+  function renderKbjuIfHost(series){
+    if (typeof window.renderKBJU7 !== 'function') return;
+    const kbjuHost = document.getElementById('kbju7-host');
+    if (!kbjuHost) return;
+    window.renderKBJU7(kbjuHost, Array.isArray(series) ? series : [], { visible:7, shape:'clip-capsule' });
+  }
+
+  /* === Кэш КБЖУ (карточки) — локальное хранилище === */
   const MACROS_KEY_PREFIX = 'macros:vals:';
   function currentUserId(){ try { return window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'anon'; } catch(_){ return 'anon'; } }
-  function macrosKey(uid){ return MACROS_KEY_PREFIX + String(uid); }
-  function saveMacrosCache(obj, uid){ try { localStorage.setItem(macrosKey(uid ?? currentUserId()), JSON.stringify(obj)); } catch(_){} }
-  function loadMacrosCache(uid){ try { const raw = localStorage.getItem(macrosKey(uid ?? currentUserId())); return raw ? JSON.parse(raw) : null; } catch(_) { return null; } }
+  function macrosKey(uid){ return MACROS_KEY_PREFIX + String(uid ?? currentUserId()); }
+  function saveMacrosCache(obj, uid){ try { localStorage.setItem(macrosKey(uid), JSON.stringify(obj)); } catch(_){} }
+  function loadMacrosCache(uid){
+    try {
+      const raw = localStorage.getItem(macrosKey(uid ?? currentUserId()));
+      return raw ? JSON.parse(raw) : null;
+    } catch(_) { return null; }
+  }
 
+  /* === UI формирование === */
   function fmtInt(v){ return (v==null || isNaN(v)) ? '—' : String(Math.round(Number(v))); }
+
   function renderSkeleton(){
     const el = host(); if (!el) return;
     el.innerHTML = `
@@ -1690,8 +1770,26 @@ PageLaunch→UpdateComment: ${comment} s`;
           <div class="macro-card"><div class="m-label">Углеводы</div><div class="m-value" id="m_carbs">—</div><div class="m-unit">г</div></div>
         </div>
         <div class="macro-hint" id="macros-hint">После сохранения появятся расчёты.</div>
-      </div>`;
+      </div>
+
+      <!-- ↓↓↓ мини-график БЖУ под карточками КБЖУ ↓↓↓ -->
+      <div class="field" id="kbju7-field">
+        <div class="kbju7 kbju7-card" id="kbju7-host" aria-label="История БЖУ">
+          <div class="kbju7-viewport">
+            <div class="kbju7-scroll" id="kbju7-scroll">
+              <svg id="kbju7-svg" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="График БЖУ"></svg>
+            </div>
+          </div>
+          <div class="kbju7-info" id="kbju7-info" role="tablist" aria-label="Выбор нутриента">
+            <button type="button" class="legend-tap" data-key="prot" aria-pressed="false"><span class="dot" aria-hidden="true"></span><span>Б:</span> <b class="v" id="kbju7-p">—</b> г</button>
+            <button type="button" class="legend-tap" data-key="fat"  aria-pressed="false"><span class="dot" aria-hidden="true"></span><span>Ж:</span> <b class="v" id="kbju7-f">—</b> г</button>
+            <button type="button" class="legend-tap" data-key="carb" aria-pressed="false"><span class="dot" aria-hidden="true"></span><span>У:</span> <b class="v" id="kbju7-c">—</b> г</button>
+          </div>
+        </div>
+      </div>
+    `;
   }
+
   function renderValues(macros, opts){
     const o = opts || {};
     const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = fmtInt(val); };
@@ -1709,7 +1807,7 @@ PageLaunch→UpdateComment: ${comment} s`;
     else { hint.textContent = '—'; }
   }
 
-  // === ДОБАВЛЕНО: статусный приоритет и «охранник» запуска ===
+  /* === статусная обёртка + поллинг макросов === */
   let _macrosTimer = 0;
   let _macrosRunId = 0;
   let _macrosAbort = null;
@@ -1762,6 +1860,28 @@ PageLaunch→UpdateComment: ${comment} s`;
 
       renderValuesSafe(res?.macros || {}, res?.status || 'WAITING');
 
+      /* === KBJU series update (инлайн или отдельным запросом) === */
+      const kbjuInline = pickKbjuSeriesFrom(res);
+      if (kbjuInline && Array.isArray(kbjuInline)) {
+        const r = res.row || 0;
+        _seriesCacheByRow[r] = kbjuInline;
+        renderKbjuIfHost(kbjuInline);
+      } else {
+        const rowToLoad = (typeof getRowCalcForUser === 'function') ? getRowCalcForUser() : null;
+        if (rowToLoad != null) {
+          if (_seriesCacheByRow[rowToLoad]) {
+            renderKbjuIfHost(_seriesCacheByRow[rowToLoad]);
+          } else {
+            if (_seriesAbort) { try{ _seriesAbort.abort(); }catch(_){ } }
+            const ctrl = new AbortController(); _seriesAbort = ctrl;
+            fetchKbjuSeries(rowToLoad, ctrl.signal)
+              .then(series => { if (series){ _seriesCacheByRow[rowToLoad] = series; renderKbjuIfHost(series); } })
+              .catch(()=>{}) // мягко игнорируем
+              .finally(()=>{ _seriesAbort = null; });
+          }
+        }
+      }
+
       if (res?.ready){
         saveMacrosCache({ row: res.row, macros: res.macros, updated_at: res.updated_at });
         return { done:true };
@@ -1769,7 +1889,6 @@ PageLaunch→UpdateComment: ${comment} s`;
       const wait = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
       return { done:false, wait };
     } catch(err){
-      // тихо выходим, если это отмена; иначе мягко продолжаем
       if (err?.name === 'AbortError') return { done:true };
       if (runId !== _macrosRunId) return { done:true };
       return { done:false, wait: 1000 };
@@ -1791,20 +1910,34 @@ PageLaunch→UpdateComment: ${comment} s`;
     _macrosStatus = 'INIT';
 
     renderSkeleton();
+
+    // отрисуем карточки из локального кэша (если есть)
     const cached = loadMacrosCache();
-    if (cached && cached.macros){ renderValuesSafe(cached.macros, 'READY'); }
+    if (cached && cached.macros){
+      renderValuesSafe(cached.macros, 'READY');
+    }
+
+    // если известен row и уже есть кэш серии — отрисуем график сразу
+    try{
+      const row = (typeof getRowCalcForUser === 'function') ? getRowCalcForUser() : null;
+      if (row != null && _seriesCacheByRow[row]) {
+        renderKbjuIfHost(_seriesCacheByRow[row]);
+      }
+    }catch(_){}
 
     clearTimeout(_macrosTimer);
     if (_macrosAbort){ try{ _macrosAbort.abort(); }catch(_){ } _macrosAbort = null; }
+    if (_seriesAbort){ try{ _seriesAbort.abort(); }catch(_){ } _seriesAbort = null; }
 
     pollLoop(runId);
   };
 
-  // автопауза/ресюм при смене видимости (бережём сеть и всегда свежие данные после возврата)
+  // автопауза/ресюм при смене видимости — бережём сеть и актуализируем при возврате
   document.addEventListener('visibilitychange', ()=>{
     if (document.visibilityState === 'hidden'){
       clearTimeout(_macrosTimer);
       if (_macrosAbort){ try{ _macrosAbort.abort(); }catch(_){ } _macrosAbort = null; }
+      if (_seriesAbort){ try{ _seriesAbort.abort(); }catch(_){ } _seriesAbort = null; }
     } else {
       window.startMacrosFlow();
     }
@@ -1813,6 +1946,7 @@ PageLaunch→UpdateComment: ${comment} s`;
   // первый запуск
   window.startMacrosFlow();
 })();
+
 
 
 
