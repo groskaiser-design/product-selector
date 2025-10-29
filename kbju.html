@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0024'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0025'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -1865,38 +1865,126 @@ PageLaunch→UpdateComment: ${comment} s`;
   }
 
   function drawChart(canvas, data){
-    // Простейшая отрисовка через Canvas API (замените на Chart.js если нужно)
-    const ctx = canvas.getContext('2d');
-    const w = canvas.width = canvas.offsetWidth;
-    const h = canvas.height = 300;
-    ctx.clearRect(0, 0, w, h);
-    
-    if (!data || data.length === 0) return;
-    
-    // Простой line chart для белков (замените на свою логику)
-    const max = Math.max(...data.map(d => d.protein || 0));
-    const step = w / (data.length - 1);
-    
-    ctx.strokeStyle = '#fbbf24';
-    ctx.lineWidth = 2;
+  if (!data || data.length === 0) return;
+  
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  
+  canvas.width = rect.width * dpr;
+  canvas.height = 300 * dpr;
+  canvas.style.width = rect.width + 'px';
+  canvas.style.height = '300px';
+  ctx.scale(dpr, dpr);
+  
+  const W = rect.width;
+  const H = 300;
+  const PAD_L = 50, PAD_R = 20, PAD_T = 30, PAD_B = 60;
+  const chartW = W - PAD_L - PAD_R;
+  const chartH = H - PAD_T - PAD_B;
+  
+  ctx.clearRect(0, 0, W, H);
+  
+  // Фон графика
+  ctx.fillStyle = 'rgba(255,255,255,0.05)';
+  ctx.fillRect(PAD_L, PAD_T, chartW, chartH);
+  
+  // Сетка
+  ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++){
+    const y = PAD_T + (chartH / 4) * i;
     ctx.beginPath();
-    data.forEach((point, i) => {
-      const x = i * step;
-      const y = h - (point.protein / max * h * 0.8) - 20;
+    ctx.moveTo(PAD_L, y);
+    ctx.lineTo(PAD_L + chartW, y);
+    ctx.stroke();
+  }
+  
+  const maxProtein = Math.max(...data.map(d => d.protein || 0), 100);
+  const maxFat = Math.max(...data.map(d => d.fat || 0), 50);
+  const maxCarbs = Math.max(...data.map(d => d.carbs || 0), 100);
+  const globalMax = Math.max(maxProtein, maxFat, maxCarbs);
+  
+  const scaleY = (val) => PAD_T + chartH - (val / globalMax) * chartH;
+  const scaleX = (i) => PAD_L + (chartW / Math.max(data.length - 1, 1)) * i;
+  
+  // Рисуем линии БЖУ
+  const drawLine = (values, color, width = 2) => {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    values.forEach((v, i) => {
+      const x = scaleX(i);
+      const y = scaleY(v || 0);
       i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
     });
     ctx.stroke();
     
-    // Подписи дат (упрощённо)
-    ctx.fillStyle = '#fff';
-    ctx.font = '11px monospace';
-    ctx.textAlign = 'center';
-    data.forEach((point, i) => {
-      if (i % Math.ceil(data.length / 5) === 0) {
-        ctx.fillText(point.date || '', i * step, h - 5);
-      }
+    // Точки
+    ctx.fillStyle = color;
+    values.forEach((v, i) => {
+      const x = scaleX(i);
+      const y = scaleY(v || 0);
+      ctx.beginPath();
+      ctx.arc(x, y, 4, 0, Math.PI * 2);
+      ctx.fill();
     });
+  };
+  
+  drawLine(data.map(d => d.protein || 0), '#fbbf24', 3); // Белки — жёлтый
+  drawLine(data.map(d => d.fat || 0), '#f59e0b', 3);     // Жиры — оранжевый
+  drawLine(data.map(d => d.carbs || 0), '#f97316', 3);   // Углеводы — красно-оранжевый
+  
+  // Подписи дат по оси X
+  ctx.fillStyle = '#fff';
+  ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+  ctx.textAlign = 'center';
+  const step = Math.max(1, Math.floor(data.length / 5));
+  data.forEach((point, i) => {
+    if (i % step === 0 || i === data.length - 1) {
+      const x = scaleX(i);
+      const label = point.date ? point.date.slice(5) : ''; // MM-DD
+      ctx.fillText(label, x, H - PAD_B + 20);
+    }
+  });
+  
+  // Подписи значений по оси Y
+  ctx.textAlign = 'right';
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  for (let i = 0; i <= 4; i++){
+    const val = Math.round((globalMax / 4) * (4 - i));
+    const y = PAD_T + (chartH / 4) * i;
+    ctx.fillText(String(val) + 'г', PAD_L - 10, y + 4);
   }
+  
+  // Легенда
+  const legendY = H - 25;
+  const legendItems = [
+    { label: 'Белки', color: '#fbbf24' },
+    { label: 'Жиры', color: '#f59e0b' },
+    { label: 'Углеводы', color: '#f97316' }
+  ];
+  
+  ctx.font = '12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+  ctx.textAlign = 'left';
+  let legendX = PAD_L;
+  
+  legendItems.forEach(item => {
+    // Цветной кружок
+    ctx.fillStyle = item.color;
+    ctx.beginPath();
+    ctx.arc(legendX, legendY, 5, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // Текст
+    ctx.fillStyle = '#fff';
+    ctx.fillText(item.label, legendX + 12, legendY + 4);
+    
+    legendX += ctx.measureText(item.label).width + 35;
+  });
+}
 
   let _chartTimer = 0;
   let _chartRunId = 0;
