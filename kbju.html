@@ -1879,6 +1879,18 @@ PageLaunch→UpdateComment: ${comment} s`;
   
   const W = rect.width;
   const H = 300;
+  
+  // === СОСТОЯНИЕ ГРАФИКА (из демо) ===
+  if (!canvas._chartState) {
+    canvas._chartState = {
+      selectedIndex: data.length - 1,
+      hoveredIndex: null,
+      touchStartX: null,
+      touchStartIndex: null
+    };
+  }
+  const state = canvas._chartState;
+  
   const PAD_L = 24, PAD_R = 24, PAD_T = 24, PAD_B = 76;
   const chartW = W - PAD_L - PAD_R;
   const chartH = H - PAD_T - PAD_B;
@@ -1886,10 +1898,13 @@ PageLaunch→UpdateComment: ${comment} s`;
   ctx.clearRect(0, 0, W, H);
   
   // Фон
-  ctx.fillStyle = 'rgba(139, 92, 246, 0.15)';
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, 'rgba(139, 92, 246, 0.2)');
+  grad.addColorStop(1, 'rgba(139, 92, 246, 0.05)');
+  ctx.fillStyle = grad;
   ctx.fillRect(0, 0, W, H);
   
-  // Максимум для масштабирования
+  // Максимум
   const maxTotal = Math.max(...data.map(d => 
     (d.protein || 0) + (d.fat || 0) + (d.carbs || 0)
   ), 100);
@@ -1898,7 +1913,9 @@ PageLaunch→UpdateComment: ${comment} s`;
   const gap = 8;
   const barWidth = (chartW - gap * (n - 1)) / n;
   
-  // Рисуем столбцы
+  // === РИСУЕМ СТОЛБЦЫ ===
+  const bars = []; // для кликов
+  
   data.forEach((point, i) => {
     const protein = point.protein || 0;
     const fat = point.fat || 0;
@@ -1911,14 +1928,22 @@ PageLaunch→UpdateComment: ${comment} s`;
     const fullH = (total / maxTotal) * chartH;
     const y = PAD_T + chartH - fullH;
     
-    // Пропорции
+    bars.push({ x, y, w: barWidth, h: fullH, index: i });
+    
     const carbsH = (carbs / total) * fullH;
     const fatH = (fat / total) * fullH;
     const proteinH = (protein / total) * fullH;
     
-    const R = 16; // радиус закругления
+    const R = 16;
+    const isSelected = i === state.selectedIndex;
+    const isHovered = i === state.hoveredIndex;
     
-    // СЛОЙ 1: Углеводы (низ, зелёный) с закруглением снизу
+    // Подсветка при наведении
+    if (isHovered && !isSelected) {
+      ctx.globalAlpha = 0.8;
+    }
+    
+    // Углеводы (низ)
     ctx.fillStyle = '#4ade80';
     ctx.beginPath();
     ctx.moveTo(x, y + fullH);
@@ -1930,13 +1955,13 @@ PageLaunch→UpdateComment: ${comment} s`;
     ctx.closePath();
     ctx.fill();
     
-    // СЛОЙ 2: Жиры (середина, синий)
+    // Жиры (середина)
     if (fatH > 1) {
       ctx.fillStyle = '#60a5fa';
       ctx.fillRect(x, y + fullH - carbsH - fatH, barWidth, fatH);
     }
     
-    // СЛОЙ 3: Белки (верх, оранжевый) с закруглением сверху
+    // Белки (верх)
     if (proteinH > 1) {
       ctx.fillStyle = '#fb923c';
       ctx.beginPath();
@@ -1950,13 +1975,18 @@ PageLaunch→UpdateComment: ${comment} s`;
       ctx.fill();
     }
     
-    // Белая рамка у последнего
-    if (i === n - 1) {
+    ctx.globalAlpha = 1;
+    
+    // Рамка у выбранного
+    if (isSelected) {
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
       ctx.lineWidth = 3;
+      ctx.shadowColor = 'rgba(255, 255, 255, 0.5)';
+      ctx.shadowBlur = 8;
       ctx.beginPath();
       ctx.roundRect(x - 2, y - 2, barWidth + 4, fullH + 4, R);
       ctx.stroke();
+      ctx.shadowBlur = 0;
       
       // Дата
       ctx.fillStyle = '#fff';
@@ -1967,12 +1997,12 @@ PageLaunch→UpdateComment: ${comment} s`;
     }
   });
   
-  // Легенда
-  const last = data[n - 1] || {};
+  // === ЛЕГЕНДА ===
+  const selected = data[state.selectedIndex] || {};
   const legendItems = [
-    { label: 'Б:', value: Math.round(last.protein || 0), color: '#60a5fa' },
-    { label: 'Ж:', value: Math.round(last.fat || 0), color: '#fb923c' },
-    { label: 'У:', value: Math.round(last.carbs || 0), color: '#4ade80' }
+    { label: 'Б:', value: Math.round(selected.protein || 0), color: '#60a5fa' },
+    { label: 'Ж:', value: Math.round(selected.fat || 0), color: '#fb923c' },
+    { label: 'У:', value: Math.round(selected.carbs || 0), color: '#4ade80' }
   ];
   
   const legendY = H - 18;
@@ -1981,25 +2011,78 @@ PageLaunch→UpdateComment: ${comment} s`;
   legendItems.forEach((item, idx) => {
     const x = PAD_L + idx * (boxW + 10);
     
-    // Рамка
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.roundRect(x, legendY - 18, boxW, 32, 10);
     ctx.stroke();
     
-    // Кружок
     ctx.fillStyle = item.color;
     ctx.beginPath();
     ctx.arc(x + 18, legendY, 6, 0, Math.PI * 2);
     ctx.fill();
     
-    // Текст
     ctx.fillStyle = '#fff';
     ctx.font = 'bold 15px -apple-system, BlinkMacSystemFont, sans-serif';
     ctx.textAlign = 'left';
     ctx.fillText(`${item.label}  ${item.value} г`, x + 30, legendY + 5);
   });
+  
+  // === ИНТЕРАКТИВНОСТЬ ===
+  if (!canvas._listenersAdded) {
+    canvas._listenersAdded = true;
+    
+    // Клик / тап
+    canvas.addEventListener('click', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      
+      for (let i = 0; i < bars.length; i++) {
+        const bar = bars[i];
+        if (x >= bar.x && x <= bar.x + bar.w && y >= bar.y && y <= bar.y + bar.h) {
+          state.selectedIndex = bar.index;
+          drawChart(canvas, data);
+          try { window.Telegram?.WebApp?.HapticFeedback?.impactOccurred?.('light'); } catch(_){}
+          break;
+        }
+      }
+    });
+    
+    // Hover (desktop)
+    canvas.addEventListener('mousemove', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      
+      let foundHover = false;
+      for (let i = 0; i < bars.length; i++) {
+        const bar = bars[i];
+        if (x >= bar.x && x <= bar.x + bar.w && y >= bar.y && y <= bar.y + bar.h) {
+          if (state.hoveredIndex !== bar.index) {
+            state.hoveredIndex = bar.index;
+            canvas.style.cursor = 'pointer';
+            drawChart(canvas, data);
+          }
+          foundHover = true;
+          break;
+        }
+      }
+      if (!foundHover && state.hoveredIndex !== null) {
+        state.hoveredIndex = null;
+        canvas.style.cursor = 'default';
+        drawChart(canvas, data);
+      }
+    });
+    
+    canvas.addEventListener('mouseleave', () => {
+      if (state.hoveredIndex !== null) {
+        state.hoveredIndex = null;
+        canvas.style.cursor = 'default';
+        drawChart(canvas, data);
+      }
+    });
+  }
 }
 
   let _chartTimer = 0;
