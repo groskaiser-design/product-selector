@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0025'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0026'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -1879,110 +1879,126 @@ PageLaunch→UpdateComment: ${comment} s`;
   
   const W = rect.width;
   const H = 300;
-  const PAD_L = 50, PAD_R = 20, PAD_T = 30, PAD_B = 60;
+  const PAD_L = 24, PAD_R = 24, PAD_T = 24, PAD_B = 76;
   const chartW = W - PAD_L - PAD_R;
   const chartH = H - PAD_T - PAD_B;
   
   ctx.clearRect(0, 0, W, H);
   
-  // Фон графика
-  ctx.fillStyle = 'rgba(255,255,255,0.05)';
-  ctx.fillRect(PAD_L, PAD_T, chartW, chartH);
+  // Фон
+  ctx.fillStyle = 'rgba(139, 92, 246, 0.15)';
+  ctx.fillRect(0, 0, W, H);
   
-  // Сетка
-  ctx.strokeStyle = 'rgba(255,255,255,0.1)';
-  ctx.lineWidth = 1;
-  for (let i = 0; i <= 4; i++){
-    const y = PAD_T + (chartH / 4) * i;
-    ctx.beginPath();
-    ctx.moveTo(PAD_L, y);
-    ctx.lineTo(PAD_L + chartW, y);
-    ctx.stroke();
-  }
+  // Максимум для масштабирования
+  const maxTotal = Math.max(...data.map(d => 
+    (d.protein || 0) + (d.fat || 0) + (d.carbs || 0)
+  ), 100);
   
-  const maxProtein = Math.max(...data.map(d => d.protein || 0), 100);
-  const maxFat = Math.max(...data.map(d => d.fat || 0), 50);
-  const maxCarbs = Math.max(...data.map(d => d.carbs || 0), 100);
-  const globalMax = Math.max(maxProtein, maxFat, maxCarbs);
+  const n = data.length;
+  const gap = 8;
+  const barWidth = (chartW - gap * (n - 1)) / n;
   
-  const scaleY = (val) => PAD_T + chartH - (val / globalMax) * chartH;
-  const scaleX = (i) => PAD_L + (chartW / Math.max(data.length - 1, 1)) * i;
-  
-  // Рисуем линии БЖУ
-  const drawLine = (values, color, width = 2) => {
-    ctx.strokeStyle = color;
-    ctx.lineWidth = width;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.beginPath();
-    values.forEach((v, i) => {
-      const x = scaleX(i);
-      const y = scaleY(v || 0);
-      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-    });
-    ctx.stroke();
-    
-    // Точки
-    ctx.fillStyle = color;
-    values.forEach((v, i) => {
-      const x = scaleX(i);
-      const y = scaleY(v || 0);
-      ctx.beginPath();
-      ctx.arc(x, y, 4, 0, Math.PI * 2);
-      ctx.fill();
-    });
-  };
-  
-  drawLine(data.map(d => d.protein || 0), '#fbbf24', 3); // Белки — жёлтый
-  drawLine(data.map(d => d.fat || 0), '#f59e0b', 3);     // Жиры — оранжевый
-  drawLine(data.map(d => d.carbs || 0), '#f97316', 3);   // Углеводы — красно-оранжевый
-  
-  // Подписи дат по оси X
-  ctx.fillStyle = '#fff';
-  ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-  ctx.textAlign = 'center';
-  const step = Math.max(1, Math.floor(data.length / 5));
+  // Рисуем столбцы
   data.forEach((point, i) => {
-    if (i % step === 0 || i === data.length - 1) {
-      const x = scaleX(i);
-      const label = point.date ? point.date.slice(5) : ''; // MM-DD
-      ctx.fillText(label, x, H - PAD_B + 20);
+    const protein = point.protein || 0;
+    const fat = point.fat || 0;
+    const carbs = point.carbs || 0;
+    const total = protein + fat + carbs;
+    
+    if (total === 0) return;
+    
+    const x = PAD_L + i * (barWidth + gap);
+    const fullH = (total / maxTotal) * chartH;
+    const y = PAD_T + chartH - fullH;
+    
+    // Пропорции
+    const carbsH = (carbs / total) * fullH;
+    const fatH = (fat / total) * fullH;
+    const proteinH = (protein / total) * fullH;
+    
+    const R = 16; // радиус закругления
+    
+    // СЛОЙ 1: Углеводы (низ, зелёный) с закруглением снизу
+    ctx.fillStyle = '#4ade80';
+    ctx.beginPath();
+    ctx.moveTo(x, y + fullH);
+    ctx.lineTo(x, y + fullH - carbsH + R);
+    ctx.arcTo(x, y + fullH - carbsH, x + R, y + fullH - carbsH, R);
+    ctx.lineTo(x + barWidth - R, y + fullH - carbsH);
+    ctx.arcTo(x + barWidth, y + fullH - carbsH, x + barWidth, y + fullH - carbsH + R, R);
+    ctx.lineTo(x + barWidth, y + fullH);
+    ctx.closePath();
+    ctx.fill();
+    
+    // СЛОЙ 2: Жиры (середина, синий)
+    if (fatH > 1) {
+      ctx.fillStyle = '#60a5fa';
+      ctx.fillRect(x, y + fullH - carbsH - fatH, barWidth, fatH);
+    }
+    
+    // СЛОЙ 3: Белки (верх, оранжевый) с закруглением сверху
+    if (proteinH > 1) {
+      ctx.fillStyle = '#fb923c';
+      ctx.beginPath();
+      ctx.moveTo(x, y + proteinH);
+      ctx.lineTo(x, y + R);
+      ctx.arcTo(x, y, x + R, y, R);
+      ctx.lineTo(x + barWidth - R, y);
+      ctx.arcTo(x + barWidth, y, x + barWidth, y + R, R);
+      ctx.lineTo(x + barWidth, y + proteinH);
+      ctx.closePath();
+      ctx.fill();
+    }
+    
+    // Белая рамка у последнего
+    if (i === n - 1) {
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.roundRect(x - 2, y - 2, barWidth + 4, fullH + 4, R);
+      ctx.stroke();
+      
+      // Дата
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 18px -apple-system, BlinkMacSystemFont, sans-serif';
+      ctx.textAlign = 'center';
+      const dateStr = point.date ? point.date.slice(5).replace('-', '.') : '';
+      ctx.fillText(dateStr, x + barWidth / 2, H - 48);
     }
   });
   
-  // Подписи значений по оси Y
-  ctx.textAlign = 'right';
-  ctx.fillStyle = 'rgba(255,255,255,0.6)';
-  for (let i = 0; i <= 4; i++){
-    const val = Math.round((globalMax / 4) * (4 - i));
-    const y = PAD_T + (chartH / 4) * i;
-    ctx.fillText(String(val) + 'г', PAD_L - 10, y + 4);
-  }
-  
   // Легенда
-  const legendY = H - 25;
+  const last = data[n - 1] || {};
   const legendItems = [
-    { label: 'Белки', color: '#fbbf24' },
-    { label: 'Жиры', color: '#f59e0b' },
-    { label: 'Углеводы', color: '#f97316' }
+    { label: 'Б:', value: Math.round(last.protein || 0), color: '#60a5fa' },
+    { label: 'Ж:', value: Math.round(last.fat || 0), color: '#fb923c' },
+    { label: 'У:', value: Math.round(last.carbs || 0), color: '#4ade80' }
   ];
   
-  ctx.font = '12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-  ctx.textAlign = 'left';
-  let legendX = PAD_L;
+  const legendY = H - 18;
+  const boxW = Math.floor((W - PAD_L - PAD_R - 20) / 3);
   
-  legendItems.forEach(item => {
-    // Цветной кружок
+  legendItems.forEach((item, idx) => {
+    const x = PAD_L + idx * (boxW + 10);
+    
+    // Рамка
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(x, legendY - 18, boxW, 32, 10);
+    ctx.stroke();
+    
+    // Кружок
     ctx.fillStyle = item.color;
     ctx.beginPath();
-    ctx.arc(legendX, legendY, 5, 0, Math.PI * 2);
+    ctx.arc(x + 18, legendY, 6, 0, Math.PI * 2);
     ctx.fill();
     
     // Текст
     ctx.fillStyle = '#fff';
-    ctx.fillText(item.label, legendX + 12, legendY + 4);
-    
-    legendX += ctx.measureText(item.label).width + 35;
+    ctx.font = 'bold 15px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(`${item.label}  ${item.value} г`, x + 30, legendY + 5);
   });
 }
 
