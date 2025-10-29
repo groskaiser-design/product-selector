@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0027'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0028'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -1816,280 +1816,298 @@ PageLaunch→UpdateComment: ${comment} s`;
   window.startMacrosFlow();
 })();
 
-/* ============================================================
- *  BLOCK E2 — Analytics Chart Data (точная копия из демо)
- * ============================================================ */
-(function chartDataInit(){
+//-- ============================================================
+//  BLOCK E2 — Analytics Chart (KBJU7, SVG + легенда)
+// ==============================================================
+
+(function chartKBJUInit(){
   const tg = window.Telegram?.WebApp;
   const BACKEND = (typeof BACKEND_URL !== 'undefined' && BACKEND_URL) ? BACKEND_URL : '';
   const host = () => document.getElementById('analytics');
 
+  // ---------- 1) Подключаем стили один раз (14px внизу, фикс точки) ----------
+  function injectKBJUStylesOnce(){
+    if (document.getElementById('kbju7-styles')) return;
+    const css = `
+    .kbju7{ --h:160; --gap:8; --ink:#fff; --c-carb:#34d399; --c-prot:#60a5fa; --c-fat:#f59e0b; position:relative }
+    .kbju7-card{ background:linear-gradient(180deg, var(--cardA), var(--cardB)); border:1px solid var(--border);
+      border-radius:18px; backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); box-shadow:var(--shadow); color:var(--ink) }
+    .kbju7-viewport{position:relative;padding:6px 8px 4px}
+    .kbju7-scroll{position:relative;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;scrollbar-width:none;touch-action: pan-x}
+    .kbju7-scroll::-webkit-scrollbar{display:none}
+    .kbju7-info{display:flex;align-items:center;justify-content:center;gap:14px;border-top:1px solid rgba(255,255,255,.16);
+      padding:10px 16px;white-space:nowrap;min-height:46px;font-size:14px;font-variant-numeric:tabular-nums}
+    .kbju7-info b{font-size:14px}
+    .kbju7-info .v{display:inline-block;min-width:3.8ch;text-align:right}
+    .legend-tap{display:inline-flex;align-items:center;gap:6px;padding:8px 10px;border:1px solid rgba(255,255,255,.9);
+      background:transparent;color:inherit;font:inherit;border-radius:12px;min-height:36px;min-width:44px;cursor:pointer;justify-content:center}
+    .legend-tap:focus-visible{outline:2px solid rgba(255,255,255,.7);outline-offset:2px}
+    .legend-tap .dot{width:10px;height:10px;border-radius:50%;flex:0 0 10px;min-width:10px;min-height:10px}
+    .legend-tap[data-key="prot"] .dot{background: var(--c-prot)}
+    .legend-tap[data-key="fat"]  .dot{background: var(--c-fat)}
+    .legend-tap[data-key="carb"] .dot{background: var(--c-carb)}
+    .legend-tap.active{background:rgba(255,255,255,.12);border-color:transparent}
+    .bar-anim{transform:scaleY(0); transform-origin:bottom; transform-box: fill-box; transition: transform .35s ease;}
+    .bar-anim.show{transform:scaleY(1)}
+    .sel-outline{fill:none;stroke:#fff;stroke-width:2;rx:18;ry:18}
+    .kbju7[data-filter="prot"] .legend-tap:not([data-key="prot"]),
+    .kbju7[data-filter="fat"]  .legend-tap:not([data-key="fat"]),
+    .kbju7[data-filter="carb"] .legend-tap:not([data-key="carb"]) {opacity:.7}
+    `;
+    const s = document.createElement('style');
+    s.id = 'kbju7-styles'; s.textContent = css; document.head.appendChild(s);
+  }
+
+  // ---------- 2) Компонент графика (из канваса; без демо-данных) ----------
+  (function exposeRenderKBJU7(){
+    if (window.renderKBJU7) return;
+    window.renderKBJU7 = function renderKBJU7(host, data, opts={}){
+      const root = typeof host === 'string' ? document.getElementById(host) : host; if (!root) return;
+      const scr  = root.querySelector('#kbju7-scroll');
+      let svg = root.querySelector('#kbju7-svg');
+      if (!svg) { const s = document.createElementNS('http://www.w3.org/2000/svg','svg'); s.setAttribute('id','kbju7-svg'); (scr || root).appendChild(s); svg = s; }
+      const infP = root.querySelector('#kbju7-p');
+      const infF = root.querySelector('#kbju7-f');
+      const infC = root.querySelector('#kbju7-c');
+
+      const list = (data||[]).slice().sort((a,b)=> new Date(a.date) - new Date(b.date));
+      if (!list.length){ svg.innerHTML = '<text x="8" y="20" fill="#fff" opacity=".8">Нет данных</text>'; return; }
+
+      const H = 160, DATE_PAD = 18; const LIFT = 8; const TOP_PAD = 14;
+      const visible = Number(opts.visible||7); const shape = opts.shape || 'clip-capsule';
+
+      function computeBarW(){
+        const W = (scr && scr.clientWidth) || root.clientWidth || 320;
+        const gap = 8;
+        const bar = Math.max(12, Math.floor((W - gap*(visible+1)) / visible));
+        return { bar, gap };
+      }
+      const fmtD = d => { try{ return new Date(d).toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit'}); }catch{ return d; } };
+
+      function draw(){
+        const { bar:BAR, gap:GAP } = computeBarW();
+        const outerR = parseFloat(getComputedStyle(root).getPropertyValue('--r')) || 18;
+        const contentW = list.length * (BAR + GAP) + GAP;
+        const filter = root.getAttribute('data-filter') || 'all';
+
+        let gramsMax;
+        if (filter==='prot') gramsMax = Math.max(50, ...list.map(d => (d.protein_g||0)));
+        else if (filter==='fat') gramsMax = Math.max(50, ...list.map(d => (d.fat_g||0)));
+        else if (filter==='carb') gramsMax = Math.max(50, ...list.map(d => (d.carbs_g||0)));
+        else gramsMax = Math.max(50, ...list.map(d => (d.protein_g||0)+(d.fat_g||0)+(d.carbs_g||0)));
+
+        const yG = v => (H - TOP_PAD - DATE_PAD - 4) * (v/gramsMax);
+
+        svg.setAttribute('viewBox', `0 0 ${contentW} ${H}`);
+        svg.setAttribute('width', contentW);
+        svg.setAttribute('height', H);
+
+        const defs = document.createElementNS('http://www.w3.org/2000/svg','defs');
+        const gBars = document.createElementNS('http://www.w3.org/2000/svg','g');
+        const gSel  = document.createElementNS('http://www.w3.org/2000/svg','g');
+        const gHit  = document.createElementNS('http://www.w3.org/2000/svg','g');
+        const groups=[]; const dates=[]; const outlines=[];
+
+        const yBase = H-2-DATE_PAD;
+        const yDate = H-6;
+
+        list.forEach((d, i)=>{
+          const x = GAP + i*(BAR + GAP);
+          let gC = (d.carbs_g||0), gP = (d.protein_g||0), gF = (d.fat_g||0);
+          if (filter==='prot'){ gC = 0; gF = 0; }
+          else if (filter==='fat'){ gC = 0; gP = 0; }
+          else if (filter==='carb'){ gP = 0; gF = 0; }
+
+          const hC = yG(gC), hP = yG(gP), hF = yG(gF);
+          const sum = hC+hP+hF;
+          const topY = yBase - Math.max(sum, 0);
+
+          let clipId = null;
+          if (shape === 'clip-capsule'){
+            clipId = `clip_${i}`;
+            const cp = document.createElementNS('http://www.w3.org/2000/svg','clipPath');
+            cp.setAttribute('id', clipId);
+            const pill = rect(x, Math.max(TOP_PAD, topY), BAR, Math.max(sum, 0.0001), outerR);
+            cp.appendChild(pill); defs.appendChild(cp);
+          }
+
+          const group = document.createElementNS('http://www.w3.org/2000/svg','g');
+          if (clipId) group.setAttribute('clip-path', `url(#${clipId})`);
+          group.style.transition = 'transform .2s ease';
+
+          const rc = rect(x, yBase - hC, BAR, hC, 0); rc.setAttribute('fill', 'rgba(52,211,153,.85)');
+          const rp = rect(x, yBase - (hC + hP), BAR, hP, 0); rp.setAttribute('fill', 'rgba(96,165,250,.85)');
+          const rf = rect(x, yBase - (hC + hP + hF), BAR, hF, 0); rf.setAttribute('fill', 'rgba(245,158,11,.85)');
+          rc.classList.add('bar-anim','seg','carb'); rp.classList.add('bar-anim','seg','prot'); rf.classList.add('bar-anim','seg','fat');
+          group.appendChild(rc); group.appendChild(rp); group.appendChild(rf);
+          gBars.appendChild(group); groups.push(group);
+
+          if (filter !== 'all'){
+            const gSelVal = filter==='prot' ? (d.protein_g||0) : filter==='fat' ? (d.fat_g||0) : (d.carbs_g||0);
+            const hSel = filter==='prot' ? hP : filter==='fat' ? hF : hC;
+            if (hSel > 22){
+              const tx = document.createElementNS('http://www.w3.org/2000/svg','text');
+              tx.textContent = String(Math.round(gSelVal));
+              tx.setAttribute('x', x + BAR/2);
+              tx.setAttribute('y', yBase - (hSel * 0.75));
+              tx.setAttribute('text-anchor','middle');
+              tx.setAttribute('font-size','14');
+              tx.setAttribute('font-weight','900');
+              tx.setAttribute('fill','#fff');
+              tx.setAttribute('opacity','0.98');
+              tx.style.pointerEvents = 'none';
+              tx.style.dominantBaseline = 'middle';
+              group.appendChild(tx);
+            }
+          }
+
+          const tDate = document.createElementNS('http://www.w3.org/2000/svg','text');
+          tDate.textContent = fmtD(d.date);
+          tDate.setAttribute('x', x + BAR/2);
+          tDate.setAttribute('y', yDate);
+          tDate.setAttribute('text-anchor','middle');
+          tDate.setAttribute('font-size','12');
+          tDate.setAttribute('font-weight','700');
+          tDate.setAttribute('fill','rgba(255,255,255,.9)');
+          tDate.style.opacity = '0';
+          tDate.style.transition = 'opacity .18s ease';
+          tDate.style.pointerEvents = 'none';
+          gBars.appendChild(tDate); dates.push(tDate);
+
+          const selOutline = rect(x-1, topY, BAR+2, Math.max(sum,2), outerR);
+          selOutline.setAttribute('class','sel-outline'); selOutline.style.opacity = '0';
+          selOutline.style.transition = 'transform .2s ease, opacity .12s ease';
+          gSel.appendChild(selOutline); outlines.push(selOutline);
+
+          const hit = rect(x, 0, BAR, H, outerR); hit.setAttribute('fill','transparent'); hit.style.cursor='pointer';
+          hit.addEventListener('click', ()=> select(i, d)); gHit.appendChild(hit);
+        });
+
+        svg.innerHTML = '';
+        svg.appendChild(defs); svg.appendChild(gBars); svg.appendChild(gSel); svg.appendChild(gHit);
+
+        requestAnimationFrame(()=>{ svg.querySelectorAll('.bar-anim').forEach(el=> el.classList.add('show')); });
+
+        select(list.length-1, list[list.length-1]);
+        if (scr){ scr.scrollLeft = scr.scrollWidth; }
+
+        function select(idx, d){
+          if (infP) infP.textContent = Math.round(d.protein_g||0);
+          if (infF) infF.textContent = Math.round(d.fat_g||0);
+          if (infC) infC.textContent = Math.round(d.carbs_g||0);
+
+          outlines.forEach((o,i)=>{ o.style.opacity = (i===idx ? '1' : '0'); o.style.transform = (i===idx ? `translateY(-${LIFT}px)` : 'translateY(0)'); });
+          groups.forEach((g,i)=>{ g.style.transform = (i===idx ? `translateY(-${LIFT}px)` : 'translateY(0)'); });
+          dates.forEach((t,i)=>{ t.style.opacity = (i===idx ? '1' : '0'); });
+
+          try{ window.Telegram?.WebApp?.HapticFeedback?.selectionChanged?.(); }catch(_){}
+        }
+
+        function rect(x,y,w,h,r=0){
+          const e = document.createElementNS('http://www.w3.org/2000/svg','rect');
+          e.setAttribute('x', x); e.setAttribute('y', Math.max(0,y));
+          e.setAttribute('width', w); e.setAttribute('height', Math.max(0,h));
+          if (r){ e.setAttribute('rx', r); e.setAttribute('ry', r); }
+          return e;
+        }
+      }
+
+      draw();
+
+      if (root.__kbjuResizeHandler){ try{ window.removeEventListener('resize', root.__kbjuResizeHandler); }catch(_){ } }
+      var __kbjuRaf = 0;
+      root.__kbjuResizeHandler = function(){ cancelAnimationFrame(__kbjuRaf); __kbjuRaf = requestAnimationFrame(draw); };
+      window.addEventListener('resize', root.__kbjuResizeHandler, { passive:true });
+
+      (function bindLegend(){
+        if (!root || root.__legendBound) return;
+        const info = root.querySelector('#kbju7-info'); if (!info) return;
+        info.addEventListener('click', (e)=>{
+          const btn = e.target.closest('.legend-tap'); if (!btn) return;
+          const key = btn.dataset.key;
+          const cur = root.getAttribute('data-filter') || 'all';
+          const next = (cur === key) ? 'all' : key;
+          root.setAttribute('data-filter', next);
+          info.querySelectorAll('.legend-tap').forEach(b=>{
+            const on = (next === b.dataset.key);
+            b.classList.toggle('active', on);
+            b.setAttribute('aria-pressed', String(on));
+          });
+          renderKBJU7(host, data, opts); // перерисовка (масштаб по фильтру)
+        }, { passive: true });
+        root.__legendBound = true;
+      })();
+    };
+  })();
+
+  // ---------- 3) Разметка контейнера под график ----------
+  function ensureKBJUHost(){
+    const el = host(); if (!el) return null;
+    let box = el.querySelector('#chart-kbju7-box');
+    if (box) return box;
+
+    const html = `
+      <div class="field" id="chart-kbju7-box" style="margin-top:12px">
+        <div class="kbju7 kbju7-card" id="kbju7-host" style="--r:18">
+          <div class="kbju7-viewport">
+            <div class="kbju7-scroll" id="kbju7-scroll">
+              <svg id="kbju7-svg" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="График БЖУ"></svg>
+            </div>
+          </div>
+          <div class="kbju7-info" id="kbju7-info" role="tablist" aria-label="Выбор нутриента">
+            <button type="button" class="legend-tap" data-key="prot" aria-label="Показать только белки (вкл/выкл)" aria-pressed="false"><span class="dot" aria-hidden="true"></span><span>Б:</span> <b class="v" id="kbju7-p">—</b> г</button>
+            <button type="button" class="legend-tap" data-key="fat"  aria-label="Показать только жиры (вкл/выкл)"  aria-pressed="false"><span class="dot" aria-hidden="true"></span><span>Ж:</span> <b class="v" id="kbju7-f">—</b> г</button>
+            <button type="button" class="legend-tap" data-key="carb" aria-label="Показать только углеводы (вкл/выкл)" aria-pressed="false"><span class="dot" aria-hidden="true"></span><span>У:</span> <b class="v" id="kbju7-c">—</b> г</button>
+          </div>
+        </div>
+        <div class="help" id="chart-hint" style="text-align:center;margin-top:6px">Загружаем график…</div>
+      </div>`;
+    el.insertAdjacentHTML('beforeend', html);
+    return el.querySelector('#chart-kbju7-box');
+  }
+
+  // ---------- 4) Нормализация боевых данных под компонент ----------
+  function normalizeChartData(arr){
+    if (!Array.isArray(arr)) return [];
+    return arr.map(d=>{
+      const date = d.date || d.day || d.ds || '';
+      // поддерживаем оба формата: protein/fat/carbs и protein_g/fat_g/carbs_g
+      const protein_g = d.protein_g ?? d.protein ?? 0;
+      const fat_g     = d.fat_g     ?? d.fat     ?? 0;
+      const carbs_g   = d.carbs_g   ?? d.carbs   ?? 0;
+      return { date, protein_g:Number(protein_g)||0, fat_g:Number(fat_g)||0, carbs_g:Number(carbs_g)||0 };
+    }).filter(x=>x.date);
+  }
+
+  // ---------- 5) Рендер состояний ----------
+  function renderChart(data, status){
+    injectKBJUStylesOnce();
+    const box = ensureKBJUHost(); if (!box) return;
+    const hint = box.querySelector('#chart-hint');
+    const hostId = 'kbju7-host';
+
+    if (status === 'READY' && data && data.length){
+      if (hint) hint.style.display = 'none';
+      window.renderKBJU7(hostId, normalizeChartData(data), { visible:7, shape:'clip-capsule' });
+    } else if (status === 'EMPTY' || status === 'WAITING'){
+      if (hint) { hint.style.display='block'; hint.textContent = 'Обрабатываем данные…'; }
+    } else if (status === 'NO_ROW'){
+      if (hint) { hint.style.display='block'; hint.textContent = 'Сначала заполните анкету и сохраните.'; }
+    }
+  }
+
+  // ---------- 6) Поллинг боевых данных (сохраняем вашу логику) ----------
   const CHART_KEY_PREFIX = 'chart:data:';
   function currentUserId(){ try { return window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'anon'; } catch(_){ return 'anon'; } }
   function chartKey(uid){ return CHART_KEY_PREFIX + String(uid); }
   function saveChartCache(obj, uid){ try { localStorage.setItem(chartKey(uid ?? currentUserId()), JSON.stringify(obj)); } catch(_){} }
   function loadChartCache(uid){ try { const raw = localStorage.getItem(chartKey(uid ?? currentUserId())); return raw ? JSON.parse(raw) : null; } catch(_) { return null; } }
 
-  function renderChartPlaceholder(){
-    const el = host(); if (!el) return;
-    const existing = el.querySelector('#chart-container');
-    if (existing) return;
-    
-    const chartHtml = `
-      <div class="field" style="margin-top:12px">
-        <div id="chart-container">
-          <div class="help" id="chart-hint">Загружаем график…</div>
-          <canvas id="chart-canvas" style="display:none;max-width:100%;height:300px"></canvas>
-        </div>
-      </div>`;
-    el.insertAdjacentHTML('beforeend', chartHtml);
-  }
-
-  // === ТОЧНАЯ КОПИЯ initChart из демо ===
-  function initChart(canvas, dayData) {
-    if (!dayData || dayData.length === 0) return;
-    
-    const ctx = canvas.getContext('2d');
-    const state = {
-      selectedIndex: dayData.length - 1,
-      hoveredIndex: null,
-      touchStartX: null,
-      touchStartIndex: null
-    };
-
-    function draw() {
-      const dpr = window.devicePixelRatio || 1;
-      const rect = canvas.getBoundingClientRect();
-      canvas.width = rect.width * dpr;
-      canvas.height = 300 * dpr;
-      canvas.style.width = rect.width + 'px';
-      canvas.style.height = '300px';
-      ctx.scale(dpr, dpr);
-
-      const W = rect.width;
-      const H = 300;
-      const PAD_L = 24, PAD_R = 24, PAD_T = 24, PAD_B = 76;
-      const chartW = W - PAD_L - PAD_R;
-      const chartH = H - PAD_T - PAD_B;
-
-      ctx.clearRect(0, 0, W, H);
-
-      const gradient = ctx.createLinearGradient(0, 0, 0, H);
-      gradient.addColorStop(0, 'rgba(139, 92, 246, 0.2)');
-      gradient.addColorStop(1, 'rgba(139, 92, 246, 0.05)');
-      ctx.fillStyle = gradient;
-      ctx.fillRect(0, 0, W, H);
-
-      const maxTotal = Math.max(...dayData.map(d => d.protein + d.fat + d.carbs), 100);
-      const n = dayData.length;
-      const gap = 8;
-      const barWidth = (chartW - gap * (n - 1)) / n;
-      const bars = [];
-
-      dayData.forEach((day, i) => {
-        const total = day.protein + day.fat + day.carbs;
-        const x = PAD_L + i * (barWidth + gap);
-        const fullH = (total / maxTotal) * chartH;
-        const y = PAD_T + chartH - fullH;
-
-        bars.push({ x, y, w: barWidth, h: fullH, index: i });
-
-        const carbsH = (day.carbs / total) * fullH;
-        const fatH = (day.fat / total) * fullH;
-        const proteinH = (day.protein / total) * fullH;
-        const R = 16;
-
-        const isSelected = i === state.selectedIndex;
-        const isHovered = i === state.hoveredIndex;
-
-        if (isHovered && !isSelected) {
-          ctx.globalAlpha = 0.85;
-        }
-
-        // Углеводы
-        ctx.fillStyle = '#4ade80';
-        ctx.beginPath();
-        ctx.moveTo(x, y + fullH);
-        ctx.lineTo(x, y + fullH - carbsH + R);
-        ctx.arcTo(x, y + fullH - carbsH, x + R, y + fullH - carbsH, R);
-        ctx.lineTo(x + barWidth - R, y + fullH - carbsH);
-        ctx.arcTo(x + barWidth, y + fullH - carbsH, x + barWidth, y + fullH - carbsH + R, R);
-        ctx.lineTo(x + barWidth, y + fullH);
-        ctx.closePath();
-        ctx.fill();
-
-        // Жиры
-        if (fatH > 1) {
-          ctx.fillStyle = '#60a5fa';
-          ctx.fillRect(x, y + fullH - carbsH - fatH, barWidth, fatH);
-        }
-
-        // Белки
-        if (proteinH > 1) {
-          ctx.fillStyle = '#fb923c';
-          ctx.beginPath();
-          ctx.moveTo(x, y + proteinH);
-          ctx.lineTo(x, y + R);
-          ctx.arcTo(x, y, x + R, y, R);
-          ctx.lineTo(x + barWidth - R, y);
-          ctx.arcTo(x + barWidth, y, x + barWidth, y + R, R);
-          ctx.lineTo(x + barWidth, y + proteinH);
-          ctx.closePath();
-          ctx.fill();
-        }
-
-        ctx.globalAlpha = 1;
-
-        if (isSelected) {
-          ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
-          ctx.lineWidth = 3;
-          ctx.shadowColor = 'rgba(255, 255, 255, 0.5)';
-          ctx.shadowBlur = 8;
-          ctx.beginPath();
-          ctx.roundRect(x - 2, y - 2, barWidth + 4, fullH + 4, R);
-          ctx.stroke();
-          ctx.shadowBlur = 0;
-
-          ctx.fillStyle = '#fff';
-          ctx.font = 'bold 18px -apple-system, BlinkMacSystemFont, sans-serif';
-          ctx.textAlign = 'center';
-          ctx.fillText(day.date.slice(5).replace('-', '.'), x + barWidth / 2, H - 48);
-        }
-      });
-
-      // Легенда
-      const selected = dayData[state.selectedIndex];
-      const legendItems = [
-        { label: 'Б:', value: Math.round(selected.protein), color: '#60a5fa' },
-        { label: 'Ж:', value: Math.round(selected.fat), color: '#fb923c' },
-        { label: 'У:', value: Math.round(selected.carbs), color: '#4ade80' }
-      ];
-
-      const legendY = H - 18;
-      const boxW = Math.floor((W - PAD_L - PAD_R - 20) / 3);
-
-      legendItems.forEach((item, idx) => {
-        const x = PAD_L + idx * (boxW + 10);
-
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.roundRect(x, legendY - 18, boxW, 32, 10);
-        ctx.stroke();
-
-        ctx.fillStyle = item.color;
-        ctx.beginPath();
-        ctx.arc(x + 18, legendY, 6, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.fillStyle = '#fff';
-        ctx.font = 'bold 15px -apple-system, BlinkMacSystemFont, sans-serif';
-        ctx.textAlign = 'left';
-        ctx.fillText(`${item.label}  ${item.value} г`, x + 30, legendY + 5);
-      });
-
-      return bars;
-    }
-
-    let bars = draw();
-
-    canvas.addEventListener('click', (e) => {
-      const rect = canvas.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-
-      for (let bar of bars) {
-        if (x >= bar.x && x <= bar.x + bar.w && y >= bar.y && y <= bar.y + bar.h) {
-          state.selectedIndex = bar.index;
-          bars = draw();
-          try { window.Telegram?.WebApp?.HapticFeedback?.impactOccurred?.('light'); } catch(_){}
-          break;
-        }
-      }
-    });
-
-    canvas.addEventListener('mousemove', (e) => {
-      const rect = canvas.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-
-      let found = false;
-      for (let bar of bars) {
-        if (x >= bar.x && x <= bar.x + bar.w && y >= bar.y && y <= bar.y + bar.h) {
-          if (state.hoveredIndex !== bar.index) {
-            state.hoveredIndex = bar.index;
-            canvas.style.cursor = 'pointer';
-            bars = draw();
-          }
-          found = true;
-          break;
-        }
-      }
-      if (!found && state.hoveredIndex !== null) {
-        state.hoveredIndex = null;
-        canvas.style.cursor = 'default';
-        bars = draw();
-      }
-    });
-
-    canvas.addEventListener('mouseleave', () => {
-      if (state.hoveredIndex !== null) {
-        state.hoveredIndex = null;
-        canvas.style.cursor = 'default';
-        bars = draw();
-      }
-    });
-
-    canvas.addEventListener('touchstart', (e) => {
-      const touch = e.touches[0];
-      state.touchStartX = touch.clientX;
-      state.touchStartIndex = state.selectedIndex;
-    });
-
-    canvas.addEventListener('touchmove', (e) => {
-      if (state.touchStartX === null) return;
-      e.preventDefault();
-      const touch = e.touches[0];
-      const dx = touch.clientX - state.touchStartX;
-      const steps = Math.round(dx / 50);
-      let newIndex = Math.max(0, Math.min(dayData.length - 1, state.touchStartIndex - steps));
-      if (newIndex !== state.selectedIndex) {
-        state.selectedIndex = newIndex;
-        bars = draw();
-      }
-    });
-
-    canvas.addEventListener('touchend', () => {
-      state.touchStartX = null;
-      state.touchStartIndex = null;
-    });
-  }
-
-  function renderChart(data, status){
-    const hint = document.getElementById('chart-hint');
-    const canvas = document.getElementById('chart-canvas');
-    
-    if (status === 'READY' && data && data.length > 0){
-      if (hint) hint.style.display = 'none';
-      if (canvas) {
-        canvas.style.display = 'block';
-        initChart(canvas, data);
-      }
-    } else if (status === 'EMPTY' || status === 'WAITING'){
-      if (hint) hint.textContent = 'Обрабатываем данные…';
-      if (canvas) canvas.style.display = 'none';
-    } else if (status === 'NO_ROW'){
-      if (hint) hint.textContent = 'Сначала заполните анкету и сохраните.';
-      if (canvas) canvas.style.display = 'none';
-    }
-  }
-
   let _chartTimer = 0;
   let _chartRunId = 0;
   let _chartAbort = null;
   let _chartStatus = 'INIT';
   const STATUS_RANK = { INIT:0, NO_ROW:1, WAITING:2, EMPTY:3, READY:4 };
-
   function renderChartSafe(data, nextStatus){
     const cur = STATUS_RANK[_chartStatus] ?? 0;
     const nxt = STATUS_RANK[nextStatus] ?? 0;
@@ -2099,17 +2117,10 @@ PageLaunch→UpdateComment: ${comment} s`;
   }
 
   async function apiFrontChartData(requestedRow, signal){
-    const payload = {
-      action: 'front_chart_data',
-      init_data: String(tg?.initData || ''),
-      row: Number(requestedRow || 0) || undefined
-    };
+    const payload = { action:'front_chart_data', init_data:String(tg?.initData || ''), row: Number(requestedRow||0) || undefined };
     const resp = await fetch(BACKEND, {
-      method:'POST',
-      headers:{ 'Content-Type':'text/plain;charset=UTF-8' },
-      body: JSON.stringify(payload),
-      cache:'no-store', credentials:'omit', mode:'cors',
-      signal
+      method:'POST', headers:{ 'Content-Type':'text/plain;charset=UTF-8' },
+      body: JSON.stringify(payload), cache:'no-store', credentials:'omit', mode:'cors', signal
     });
     const raw = await resp.text();
     let json = null; try { json = raw ? JSON.parse(raw) : null; } catch(_){}
@@ -2161,7 +2172,9 @@ PageLaunch→UpdateComment: ${comment} s`;
     const runId = _chartRunId;
     _chartStatus = 'INIT';
 
-    renderChartPlaceholder();
+    injectKBJUStylesOnce();
+    ensureKBJUHost();
+
     const cached = loadChartCache();
     if (cached && cached.data){ renderChartSafe(cached.data, 'READY'); }
 
@@ -2180,8 +2193,11 @@ PageLaunch→UpdateComment: ${comment} s`;
     }
   });
 
+  // первый запуск
   window.startChartFlow();
 })();
+
+
 
 // ============================================================
 // BLOCK Z — Аккордеон: один-единственный обработчик (idempotent)
