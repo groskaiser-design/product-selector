@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0030'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0031'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -887,7 +887,7 @@ async function confirmSavedAfterTimeout(prevRowCalc){
 }
 
 /* ============================================================
- *  BLOCK D — Кулдаун, попапы, сохранение
+ *  BLOCK D — Кулдаун, попапы, сохранение  (FULL REWRITE)
  * ============================================================ */
 var SAVE_IN_PROGRESS = false;
 var COOLDOWN_MS = 60000;
@@ -1051,7 +1051,6 @@ function collectSurveyValues(){
 
   if (out.gender === 'male'){ out.pregnancy_lactation = null; out.cycle_regular = null; }
 
-  // Если % жира не «нет данных» — скрытую визуальную оценку не сохраняем
   try{
     const bf = document.getElementById('bf-none');
     const sys = document.getElementById('opt_fat');
@@ -1062,112 +1061,61 @@ function collectSurveyValues(){
   return out;
 }
 
-
-
-// ============================================================
-// ПРОСТАЯ РЕАКТИВНАЯ ВАЛИДАЦИЯ С БЛОКИРОВКОЙ КНОПКИ
-// Вставить ПЕРЕД функцией handleSaveClick (строка ~1034)
-// ============================================================
-
-/**
- * Проверяет, все ли обязательные поля заполнены
- */
+/* === Валидация формы (реактивная) === */
 function isFormValid() {
   try {
     const wheels = collectWheelValues();
     const survey = collectSurveyValues();
-    
-    // 1) Колёса: возраст, вес, рост
     if (!wheels.age || wheels.age === 0) return false;
     if (!wheels.weight || wheels.weight === 0) return false;
     if (!wheels.height || wheels.height === 0) return false;
-    
-    // 2) Пол
     if (!survey.gender) return false;
-    
-    // 3) % жира ИЛИ телосложение
+
     const hasFat = wheels.fat !== null && wheels.fat !== 0;
     const hasBodyComp = survey.body_comp !== null;
     if (!hasFat && !hasBodyComp) return false;
-    
-    // 4) Все селекторы анкеты
+
     const required = [
-      'ethnicity', 'job_type', 'steps_per_day', 'workouts_per_week',
-      'workout_duration', 'workout_intensity', 'neat_level', 'sleep_hours',
-      'weight_history', 'main_goal', 'goal_pace', 'chronic_conditions'
+      'ethnicity','job_type','steps_per_day','workouts_per_week',
+      'workout_duration','workout_intensity','neat_level','sleep_hours',
+      'weight_history','main_goal','goal_pace','chronic_conditions'
     ];
-    for (const field of required) {
-      if (!survey[field]) return false;
-    }
-    
-    // 5) Условные поля для женщин
+    for (const f of required) if (!survey[f]) return false;
+
     if (survey.gender === 'female') {
       if (!survey.pregnancy_lactation) return false;
       if (survey.pregnancy_lactation === 'none' && !survey.cycle_regular) return false;
     }
-    
     return true;
-  } catch (e) {
-    return false;
-  }
+  } catch { return false; }
 }
-
-/**
- * Обновляет состояние кнопки "Сохранить"
- */
 function updateSaveButton() {
-  const btn = document.getElementById('saveBtn');
-  if (!btn) return;
-  
-  const isValid = isFormValid();
-  btn.disabled = !isValid;
-  
-  if (!isValid) {
-    btn.classList.add('disabled');
-    btn.style.cursor = 'not-allowed';
-  } else {
-    btn.classList.remove('disabled');
-    btn.style.cursor = 'pointer';
-  }
+  const btn = document.getElementById('saveBtn'); if (!btn) return;
+  const ok = isFormValid();
+  btn.disabled = !ok;
+  btn.classList.toggle('disabled', !ok);
+  btn.style.cursor = ok ? 'pointer' : 'not-allowed';
 }
-
-// ============================================================
-// СЛУШАТЕЛИ ДЛЯ РЕАКТИВНОЙ ПРОВЕРКИ
-// Вставить ПОСЛЕ функции updateSaveButton()
-// ============================================================
-
-(function setupValidation() {
-  // Проверка при загрузке
+(function setupValidation(){
   setTimeout(updateSaveButton, 100);
-  
-  // Слушаем изменения колёс (уже есть событие wheelchange)
-  document.addEventListener('wheelchange', () => {
-    requestAnimationFrame(updateSaveButton);
-  });
-  
-  // Слушаем клики по всей форме (binary-btn, choice-item)
-  document.addEventListener('click', (e) => {
+  document.addEventListener('wheelchange', ()=> requestAnimationFrame(updateSaveButton), {passive:true});
+  document.addEventListener('click', (e)=>{
     if (e.target?.closest?.('.binary-btn') || e.target?.closest?.('.choice-item')) {
       setTimeout(updateSaveButton, 50);
     }
-  }, { passive: true });
-  
-  // Слушаем чекбоксы "нет данных"
+  }, { passive:true });
   const bfNone = document.getElementById('bf-none');
   const optFat = document.getElementById('opt_fat');
-  if (bfNone) bfNone.addEventListener('change', updateSaveButton);
-  if (optFat) optFat.addEventListener('change', updateSaveButton);
-  
-  // Периодическая проверка (для надёжности)
+  if (bfNone) bfNone.addEventListener('change', updateSaveButton, {passive:true});
+  if (optFat) optFat.addEventListener('change', updateSaveButton, {passive:true});
   setInterval(updateSaveButton, 1000);
 })();
-  
+
 /* === КНОПКА СОХРАНЕНИЯ: Сохраняем ВЕСЬ ПАКЕТ === */
 function handleSaveClick(e){
   if (e && e.preventDefault) { try { e.preventDefault(); } catch(_){} }
   if (!canSaveNow()) { showPopup('Too many requests','Не нужно так часто нажимать эту кнопку','error'); return; }
 
-  // ✅ ВАЛИДАЦИЯ: проверяем форму перед отправкой
   if (!isFormValid()) {
     const tg = window.Telegram?.WebApp;
     try { tg?.HapticFeedback?.notificationOccurred?.('error'); } catch(_){}
@@ -1185,14 +1133,14 @@ function handleSaveClick(e){
   try { tg?.HapticFeedback?.impactOccurred?.('light'); } catch(_){}
 
   const values = { ...collectWheelValues(), ...collectSurveyValues() };
-  
-  // ✅ КРИТИЧНО: Удалить кэш макросов СРАЗУ, ДО отправки на сервер
-  // Это предотвращает показ старых данных при медленном Apps Script + переключении вкладок
+
+  // 🔥 Немедленно убрать кэши, чтобы не мигал старый UI при долгих ответах бэкенда
   try {
     const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
-    const key = 'macros:vals:' + String(uid);
-    localStorage.removeItem(key);
+    localStorage.removeItem('macros:vals:' + String(uid));      // карточки КБЖУ
+    localStorage.removeItem('kbju:series:' + String(uid));      // серии мини-графика Б/Ж/У (persistent)
   } catch(_){}
+  try { window.clearKbjuSeriesCacheMemory && window.clearKbjuSeriesCacheMemory(); } catch(_){} // RAM-кэш графика
 
   Promise.resolve()
     .then(() => saveMeasurementsToDB(values, saveId))
@@ -1200,11 +1148,10 @@ function handleSaveClick(e){
       setRowCalcForUser(res.row_calc);
       setLastMeasurementTime(Date.parse(res.ts_iso));
 
-      // свернуть анкету и подправить скролл
       collapseAccordionSafe();
       requestAnimationFrame(()=>requestAnimationFrame(scrollTopNoJump));
 
-      // перезапуск потоков (если подключены)
+      // перезапуск потоков — подтянем свежие карточки + свежие серии графика и заново положим их в кэш
       try { startFrontDataFlow(); } catch(_){}
       try { window.startMacrosFlow(); } catch(_){}
 
@@ -1213,8 +1160,6 @@ function handleSaveClick(e){
     })
     .catch(async function(err){
       const msg = String((err && err.message) || err || '');
-
-      // Таймаут — пробуем «пост-чек»
       if ((err && err.code === 408) || /timeout|network/i.test(msg)) {
         const confirmed = await confirmSavedAfterTimeout(prevRowCalc).catch(()=>null);
         if (confirmed != null) {
@@ -1224,7 +1169,7 @@ function handleSaveClick(e){
 
           collapseAccordionSafe();
           requestAnimationFrame(()=>requestAnimationFrame(scrollTopNoJump));
-          
+
           try { startFrontDataFlow(); } catch(_){}
           try { window.startMacrosFlow(); } catch(_){}
 
@@ -1237,14 +1182,11 @@ function handleSaveClick(e){
         try { startFrontDataFlow(); } catch(_){}
         return;
       }
-
-      // Rate limit
       if ((err && err.code === 429) || /too\s*many\s*requests|rate[-_\s]*limit|слишком\s+часто|429/i.test(msg)){
         setUnlockTime(Date.now() + 4000);
         showPopup('Too many requests','Не нужно так часто нажимать эту кнопку','error');
         return;
       }
-
       setUnlockTime(Date.now() + 2000);
       showPopup('Не сохранено','Произошла ошибка при сохранении. Попробуйте позже.','error');
     })
@@ -1253,7 +1195,6 @@ function handleSaveClick(e){
       SAVE_IN_PROGRESS = false;
     });
 }
-
 (function bindSave(){
   var btn = document.getElementById('saveBtn');
   if (!btn) return;
@@ -1261,6 +1202,7 @@ function handleSaveClick(e){
   btn.parentNode.replaceChild(newBtn, btn);
   newBtn.addEventListener('click', handleSaveClick, false);
 })();
+
 
 /* ============================================================
  *  BLOCK E: Front data flow (AI + last inputs)
@@ -1911,19 +1853,35 @@ PageLaunch→UpdateComment: ${comment} s`;
 })();
 
 /* ============================================================
- *  BLOCK E1 — Analytics Macros (poll + cache)  (FULL REPLACEMENT)
- *  — рендер карточек КБЖУ + мини-график Б/Ж/У (новый дизайн)
- *  — получение данных из бэкенда, кэширование и безопасный поллинг
+ *  BLOCK E1 — Analytics Macros (poll + cache)  (FULL REWRITE)
+ *  — карточки КБЖУ + мини-график Б/Ж/У (persist-кэш серий)
  * ============================================================ */
-
-  (function macrosAnalyticsInit(){
+(function macrosAnalyticsInit(){
   const tg = window.Telegram?.WebApp;
   const BACKEND = (typeof BACKEND_URL !== 'undefined' && BACKEND_URL) ? BACKEND_URL : '';
   const host = () => document.getElementById('analytics');
 
-  /* === KBJU series state + helpers (для мини-графика) === */
+  /* === KBJU series: RAM + persistent cache === */
   let _seriesAbort = null;
   const _seriesCacheByRow = Object.create(null);
+
+  const KBJU_SERIES_KEY_PREFIX = 'kbju:series:';
+  function kbjuSeriesKey(uid){ 
+    const id = (typeof currentUserId === 'function') ? currentUserId() : (window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'anon');
+    return KBJU_SERIES_KEY_PREFIX + String(uid ?? id);
+  }
+  function saveKbjuSeriesCache(obj, uid){ try{ localStorage.setItem(kbjuSeriesKey(uid), JSON.stringify(obj)); }catch(_){} }
+  function loadKbjuSeriesCache(uid){
+    try {
+      const raw = localStorage.getItem(kbjuSeriesKey(uid));
+      return raw ? JSON.parse(raw) : null;
+    } catch(_){ return null; }
+  }
+  function clearKbjuSeriesCache(uid){ try{ localStorage.removeItem(kbjuSeriesKey(uid)); }catch(_){} }
+  // публично: очистка RAM-кэша для вызова из блока сохранения
+  window.clearKbjuSeriesCacheMemory = function(){
+    try { for (const k in _seriesCacheByRow) delete _seriesCacheByRow[k]; } catch(_){}
+  };
 
   function pickKbjuSeriesFrom(res){
     // ожидаем массив объектов: [{ date:'YYYY-MM-DD', protein_g, fat_g, carbs_g }, ...]
@@ -1957,21 +1915,22 @@ PageLaunch→UpdateComment: ${comment} s`;
     window.renderKBJU7(kbjuHost, Array.isArray(series) ? series : [], { visible:7, shape:'clip-capsule' });
   }
 
-  /* === Кэш КБЖУ (карточки) — локальное хранилище === */
+  /* === Кэш КБЖУ (карточки) — localStorage === */
   const MACROS_KEY_PREFIX = 'macros:vals:';
-  function currentUserId(){ try { return window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'anon'; } catch(_){ return 'anon'; } }
-  function macrosKey(uid){ return MACROS_KEY_PREFIX + String(uid ?? currentUserId()); }
+  function macrosKey(uid){
+    const id = (typeof currentUserId === 'function') ? currentUserId() : (window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'anon');
+    return MACROS_KEY_PREFIX + String(uid ?? id);
+  }
   function saveMacrosCache(obj, uid){ try { localStorage.setItem(macrosKey(uid), JSON.stringify(obj)); } catch(_){} }
   function loadMacrosCache(uid){
     try {
-      const raw = localStorage.getItem(macrosKey(uid ?? currentUserId()));
+      const raw = localStorage.getItem(macrosKey(uid));
       return raw ? JSON.parse(raw) : null;
     } catch(_) { return null; }
   }
 
-  /* === UI формирование === */
+  /* === UI === */
   function fmtInt(v){ return (v==null || isNaN(v)) ? '—' : String(Math.round(Number(v))); }
-
   function renderSkeleton(){
     const el = host(); if (!el) return;
     el.innerHTML = `
@@ -1985,7 +1944,6 @@ PageLaunch→UpdateComment: ${comment} s`;
         <div class="macro-hint" id="macros-hint">После сохранения появятся расчёты.</div>
       </div>
 
-      <!-- ↓↓↓ мини-график БЖУ под карточками КБЖУ ↓↓↓ -->
       <div class="field" id="kbju7-field">
         <div class="kbju7 kbju7-card" id="kbju7-host" aria-label="История БЖУ">
           <div class="kbju7-viewport">
@@ -2002,7 +1960,6 @@ PageLaunch→UpdateComment: ${comment} s`;
       </div>
     `;
   }
-
   function renderValues(macros, opts){
     const o = opts || {};
     const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = fmtInt(val); };
@@ -2020,7 +1977,7 @@ PageLaunch→UpdateComment: ${comment} s`;
     else { hint.textContent = '—'; }
   }
 
-  /* === статусная обёртка + поллинг макросов === */
+  /* === статусная обвязка + поллинг === */
   let _macrosTimer = 0;
   let _macrosRunId = 0;
   let _macrosAbort = null;
@@ -2030,7 +1987,7 @@ PageLaunch→UpdateComment: ${comment} s`;
   function renderValuesSafe(macros, nextStatus){
     const cur = STATUS_RANK[_macrosStatus] ?? 0;
     const nxt = STATUS_RANK[nextStatus] ?? 0;
-    if (nxt < cur) return;             // не даём «откатить» UI
+    if (nxt < cur) return;
     renderValues(macros, { status: nextStatus });
     _macrosStatus = nextStatus;
   }
@@ -2058,7 +2015,6 @@ PageLaunch→UpdateComment: ${comment} s`;
     if (runId !== _macrosRunId) return { done:true };
     const reqRow = (typeof getRowCalcForUser === 'function') ? getRowCalcForUser() : null;
 
-    // отменяем прошлый запрос, чтобы старый ответ не «догонял»
     if (_macrosAbort) { try{ _macrosAbort.abort(); }catch(_){ } }
     const controller = new AbortController();
     _macrosAbort = controller;
@@ -2073,11 +2029,12 @@ PageLaunch→UpdateComment: ${comment} s`;
 
       renderValuesSafe(res?.macros || {}, res?.status || 'WAITING');
 
-      /* === KBJU series update (инлайн или отдельным запросом) === */
+      // === KBJU series: инлайн или отдельным запросом, + persist ===
       const kbjuInline = pickKbjuSeriesFrom(res);
       if (kbjuInline && Array.isArray(kbjuInline)) {
         const r = res.row || 0;
         _seriesCacheByRow[r] = kbjuInline;
+        saveKbjuSeriesCache({ row: r, series: kbjuInline, updated_at: res.updated_at || Date.now() });
         renderKbjuIfHost(kbjuInline);
       } else {
         const rowToLoad = (typeof getRowCalcForUser === 'function') ? getRowCalcForUser() : null;
@@ -2088,8 +2045,14 @@ PageLaunch→UpdateComment: ${comment} s`;
             if (_seriesAbort) { try{ _seriesAbort.abort(); }catch(_){ } }
             const ctrl = new AbortController(); _seriesAbort = ctrl;
             fetchKbjuSeries(rowToLoad, ctrl.signal)
-              .then(series => { if (series){ _seriesCacheByRow[rowToLoad] = series; renderKbjuIfHost(series); } })
-              .catch(()=>{}) // мягко игнорируем
+              .then(series => {
+                if (series){
+                  _seriesCacheByRow[rowToLoad] = series;
+                  saveKbjuSeriesCache({ row: rowToLoad, series, updated_at: Date.now() });
+                  renderKbjuIfHost(series);
+                }
+              })
+              .catch(()=>{})
               .finally(()=>{ _seriesAbort = null; });
           }
         }
@@ -2116,7 +2079,7 @@ PageLaunch→UpdateComment: ${comment} s`;
     _macrosTimer = setTimeout(()=>pollLoop(runId), r.wait);
   }
 
-  // публичный запуск с «меткой» и полной зачисткой
+  // публичный запуск с очисткой и предварительной отрисовкой из кэша
   window.startMacrosFlow = function forceStart(){
     _macrosRunId += 1;
     const runId = _macrosRunId;
@@ -2124,19 +2087,26 @@ PageLaunch→UpdateComment: ${comment} s`;
 
     renderSkeleton();
 
-    // отрисуем карточки из локального кэша (если есть)
-    const cached = loadMacrosCache();
-    if (cached && cached.macros){
-      renderValuesSafe(cached.macros, 'READY');
-    }
+    // 1) Карточки КБЖУ из кэша
+    try {
+      const cached = loadMacrosCache();
+      if (cached && cached.macros) renderValuesSafe(cached.macros, 'READY');
+    } catch(_){}
 
-    // если известен row и уже есть кэш серии — отрисуем график сразу
-    try{
-      const row = (typeof getRowCalcForUser === 'function') ? getRowCalcForUser() : null;
-      if (row != null && _seriesCacheByRow[row]) {
-        renderKbjuIfHost(_seriesCacheByRow[row]);
+    // 2) Мини-график БЖУ из persist-кэша (мгновенно)
+    try {
+      const uid = (typeof currentUserId === 'function') ? currentUserId() : undefined;
+      const scached = loadKbjuSeriesCache(uid);
+      if (scached && Array.isArray(scached.series)) {
+        renderKbjuIfHost(scached.series);
+      } else {
+        // если известно актуальное row и есть RAM-кэш — тоже можно показать
+        const row = (typeof getRowCalcForUser === 'function') ? getRowCalcForUser() : null;
+        if (row != null && _seriesCacheByRow[row]) {
+          renderKbjuIfHost(_seriesCacheByRow[row]);
+        }
       }
-    }catch(_){}
+    } catch(_){}
 
     clearTimeout(_macrosTimer);
     if (_macrosAbort){ try{ _macrosAbort.abort(); }catch(_){ } _macrosAbort = null; }
@@ -2145,7 +2115,7 @@ PageLaunch→UpdateComment: ${comment} s`;
     pollLoop(runId);
   };
 
-  // автопауза/ресюм при смене видимости — бережём сеть и актуализируем при возврате
+  // автопауза/резюм при видимости
   document.addEventListener('visibilitychange', ()=>{
     if (document.visibilityState === 'hidden'){
       clearTimeout(_macrosTimer);
@@ -2156,9 +2126,10 @@ PageLaunch→UpdateComment: ${comment} s`;
     }
   });
 
-  // первый запуск
+  // первый старт
   window.startMacrosFlow();
 })();
+
 
 
 
