@@ -2,16 +2,22 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8" />
+<meta http-equiv="Cache-Control" content="no-store" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="tma:home-url" content="./index.html" />
 <meta name="tma:home-hash" content="" />
 <title>Замеры — анкета</title>
 
+<!-- Сетевые оптимизации для ускорения первого запроса к Apps Script -->
+<link rel="preconnect" href="https://script.google.com" crossorigin>
+<link rel="dns-prefetch" href="//script.google.com">
+<link rel="preconnect" href="https://script.googleusercontent.com" crossorigin>
+
 <!-- === SMART VERSION CONTROL: обновляем только при смене версии === -->
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0025'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0027'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -760,8 +766,11 @@ window.forceInitAllWheels = ensureAllWheelsOnce;
  * BLOCK C — SAVE (Apps Script)
  * =========================== */
 const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbzRB01KdD51Qx4Gt2JvpxO3TGslgPJjQnKIeqr7fbBD2l13gco2BeGNTNhS6f2v6qR9Ng/exec';
+/** Если у тебя есть отдельный быстрый деплой для save — укажи его здесь. Иначе оставь как есть. */
+const BACKEND_SAVE_URL = BACKEND_URL;
+
 const APP_VERSION  = 'frontend-2025-10-21';
-const REQUEST_TIMEOUT_MS = 30000;
+const REQUEST_TIMEOUT_MS = 15000; // ↓ было 30000 — даём более быстрый таймаут для пост-чека
 function nowIso(){ return new Date().toISOString(); }
 function todayLocalISO(tz){
   try{
@@ -792,17 +801,17 @@ async function saveMeasurementsToDB(values, saveId){
 
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  let resp, raw, json = null;
+
+  let resp, json = null;
   try {
-    resp = await fetch(BACKEND_URL, {
+    resp = await fetch(BACKEND_SAVE_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=UTF-8' }, // simple request, без preflight
       body: JSON.stringify(payload),
       redirect: 'follow', cache: 'no-store', credentials: 'omit', mode: 'cors',
       signal: controller.signal
     });
-    raw = await resp.text();
-    try { json = raw ? JSON.parse(raw) : null; } catch {}
+    json = await resp.json().catch(()=>null);
   } catch (err) {
     if (err && err.name === 'AbortError') { const e = new Error('Сервер не ответил вовремя'); e.code = 408; throw e; }
     throw err;
@@ -838,8 +847,7 @@ async function fetchUserRow(){
       body: JSON.stringify({ action:'user_row', init_data:String(tg?.initData || '') }),
       cache:'no-store', credentials:'omit', mode:'cors'
     });
-    const raw = await resp.text();
-    const json = raw ? JSON.parse(raw) : null;
+    const json = await resp.json().catch(()=>null);
     if (!resp.ok || !json || json.ok !== true) return null;
     return json;
   } catch { return null; }
@@ -1033,7 +1041,6 @@ function collectSurveyValues(){
 
 // ============================================================
 // ПРОСТАЯ РЕАКТИВНАЯ ВАЛИДАЦИЯ С БЛОКИРОВКОЙ КНОПКИ
-// Вставить ПЕРЕД функцией handleSaveClick (строка ~1034)
 // ============================================================
 
 /**
@@ -1100,7 +1107,6 @@ function updateSaveButton() {
 
 // ============================================================
 // СЛУШАТЕЛИ ДЛЯ РЕАКТИВНОЙ ПРОВЕРКИ
-// Вставить ПОСЛЕ функции updateSaveButton()
 // ============================================================
 
 (function setupValidation() {
@@ -1146,6 +1152,10 @@ function handleSaveClick(e){
   const prevRowCalc = getRowCalcForUser();
   const saveId = genSaveId();
 
+  // ⏸ Пауза всех фоновых поллеров на время save
+  window.pauseFrontDataFlow?.();
+  window.pauseMacrosFlow?.();
+
   SAVE_IN_PROGRESS = true;
   setUnlockTime(Date.now() + COOLDOWN_MS);
   setSavingState(true);
@@ -1154,22 +1164,35 @@ function handleSaveClick(e){
   const values = { ...collectWheelValues(), ...collectSurveyValues() };
   
   // ✅ КРИТИЧНО: Удалить кэш макросов СРАЗУ, ДО отправки на сервер
-  // Это предотвращает показ старых данных при медленном Apps Script + переключении вкладок
   try {
     const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
     const key = 'macros:vals:' + String(uid);
     localStorage.removeItem(key);
   } catch(_){}
 
+  // ⚡ Оптимистичный визуальный ACK, если сервер медлит > 500мс
+  const EARLY_ACK_MS = 500;
+  let earlyAckFired = false;
+  const earlyAckTimer = setTimeout(()=>{
+    earlyAckFired = true;
+    collapseAccordionSafe();
+    requestAnimationFrame(()=>requestAnimationFrame(scrollTopNoJump));
+    try { setLastMeasurementTime(Date.now()); } catch(_){}
+  }, EARLY_ACK_MS);
+
   Promise.resolve()
     .then(() => saveMeasurementsToDB(values, saveId))
     .then(function(res){
+      clearTimeout(earlyAckTimer);
+
       setRowCalcForUser(res.row_calc);
       setLastMeasurementTime(Date.parse(res.ts_iso));
 
-      // свернуть анкету и подправить скролл
-      collapseAccordionSafe();
-      requestAnimationFrame(()=>requestAnimationFrame(scrollTopNoJump));
+      // свернуть анкету и подправить скролл, если не сработал ранний ACK
+      if (!earlyAckFired){
+        collapseAccordionSafe();
+        requestAnimationFrame(()=>requestAnimationFrame(scrollTopNoJump));
+      }
 
       // перезапуск потоков (если подключены)
       try { startFrontDataFlow(); } catch(_){}
@@ -1179,6 +1202,7 @@ function handleSaveClick(e){
       showPopup('Готово','Данные сохранены.','success');
     })
     .catch(async function(err){
+      clearTimeout(earlyAckTimer);
       const msg = String((err && err.message) || err || '');
 
       // Таймаут — пробуем «пост-чек»
@@ -1218,6 +1242,9 @@ function handleSaveClick(e){
     .finally(() => {
       setSavingState(false);
       SAVE_IN_PROGRESS = false;
+      // ▶️ Возобновляем фоновые потоки
+      window.resumeFrontDataFlow?.();
+      window.startMacrosFlow?.();
     });
 }
 
@@ -1248,6 +1275,9 @@ function handleSaveClick(e){
     host.innerHTML = `<div class="field"><div class="help">После сохранения появятся графики.</div></div>`;
   }
 
+  let _pollTimer = 0;
+  let _frontAbort = null; // ← контроллер текущего запроса, чтобы можно было abort()
+
   async function apiFrontWait(timeoutSec){
     const payload = {
       action:'front_wait',
@@ -1255,11 +1285,16 @@ function handleSaveClick(e){
       timeout_sec: Math.max(0, Math.min(25, Number(timeoutSec)||25))
     };
     const t0 = performance?.now ? performance.now() : Date.now();
+
+    if (_frontAbort){ try{ _frontAbort.abort(); }catch(_){ } }
+    _frontAbort = new AbortController();
+
     const resp = await fetch(BACKEND, {
       method:'POST',
       headers:{'Content-Type':'text/plain;charset=UTF-8'},
       body:JSON.stringify(payload),
-      cache:'no-store', credentials:'omit', mode:'cors'
+      cache:'no-store', credentials:'omit', mode:'cors',
+      signal: _frontAbort.signal
     });
     const raw = await resp.text();
     let json = null; try{ json = raw ? JSON.parse(raw) : null; }catch(_){}
@@ -1430,7 +1465,6 @@ function handleSaveClick(e){
     try { updateCycleVisibility(); updateBodyCompVisibility(); } catch(_){}
   }
 
-  let _pollTimer = 0;
   async function pollOnce(){
     try{
       const res = await apiFrontWait(25);
@@ -1462,10 +1496,21 @@ function handleSaveClick(e){
     if (r.done) return;
     _pollTimer = setTimeout(()=>pollLoop(), r.wait);
   }
-  window.startFrontDataFlow = function(){ pollLoop(); };
 
+  // Публичные пауза/резюм для поллера комментария
+  window.pauseFrontDataFlow = function(){
+    clearTimeout(_pollTimer);
+    if (_frontAbort){ try{ _frontAbort.abort(); }catch(_){ } _frontAbort = null; }
+  };
+  window.resumeFrontDataFlow = function(){
+    clearTimeout(_pollTimer);
+    _pollTimer = setTimeout(()=>pollLoop(), 0);
+  };
+
+  // Первый запуск
   setAIStatus('Ждём данные…');
   setAnalyticsPlaceholder();
+  window.startFrontDataFlow = function(){ pollLoop(); };
   window.startFrontDataFlow();
 
   apiLastInputs()
@@ -1606,7 +1651,7 @@ PageLaunch→UpdateComment: ${comment} s`;
 
       } catch(_){}
       updateBodyCompVisibility();
-      updateSaveButton(); // ← ДОБАВИТЬ для немедленной реакции
+      updateSaveButton(); // ← немедленная реакция валидации
       hapticSelect();
     }
   }, {passive:true});
@@ -1771,7 +1816,6 @@ PageLaunch→UpdateComment: ${comment} s`;
     } catch(err){
       // тихо выходим, если это отмена; иначе мягко продолжаем
       if (err?.name === 'AbortError') return { done:true };
-      if (runId !== _macrosRunId) return { done:true };
       return { done:false, wait: 1000 };
     }
   }
@@ -1798,6 +1842,12 @@ PageLaunch→UpdateComment: ${comment} s`;
     if (_macrosAbort){ try{ _macrosAbort.abort(); }catch(_){ } _macrosAbort = null; }
 
     pollLoop(runId);
+  };
+
+  // Пауза на время сохранения
+  window.pauseMacrosFlow = function(){
+    clearTimeout(_macrosTimer);
+    if (_macrosAbort){ try{ _macrosAbort.abort(); }catch(_){ } _macrosAbort = null; }
   };
 
   // автопауза/ресюм при смене видимости (бережём сеть и всегда свежие данные после возврата)
