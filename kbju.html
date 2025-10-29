@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0026'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0027'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -1817,7 +1817,7 @@ PageLaunch→UpdateComment: ${comment} s`;
 })();
 
 /* ============================================================
- *  BLOCK E2 — Analytics Chart Data (poll + cache)
+ *  BLOCK E2 — Analytics Chart Data (точная копия из демо)
  * ============================================================ */
 (function chartDataInit(){
   const tg = window.Telegram?.WebApp;
@@ -1833,7 +1833,7 @@ PageLaunch→UpdateComment: ${comment} s`;
   function renderChartPlaceholder(){
     const el = host(); if (!el) return;
     const existing = el.querySelector('#chart-container');
-    if (existing) return; // уже есть
+    if (existing) return;
     
     const chartHtml = `
       <div class="field" style="margin-top:12px">
@@ -1845,6 +1845,226 @@ PageLaunch→UpdateComment: ${comment} s`;
     el.insertAdjacentHTML('beforeend', chartHtml);
   }
 
+  // === ТОЧНАЯ КОПИЯ initChart из демо ===
+  function initChart(canvas, dayData) {
+    if (!dayData || dayData.length === 0) return;
+    
+    const ctx = canvas.getContext('2d');
+    const state = {
+      selectedIndex: dayData.length - 1,
+      hoveredIndex: null,
+      touchStartX: null,
+      touchStartIndex: null
+    };
+
+    function draw() {
+      const dpr = window.devicePixelRatio || 1;
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = rect.width * dpr;
+      canvas.height = 300 * dpr;
+      canvas.style.width = rect.width + 'px';
+      canvas.style.height = '300px';
+      ctx.scale(dpr, dpr);
+
+      const W = rect.width;
+      const H = 300;
+      const PAD_L = 24, PAD_R = 24, PAD_T = 24, PAD_B = 76;
+      const chartW = W - PAD_L - PAD_R;
+      const chartH = H - PAD_T - PAD_B;
+
+      ctx.clearRect(0, 0, W, H);
+
+      const gradient = ctx.createLinearGradient(0, 0, 0, H);
+      gradient.addColorStop(0, 'rgba(139, 92, 246, 0.2)');
+      gradient.addColorStop(1, 'rgba(139, 92, 246, 0.05)');
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, W, H);
+
+      const maxTotal = Math.max(...dayData.map(d => d.protein + d.fat + d.carbs), 100);
+      const n = dayData.length;
+      const gap = 8;
+      const barWidth = (chartW - gap * (n - 1)) / n;
+      const bars = [];
+
+      dayData.forEach((day, i) => {
+        const total = day.protein + day.fat + day.carbs;
+        const x = PAD_L + i * (barWidth + gap);
+        const fullH = (total / maxTotal) * chartH;
+        const y = PAD_T + chartH - fullH;
+
+        bars.push({ x, y, w: barWidth, h: fullH, index: i });
+
+        const carbsH = (day.carbs / total) * fullH;
+        const fatH = (day.fat / total) * fullH;
+        const proteinH = (day.protein / total) * fullH;
+        const R = 16;
+
+        const isSelected = i === state.selectedIndex;
+        const isHovered = i === state.hoveredIndex;
+
+        if (isHovered && !isSelected) {
+          ctx.globalAlpha = 0.85;
+        }
+
+        // Углеводы
+        ctx.fillStyle = '#4ade80';
+        ctx.beginPath();
+        ctx.moveTo(x, y + fullH);
+        ctx.lineTo(x, y + fullH - carbsH + R);
+        ctx.arcTo(x, y + fullH - carbsH, x + R, y + fullH - carbsH, R);
+        ctx.lineTo(x + barWidth - R, y + fullH - carbsH);
+        ctx.arcTo(x + barWidth, y + fullH - carbsH, x + barWidth, y + fullH - carbsH + R, R);
+        ctx.lineTo(x + barWidth, y + fullH);
+        ctx.closePath();
+        ctx.fill();
+
+        // Жиры
+        if (fatH > 1) {
+          ctx.fillStyle = '#60a5fa';
+          ctx.fillRect(x, y + fullH - carbsH - fatH, barWidth, fatH);
+        }
+
+        // Белки
+        if (proteinH > 1) {
+          ctx.fillStyle = '#fb923c';
+          ctx.beginPath();
+          ctx.moveTo(x, y + proteinH);
+          ctx.lineTo(x, y + R);
+          ctx.arcTo(x, y, x + R, y, R);
+          ctx.lineTo(x + barWidth - R, y);
+          ctx.arcTo(x + barWidth, y, x + barWidth, y + R, R);
+          ctx.lineTo(x + barWidth, y + proteinH);
+          ctx.closePath();
+          ctx.fill();
+        }
+
+        ctx.globalAlpha = 1;
+
+        if (isSelected) {
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+          ctx.lineWidth = 3;
+          ctx.shadowColor = 'rgba(255, 255, 255, 0.5)';
+          ctx.shadowBlur = 8;
+          ctx.beginPath();
+          ctx.roundRect(x - 2, y - 2, barWidth + 4, fullH + 4, R);
+          ctx.stroke();
+          ctx.shadowBlur = 0;
+
+          ctx.fillStyle = '#fff';
+          ctx.font = 'bold 18px -apple-system, BlinkMacSystemFont, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(day.date.slice(5).replace('-', '.'), x + barWidth / 2, H - 48);
+        }
+      });
+
+      // Легенда
+      const selected = dayData[state.selectedIndex];
+      const legendItems = [
+        { label: 'Б:', value: Math.round(selected.protein), color: '#60a5fa' },
+        { label: 'Ж:', value: Math.round(selected.fat), color: '#fb923c' },
+        { label: 'У:', value: Math.round(selected.carbs), color: '#4ade80' }
+      ];
+
+      const legendY = H - 18;
+      const boxW = Math.floor((W - PAD_L - PAD_R - 20) / 3);
+
+      legendItems.forEach((item, idx) => {
+        const x = PAD_L + idx * (boxW + 10);
+
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.roundRect(x, legendY - 18, boxW, 32, 10);
+        ctx.stroke();
+
+        ctx.fillStyle = item.color;
+        ctx.beginPath();
+        ctx.arc(x + 18, legendY, 6, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 15px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText(`${item.label}  ${item.value} г`, x + 30, legendY + 5);
+      });
+
+      return bars;
+    }
+
+    let bars = draw();
+
+    canvas.addEventListener('click', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+
+      for (let bar of bars) {
+        if (x >= bar.x && x <= bar.x + bar.w && y >= bar.y && y <= bar.y + bar.h) {
+          state.selectedIndex = bar.index;
+          bars = draw();
+          try { window.Telegram?.WebApp?.HapticFeedback?.impactOccurred?.('light'); } catch(_){}
+          break;
+        }
+      }
+    });
+
+    canvas.addEventListener('mousemove', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+
+      let found = false;
+      for (let bar of bars) {
+        if (x >= bar.x && x <= bar.x + bar.w && y >= bar.y && y <= bar.y + bar.h) {
+          if (state.hoveredIndex !== bar.index) {
+            state.hoveredIndex = bar.index;
+            canvas.style.cursor = 'pointer';
+            bars = draw();
+          }
+          found = true;
+          break;
+        }
+      }
+      if (!found && state.hoveredIndex !== null) {
+        state.hoveredIndex = null;
+        canvas.style.cursor = 'default';
+        bars = draw();
+      }
+    });
+
+    canvas.addEventListener('mouseleave', () => {
+      if (state.hoveredIndex !== null) {
+        state.hoveredIndex = null;
+        canvas.style.cursor = 'default';
+        bars = draw();
+      }
+    });
+
+    canvas.addEventListener('touchstart', (e) => {
+      const touch = e.touches[0];
+      state.touchStartX = touch.clientX;
+      state.touchStartIndex = state.selectedIndex;
+    });
+
+    canvas.addEventListener('touchmove', (e) => {
+      if (state.touchStartX === null) return;
+      e.preventDefault();
+      const touch = e.touches[0];
+      const dx = touch.clientX - state.touchStartX;
+      const steps = Math.round(dx / 50);
+      let newIndex = Math.max(0, Math.min(dayData.length - 1, state.touchStartIndex - steps));
+      if (newIndex !== state.selectedIndex) {
+        state.selectedIndex = newIndex;
+        bars = draw();
+      }
+    });
+
+    canvas.addEventListener('touchend', () => {
+      state.touchStartX = null;
+      state.touchStartIndex = null;
+    });
+  }
+
   function renderChart(data, status){
     const hint = document.getElementById('chart-hint');
     const canvas = document.getElementById('chart-canvas');
@@ -1853,7 +2073,7 @@ PageLaunch→UpdateComment: ${comment} s`;
       if (hint) hint.style.display = 'none';
       if (canvas) {
         canvas.style.display = 'block';
-        drawChart(canvas, data);
+        initChart(canvas, data);
       }
     } else if (status === 'EMPTY' || status === 'WAITING'){
       if (hint) hint.textContent = 'Обрабатываем данные…';
@@ -1863,227 +2083,6 @@ PageLaunch→UpdateComment: ${comment} s`;
       if (canvas) canvas.style.display = 'none';
     }
   }
-
-  function drawChart(canvas, data){
-  if (!data || data.length === 0) return;
-  
-  const ctx = canvas.getContext('2d');
-  const dpr = window.devicePixelRatio || 1;
-  const rect = canvas.getBoundingClientRect();
-  
-  canvas.width = rect.width * dpr;
-  canvas.height = 300 * dpr;
-  canvas.style.width = rect.width + 'px';
-  canvas.style.height = '300px';
-  ctx.scale(dpr, dpr);
-  
-  const W = rect.width;
-  const H = 300;
-  
-  // === СОСТОЯНИЕ ГРАФИКА (из демо) ===
-  if (!canvas._chartState) {
-    canvas._chartState = {
-      selectedIndex: data.length - 1,
-      hoveredIndex: null,
-      touchStartX: null,
-      touchStartIndex: null
-    };
-  }
-  const state = canvas._chartState;
-  
-  const PAD_L = 24, PAD_R = 24, PAD_T = 24, PAD_B = 76;
-  const chartW = W - PAD_L - PAD_R;
-  const chartH = H - PAD_T - PAD_B;
-  
-  ctx.clearRect(0, 0, W, H);
-  
-  // Фон
-  const grad = ctx.createLinearGradient(0, 0, 0, H);
-  grad.addColorStop(0, 'rgba(139, 92, 246, 0.2)');
-  grad.addColorStop(1, 'rgba(139, 92, 246, 0.05)');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, W, H);
-  
-  // Максимум
-  const maxTotal = Math.max(...data.map(d => 
-    (d.protein || 0) + (d.fat || 0) + (d.carbs || 0)
-  ), 100);
-  
-  const n = data.length;
-  const gap = 8;
-  const barWidth = (chartW - gap * (n - 1)) / n;
-  
-  // === РИСУЕМ СТОЛБЦЫ ===
-  const bars = []; // для кликов
-  
-  data.forEach((point, i) => {
-    const protein = point.protein || 0;
-    const fat = point.fat || 0;
-    const carbs = point.carbs || 0;
-    const total = protein + fat + carbs;
-    
-    if (total === 0) return;
-    
-    const x = PAD_L + i * (barWidth + gap);
-    const fullH = (total / maxTotal) * chartH;
-    const y = PAD_T + chartH - fullH;
-    
-    bars.push({ x, y, w: barWidth, h: fullH, index: i });
-    
-    const carbsH = (carbs / total) * fullH;
-    const fatH = (fat / total) * fullH;
-    const proteinH = (protein / total) * fullH;
-    
-    const R = 16;
-    const isSelected = i === state.selectedIndex;
-    const isHovered = i === state.hoveredIndex;
-    
-    // Подсветка при наведении
-    if (isHovered && !isSelected) {
-      ctx.globalAlpha = 0.8;
-    }
-    
-    // Углеводы (низ)
-    ctx.fillStyle = '#4ade80';
-    ctx.beginPath();
-    ctx.moveTo(x, y + fullH);
-    ctx.lineTo(x, y + fullH - carbsH + R);
-    ctx.arcTo(x, y + fullH - carbsH, x + R, y + fullH - carbsH, R);
-    ctx.lineTo(x + barWidth - R, y + fullH - carbsH);
-    ctx.arcTo(x + barWidth, y + fullH - carbsH, x + barWidth, y + fullH - carbsH + R, R);
-    ctx.lineTo(x + barWidth, y + fullH);
-    ctx.closePath();
-    ctx.fill();
-    
-    // Жиры (середина)
-    if (fatH > 1) {
-      ctx.fillStyle = '#60a5fa';
-      ctx.fillRect(x, y + fullH - carbsH - fatH, barWidth, fatH);
-    }
-    
-    // Белки (верх)
-    if (proteinH > 1) {
-      ctx.fillStyle = '#fb923c';
-      ctx.beginPath();
-      ctx.moveTo(x, y + proteinH);
-      ctx.lineTo(x, y + R);
-      ctx.arcTo(x, y, x + R, y, R);
-      ctx.lineTo(x + barWidth - R, y);
-      ctx.arcTo(x + barWidth, y, x + barWidth, y + R, R);
-      ctx.lineTo(x + barWidth, y + proteinH);
-      ctx.closePath();
-      ctx.fill();
-    }
-    
-    ctx.globalAlpha = 1;
-    
-    // Рамка у выбранного
-    if (isSelected) {
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
-      ctx.lineWidth = 3;
-      ctx.shadowColor = 'rgba(255, 255, 255, 0.5)';
-      ctx.shadowBlur = 8;
-      ctx.beginPath();
-      ctx.roundRect(x - 2, y - 2, barWidth + 4, fullH + 4, R);
-      ctx.stroke();
-      ctx.shadowBlur = 0;
-      
-      // Дата
-      ctx.fillStyle = '#fff';
-      ctx.font = 'bold 18px -apple-system, BlinkMacSystemFont, sans-serif';
-      ctx.textAlign = 'center';
-      const dateStr = point.date ? point.date.slice(5).replace('-', '.') : '';
-      ctx.fillText(dateStr, x + barWidth / 2, H - 48);
-    }
-  });
-  
-  // === ЛЕГЕНДА ===
-  const selected = data[state.selectedIndex] || {};
-  const legendItems = [
-    { label: 'Б:', value: Math.round(selected.protein || 0), color: '#60a5fa' },
-    { label: 'Ж:', value: Math.round(selected.fat || 0), color: '#fb923c' },
-    { label: 'У:', value: Math.round(selected.carbs || 0), color: '#4ade80' }
-  ];
-  
-  const legendY = H - 18;
-  const boxW = Math.floor((W - PAD_L - PAD_R - 20) / 3);
-  
-  legendItems.forEach((item, idx) => {
-    const x = PAD_L + idx * (boxW + 10);
-    
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.roundRect(x, legendY - 18, boxW, 32, 10);
-    ctx.stroke();
-    
-    ctx.fillStyle = item.color;
-    ctx.beginPath();
-    ctx.arc(x + 18, legendY, 6, 0, Math.PI * 2);
-    ctx.fill();
-    
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 15px -apple-system, BlinkMacSystemFont, sans-serif';
-    ctx.textAlign = 'left';
-    ctx.fillText(`${item.label}  ${item.value} г`, x + 30, legendY + 5);
-  });
-  
-  // === ИНТЕРАКТИВНОСТЬ ===
-  if (!canvas._listenersAdded) {
-    canvas._listenersAdded = true;
-    
-    // Клик / тап
-    canvas.addEventListener('click', (e) => {
-      const rect = canvas.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      
-      for (let i = 0; i < bars.length; i++) {
-        const bar = bars[i];
-        if (x >= bar.x && x <= bar.x + bar.w && y >= bar.y && y <= bar.y + bar.h) {
-          state.selectedIndex = bar.index;
-          drawChart(canvas, data);
-          try { window.Telegram?.WebApp?.HapticFeedback?.impactOccurred?.('light'); } catch(_){}
-          break;
-        }
-      }
-    });
-    
-    // Hover (desktop)
-    canvas.addEventListener('mousemove', (e) => {
-      const rect = canvas.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      
-      let foundHover = false;
-      for (let i = 0; i < bars.length; i++) {
-        const bar = bars[i];
-        if (x >= bar.x && x <= bar.x + bar.w && y >= bar.y && y <= bar.y + bar.h) {
-          if (state.hoveredIndex !== bar.index) {
-            state.hoveredIndex = bar.index;
-            canvas.style.cursor = 'pointer';
-            drawChart(canvas, data);
-          }
-          foundHover = true;
-          break;
-        }
-      }
-      if (!foundHover && state.hoveredIndex !== null) {
-        state.hoveredIndex = null;
-        canvas.style.cursor = 'default';
-        drawChart(canvas, data);
-      }
-    });
-    
-    canvas.addEventListener('mouseleave', () => {
-      if (state.hoveredIndex !== null) {
-        state.hoveredIndex = null;
-        canvas.style.cursor = 'default';
-        drawChart(canvas, data);
-      }
-    });
-  }
-}
 
   let _chartTimer = 0;
   let _chartRunId = 0;
