@@ -1730,63 +1730,66 @@ function initFrontDataFlow(){
       : `<div class="field"><div class="help">Комментарий пока не готов…</div></div>`;
   }
 
-  function applyInputsToWheels(inputs){
-    if (!inputs || typeof inputs !== 'object') return;
-    ensureAllWheelsOnce();
+ function applyInputsToWheels(inputs){
+  if (!inputs || typeof inputs !== 'object') return;
+  
+  // ✅ Сохраняем данные ДО инициализации колёс
+  for (const [k, vRaw] of Object.entries(inputs)){
+    const cfg = CFG[k]; 
+    if (!cfg) continue;
+    window.__pendingInputs = window.__pendingInputs || {};
+    window.__pendingInputs[k] = vRaw;
+  }
+  
+  // ✅ Теперь инициализируем колёса — они подхватят pendingInputs
+  ensureAllWheelsOnce();
 
-    for (const [k, vRaw] of Object.entries(inputs)){
-      const cfg = CFG[k]; 
-      if (!cfg) continue;
-      const el  = window.fieldByKey[k];
-      const w   = window.wheels[k];
+  // ✅ Применяем значения к уже созданным колёсам
+  for (const [k, vRaw] of Object.entries(inputs)){
+    const cfg = CFG[k]; 
+    if (!cfg) continue;
+    const el  = window.fieldByKey[k];
+    const w   = window.wheels[k];
 
-      const v = numOrNull(vRaw);
+    const v = numOrNull(vRaw);
 
-      if (v == null){
-        window.__pendingInputs = window.__pendingInputs || {};
-        window.__pendingInputs[k] = null;
-        if (cfg.optional && el){
-          let cb = el.querySelector('#opt_'+k);
-          if (!cb){
-            const opt = document.createElement('div');
-            opt.className = 'optline';
-            opt.innerHTML = `<label style="display:flex;align-items:center;gap:8px;opacity:.95">
-                <input type="checkbox" id="opt_${k}"> нет данных
-              </label>`;
-            el.appendChild(opt);
-            cb = opt.querySelector('input');
-          }
-          cb.checked = true;
-          if (w && w.setDisabled) w.setDisabled(true, true);
-        }
-        continue;
-      }
-
+    if (v == null){
       if (cfg.optional && el){
-        const cb = el.querySelector('#opt_'+k);
-        if (cb){ cb.checked = false; }
-        if (w && w.setDisabled) w.setDisabled(false, true);
-      }
-
-      const target = (k === 'age') ? Math.round(v) : v;
-      const cur = (w && typeof w.getModelValue === 'function') ? w.getModelValue() : (w ? w.value : null);
-      const changed = (cur == null) || Math.abs(Number(cur) - Number(target)) > 0.001;
-
-      if (changed){
-        if (w) {
-          w.setValue(target);
-        } else {
-          window.__pendingInputs = window.__pendingInputs || {};
-          window.__pendingInputs[k] = target;
+        let cb = el.querySelector('#opt_'+k);
+        if (!cb){
+          const opt = document.createElement('div');
+          opt.className = 'optline';
+          opt.innerHTML = `<label style="display:flex;align-items:center;gap:8px;opacity:.95">
+              <input type="checkbox" id="opt_${k}"> нет данных
+            </label>`;
+          el.appendChild(opt);
+          cb = opt.querySelector('input');
         }
+        cb.checked = true;
+        if (w && w.setDisabled) w.setDisabled(true, true);
       }
+      continue;
     }
 
-    if (isAdmin() && typeof window.__pageLaunchToUpdateWheel === 'number' === false) {
-      window.__pageLaunchToUpdateWheel = performance.now() - window.__pageLoadTime;
-      try { updatePerfUI && updatePerfUI(); } catch(_){}
+    if (cfg.optional && el){
+      const cb = el.querySelector('#opt_'+k);
+      if (cb){ cb.checked = false; }
+      if (w && w.setDisabled) w.setDisabled(false, true);
+    }
+
+    const target = (k === 'age') ? Math.round(v) : v;
+    
+    // ✅ ПРИНУДИТЕЛЬНО обновляем значение
+    if (w && w.setValue) {
+      w.setValue(target);
     }
   }
+
+  if (isAdmin() && typeof window.__pageLaunchToUpdateWheel !== 'number') {
+    window.__pageLaunchToUpdateWheel = performance.now() - window.__pageLoadTime;
+    try { updatePerfUI && updatePerfUI(); } catch(_){}
+  }
+}
 
   function applyInputsToSurvey(inputs){
     if (!inputs || typeof inputs !== 'object') return;
