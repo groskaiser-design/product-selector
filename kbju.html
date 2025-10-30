@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0034'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0035'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -800,7 +800,7 @@ window.forceInitAllWheels = ensureAllWheelsOnce;
 /* ===========================
  * BLOCK C — SAVE (Apps Script)
  * =========================== */
-const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbx44MmgTfKrBlP4SBksvYvWeRmL3Y50rI_ZU9i374bVzG6XMdl0bNzAfePrqJpA4BLtsg/exec';
+const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbxigGt3AsP7p47BY3eG6zjLaND6iNoZwTvbZzI1shM3qRCpTo66jCic948tsEO_2zrWWw/exec';
 const APP_VERSION  = 'frontend-2025-10-21';
 const REQUEST_TIMEOUT_MS = 30000;
 function nowIso(){ return new Date().toISOString(); }
@@ -1169,7 +1169,57 @@ function updateSaveButton() {
   // Периодическая проверка (для надёжности)
   setInterval(updateSaveButton, 1000);
 })();
-  
+
+// ============================================================
+// AFTER-SAVE PRIME: разово тянем macros + chart с wait_sec,
+// кладём в локальный кэш, чтобы UI обновился мгновенно.
+// ВАЖНО: запускать это ПЕРЕД start*Flow(), чтобы потоки
+// подхватили уже «тёплый» кэш.
+// ============================================================
+async function primeAnalyticsAfterSave(rowCalc){
+  const tg  = window.Telegram?.WebApp;
+  const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
+  const init_data = String(tg?.initData || '');
+  const headers = { 'Content-Type':'text/plain;charset=UTF-8' };
+
+  // Готовим тела запросов с wait_sec
+  const bodyMacros = JSON.stringify({ action:'front_macros', init_data, row: Number(rowCalc)||undefined, wait_sec: 10 });
+  const bodyChart  = JSON.stringify({ action:'front_chart_data', init_data, row: Number(rowCalc)||undefined, wait_sec: 10 });
+
+  const fetchJson = async (body) => {
+    const r = await fetch(BACKEND_URL, {
+      method:'POST', headers, body,
+      cache:'no-store', credentials:'omit', mode:'cors'
+    });
+    const raw = await r.text();
+    try { return raw ? JSON.parse(raw) : null; } catch { return null; }
+  };
+
+  const [mRes, cRes] = await Promise.allSettled([ fetchJson(bodyMacros), fetchJson(bodyChart) ]);
+
+  // Макросы — если есть READY или PARTIAL, кладём в кэш
+  if (mRes.status === 'fulfilled' && mRes.value && (mRes.value.ready || mRes.value.status === 'PARTIAL')) {
+    try {
+      localStorage.setItem('macros:vals:'+uid, JSON.stringify({
+        row: mRes.value.row ?? rowCalc,
+        macros: mRes.value.macros || {},
+        updated_at: mRes.value.updated_at || new Date().toISOString()
+      }));
+    } catch(_) {}
+  }
+
+  // График — если прислали массив, кладём в кэш
+  if (cRes.status === 'fulfilled' && cRes.value && Array.isArray(cRes.value.data)) {
+    try {
+      localStorage.setItem('chart:data:'+uid, JSON.stringify({
+        row: cRes.value.row ?? rowCalc,
+        data: cRes.value.data || [],
+        updated_at: cRes.value.updated_at || new Date().toISOString()
+      }));
+    } catch(_) {}
+  }
+}
+
 /* === КНОПКА СОХРАНЕНИЯ: Сохраняем ВЕСЬ ПАКЕТ === */
 function handleSaveClick(e){
   if (e && e.preventDefault) { try { e.preventDefault(); } catch(_){} }
@@ -1203,65 +1253,63 @@ function handleSaveClick(e){
   } catch(_){}
 
   Promise.resolve()
-    .then(() => saveMeasurementsToDB(values, saveId))
-    .then(function(res){
-      setRowCalcForUser(res.row_calc);
-      setLastMeasurementTime(Date.parse(res.ts_iso));
+  .then(() => saveMeasurementsToDB(values, saveId))
+  .then((res) => {
+    setRowCalcForUser(res.row_calc);
+    setLastMeasurementTime(Date.parse(res.ts_iso));
+    // прогреваем кэш, ошибки игнорим
+    return primeAnalyticsAfterSave(res.row_calc).catch(()=>{});
+  })
+  .then(() => {
+    collapseAccordionSafe();
+    requestAnimationFrame(()=>requestAnimationFrame(scrollTopNoJump));
+    try { startFrontDataFlow(); } catch(_){}
+    try { window.startMacrosFlow(); } catch(_){}
+    try { window.startChartFlow(); } catch(_){}
+    try { tg?.HapticFeedback?.notificationOccurred?.('success'); } catch(_){}
+    showPopup('Готово','Данные сохранены.','success');
+  })
+  .catch(async (err) => {
+    const msg = String((err && err.message) || err || '');
 
-      // свернуть анкету и подправить скролл
-      collapseAccordionSafe();
-      requestAnimationFrame(()=>requestAnimationFrame(scrollTopNoJump));
-
-      // перезапуск потоков (если подключены)
-      try { startFrontDataFlow(); } catch(_){}
-      try { window.startMacrosFlow(); } catch(_){}
-      try { window.startChartFlow(); } catch(_){}
-
-      try { tg?.HapticFeedback?.notificationOccurred?.('success'); } catch(_){}
-      showPopup('Готово','Данные сохранены.','success');
-    })
-    .catch(async function(err){
-      const msg = String((err && err.message) || err || '');
-
-      // Таймаут — пробуем «пост-чек»
-      if ((err && err.code === 408) || /timeout|network/i.test(msg)) {
-        const confirmed = await confirmSavedAfterTimeout(prevRowCalc).catch(()=>null);
-        if (confirmed != null) {
-          setRowCalcForUser(confirmed);
-          setLastMeasurementTime(Date.now());
-          setUnlockTime(Date.now() + 4000);
-
-          collapseAccordionSafe();
-          requestAnimationFrame(()=>requestAnimationFrame(scrollTopNoJump));
-          
-          try { startFrontDataFlow(); } catch(_){}
-          try { window.startMacrosFlow(); } catch(_){}
-          try { window.startChartFlow(); } catch(_){}
-
-          try { tg?.HapticFeedback?.notificationOccurred?.('success'); } catch(_){}
-          showPopup('Готово','Данные сохранены.','success');
-          return;
-        }
-        setUnlockTime(Date.now() + 2000);
-        showPopup('Не сохранено (возможно ушло)','Сервер не успел ответить вовремя. Возможно, данные уже сохранены. Проверьте «Последний замер».','error');
-        try { startFrontDataFlow(); } catch(_){}
-        return;
-      }
-
-      // Rate limit
-      if ((err && err.code === 429) || /too\s*many\s*requests|rate[-_\s]*limit|слишком\s+часто|429/i.test(msg)){
+    // таймаут → пост-чек
+    if ((err && err.code === 408) || /timeout|network/i.test(msg)) {
+      const confirmed = await confirmSavedAfterTimeout(prevRowCalc).catch(()=>null);
+      if (confirmed != null) {
+        setRowCalcForUser(confirmed);
+        setLastMeasurementTime(Date.now());
         setUnlockTime(Date.now() + 4000);
-        showPopup('Too many requests','Не нужно так часто нажимать эту кнопку','error');
+        try { await primeAnalyticsAfterSave(confirmed); } catch(_){}
+        collapseAccordionSafe();
+        requestAnimationFrame(()=>requestAnimationFrame(scrollTopNoJump));
+        try { startFrontDataFlow(); } catch(_){}
+        try { window.startMacrosFlow(); } catch(_){}
+        try { window.startChartFlow(); } catch(_){}
+        try { tg?.HapticFeedback?.notificationOccurred?.('success'); } catch(_){}
+        showPopup('Готово','Данные сохранены.','success');
         return;
       }
-
       setUnlockTime(Date.now() + 2000);
-      showPopup('Не сохранено','Произошла ошибка при сохранении. Попробуйте позже.','error');
-    })
-    .finally(() => {
-      setSavingState(false);
-      SAVE_IN_PROGRESS = false;
-    });
+      showPopup('Не сохранено (возможно ушло)','Сервер не успел ответить вовремя. Возможно, данные уже сохранены. Проверьте «Последний замер».','error');
+      try { startFrontDataFlow(); } catch(_){}
+      return;
+    }
+
+    // rate-limit
+    if ((err && err.code === 429) || /too\s*many\s*requests|rate[-_\s]*limit|слишком\s+часто|429/i.test(msg)){
+      setUnlockTime(Date.now() + 4000);
+      showPopup('Too many requests','Не нужно так часто нажимать эту кнопку','error');
+      return;
+    }
+
+    setUnlockTime(Date.now() + 2000);
+    showPopup('Не сохранено','Произошла ошибка при сохранении. Попробуйте позже.','error');
+  })
+  .finally(() => {
+    setSavingState(false);
+    SAVE_IN_PROGRESS = false;
+  });
+
 }
 
 (function bindSave(){
@@ -1406,7 +1454,7 @@ function handleSaveClick(e){
     }
   }
 
-  if (isAdmin() && typeof window.__pageLaunchToUpdateWheel === 'number' === false) {
+    if (isAdmin() && typeof window.__pageLaunchToUpdateWheel !== 'number') {
     window.__pageLaunchToUpdateWheel = performance.now() - window.__pageLoadTime;
     try { updatePerfUI && updatePerfUI(); } catch(_){}
   }
@@ -2304,6 +2352,7 @@ function renderChart(data, status){
 
     const willBeCollapsed = sec.classList.toggle('collapsed');
     h.setAttribute('aria-expanded', String(!willBeCollapsed));
+    sec.setAttribute('aria-hidden', String(willBeCollapsed)); // ← добавить
 
     // Первое раскрытие анкеты → инициализация колёс
     if (id === 'sec-measures' && !willBeCollapsed){
