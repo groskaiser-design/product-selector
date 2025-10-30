@@ -270,7 +270,7 @@ window.addEventListener('pageshow', (e)=>{
         <!-- Шаги -->
         <div class="field">
           <div class="row"><div class="label">Среднее количество шагов в день</div></div>
-          <div class="choice-list" data-type="single" data-field="steps_per_day" role="radiogroup" aria-label="Среднее количество шагов в день">
+          <div class="choice-list" data-type="single" data-field="steps_per_day" role="radiогroup" aria-label="Среднее количество шагов в день">
             <div class="choice-item" role="radio" aria-checked="false" data-value="lt_3000"><div class="radio-circle"></div><span class="label">Менее 3000</span></div>
             <div class="choice-item" role="radio" aria-checked="false" data-value="3000_4999"><div class="radio-circle"></div><span class="label">3000 до 4999</span></div>
             <div class="choice-item" role="radio" aria-checked="false" data-value="5000_7999"><div class="radio-circle"></div><span class="label">5000 до 7999</span></div>
@@ -796,7 +796,7 @@ window.forceInitAllWheels = ensureAllWheelsOnce;
  * =========================== */
 const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbzqD3uEK6C1jnBhGty4ITxOiClspu90cgCgyIc2ut17fEdinvyNBc9TPI0upsDjIdlt7w/exec';
 const APP_VERSION  = 'frontend-2025-10-21';
-const REQUEST_TIMEOUT_MS = 30000;
+const REQUEST_TIMEOUT_MS = 33000; // was 30000
 function nowIso(){ return new Date().toISOString(); }
 function todayLocalISO(tz){
   try{
@@ -885,6 +885,44 @@ async function confirmSavedAfterTimeout(prevRowCalc){
   if (row && row.found && Number(row.row_calc) && Number(row.row_calc) !== Number(prevRowCalc || 0)) {
     return Number(row.row_calc);
   }
+  return null;
+}
+
+// Расширенный пост-чек: несколько попыток + проверка локальных кэшей макросов/графика
+async function confirmSavedAfterTimeoutAggressive(prevRowCalc, tStartMs){
+  // 1) 3 попытки дернуть user_row с мягким бэкоффом
+  const waits = [800, 1400, 2000];
+  for (const w of waits){
+    const row = await fetchUserRow().catch(()=>null);
+    const cur = row && row.found ? Number(row.row_calc) : null;
+    if (cur != null && cur !== Number(prevRowCalc || 0)) {
+      return { rowCalc: cur, via: 'row_calc' };
+    }
+    await new Promise(r=>setTimeout(r, w));
+  }
+
+  // 2) Косвенная проверка: кэши обновились после клика "Сохранить"
+  try{
+    const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
+    const newer = iso => (iso && Date.parse(iso) > (tStartMs || 0));
+
+    const mraw = localStorage.getItem('macros:vals:'+uid);
+    if (mraw){
+      const m = JSON.parse(mraw);
+      if (m?.updated_at && newer(m.updated_at)) {
+        return { rowCalc: Number(m.row)||null, via: 'macros_cache' };
+      }
+    }
+
+    const craw = localStorage.getItem('chart:data:'+uid);
+    if (craw){
+      const c = JSON.parse(craw);
+      if (c?.updated_at && newer(c.updated_at)) {
+        return { rowCalc: Number(c.row)||null, via: 'chart_cache' };
+      }
+    }
+  }catch(_){}
+
   return null;
 }
 
@@ -1202,7 +1240,7 @@ async function primeAnalyticsAfterSave(rowCalc){
 }
 
 
-/* === КНОПКА СОХРАНЕНИЯ: Сохраняем ВЕСЬ ПАКЕТ === */
+/* === КНОПКА СОХРАНЕНИЯ: Сохраняем ВЕСЬ ПАКЕТ (обновлено) === */
 function handleSaveClick(e){
   if (e && e.preventDefault) { try { e.preventDefault(); } catch(_){} }
   if (!canSaveNow()) { showPopup('Too many requests','Не нужно так часто нажимать эту кнопку','error'); return; }
@@ -1218,6 +1256,7 @@ function handleSaveClick(e){
   const tg = window.Telegram?.WebApp;
   const prevRowCalc = getRowCalcForUser();
   const saveId = genSaveId();
+  const tClick = Date.now(); // ← фиксируем момент клика
 
   SAVE_IN_PROGRESS = true;
   setUnlockTime(Date.now() + COOLDOWN_MS);
@@ -1253,26 +1292,27 @@ function handleSaveClick(e){
     .catch(async (err)=>{
       const msg = String((err && err.message) || err || '');
 
-      // Таймаут/сеть — делаем пост-чек: вдруг успело сохраниться
+      // Таймаут/сеть — делаем расширенный пост-чек: вдруг успело сохраниться
       if ((err && err.code === 408) || /timeout|network/i.test(msg)) {
-        const confirmed = await confirmSavedAfterTimeout(prevRowCalc).catch(()=>null);
+        // форсим фронтовые флоу, чтобы кэши могли обновиться
+        try { startFrontDataFlow(); } catch(_){}
+        try { window.startMacrosFlow(); } catch(_){}
+        try { window.startChartFlow(); } catch(_){}
+
+        const confirmed = await confirmSavedAfterTimeoutAggressive(prevRowCalc, tClick).catch(()=>null);
         if (confirmed != null) {
-          setRowCalcForUser(confirmed);
+          if (confirmed.rowCalc != null) setRowCalcForUser(confirmed.rowCalc);
           setLastMeasurementTime(Date.now());
           setUnlockTime(Date.now() + 4000);
-          try { await primeAnalyticsAfterSave(confirmed); } catch(_){}
+          try { await primeAnalyticsAfterSave(confirmed.rowCalc || getRowCalcForUser()); } catch(_){}
           collapseAccordionSafe();
           requestAnimationFrame(()=>requestAnimationFrame(scrollTopNoJump));
-          try { startFrontDataFlow(); } catch(_){}
-          try { window.startMacrosFlow(); } catch(_){}
-          try { window.startChartFlow(); } catch(_){}
           try { tg?.HapticFeedback?.notificationOccurred?.('success'); } catch(_){}
           showPopup('Готово','Данные сохранены.','success');
           return;
         }
         setUnlockTime(Date.now() + 2000);
-        showPopup('Не сохранено (возможно ушло)','Сервер не успел ответить вовремя. Возможно, данные уже сохранены. Проверьте «Последний замер».','error');
-        try { startFrontDataFlow(); } catch(_){}
+        showPopup('Не сохранено (возможно ушло)','Сервер не успел ответить вовремя. Возможно, данные уже сохранены. Проверить можно в «Последний замер» и в аналитике ниже.','error');
         return;
       }
 
