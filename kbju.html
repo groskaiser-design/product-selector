@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0035'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0036'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -1171,11 +1171,15 @@ function updateSaveButton() {
 })();
   
 /* === КНОПКА СОХРАНЕНИЯ: Сохраняем ВЕСЬ ПАКЕТ === */
+/* === КНОПКА СОХРАНЕНИЯ: Сохраняем ВЕСЬ ПАКЕТ === */
 function handleSaveClick(e){
   if (e && e.preventDefault) { try { e.preventDefault(); } catch(_){} }
-  if (!canSaveNow()) { showPopup('Too many requests','Не нужно так часто нажимать эту кнопку','error'); return; }
+  if (!canSaveNow()) {
+    showPopup('Too many requests','Не нужно так часто нажимать эту кнопку','error');
+    return;
+  }
 
-  // ✅ ВАЛИДАЦИЯ: проверяем форму перед отправкой
+  // ✅ Валидация перед отправкой
   if (!isFormValid()) {
     const tg = window.Telegram?.WebApp;
     try { tg?.HapticFeedback?.notificationOccurred?.('error'); } catch(_){}
@@ -1192,27 +1196,29 @@ function handleSaveClick(e){
   setSavingState(true);
   try { tg?.HapticFeedback?.impactOccurred?.('light'); } catch(_){}
 
+  // единый “снимок” формы
   const values = { ...collectWheelValues(), ...collectSurveyValues() };
-  
-  // ✅ КРИТИЧНО: Удалить кэш макросов СРАЗУ, ДО отправки на сервер
-  // Это предотвращает показ старых данных при медленном Apps Script + переключении вкладок
+
+  // ⚠️ сразу очищаем старый кэш макросов (чтобы не мигали устаревшие цифры)
   try {
     const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
-    const key = 'macros:vals:' + String(uid);
-    localStorage.removeItem(key);
+    localStorage.removeItem('macros:vals:' + String(uid));
   } catch(_){}
 
   Promise.resolve()
     .then(() => saveMeasurementsToDB(values, saveId))
-    .then(function(res){
-      setRowCalcForUser(res.row_calc);
-      setLastMeasurementTime(Date.parse(res.ts_iso));
+    .then((res)=>{
+      // успех сохранения на бэке
+      const rowCalc = Number(res?.row_calc);
+      if (Number.isFinite(rowCalc)) setRowCalcForUser(rowCalc);
+      const ts = res?.ts_iso ? Date.parse(res.ts_iso) : Date.now();
+      setLastMeasurementTime(ts);
 
-      // свернуть анкету и подправить скролл
+      // закрываем анкету, скроллим вверх
       collapseAccordionSafe();
       requestAnimationFrame(()=>requestAnimationFrame(scrollTopNoJump));
 
-      // перезапуск потоков (если подключены)
+      // запускаем потоки подгрузки данных
       try { startFrontDataFlow(); } catch(_){}
       try { window.startMacrosFlow(); } catch(_){}
       try { window.startChartFlow(); } catch(_){}
@@ -1220,20 +1226,20 @@ function handleSaveClick(e){
       try { tg?.HapticFeedback?.notificationOccurred?.('success'); } catch(_){}
       showPopup('Готово','Данные сохранены.','success');
     })
-    .catch(async function(err){
+    .catch(async (err)=>{
       const msg = String((err && err.message) || err || '');
 
-      // Таймаут — пробуем «пост-чек»
+      // Таймаут/сетевые сбои — делаем пост-чек: возможно, запись уже в базе
       if ((err && err.code === 408) || /timeout|network/i.test(msg)) {
         const confirmed = await confirmSavedAfterTimeout(prevRowCalc).catch(()=>null);
         if (confirmed != null) {
-          setRowCalcForUser(confirmed);
+          setRowCalcForUser(Number(confirmed));
           setLastMeasurementTime(Date.now());
           setUnlockTime(Date.now() + 4000);
 
           collapseAccordionSafe();
           requestAnimationFrame(()=>requestAnimationFrame(scrollTopNoJump));
-          
+
           try { startFrontDataFlow(); } catch(_){}
           try { window.startMacrosFlow(); } catch(_){}
           try { window.startChartFlow(); } catch(_){}
@@ -1242,6 +1248,7 @@ function handleSaveClick(e){
           showPopup('Готово','Данные сохранены.','success');
           return;
         }
+        // не подтвердили — мягко сообщаем и всё равно пробуем подтянуть фронтовые данные
         setUnlockTime(Date.now() + 2000);
         showPopup('Не сохранено (возможно ушло)','Сервер не успел ответить вовремя. Возможно, данные уже сохранены. Проверьте «Последний замер».','error');
         try { startFrontDataFlow(); } catch(_){}
@@ -1249,20 +1256,22 @@ function handleSaveClick(e){
       }
 
       // Rate limit
-      if ((err && err.code === 429) || /too\s*many\s*requests|rate[-_\s]*limit|слишком\s+часто|429/i.test(msg)){
+      if ((err && err.code === 429) || /too\s*many\s*requests|rate[-_\s]*limit|слишком\s+часто|429/i.test(msg)) {
         setUnlockTime(Date.now() + 4000);
         showPopup('Too many requests','Не нужно так часто нажимать эту кнопку','error');
         return;
       }
 
+      // Прочая ошибка
       setUnlockTime(Date.now() + 2000);
       showPopup('Не сохранено','Произошла ошибка при сохранении. Попробуйте позже.','error');
     })
-    .finally(() => {
+    .finally(()=>{
       setSavingState(false);
       SAVE_IN_PROGRESS = false;
     });
 }
+
 
 (function bindSave(){
   var btn = document.getElementById('saveBtn');
@@ -1294,27 +1303,39 @@ function handleSaveClick(e){
   }
 
   // === 0) API: единый бутстрап-пакет
-  async function apiFrontBootstrap(requestedRow){
-    const payload = {
-      action:'front_bootstrap',
-      init_data:String(tg?.initData || ''),
-      row: Number(requestedRow||0) || undefined
-    };
-    const t0 = performance?.now ? performance.now() : Date.now();
-    const resp = await fetch(BACKEND, {
-      method:'POST',
-      headers:{'Content-Type':'text/plain;charset=UTF-8'}, // simple request (без preflight)
-      body:JSON.stringify(payload),
-      cache:'no-store', credentials:'omit', mode:'cors'
-    });
-    const raw = await resp.text();
-    let json = null; try{ json = raw ? JSON.parse(raw) : null; }catch(_){}
-    const t1 = performance?.now ? performance.now() : Date.now();
-    window.__frontBootstrapLastMs = +(t1 - t0).toFixed(1);
-    try { updatePerfUI && updatePerfUI(); } catch(_){}
-    if (!resp.ok || !json) throw new Error(`HTTP ${resp.status}`);
-    return json;
+  // === 0) API: единый бутстрап-пакет
+async function apiFrontBootstrap(requestedRow){
+  const payload = {
+    action: 'front_bootstrap',
+    init_data: String(tg?.initData || ''),
+    row: Number(requestedRow || 0) || undefined
+  };
+
+  const t0 = performance?.now ? performance.now() : Date.now();
+  const resp = await fetch(BACKEND, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=UTF-8' }, // simple request без preflight
+    body: JSON.stringify(payload),
+    cache: 'no-store',
+    credentials: 'omit',
+    mode: 'cors'
+  });
+
+  const raw = await resp.text();
+  let json = null; try { json = raw ? JSON.parse(raw) : null; } catch(_){}
+
+  const t1 = performance?.now ? performance.now() : Date.now();
+  window.__frontBootstrapLastMs = +(t1 - t0).toFixed(1);
+  try { updatePerfUI && updatePerfUI(); } catch(_){}
+
+  // Строго отбрасываем неуспех: вызывающий код полагается на throw → fallback
+  if (!resp.ok || !json || json.ok !== true) {
+    const reason = json?.error || `HTTP ${resp.status}`;
+    throw new Error(reason);
   }
+  return json;
+}
+
 
   // === 1) API: ожидание готовности фронтового HTML-коммента
   async function apiFrontWait(timeoutSec){
