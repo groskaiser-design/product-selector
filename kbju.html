@@ -12,7 +12,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0040'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0041'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -905,19 +905,42 @@ async function confirmSavedAfterTimeout(prevRowCalc){
 }
 
 // --- Ждем, пока новые данные появятся на сервере (ДОЛЖНА БЫТЬ ВНЕ других функций!) ---
-async function waitForFreshData(rowCalcAfterSave, maxWait = 25000) {
+// --- Ждём, пока новые данные появятся на сервере (ДОЛЖНА БЫТЬ ВНЕ других функций!) ---
+async function waitForFreshData(rowCalcAfterSave, fastMs = 10000, slowMs = 60000) {
   const t0 = Date.now();
-  while (Date.now() - t0 < maxWait) {
+  let seenFront = false, seenMacros = false, seenChart = false;
+
+  // Фаза A — быстрая
+  while (Date.now() - t0 < fastMs) {
     try {
-      const bootstrap = await apiFrontBootstrap(rowCalcAfterSave);
-      if (Number(bootstrap?.row) === Number(rowCalcAfterSave)) {
-        return bootstrap;
-      }
+      const b = await apiFrontBootstrap(rowCalcAfterSave);
+      const sameRow = Number(b?.row) === Number(rowCalcAfterSave);
+      if (b?.front)  seenFront  = seenFront  || !!(b.front.ready  || b.front.html);
+      if (b?.macros) seenMacros = seenMacros || !!b.macros.ready;
+      if (b?.chart)  seenChart  = seenChart  || !!b.chart.ready;
+      const allReady = seenFront && seenMacros && seenChart;
+
+      if (allReady || sameRow) return b;
     } catch(_) {}
-    await new Promise(res => setTimeout(res, 350));
+    await new Promise(res => setTimeout(res, 200));
   }
+
+  // Фаза B — медленная
+  const t1 = Date.now();
+  while (Date.now() - t1 < slowMs) {
+    try {
+      const b = await apiFrontBootstrap(rowCalcAfterSave);
+      const sameRow = Number(b?.row) === Number(rowCalcAfterSave);
+      const allReady = !!(b?.front?.ready) && !!(b?.macros?.ready) && !!(b?.chart?.ready);
+
+      if (allReady || sameRow) return b;
+    } catch(_) {}
+    await new Promise(res => setTimeout(res, 750));
+  }
+
   return null;
 }
+
 
   
 /* ============================================================
