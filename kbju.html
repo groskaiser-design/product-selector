@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0043'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0044'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -943,9 +943,6 @@ async function waitForFreshData(rowCalcAfterSave, fastMs = 10000, slowMs = 60000
   return null;
 }
 
-
-
-  
 /* ============================================================
  *  BLOCK D — Кулдаун, попапы, сохранение
  * ============================================================ */
@@ -962,7 +959,7 @@ function rowCalcKey(uid){ return ROWCALC_KEY_PREFIX + String(uid); }
 function setRowCalcForUser(rowCalc, uid){
   if (typeof uid === 'undefined') uid = currentUserId();
   try { localStorage.setItem(rowCalcKey(uid), String(rowCalc)); }
-  catch(_) { try { sessionStorage.setItem(rowCalcKey(uid), String(rowCalc)); } catch(_){} }
+  catch(_) { try { sessionStorage.setItem(rowCalcKey(uid), String(rowCalc)); } catch(_){ } }
   if (!window.__rowCalcByUid) window.__rowCalcByUid = {};
   window.__rowCalcByUid[String(uid)] = Number(rowCalc);
 }
@@ -985,7 +982,7 @@ function lastTimeKey(uid){ return LASTTIME_KEY_PREFIX + String(uid); }
 function setLastMeasurementTime(timestamp, uid){
   if (typeof uid === 'undefined') uid = currentUserId();
   try { localStorage.setItem(lastTimeKey(uid), String(timestamp)); } 
-  catch(_) { try { sessionStorage.setItem(lastTimeKey(uid), String(timestamp)); } catch(_){} }
+  catch(_) { try { sessionStorage.setItem(lastTimeKey(uid), String(timestamp)); } catch(_){ } }
   if (!window.__lastTimeByUid) window.__lastTimeByUid = {};
   window.__lastTimeByUid[String(uid)] = Number(timestamp);
   updateLastTimeDisplay(timestamp);
@@ -1012,6 +1009,7 @@ function updateLastTimeDisplay(timestamp){
 }
 window.setLastMeasurementTime = setLastMeasurementTime;
 window.getLastMeasurementTime = getLastMeasurementTime;
+
 // === Row lock: держим целевой row после сохранения, чтобы не откатываться
 var __desiredRow = null, __desiredRowUntil = 0;
 function lockDesiredRow(row, ms){ __desiredRow = Number(row)||null; __desiredRowUntil = Date.now() + (ms||60000); }
@@ -1115,7 +1113,6 @@ function collectSurveyValues(){
 
   if (out.gender === 'male'){ out.pregnancy_lactation = null; out.cycle_regular = null; }
 
-  // Если % жира не «нет данных» — скрытую визуальную оценку не сохраняем
   try{
     const bf = document.getElementById('bf-none');
     const sys = document.getElementById('opt_fat');
@@ -1141,34 +1138,18 @@ function loadInputsCache(uid){
   catch(_) { return null; }
 }
 
-
-// ============================================================
-// ПРОСТАЯ РЕАКТИВНАЯ ВАЛИДАЦИЯ С БЛОКИРОВКОЙ КНОПКИ
-// Вставить ПЕРЕД функцией handleSaveClick (строка ~1034)
-// ============================================================
-
-/**
- * Проверяет, все ли обязательные поля заполнены
- */
+// ===== ВАЛИДАЦИЯ (как было) =====
 function isFormValid() {
   try {
     const wheels = collectWheelValues();
     const survey = collectSurveyValues();
-    
-    // 1) Колёса: возраст, вес, рост
     if (!wheels.age || wheels.age === 0) return false;
     if (!wheels.weight || wheels.weight === 0) return false;
     if (!wheels.height || wheels.height === 0) return false;
-    
-    // 2) Пол
     if (!survey.gender) return false;
-    
-    // 3) % жира ИЛИ телосложение
     const hasFat = wheels.fat !== null && wheels.fat !== 0;
     const hasBodyComp = survey.body_comp !== null;
     if (!hasFat && !hasBodyComp) return false;
-    
-    // 4) Все селекторы анкеты
     const required = [
       'ethnicity', 'job_type', 'steps_per_day', 'workouts_per_week',
       'workout_duration', 'workout_intensity', 'neat_level', 'sleep_hours',
@@ -1177,29 +1158,20 @@ function isFormValid() {
     for (const field of required) {
       if (!survey[field]) return false;
     }
-    
-    // 5) Условные поля для женщин
     if (survey.gender === 'female') {
       if (!survey.pregnancy_lactation) return false;
       if (survey.pregnancy_lactation === 'none' && !survey.cycle_regular) return false;
     }
-    
     return true;
   } catch (e) {
     return false;
   }
 }
-
-/**
- * Обновляет состояние кнопки "Сохранить"
- */
 function updateSaveButton() {
   const btn = document.getElementById('saveBtn');
   if (!btn) return;
-  
   const isValid = isFormValid();
   btn.disabled = !isValid;
-  
   if (!isValid) {
     btn.classList.add('disabled');
     btn.style.cursor = 'not-allowed';
@@ -1208,38 +1180,23 @@ function updateSaveButton() {
     btn.style.cursor = 'pointer';
   }
 }
-
-// ============================================================
-// СЛУШАТЕЛИ ДЛЯ РЕАКТИВНОЙ ПРОВЕРКИ
-// Вставить ПОСЛЕ функции updateSaveButton()
-// ============================================================
-
 (function setupValidation() {
-  // Проверка при загрузке
   setTimeout(updateSaveButton, 100);
-  
-  // Слушаем изменения колёс (уже есть событие wheelchange)
   document.addEventListener('wheelchange', () => {
     requestAnimationFrame(updateSaveButton);
   });
-  
-  // Слушаем клики по всей форме (binary-btn, choice-item)
   document.addEventListener('click', (e) => {
     if (e.target?.closest?.('.binary-btn') || e.target?.closest?.('.choice-item')) {
       setTimeout(updateSaveButton, 50);
     }
   }, { passive: true });
-  
-  // Слушаем чекбоксы "нет данных"
   const bfNone = document.getElementById('bf-none');
   const optFat = document.getElementById('opt_fat');
   if (bfNone) bfNone.addEventListener('change', updateSaveButton);
   if (optFat) optFat.addEventListener('change', updateSaveButton);
-  
-  // Периодическая проверка (для надёжности)
   setInterval(updateSaveButton, 1000);
 })();
-  
+
 /* === КНОПКА СОХРАНЕНИЯ: Сохраняем ВЕСЬ ПАКЕТ === */
 function handleSaveClick(e){
   if (e && e.preventDefault) { try { e.preventDefault(); } catch(_){} }
@@ -1248,7 +1205,6 @@ function handleSaveClick(e){
     return;
   }
 
-  // ✅ Валидация до отправки
   if (!isFormValid()) {
     const tg = window.Telegram?.WebApp;
     try { tg?.HapticFeedback?.notificationOccurred?.('error'); } catch(_){}
@@ -1258,6 +1214,11 @@ function handleSaveClick(e){
 
   const tg = window.Telegram?.WebApp;
   const prevRowCalc = getRowCalcForUser();
+
+  // 🔒 Пинним «ожидаемый новый» row: не показываем старые данные
+  const minNewRow = (Number(prevRowCalc) || 0) + 1;
+  try { lockDesiredRow(minNewRow, 60000); } catch(_) {}
+
   const saveId = genSaveId();
 
   SAVE_IN_PROGRESS = true;
@@ -1265,20 +1226,16 @@ function handleSaveClick(e){
   setSavingState(true);
   try { tg?.HapticFeedback?.impactOccurred?.('light'); } catch(_){}
 
-  // ЕДИНЫЙ снимок формы
   const values = { ...collectWheelValues(), ...collectSurveyValues() };
 
-  // Сразу очищаем кэш (чтобы не мигали старые числа)
   try {
     const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
     localStorage.removeItem('macros:vals:' + String(uid));
     localStorage.removeItem('chart:data:' + String(uid));
   } catch(_){}
 
-  // === ВАЖНО: запускаем сохранение, но UI обновляем СРАЗУ (оптимистично)
   const saveTask = saveMeasurementsToDB(values, saveId);
 
-  // Оптимистичный UI: закрываем анкету, скроллим вверх, запускаем потоки и показываем попап
   collapseAccordionSafe();
   requestAnimationFrame(()=>requestAnimationFrame(scrollTopNoJump));
   setTimeout(()=>{
@@ -1287,11 +1244,9 @@ function handleSaveClick(e){
     try { window.startChartFlow(); } catch(_){}
   }, 0);
 
-  // ↯ МГНОВЕННЫЙ попап: не ждём сеть
   try { tg?.HapticFeedback?.notificationOccurred?.('success'); } catch(_){}
   showPopup('Готово','Данные отправлены. Обновляем…','success');
 
-  // Дальше — «доводим» состояние, когда сервер ответит
   saveTask
     .then(async (res)=>{
       const rowCalc = Number(res?.row_calc);
@@ -1299,35 +1254,34 @@ function handleSaveClick(e){
       const ts = res?.ts_iso ? Date.parse(res.ts_iso) : Date.now();
       setLastMeasurementTime(ts);
 
-      // ⚡ Сразу перезапускаем потоки на новом row_calc
+      // 🔒 Перелочим уже на фактический row (ещё на 10с)
+      try { lockDesiredRow(Number(rowCalc) || minNewRow, 10000); } catch(_){}
+
       try { window.startMacrosFlow(); } catch(_){}
       try { window.startChartFlow(); } catch(_){}
       
-      // Кэш анкеты
       try {
         const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
         saveInputsCache({ row: rowCalc || null, inputs: values, updated_at: new Date().toISOString() }, uid);
       } catch(_){}
 
-      // Мягкое ожидание «свежих» данных (не блокирует UI)
       void waitForFreshData(rowCalc).catch(()=>{});
     })
     .catch(async (err)=>{
       const msg = String((err && err.message) || err || '');
 
-      // Таймаут/сеть: попробуем пост-чек факта сохранения
       if ((err && err.code === 408) || /timeout|network/i.test(msg)) {
         const confirmed = await confirmSavedAfterTimeout(prevRowCalc).catch(()=>null);
         if (confirmed != null) {
           setRowCalcForUser(Number(confirmed));
           setLastMeasurementTime(Date.now());
           setUnlockTime(Date.now() + 4000);
-        
-          // ⚡ Тоже перезапускаем потоки, чтобы не ждать «ожидалку»
+
+          // 🔒 На всякий случай удержим minNewRow ещё немного
+          try { lockDesiredRow(Number(confirmed) || minNewRow, 10000); } catch(_){}
+
           try { window.startMacrosFlow(); } catch(_){}
           try { window.startChartFlow(); } catch(_){}
-        
-          // мягко ждём свежие данные (как и было)
           void waitForFreshData(confirmed, 10000, 60000).catch(()=>{});
           return;
         }
@@ -1337,14 +1291,12 @@ function handleSaveClick(e){
         return;
       }
 
-      // Rate limit
       if ((err && err.code === 429) || /too\s*many\s*requests|rate[-_\s]*limit|слишком\s+часто|429/i.test(msg)) {
         setUnlockTime(Date.now() + 4000);
         showPopup('Too many requests','Не нужно так часто нажимать эту кнопку','error');
         return;
       }
 
-      // Прочая ошибка
       setUnlockTime(Date.now() + 2000);
       showPopup('Не сохранено','Произошла ошибка при сохранении. Попробуйте позже.','error');
     })
@@ -1354,8 +1306,6 @@ function handleSaveClick(e){
     });
 }
 
-
-
 (function bindSave(){
   var btn = document.getElementById('saveBtn');
   if (!btn) return;
@@ -1363,7 +1313,6 @@ function handleSaveClick(e){
   btn.parentNode.replaceChild(newBtn, btn);
   newBtn.addEventListener('click', handleSaveClick, false);
 })();
-
 
 /* ============================================================
  *  BLOCK E: Front data flow (AI + last inputs)
@@ -1385,44 +1334,39 @@ function handleSaveClick(e){
   }
 
   // === 0) API: единый бутстрап-пакет
-  // === 0) API: единый бутстрап-пакет
-async function apiFrontBootstrap(requestedRow){
-  const payload = {
-    action: 'front_bootstrap',
-    init_data: String(tg?.initData || ''),
-    row: Number(requestedRow || 0) || undefined
-  }
+  async function apiFrontBootstrap(requestedRow){
+    const payload = {
+      action: 'front_bootstrap',
+      init_data: String(tg?.initData || ''),
+      row: Number(requestedRow || 0) || undefined
+    }
     window.apiFrontBootstrap = apiFrontBootstrap;
 
-  
-  const t0 = performance?.now ? performance.now() : Date.now();
-  const resp = await fetch(BACKEND, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=UTF-8' }, // simple request без preflight
-    body: JSON.stringify(payload),
-    cache: 'no-store',
-    credentials: 'omit',
-    mode: 'cors'
-  });
+    const t0 = performance?.now ? performance.now() : Date.now();
+    const resp = await fetch(BACKEND, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+      body: JSON.stringify(payload),
+      cache: 'no-store',
+      credentials: 'omit',
+      mode: 'cors'
+    });
 
-  const raw = await resp.text();
-  let json = null; try { json = raw ? JSON.parse(raw) : null; } catch(_){}
+    const raw = await resp.text();
+    let json = null; try { json = raw ? JSON.parse(raw) : null; } catch(_){}
 
-  const t1 = performance?.now ? performance.now() : Date.now();
-  window.__frontBootstrapLastMs = +(t1 - t0).toFixed(1);
-  try { updatePerfUI && updatePerfUI(); } catch(_){}
+    const t1 = performance?.now ? performance.now() : Date.now();
+    window.__frontBootstrapLastMs = +(t1 - t0).toFixed(1);
+    try { updatePerfUI && updatePerfUI(); } catch(_){}
 
-  // Строго отбрасываем неуспех: вызывающий код полагается на throw → fallback
-  if (!resp.ok || !json || json.ok !== true) {
-    const reason = json?.error || `HTTP ${resp.status}`;
-    throw new Error(reason);
+    if (!resp.ok || !json || json.ok !== true) {
+      const reason = json?.error || `HTTP ${resp.status}`;
+      throw new Error(reason);
+    }
+    return json;
   }
-  return json;
-}
-window.apiFrontBootstrap = apiFrontBootstrap;
+  window.apiFrontBootstrap = apiFrontBootstrap;
 
-
-  // === 1) API: ожидание готовности фронтового HTML-коммента
   async function apiFrontWait(timeoutSec){
     const payload = {
       action:'front_wait',
@@ -1445,7 +1389,6 @@ window.apiFrontBootstrap = apiFrontBootstrap;
     return json;
   }
 
-  // === 2) API: запасной канал получения последних инпутов (совместимость)
   async function apiLastInputs(){
     if (isAdmin() && typeof window.__pageLaunchToRequestSent !== 'number') {
       window.__pageLaunchToRequestSent = performance.now() - window.__pageLoadTime;
@@ -1474,7 +1417,6 @@ window.apiFrontBootstrap = apiFrontBootstrap;
     return json;
   }
 
-  // === 3) Рендер HTML-комментария
   function renderAIComment(html){
     if (isAdmin() && typeof window.__pageLaunchToUpdateComment !== 'number') {
       window.__pageLaunchToUpdateComment = performance.now() - window.__pageLoadTime;
@@ -1486,19 +1428,17 @@ window.apiFrontBootstrap = apiFrontBootstrap;
       : `<div class="field"><div class="help">Комментарий пока не готов…</div></div>`;
   }
 
-  // === 4) Применение входных данных к колёсам
   function applyInputsToWheels(inputs){
     if (!inputs || typeof inputs !== 'object') return;
     ensureAllWheelsOnce();
 
     for (const [k, vRaw] of Object.entries(inputs)){
-      const cfg = CFG[k]; if (!cfg) continue;               // только age/weight/height/fat
+      const cfg = CFG[k]; if (!cfg) continue;
       const el  = fieldByKey[k];
       const w   = wheels[k];
 
       const v = numOrNull(vRaw);
 
-      // Нет данных → для опциональных полей отмечаем чекбокс и дизейблим колесо
       if (v == null){
         window.__pendingInputs = window.__pendingInputs || {};
         window.__pendingInputs[k] = null;
@@ -1519,7 +1459,6 @@ window.apiFrontBootstrap = apiFrontBootstrap;
         continue;
       }
 
-      // Есть значение → снимаем "нет данных", если оно стояло
       if (cfg.optional && el){
         const cb = el.querySelector('#opt_'+k);
         if (cb){ cb.checked = false; }
@@ -1540,13 +1479,14 @@ window.apiFrontBootstrap = apiFrontBootstrap;
       }
     }
 
-     if (isAdmin() && typeof window.__pageLaunchToUpdateWheel !== 'number') {
+    if (isAdmin() && typeof window.__pageLaunchToUpdateWheel === 'number') {
+      try { updatePerfUI && updatePerfUI(); } catch(_){}
+    } else if (isAdmin()) {
       window.__pageLaunchToUpdateWheel = performance.now() - window.__pageLoadTime;
       try { updatePerfUI && updatePerfUI(); } catch(_){}
     }
   }
 
-  // === 5) Применение входных данных к селекторам анкеты
   function applyInputsToSurvey(inputs){
     if (!inputs || typeof inputs !== 'object') return;
 
@@ -1607,14 +1547,12 @@ window.apiFrontBootstrap = apiFrontBootstrap;
     try { updateCycleVisibility(); updateBodyCompVisibility(); } catch(_){}
   }
 
-  // === 6) Поллинг ожидания готовности HTML-коммента
   let _pollTimer = 0;
   async function pollOnce(){
     try{
       const res = await apiFrontWait(25);
       if (res?.ready){
         renderAIComment(res.html || '');
-
         try {
           fetch(BACKEND, {
             method:'POST',
@@ -1623,7 +1561,6 @@ window.apiFrontBootstrap = apiFrontBootstrap;
             cache:'no-store', credentials:'omit', mode:'cors'
           }).catch(()=>{});
         } catch(_){}
-
         return {done:true};
       }
       setAIStatus('Обрабатываем… (ждём комментарий)');
@@ -1642,11 +1579,9 @@ window.apiFrontBootstrap = apiFrontBootstrap;
   }
   window.startFrontDataFlow = function(){ pollLoop(); };
 
-  // === 7) Надёжный запуск: bootstrap → дозагрузка
   setAIStatus('Ждём данные…');
   setAnalyticsPlaceholder();
   (async function bootstrapThenHydrate(){
-    // мгновенный seed из localStorage (если есть)
     try {
       const seed = (typeof loadInputsCache === 'function') ? loadInputsCache() : null;
       if (seed && seed.inputs) {
@@ -1657,43 +1592,41 @@ window.apiFrontBootstrap = apiFrontBootstrap;
       }
     } catch(_) { ensureAllWheelsOnce(); }
 
-    const reqRow = (typeof getRowCalcForUser === 'function') ? getRowCalcForUser() : null;
+    // ✅ ВАЖНО: минимальный row — по desiredRow()
+    const reqRow =
+      (typeof desiredRow === 'function' && desiredRow() != null)
+        ? desiredRow()
+        : ((typeof getRowCalcForUser === 'function') ? getRowCalcForUser() : null);
+
     try{
       const b = await apiFrontBootstrap(reqRow);
       if (!b || b.ok !== true) throw new Error('bootstrap_failed');
 
-      // row_calc синхронизируем
       if (b.row) { try { setRowCalcForUser(b.row); } catch(_){ } }
 
-      // 1) Инпуты
       if (b.inputs && b.inputs.found && b.inputs.inputs){
         applyInputsToWheels(b.inputs.inputs);
         applyInputsToSurvey(b.inputs.inputs);
-
         try {
           const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
           saveInputsCache({ row: b.row || null, inputs: b.inputs.inputs, updated_at: b.updated_at || new Date().toISOString() }, uid);
         } catch(_){}
-        
       } else {
         try{
           const r = await apiLastInputs();
           if (r && r.found && r.inputs){
             applyInputsToWheels(r.inputs);
             applyInputsToSurvey(r.inputs);
-
-                      try {
-            const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
-            saveInputsCache({ row: b?.row || null, inputs: r.inputs, updated_at: new Date().toISOString() }, uid);
-          } catch(_){}
-            
+            try {
+              const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
+              saveInputsCache({ row: b?.row || null, inputs: r.inputs, updated_at: new Date().toISOString() }, uid);
+            } catch(_){}
           } else {
             ensureAllWheelsOnce();
           }
         } catch { ensureAllWheelsOnce(); }
       }
 
-      // 2) Комментарий (HTML)
       if (b.front && b.front.html){
         renderAIComment(b.front.html || '');
       } else {
@@ -1701,11 +1634,12 @@ window.apiFrontBootstrap = apiFrontBootstrap;
         window.startFrontDataFlow();
       }
 
-      // 3) Макросы: подогреваем кэш и запускаем поток
       try{
         const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
         if (b.macros){
-          if (b.macros.ready && b.macros.macros){
+          const macrosRow = Number(b.macros.row || b.row || 0);
+          // ✅ не кладём старее reqRow
+          if (b.macros.ready && b.macros.macros && !(reqRow && macrosRow < Number(reqRow))) {
             const seed = { row: b.macros.row || b.row || null, macros: b.macros.macros, updated_at: b.macros.updated_at };
             localStorage.setItem('macros:vals:' + String(uid), JSON.stringify(seed));
           }
@@ -1713,20 +1647,20 @@ window.apiFrontBootstrap = apiFrontBootstrap;
         } else { try { window.startMacrosFlow(); } catch(_){} }
       } catch(_){}
 
-      // 4) График: аналогично — кэш + поток
       try{
         const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
         if (b.chart){
-          if (b.chart.ready && Array.isArray(b.chart.data)){
+          const chartRow = Number(b.chart.row || b.row || 0);
+          // ✅ не кладём старее reqRow
+          if (b.chart.ready && Array.isArray(b.chart.data) && !(reqRow && chartRow < Number(reqRow))) {
             const seed = { row: b.chart.row || b.row || null, data: b.chart.data, updated_at: b.chart.updated_at };
             localStorage.setItem('chart:data:' + String(uid), JSON.stringify(seed));
           }
           try { window.startChartFlow(); } catch(_){}
-        } else { try { window.startChartFlow(); } catch(_){} }
+        } else { try { window.startChartFlow(); } catch(_{} }
       } catch(_){}
 
     } catch {
-      // Fallback: последовательная подгрузка
       window.startFrontDataFlow();
       try{
         const r = await apiLastInputs();
@@ -1742,191 +1676,6 @@ window.apiFrontBootstrap = apiFrontBootstrap;
     }
   })();
 
-})();
-
-
-
-/* ============================================================
- *  BLOCK P (Admin): «Скорость работы»
- * ============================================================ */
-(function maybeInjectAdminSection(){
-  window.__pageLoadTime = window.__pageLoadTime || performance.now();
-  function inject(){
-    if (!isAdmin()) return;
-    const host = document.getElementById('admin-section-anchor');
-    if (!host) return;
-    if (document.getElementById('sec-performance')) return;
-
-    const sec = document.createElement('section');
-    sec.className = 'section collapsed';
-    sec.id = 'sec-performance';
-    sec.innerHTML = `
-      <div class="section-h" data-toggle="sec-performance" role="button" tabindex="0" aria-controls="sec-performance" aria-expanded="false">
-        <h2>Скорость работы</h2>
-        <div class="toggle" aria-hidden="true">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M8 10l4 4 4-4" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </div>
-      </div>
-      <div class="section-content" id="perf-section">
-        <div class="field">
-          <div class="help" id="perfText" style="white-space:pre-line;text-align:left;font-family:monospace;font-size:13px"></div>
-        </div>
-      </div>
-    `;
-    const anchor = document.getElementById('admin-section-anchor');
-    if (anchor) anchor.replaceWith(sec);
-
-    window.updatePerfUI = function(){
-      const wheelsInit = (typeof window.__pageLaunchToWheelsInit === 'number') 
-        ? (window.__pageLaunchToWheelsInit / 1000).toFixed(3) 
-        : '—';
-      const requestSent = (typeof window.__pageLaunchToRequestSent === 'number') 
-        ? (window.__pageLaunchToRequestSent / 1000).toFixed(3) 
-        : '—';
-      const responseReceived = (typeof window.__pageLaunchToResponseReceived === 'number') 
-        ? (window.__pageLaunchToResponseReceived / 1000).toFixed(3) 
-        : '—';
-      const wheel = (typeof window.__pageLaunchToUpdateWheel === 'number') 
-        ? (window.__pageLaunchToUpdateWheel / 1000).toFixed(3) 
-        : '—';
-      const comment = (typeof window.__pageLaunchToUpdateComment === 'number') 
-        ? (window.__pageLaunchToUpdateComment / 1000).toFixed(3) 
-        : '—';
-      
-      const block = 
-`PageLaunch→WheelsInit: ${wheelsInit} s
-PageLaunch→RequestSent: ${requestSent} s
-PageLaunch→ResponseReceived: ${responseReceived} s
-PageLaunch→UpdateWheel: ${wheel} s
-PageLaunch→UpdateComment: ${comment} s`;
-      
-      const el = document.getElementById('perfText');
-      if (el) el.textContent = block;
-    };
-
-    try { updatePerfUI(); } catch(_){}
-  }
-  inject(); setTimeout(inject, 300); setTimeout(inject, 1200);
-})();
-
-/* ============================================================
- *  BLOCK Z: Аккордеон + видимость секций
- * ============================================================ */
-
-/* === Survey: haptics + events + visibility === */
-(function(){
-  const TMA = window.Telegram?.WebApp;
-  try{ TMA?.ready?.(); }catch(_){}
-  const hapticImpact = (type='light')=>{ try{ TMA?.HapticFeedback?.impactOccurred?.(type); }catch(_){} };
-  const hapticSelect = ()=>{ try{ TMA?.HapticFeedback?.selectionChanged?.(); }catch(_){} };
-  const bump = el => { if(!el) return; el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); };
-
-  document.addEventListener('pointerdown', (e)=>{
-    const el = e.target.closest?.('.binary-btn, .choice-item, #bf-none-wrap, #saveBtn');
-    if (!el) return;
-    hapticImpact('light'); bump(el);
-  }, {passive:true});
-
-  document.addEventListener('click', (e)=>{
-    const bbtn = e.target.closest?.('.binary-btn');
-    if (bbtn){
-      const field = bbtn.dataset.field;
-      document.querySelectorAll('.binary-btn[data-field="'+field+'"]').forEach(b=>{ b.classList.remove('active'); b.setAttribute('aria-pressed','false'); });
-      bbtn.classList.add('active'); bbtn.setAttribute('aria-pressed','true');
-      hapticSelect(); updateCycleVisibility();
-      return;
-    }
-
-    const item = e.target.closest?.('.choice-item');
-    if (item){
-      const list = item.closest?.('.choice-list'); if (!list) return;
-      if (list.dataset.type === 'single'){
-        list.querySelectorAll('.choice-item').forEach(i=>{ i.classList.remove('selected'); i.setAttribute('aria-checked','false'); });
-        item.classList.add('selected'); item.setAttribute('aria-checked','true'); hapticSelect();
-        if (list.dataset.field === 'pregnancy_lactation') updateCycleVisibility();
-      } else if (list.dataset.type === 'multiple'){
-        const nowSel = item.classList.toggle('selected'); item.setAttribute('aria-checked', nowSel ? 'true':'false'); hapticSelect();
-        if (list.dataset.field === 'chronic_conditions'){
-          if (item.dataset.value === 'none' && nowSel){
-            list.querySelectorAll('.choice-item').forEach(i=>{ if(i!==item){ i.classList.remove('selected'); i.setAttribute('aria-checked','false'); } });
-          } else if (item.dataset.value !== 'none' && nowSel){
-            const noneItem = list.querySelector('.choice-item[data-value="none"]'); if (noneItem){ noneItem.classList.remove('selected'); noneItem.setAttribute('aria-checked','false'); }
-          }
-        }
-      }
-      return;
-    }
-
-    const chk = e.target.closest?.('#bf-none-wrap');
-    if (chk){
-      const input = chk.querySelector('input');
-      input.checked = !input.checked;
-      chk.classList.toggle('checked', input.checked);
-      try {
-        const optFat = document.querySelector('#opt_fat'); if (optFat) optFat.checked = input.checked;
-        const fatField = document.querySelector('.field[data-key="fat"]');
-        const duo = fatField?.querySelector?.('.duo');
-        if (duo) duo.classList.toggle('disabled', input.checked);
-        const w = wheels?.fat; if (w?.setDisabled) w.setDisabled(input.checked, /*programmatic*/true);
-
-      } catch(_){}
-      updateBodyCompVisibility();
-      updateSaveButton(); // ← ДОБАВИТЬ для немедленной реакции
-      hapticSelect();
-    }
-  }, {passive:true});
-
-  window.updateCycleVisibility = function(){
-    const isFemale = document.querySelector('.binary-btn.active[data-value="female"]');
-    const isMale   = document.querySelector('.binary-btn.active[data-value="male"]');
-    const secPreg  = document.getElementById('sec-preg');
-    const secCycle = document.getElementById('sec-cycle');
-    if (!secPreg || !secCycle) return;
-    if (isMale){
-      secPreg.style.display='none'; secCycle.style.display='none';
-      secPreg.querySelectorAll('.choice-item.selected').forEach(i=>i.classList.remove('selected'));
-      secCycle.querySelectorAll('.choice-item.selected').forEach(i=>i.classList.remove('selected'));
-      return;
-    }
-    secPreg.style.display = isFemale ? '' : 'none';
-    const preg = document.querySelector('.choice-list[data-field="pregnancy_lactation"] .choice-item.selected')?.dataset.value || null;
-    const showCycle = !!isFemale && preg === 'none';
-    secCycle.style.display = showCycle ? '' : 'none';
-    if (!showCycle){ secCycle.querySelectorAll('.choice-item.selected').forEach(i=>i.classList.remove('selected')); }
-  };
-
-  window.updateBodyCompVisibility = function(){
-    const sec  = document.getElementById('sec-bodycomp');
-    if (!sec) return;
-    const bf = document.getElementById('bf-none');
-    const sys = document.getElementById('opt_fat');
-    const show = (bf && bf.checked) || (sys && sys.checked);
-    sec.style.display = show ? '' : 'none';
-    if (!show){ sec.querySelectorAll('.choice-item.selected').forEach(i=>i.classList.remove('selected')); }
-  };
-
-  requestAnimationFrame(()=>{ updateCycleVisibility(); updateBodyCompVisibility(); });
-
-  function ensureFatOptlineStyled(){
-    const fatField = document.querySelector('.field[data-key="fat"]');
-    if (!fatField) return;
-    const optline = fatField.querySelector('.optline');
-    if (!optline) return;
-    if (!optline.querySelector('#bf-none-wrap')){
-      const wrap = document.createElement('label');
-      wrap.className = 'check';
-      wrap.id = 'bf-none-wrap';
-      wrap.innerHTML = '<input type="checkbox" id="bf-none" hidden />'
-        + '<span class="check-square" aria-hidden="true"></span>'
-        + '<span class="check-label">нет данных</span>';
-      optline.appendChild(wrap);
-      const sys = document.getElementById('opt_fat');
-      const duo = fatField.querySelector('.duo');
-      if (sys){ wrap.querySelector('#bf-none').checked = !!sys.checked; }
-      if (duo){ duo.classList.toggle('disabled', wrap.querySelector('#bf-none').checked); }
-    }
-  }
-  requestAnimationFrame(ensureFatOptlineStyled);
 })();
 
 /* ============================================================
@@ -1974,7 +1723,6 @@ PageLaunch→UpdateComment: ${comment} s`;
     else { hint.textContent = '—'; }
   }
 
-  // === ДОБАВЛЕНО: статусный приоритет и «охранник» запуска ===
   let _macrosTimer = 0;
   let _macrosRunId = 0;
   let _macrosAbort = null;
@@ -1984,7 +1732,7 @@ PageLaunch→UpdateComment: ${comment} s`;
   function renderValuesSafe(macros, nextStatus){
     const cur = STATUS_RANK[_macrosStatus] ?? 0;
     const nxt = STATUS_RANK[nextStatus] ?? 0;
-    if (nxt < cur) return;             // не даём «откатить» UI
+    if (nxt < cur) return;
     renderValues(macros, { status: nextStatus });
     _macrosStatus = nextStatus;
   }
@@ -2010,16 +1758,18 @@ PageLaunch→UpdateComment: ${comment} s`;
 
   async function pollOnce(runId){
     if (runId !== _macrosRunId) return { done:true };
-    const reqRow = (typeof getRowCalcForUser === 'function') ? getRowCalcForUser() : null;
 
-    // отменяем прошлый запрос, чтобы старый ответ не «догонял»
+    const reqRow =
+      (typeof desiredRow === 'function' && desiredRow() != null)
+        ? desiredRow()
+        : getRowCalcForUser();
+
     if (_macrosAbort) { try{ _macrosAbort.abort(); }catch(_){ } }
     const controller = new AbortController();
     _macrosAbort = controller;
 
     try{
       const res = await apiFrontMacros(reqRow, controller.signal);
-      // Не принимаем ответы со старым row (держим только >= текущего)
       if (res?.row && reqRow && Number(res.row) < Number(reqRow)) {
         const wait = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
         return { done:false, wait };
@@ -2028,19 +1778,21 @@ PageLaunch→UpdateComment: ${comment} s`;
 
       const serverRow = Number(res?.row);
       if (Number.isFinite(serverRow) && (reqRow == null || serverRow > reqRow)) {
-        setRowCalcForUser(serverRow); // только вперёд
+        setRowCalcForUser(serverRow);
       }
 
       renderValuesSafe(res?.macros || {}, res?.status || 'WAITING');
 
       if (res?.ready){
-        saveMacrosCache({ row: res.row, macros: res.macros, updated_at: res.updated_at });
+        // не кэшируем, если внезапно старее (на всякий)
+        if (!(reqRow && Number(res.row || 0) < Number(reqRow))) {
+          saveMacrosCache({ row: res.row, macros: res.macros, updated_at: res.updated_at });
+        }
         return { done:true };
       }
       const wait = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
       return { done:false, wait };
     } catch(err){
-      // тихо выходим, если это отмена; иначе мягко продолжаем
       if (err?.name === 'AbortError') return { done:true };
       if (runId !== _macrosRunId) return { done:true };
       return { done:false, wait: 1000 };
@@ -2055,15 +1807,23 @@ PageLaunch→UpdateComment: ${comment} s`;
     _macrosTimer = setTimeout(()=>pollLoop(runId), r.wait);
   }
 
-  // публичный запуск с «меткой» и полной зачисткой
   window.startMacrosFlow = function forceStart(){
     _macrosRunId += 1;
     const runId = _macrosRunId;
     _macrosStatus = 'INIT';
 
     renderSkeleton();
+
+    // ✅ Показываем кэш только если он не старее desiredRow()
+    const target =
+      (typeof desiredRow === 'function' && desiredRow() != null)
+        ? desiredRow()
+        : getRowCalcForUser();
+
     const cached = loadMacrosCache();
-    if (cached && cached.macros){ renderValuesSafe(cached.macros, 'READY'); }
+    if (cached?.macros && !(target && Number(cached.row || 0) < Number(target))) {
+      renderValuesSafe(cached.macros, 'READY');
+    }
 
     clearTimeout(_macrosTimer);
     if (_macrosAbort){ try{ _macrosAbort.abort(); }catch(_){ } _macrosAbort = null; }
@@ -2071,7 +1831,6 @@ PageLaunch→UpdateComment: ${comment} s`;
     pollLoop(runId);
   };
 
-  // автопауза/ресюм при смене видимости (бережём сеть и всегда свежие данные после возврата)
   document.addEventListener('visibilitychange', ()=>{
     if (document.visibilityState === 'hidden'){
       clearTimeout(_macrosTimer);
@@ -2081,23 +1840,20 @@ PageLaunch→UpdateComment: ${comment} s`;
     }
   });
 
-  // первый запуск
   window.startMacrosFlow();
 })();
 
 //-- ============================================================
 //  BLOCK E2 — Analytics Chart (KBJU7, SVG + легенда)
 // ==============================================================
-
 (function chartKBJUInit(){
   const tg = window.Telegram?.WebApp;
   const BACKEND = (typeof BACKEND_URL !== 'undefined' && BACKEND_URL) ? BACKEND_URL : '';
   const host = () => document.getElementById('analytics');
 
-  // ---------- 1) Подключаем стили один раз (14px внизу, фикс точки) ----------
-function injectKBJUStylesOnce(){
-  if (document.getElementById('kbju7-styles')) return;
-  const css = `
+  function injectKBJUStylesOnce(){
+    if (document.getElementById('kbju7-styles')) return;
+    const css = `
   .kbju7{ --h:160; --gap:8; --ink:#fff; --c-carb:#34d399; --c-prot:#60a5fa; --c-fat:#f59e0b; position:relative }
   .kbju7-card{
     background:linear-gradient(180deg, var(--cardA), var(--cardB));
@@ -2108,20 +1864,17 @@ function injectKBJUStylesOnce(){
   .kbju7-viewport{position:relative;padding:6px 8px 4px}
   .kbju7-scroll{position:relative;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;scrollbar-width:none;touch-action: pan-x}
   .kbju7-scroll::-webkit-scrollbar{display:none}
-
-  /* ——— Легенда: всегда в ОДНУ строку, кнопки равной ширины и авто-уменьшение текста ——— */
   .kbju7-info{
     display:flex; align-items:center; justify-content:center;
-    gap:8px; flex-wrap:nowrap;               /* <— не переносить */
+    gap:8px; flex-wrap:nowrap;
     padding:10px 12px; min-height:42px;
-    font-size:clamp(12px, 3.4vw, 14px);      /* <— авто-скейл текста */
+    font-size:clamp(12px, 3.4vw, 14px);
     font-variant-numeric:tabular-nums;
   }
   .kbju7-info .v{display:inline-block; min-width:0; text-align:center}
-
   .legend-tap{
     display:inline-flex; align-items:center; justify-content:center;
-    flex:1 1 0; min-width:0;                 /* <— делаем три равные колонки */
+    flex:1 1 0; min-width:0;
     gap:6px; padding:8px 10px;
     white-space:nowrap; line-height:1;
     border:1px solid rgba(255,255,255,.9); background:transparent; color:inherit; font:inherit;
@@ -2133,32 +1886,25 @@ function injectKBJUStylesOnce(){
   .legend-tap[data-key="fat"]  .dot{background: var(--c-fat)}
   .legend-tap[data-key="carb"] .dot{background: var(--c-carb)}
   .legend-tap.active{background:rgba(255,255,255,.12); border-color:transparent}
-
-  /* Столбики/анимки */
   .bar-anim{transform:scaleY(0); transform-origin:bottom; transform-box:fill-box; transition:transform .35s ease;}
   .bar-anim.show{transform:scaleY(1)}
   .sel-outline{fill:none;stroke:#fff;stroke-width:2;rx:18;ry:18}
   .kbju7[data-filter="prot"] .legend-tap:not([data-key="prot"]),
   .kbju7[data-filter="fat"]  .legend-tap:not([data-key="fat"]),
   .kbju7[data-filter="carb"] .legend-tap:not([data-key="carb"]) {opacity:.7}
-
-  /* Убираем серый тап-хайлайт на мобилках */
   .kbju7, .kbju7 * { -webkit-tap-highlight-color: transparent; }
   .kbju7 svg, .kbju7 svg * { -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; }
-
-  /* Очень узкие экраны — ещё компактнее */
   @media (max-width: 340px){
     .kbju7-info{ gap:6px; }
     .legend-tap{ padding:6px 8px; }
   }
   `;
-  const s = document.createElement('style');
-  s.id = 'kbju7-styles';
-  s.textContent = css;
-  document.head.appendChild(s);
-}
+    const s = document.createElement('style');
+    s.id = 'kbju7-styles';
+    s.textContent = css;
+    document.head.appendChild(s);
+  }
 
-  // ---------- 2) Компонент графика (из канваса; без демо-данных) ----------
   (function exposeRenderKBJU7(){
     if (window.renderKBJU7) return;
     window.renderKBJU7 = function renderKBJU7(host, data, opts={}){
@@ -2333,14 +2079,13 @@ function injectKBJUStylesOnce(){
             b.classList.toggle('active', on);
             b.setAttribute('aria-pressed', String(on));
           });
-          renderKBJU7(host, data, opts); // перерисовка (масштаб по фильтру)
+          renderKBJU7(host, data, opts);
         }, { passive: true });
         root.__legendBound = true;
       })();
     };
   })();
 
-  // ---------- 3) Разметка контейнера под график ----------
   function ensureKBJUHost(){
     const el = host(); if (!el) return null;
     let box = el.querySelector('#chart-kbju7-box');
@@ -2366,53 +2111,39 @@ function injectKBJUStylesOnce(){
     return el.querySelector('#chart-kbju7-box');
   }
 
-  // ---------- 4) Нормализация боевых данных под компонент ----------
   function normalizeChartData(arr){
-  if (!Array.isArray(arr)) return [];
-  return arr.map(d=>{
-    const date = d.date || d.day || d.ds || '';
-    // Источник данных: protein_g / fat_g / carbs_g (основной).
-    // Поддержка legacy protein / fat / carbs оставлена как fallback.
-    const protein_g = d.protein_g ?? d.protein ?? 0;
-    const fat_g     = d.fat_g     ?? d.fat     ?? 0;
-    const carbs_g   = d.carbs_g   ?? d.carbs   ?? 0;
-    return {
-      date,
-      protein_g: Number(protein_g) || 0,
-      fat_g:     Number(fat_g)     || 0,
-      carbs_g:   Number(carbs_g)   || 0
-    };
-  }).filter(x=>x.date);
-}
-
-  // ---------- 5) Рендер состояний ----------
-function renderChart(data, status){
-  injectKBJUStylesOnce();
-  const box = ensureKBJUHost(); if (!box) return;
-  const hint = box.querySelector('#chart-hint');   // подпись под графиком
-  const hostId = 'kbju7-host';
-
-  if (status === 'READY' && data && data.length){
-    // показываем подпись как под карточками
-    if (hint){ hint.style.display = 'block'; hint.textContent = 'Динамика вашей нормы БЖУ'; }
-    window.renderKBJU7(hostId, normalizeChartData(data), { visible:7, shape:'clip-capsule' });
-    return;
+    if (!Array.isArray(arr)) return [];
+    return arr.map(d=>{
+      const date = d.date || d.day || d.ds || '';
+      const protein_g = d.protein_g ?? d.protein ?? 0;
+      const fat_g     = d.fat_g     ?? d.fat     ?? 0;
+      const carbs_g   = d.carbs_g   ?? d.carbs   ?? 0;
+      return { date, protein_g: Number(protein_g) || 0, fat_g: Number(fat_g) || 0, carbs_g: Number(carbs_g) || 0 };
+    }).filter(x=>x.date);
   }
 
-  if (status === 'EMPTY' || status === 'WAITING'){
-    if (hint){ hint.style.display = 'block'; hint.textContent = 'Обрабатываем данные…'; }
-    return;
+  function renderChart(data, status){
+    injectKBJUStylesOnce();
+    const box = ensureKBJUHost(); if (!box) return;
+    const hint = box.querySelector('#chart-hint');
+    const hostId = 'kbju7-host';
+
+    if (status === 'READY' && data && data.length){
+      if (hint){ hint.style.display = 'block'; hint.textContent = 'Динамика вашей нормы БЖУ'; }
+      window.renderKBJU7(hostId, normalizeChartData(data), { visible:7, shape:'clip-capsule' });
+      return;
+    }
+    if (status === 'EMPTY' || status === 'WAITING'){
+      if (hint){ hint.style.display = 'block'; hint.textContent = 'Обрабатываем данные…'; }
+      return;
+    }
+    if (status === 'NO_ROW'){
+      if (hint){ hint.style.display = 'block'; hint.textContent = 'Сначала заполните анкету и сохраните.'; }
+      return;
+    }
+    if (hint){ hint.style.display = 'block'; hint.textContent = '—'; }
   }
 
-  if (status === 'NO_ROW'){
-    if (hint){ hint.style.display = 'block'; hint.textContent = 'Сначала заполните анкету и сохраните.'; }
-    return;
-  }
-
-  if (hint){ hint.style.display = 'block'; hint.textContent = '—'; }
-}
-
-  // ---------- 6) Поллинг боевых данных (сохраняем вашу логику) ----------
   const CHART_KEY_PREFIX = 'chart:data:';
   function currentUserId(){ try { return window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'anon'; } catch(_){ return 'anon'; } }
   function chartKey(uid){ return CHART_KEY_PREFIX + String(uid); }
@@ -2446,7 +2177,11 @@ function renderChart(data, status){
 
   async function pollOnce(runId){
     if (runId !== _chartRunId) return { done:true };
-    const reqRow = (typeof getRowCalcForUser === 'function') ? getRowCalcForUser() : null;
+
+    const reqRow =
+      (typeof desiredRow === 'function' && desiredRow() != null)
+        ? desiredRow()
+        : getRowCalcForUser();
 
     if (_chartAbort) { try{ _chartAbort.abort(); }catch(_){ } }
     const controller = new AbortController();
@@ -2458,13 +2193,15 @@ function renderChart(data, status){
 
       const serverRow = Number(res?.row);
       if (Number.isFinite(serverRow) && (reqRow == null || serverRow > reqRow)) {
-        setRowCalcForUser(serverRow); // только вперёд
+        setRowCalcForUser(serverRow);
       }
 
       renderChartSafe(res?.data || [], res?.status || 'WAITING');
 
       if (res?.ready){
-        saveChartCache({ row: res.row, data: res.data, updated_at: res.updated_at });
+        if (!(reqRow && Number(res.row || 0) < Number(reqRow))) {
+          saveChartCache({ row: res.row, data: res.data, updated_at: res.updated_at });
+        }
         return { done:true };
       }
       const wait = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
@@ -2492,8 +2229,16 @@ function renderChart(data, status){
     injectKBJUStylesOnce();
     ensureKBJUHost();
 
+    // ✅ Показываем кэш только если он не старее desiredRow()
+    const target =
+      (typeof desiredRow === 'function' && desiredRow() != null)
+        ? desiredRow()
+        : getRowCalcForUser();
+
     const cached = loadChartCache();
-    if (cached && cached.data){ renderChartSafe(cached.data, 'READY'); }
+    if (cached?.data && !(target && Number(cached.row || 0) < Number(target))) {
+      renderChartSafe(cached.data, 'READY');
+    }
 
     clearTimeout(_chartTimer);
     if (_chartAbort){ try{ _chartAbort.abort(); }catch(_){ } _chartAbort = null; }
@@ -2510,9 +2255,196 @@ function renderChart(data, status){
     }
   });
 
-  // первый запуск
   window.startChartFlow();
 })();
+
+
+/* ============================================================
+ *  BLOCK P (Admin): «Скорость работы»
+ * ============================================================ */
+(function maybeInjectAdminSection(){
+  window.__pageLoadTime = window.__pageLoadTime || performance.now();
+  function inject(){
+    if (!isAdmin()) return;
+    const host = document.getElementById('admin-section-anchor');
+    if (!host) return;
+    if (document.getElementById('sec-performance')) return;
+
+    const sec = document.createElement('section');
+    sec.className = 'section collapsed';
+    sec.id = 'sec-performance';
+    sec.innerHTML = `
+      <div class="section-h" data-toggle="sec-performance" role="button" tabindex="0" aria-controls="sec-performance" aria-expanded="false">
+        <h2>Скорость работы</h2>
+        <div class="toggle" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M8 10l4 4 4-4" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+      </div>
+      <div class="section-content" id="perf-section">
+        <div class="field">
+          <div class="help" id="perfText" style="white-space:pre-line;text-align:left;font-family:monospace;font-size:13px"></div>
+        </div>
+      </div>
+    `;
+    const anchor = document.getElementById('admin-section-anchor');
+    if (anchor) anchor.replaceWith(sec);
+
+    window.updatePerfUI = function(){
+      const wheelsInit = (typeof window.__pageLaunchToWheelsInit === 'number') 
+        ? (window.__pageLaunchToWheelsInit / 1000).toFixed(3) 
+        : '—';
+      const requestSent = (typeof window.__pageLaunchToRequestSent === 'number') 
+        ? (window.__pageLaunchToRequestSent / 1000).toFixed(3) 
+        : '—';
+      const responseReceived = (typeof window.__pageLaunchToResponseReceived === 'number') 
+        ? (window.__pageLaunchToResponseReceived / 1000).toFixed(3) 
+        : '—';
+      const wheel = (typeof window.__pageLaunchToUpdateWheel === 'number') 
+        ? (window.__pageLaunchToUpdateWheel / 1000).toFixed(3) 
+        : '—';
+      const comment = (typeof window.__pageLaunchToUpdateComment === 'number') 
+        ? (window.__pageLaunchToUpdateComment / 1000).toFixed(3) 
+        : '—';
+      
+      const block = 
+`PageLaunch→WheelsInit: ${wheelsInit} s
+PageLaunch→RequestSent: ${requestSent} s
+PageLaunch→ResponseReceived: ${responseReceived} s
+PageLaunch→UpdateWheel: ${wheel} s
+PageLaunch→UpdateComment: ${comment} s`;
+      
+      const el = document.getElementById('perfText');
+      if (el) el.textContent = block;
+    };
+
+    try { updatePerfUI(); } catch(_){}
+  }
+  inject(); setTimeout(inject, 300); setTimeout(inject, 1200);
+})();
+
+
+
+  
+/* ============================================================
+ *  BLOCK Z: Аккордеон + видимость секций
+ * ============================================================ */
+
+/* === Survey: haptics + events + visibility === */
+(function(){
+  const TMA = window.Telegram?.WebApp;
+  try{ TMA?.ready?.(); }catch(_){}
+  const hapticImpact = (type='light')=>{ try{ TMA?.HapticFeedback?.impactOccurred?.(type); }catch(_){} };
+  const hapticSelect = ()=>{ try{ TMA?.HapticFeedback?.selectionChanged?.(); }catch(_){} };
+  const bump = el => { if(!el) return; el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); };
+
+  document.addEventListener('pointerdown', (e)=>{
+    const el = e.target.closest?.('.binary-btn, .choice-item, #bf-none-wrap, #saveBtn');
+    if (!el) return;
+    hapticImpact('light'); bump(el);
+  }, {passive:true});
+
+  document.addEventListener('click', (e)=>{
+    const bbtn = e.target.closest?.('.binary-btn');
+    if (bbtn){
+      const field = bbtn.dataset.field;
+      document.querySelectorAll('.binary-btn[data-field="'+field+'"]').forEach(b=>{ b.classList.remove('active'); b.setAttribute('aria-pressed','false'); });
+      bbtn.classList.add('active'); bbtn.setAttribute('aria-pressed','true');
+      hapticSelect(); updateCycleVisibility();
+      return;
+    }
+
+    const item = e.target.closest?.('.choice-item');
+    if (item){
+      const list = item.closest?.('.choice-list'); if (!list) return;
+      if (list.dataset.type === 'single'){
+        list.querySelectorAll('.choice-item').forEach(i=>{ i.classList.remove('selected'); i.setAttribute('aria-checked','false'); });
+        item.classList.add('selected'); item.setAttribute('aria-checked','true'); hapticSelect();
+        if (list.dataset.field === 'pregnancy_lactation') updateCycleVisibility();
+      } else if (list.dataset.type === 'multiple'){
+        const nowSel = item.classList.toggle('selected'); item.setAttribute('aria-checked', nowSel ? 'true':'false'); hapticSelect();
+        if (list.dataset.field === 'chronic_conditions'){
+          if (item.dataset.value === 'none' && nowSel){
+            list.querySelectorAll('.choice-item').forEach(i=>{ if(i!==item){ i.classList.remove('selected'); i.setAttribute('aria-checked','false'); } });
+          } else if (item.dataset.value !== 'none' && nowSel){
+            const noneItem = list.querySelector('.choice-item[data-value="none"]'); if (noneItem){ noneItem.classList.remove('selected'); noneItem.setAttribute('aria-checked','false'); }
+          }
+        }
+      }
+      return;
+    }
+
+    const chk = e.target.closest?.('#bf-none-wrap');
+    if (chk){
+      const input = chk.querySelector('input');
+      input.checked = !input.checked;
+      chk.classList.toggle('checked', input.checked);
+      try {
+        const optFat = document.querySelector('#opt_fat'); if (optFat) optFat.checked = input.checked;
+        const fatField = document.querySelector('.field[data-key="fat"]');
+        const duo = fatField?.querySelector?.('.duo');
+        if (duo) duo.classList.toggle('disabled', input.checked);
+        const w = wheels?.fat; if (w?.setDisabled) w.setDisabled(input.checked, /*programmatic*/true);
+
+      } catch(_){}
+      updateBodyCompVisibility();
+      updateSaveButton(); // ← ДОБАВИТЬ для немедленной реакции
+      hapticSelect();
+    }
+  }, {passive:true});
+
+  window.updateCycleVisibility = function(){
+    const isFemale = document.querySelector('.binary-btn.active[data-value="female"]');
+    const isMale   = document.querySelector('.binary-btn.active[data-value="male"]');
+    const secPreg  = document.getElementById('sec-preg');
+    const secCycle = document.getElementById('sec-cycle');
+    if (!secPreg || !secCycle) return;
+    if (isMale){
+      secPreg.style.display='none'; secCycle.style.display='none';
+      secPreg.querySelectorAll('.choice-item.selected').forEach(i=>i.classList.remove('selected'));
+      secCycle.querySelectorAll('.choice-item.selected').forEach(i=>i.classList.remove('selected'));
+      return;
+    }
+    secPreg.style.display = isFemale ? '' : 'none';
+    const preg = document.querySelector('.choice-list[data-field="pregnancy_lactation"] .choice-item.selected')?.dataset.value || null;
+    const showCycle = !!isFemale && preg === 'none';
+    secCycle.style.display = showCycle ? '' : 'none';
+    if (!showCycle){ secCycle.querySelectorAll('.choice-item.selected').forEach(i=>i.classList.remove('selected')); }
+  };
+
+  window.updateBodyCompVisibility = function(){
+    const sec  = document.getElementById('sec-bodycomp');
+    if (!sec) return;
+    const bf = document.getElementById('bf-none');
+    const sys = document.getElementById('opt_fat');
+    const show = (bf && bf.checked) || (sys && sys.checked);
+    sec.style.display = show ? '' : 'none';
+    if (!show){ sec.querySelectorAll('.choice-item.selected').forEach(i=>i.classList.remove('selected')); }
+  };
+
+  requestAnimationFrame(()=>{ updateCycleVisibility(); updateBodyCompVisibility(); });
+
+  function ensureFatOptlineStyled(){
+    const fatField = document.querySelector('.field[data-key="fat"]');
+    if (!fatField) return;
+    const optline = fatField.querySelector('.optline');
+    if (!optline) return;
+    if (!optline.querySelector('#bf-none-wrap')){
+      const wrap = document.createElement('label');
+      wrap.className = 'check';
+      wrap.id = 'bf-none-wrap';
+      wrap.innerHTML = '<input type="checkbox" id="bf-none" hidden />'
+        + '<span class="check-square" aria-hidden="true"></span>'
+        + '<span class="check-label">нет данных</span>';
+      optline.appendChild(wrap);
+      const sys = document.getElementById('opt_fat');
+      const duo = fatField.querySelector('.duo');
+      if (sys){ wrap.querySelector('#bf-none').checked = !!sys.checked; }
+      if (duo){ duo.classList.toggle('disabled', wrap.querySelector('#bf-none').checked); }
+    }
+  }
+  requestAnimationFrame(ensureFatOptlineStyled);
+})();
+
 
 
 // ============================================================
