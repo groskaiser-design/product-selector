@@ -519,107 +519,52 @@
           }
         })();
       })();
-
-   // HAPTIC: точная копия логики колес из анкеты, адаптированная под горизонтальный таймлайн
-
+</script>
+<!-- HAPTIC for horizontal wheel: touch-gated + throttled -->
+<script>
 (function () {
-  const tg = window.Telegram && window.Telegram.WebApp;
-  const h  = tg && tg.HapticFeedback;
+  var tg = window.Telegram && window.Telegram.WebApp;
+  var h  = tg && tg.HapticFeedback;
   if (!tg || !h) return;
   try { tg.ready(); } catch(_) {}
 
-  const root = document.getElementById('dateWheel');
+  // утилиты
+  var tick = function(){ try{ h.selectionChanged(); }catch(_){} };
+  var bump = function(style){ try{ h.impactOccurred(style||'medium'); }catch(_){} };
+
+  // корень и реальный скроллер
+  var root = document.getElementById('dateWheel');
   if (!root) return;
 
-  // Находим реальный горизонтальный скроллер
   function isScrollableX(el){
-    const cs = getComputedStyle(el);
-    const ox = cs.overflowX;
-    return (ox === 'auto' || ox === 'scroll' || ox === 'overlay') && (el.scrollWidth - el.clientWidth > 1);
+    var cs = getComputedStyle(el), ox = cs.overflowX;
+    return (ox==='auto'||ox==='scroll'||ox==='overlay') && (el.scrollWidth - el.clientWidth > 1);
   }
-  const scroller = isScrollableX(root) ? root : Array.from(root.querySelectorAll('*')).find(isScrollableX) || root;
+  var scroller = isScrollableX(root) ? root : Array.prototype.find.call(root.querySelectorAll('*'), isScrollableX) || root;
 
-  const supportsScrollEnd = ('onscrollend' in window);
-  let raf = 0, snapTimer = 0, isProgrammatic = false, lastIdx = -1;
+  // touch-гейтинг + троттлинг
+  var touching = false, lastTick = 0, stopTimer = 0;
+  var TICK_EVERY = 180;   // минимум ~0.18s между «тиками»
+  var STOP_DELAY = 160;   // «тычок» после паузы
 
-  const items = () => Array.from(root.querySelectorAll('.item'));
+  root.addEventListener('touchstart', function(){ touching = true; clearTimeout(stopTimer); }, {passive:true});
+  root.addEventListener('touchend',   function(){ touching = false; }, {passive:true});
+  root.addEventListener('touchcancel',function(){ touching = false; }, {passive:true});
 
-  // ближайший к центру индекс
-  function nearestIndex(){
-    const xs = items();
-    if (!xs.length) return -1;
-    const r = scroller.getBoundingClientRect();
-    const center = r.left + r.width/2;
-    let best = 0, bestd = Infinity;
-    for (let i=0; i<xs.length; i++){
-      const ir = xs[i].getBoundingClientRect();
-      const c = ir.left + ir.width/2;
-      const d = Math.abs(c - center);
-      if (d < bestd){ bestd = d; best = i; }
-    }
-    return best;
-  }
+  scroller.addEventListener('scroll', function(){
+    if (!touching) return;                         // только реальный жест
+    var now = (performance && performance.now) ? performance.now() : Date.now();
+    if (now - lastTick >= TICK_EVERY) { lastTick = now; tick(); }  // редкий «тик»
+    clearTimeout(stopTimer);
+    stopTimer = setTimeout(function(){ bump('medium'); }, STOP_DELAY); // «тычок» на стопе
+  }, {passive:true});
 
-  // как в анкете: отмечаем active + дергаем selectionChanged только при user-скролле
-  function markActive(){
-    const xs = items();
-    const idx = nearestIndex();
-    if (idx < 0) return;
-
-    if (lastIdx >= 0 && xs[lastIdx]) xs[lastIdx].classList.remove('active');
-    const el = xs[idx]; if (el) el.classList.add('active');
-
-    if (!isProgrammatic && idx !== lastIdx){
-      try { h.selectionChanged(); } catch(_) {}
-    }
-    lastIdx = idx;
-  }
-
-  // приснапиться к ближайшему (без хаптики — ровно как в анкете)
-  function snapNow(){
-    const xs = items();
-    const idx = nearestIndex();
-    if (idx < 0 || !xs[idx]) return;
-
-    const el = xs[idx];
-    const wr = scroller.getBoundingClientRect();
-    const er = el.getBoundingClientRect();
-    const delta = (er.left + er.width/2) - (wr.left + wr.width/2);
-
-    const prev = isProgrammatic; isProgrammatic = true;
-    scroller.scrollLeft += delta;
-    requestAnimationFrame(() => { markActive(); isProgrammatic = prev; });
-  }
-
-  function onScroll(){
-    if (raf) cancelAnimationFrame(raf);
-    raf = requestAnimationFrame(markActive);
-    clearTimeout(snapTimer);
-    snapTimer = setTimeout(snapNow, 80); // как у тебя в анкете
-  }
-
-  scroller.addEventListener('scroll', onScroll, { passive: true });
-  if (supportsScrollEnd) scroller.addEventListener('scrollend', snapNow, { passive: true });
-
-  // клик по .item — центрируем (программно => без лишней хаптики)
-  root.addEventListener('click', (e) => {
-    const el = e.target.closest && e.target.closest('.item');
-    if (!el) return;
-    const wr = scroller.getBoundingClientRect();
-    const er = el.getBoundingClientRect();
-    const delta = (er.left + er.width/2) - (wr.left + wr.width/2);
-
-    const prev = isProgrammatic; isProgrammatic = true;
-    scroller.scrollLeft += delta;
-    requestAnimationFrame(() => { markActive(); isProgrammatic = prev; });
-  }, { passive: true });
-
-  // первичная активация
-  requestAnimationFrame(markActive);
+  // быстрый «тик» при явном выборе
+  root.addEventListener('click', function(e){
+    if (e.target.closest && e.target.closest('.item')) tick();
+  }, {passive:true});
 })();
-
-
-
 </script>
+
 </body>
 </html>
