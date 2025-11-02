@@ -520,83 +520,67 @@
         })();
       })();
     </script>
-  
-<!-- TELEGRAM HAPTIC (audited) -->
+  <!-- TELEGRAM HAPTIC (audited, robust to re-renders) -->
 <script>
 (function () {
   var tg = window.Telegram && window.Telegram.WebApp;
-  if (!tg || !tg.HapticFeedback) return; // outside Telegram: no-op
-  try { tg.ready && tg.ready(); } catch (_) {}
+  if (!tg || !tg.HapticFeedback) return;           // вне Telegram Mini App — молчим
+  try { tg.ready && tg.ready(); } catch(_) {}
   var h = tg.HapticFeedback;
 
-  // 1) Metric rows: delegate click to container (#rows)
+  // Утилиты с защитой (чтобы не падать)
+  function tick()     { try { h.selectionChanged && h.selectionChanged(); } catch(_) {} }
+  function bump(st)   { try { h.impactOccurred && h.impactOccurred(st||'light'); } catch(_) {} }
+
+  // 1) Клики по строкам метрик -> лёгкий «тычок»
   var rows = document.getElementById('rows');
   if (rows) {
     rows.addEventListener('click', function (e) {
-      if (e.target.closest && e.target.closest('.row')) {
-        h.impactOccurred && h.impactOccurred('light');
-      }
+      if (e.target.closest && e.target.closest('.row')) bump('light');
     });
   }
 
-  // 2) Date wheel: tick on selection change during scroll + bump on scroll stop
+  // 2) Колесо дат: «тик» при смене активного и «тычок» на стоп скролла
   var wheel = document.getElementById('dateWheel');
   if (!wheel) return;
 
-  var lastIndex = -1, rafId = 0, stopTimer = 0;
+  // 2.1) «Тик» при смене активного элемента — отслеживаем класс .active
+  var lastActiveEl = null, lastActiveIdx = -1;
+  function scanActive() {
+    var a = wheel.querySelector('.item.active');
+    if (!a || a === lastActiveEl) return;
+    lastActiveEl = a;
+    var idx = parseInt(a.dataset.idx || '-1', 10);
+    if (idx !== lastActiveIdx) { lastActiveIdx = idx; tick(); }
+  }
+  // Слежение за изменениями классов и детей (перерисовки)
+  var mo = new MutationObserver(function () { scanActive(); });
+  mo.observe(wheel, { attributes: true, attributeFilter: ['class'], subtree: true, childList: true });
 
-  function getItems() { return wheel.querySelectorAll('.item'); }
-
-  function getActiveIndex(items) {
-    if (!items || !items.length) return -1;
-    var wr = wheel.getBoundingClientRect();
-    var center = wr.left + wr.width / 2;
-    var best = -1, bestDist = 1e12;
-    for (var i = 0; i < items.length; i++) {
-      var r = items[i].getBoundingClientRect();
-      var c = r.left + r.width / 2;
-      var d = Math.abs(c - center);
-      if (d < bestDist) { bestDist = d; best = i; }
-    }
-    return best;
+  // 2.2) «Тычок» когда прокрутка остановилась
+  if ('onscrollend' in window) {
+    wheel.addEventListener('scrollend', function(){ bump('light'); }, { passive: true });
+  } else {
+    var stopTimer = 0;
+    wheel.addEventListener('scroll', function(){
+      clearTimeout(stopTimer);
+      stopTimer = setTimeout(function(){ bump('light'); }, 140);
+    }, { passive: true });
   }
 
-  function onScroll() {
-    cancelAnimationFrame(rafId);
-    rafId = requestAnimationFrame(function () {
-      var items = getItems();
-      var idx = getActiveIndex(items);
-      if (idx !== -1 && idx !== lastIndex) {
-        lastIndex = idx;
-        h.selectionChanged && h.selectionChanged(); // light tick
-      }
-    });
-
-    clearTimeout(stopTimer);
-    stopTimer = setTimeout(function () {
-      h.impactOccurred && h.impactOccurred('light'); // gentle bump on stop
-    }, 140);
-  }
-
-  wheel.addEventListener('scroll', onScroll, { passive: true });
-
-  // Immediate tick on explicit selection (click/keyboard)
-  wheel.addEventListener('click', function (e) {
-    if (e.target.closest && e.target.closest('.item')) {
-      h.selectionChanged && h.selectionChanged();
-    }
+  // 2.3) Мгновенный «тик» при явном выборе (тап по .item / клавиатура)
+  wheel.addEventListener('click', function(e){
+    if (e.target.closest && e.target.closest('.item')) tick();
   }, { passive: true });
-
-  wheel.addEventListener('keydown', function (e) {
-    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-      h.selectionChanged && h.selectionChanged();
-    }
+  wheel.addEventListener('keydown', function(e){
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') tick();
   });
 
-  // 3) Handle dynamic re-render: reset lastIndex when items change (e.g., setSeries runs)
-  var mo = new MutationObserver(function () { lastIndex = -1; });
-  mo.observe(wheel, { childList: true });
+  // Первичная синхронизация (если активный уже выставлен)
+  scanActive();
 })();
 </script>
+
+
 </body>
 </html>
