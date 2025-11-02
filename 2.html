@@ -520,19 +520,20 @@
         })();
       })();
     </script>
-  <!-- TELEGRAM HAPTIC (audited, robust to re-renders) -->
+
+    <!-- TELEGRAM HAPTIC (virt-wheel safe) -->
 <script>
 (function () {
   var tg = window.Telegram && window.Telegram.WebApp;
-  if (!tg || !tg.HapticFeedback) return;           // вне Telegram Mini App — молчим
+  if (!tg || !tg.HapticFeedback) return;
   try { tg.ready && tg.ready(); } catch(_) {}
   var h = tg.HapticFeedback;
 
-  // Утилиты с защитой (чтобы не падать)
-  function tick()     { try { h.selectionChanged && h.selectionChanged(); } catch(_) {} }
-  function bump(st)   { try { h.impactOccurred && h.impactOccurred(st||'light'); } catch(_) {} }
+  // безопасные вызовы
+  function tick()  { try { h.selectionChanged && h.selectionChanged(); } catch(_) {} }
+  function bump(s) { try { h.impactOccurred && h.impactOccurred(s||'light'); } catch(_) {} }
 
-  // 1) Клики по строкам метрик -> лёгкий «тычок»
+  // 1) клики по строкам метрик
   var rows = document.getElementById('rows');
   if (rows) {
     rows.addEventListener('click', function (e) {
@@ -540,46 +541,68 @@
     });
   }
 
-  // 2) Колесо дат: «тик» при смене активного и «тычок» на стоп скролла
-  var wheel = document.getElementById('dateWheel');
-  if (!wheel) return;
+  // 2) колесо дат — без scroll, только по смене .item.active
+  var root = document.getElementById('dateWheel');
+  if (!root) return;
 
-  // 2.1) «Тик» при смене активного элемента — отслеживаем класс .active
-  var lastActiveEl = null, lastActiveIdx = -1;
-  function scanActive() {
-    var a = wheel.querySelector('.item.active');
-    if (!a || a === lastActiveEl) return;
-    lastActiveEl = a;
-    var idx = parseInt(a.dataset.idx || '-1', 10);
-    if (idx !== lastActiveIdx) { lastActiveIdx = idx; tick(); }
+  var lastIdx = -1;
+  var lastTickAt = 0;
+  var moving = false;
+  var stopTimer = 0;
+
+  function now() { return (window.performance && performance.now) ? performance.now() : Date.now(); }
+
+  function onActiveChanged() {
+    var a = root.querySelector('.item.active');
+    if (!a) return;
+
+    var idx = +a.dataset.idx;
+    if (!Number.isFinite(idx)) {
+      // fallback если нет data-idx: считаем порядковый номер
+      var p = a.parentNode;
+      idx = Array.prototype.indexOf.call(p ? p.children : [], a);
+    }
+    if (idx === -1) return;
+
+    var t = now();
+    moving = true;
+
+    // лёгкий тик при смене выбора — но не чаще 90мс
+    if (idx !== lastIdx && (t - lastTickAt) >= 90) {
+      lastTickAt = t;
+      tick();
+    }
+    lastIdx = idx;
+
+    // «тычок» после остановки (160мс без изменений)
+    clearTimeout(stopTimer);
+    stopTimer = setTimeout(function () {
+      if (moving) { moving = false; bump('light'); }
+    }, 160);
   }
-  // Слежение за изменениями классов и детей (перерисовки)
-  var mo = new MutationObserver(function () { scanActive(); });
-  mo.observe(wheel, { attributes: true, attributeFilter: ['class'], subtree: true, childList: true });
 
-  // 2.2) «Тычок» когда прокрутка остановилась
-  if ('onscrollend' in window) {
-    wheel.addEventListener('scrollend', function(){ bump('light'); }, { passive: true });
-  } else {
-    var stopTimer = 0;
-    wheel.addEventListener('scroll', function(){
-      clearTimeout(stopTimer);
-      stopTimer = setTimeout(function(){ bump('light'); }, 140);
-    }, { passive: true });
-  }
-
-  // 2.3) Мгновенный «тик» при явном выборе (тап по .item / клавиатура)
-  wheel.addEventListener('click', function(e){
-    if (e.target.closest && e.target.closest('.item')) tick();
-  }, { passive: true });
-  wheel.addEventListener('keydown', function(e){
-    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') tick();
+  // следим за сменой класса/перерисовкой
+  var mo = new MutationObserver(function (muts) {
+    for (var i=0;i<muts.length;i++) {
+      var m = muts[i];
+      if (m.type === 'attributes' && m.attributeName === 'class' && m.target.classList && m.target.classList.contains('item')) {
+        onActiveChanged(); return;
+      }
+      if (m.type === 'childList') { onActiveChanged(); return; }
+    }
   });
+  mo.observe(root, { subtree: true, childList: true, attributes: true, attributeFilter: ['class'] });
 
-  // Первичная синхронизация (если активный уже выставлен)
-  scanActive();
+  // тик и по явному выбору
+  root.addEventListener('click', function (e) {
+    if (e.target.closest && e.target.closest('.item')) onActiveChanged();
+  }, { passive: true });
+
+  // начальная синхронизация
+  onActiveChanged();
 })();
 </script>
+
 
 
 </body>
