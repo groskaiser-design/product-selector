@@ -519,44 +519,48 @@
           }
         })();
       })();
-
-
-// HAPTIC for timeline: bind to real scroller .TabList.no-scrollbar -->
-
+</script>
+<!-- HAPTIC for timeline: bind to .TabList.no-scrollbar -->
+<script>
 (function () {
-  var tg = window.Telegram && window.Telegram.WebApp;
-  var h  = tg && tg.HapticFeedback;
-  if (!tg || !h) return;           // вне Telegram WebView – молчим
-  try { tg.ready && tg.ready(); } catch(_) {}
+  var root = document.getElementById('dateWheel') || document.body;
+  var scroller = document.querySelector('div.TabList.no-scrollbar') || root;
 
-  // реальный горизонтальный скроллер вашего колеса
-  var scroller = document.querySelector('div.TabList.no-scrollbar');
-  // корневой контейнер жестов
-  var root = document.getElementById('dateWheel') || scroller;
-  if (!scroller || !root) return;
+  // если не нашли — выходим тихо (ничего не ломаем)
+  if (!scroller) return;
 
   var touching = false, lastTick = 0, stopTimer = 0;
-  var TICK_EVERY = 180;  // не чаще ~0.18s
-  var STOP_DELAY = 160;  // «тычок» после паузы
+  var TICK_EVERY = 180;   // не чаще ~0.18s
+  var STOP_DELAY = 160;   // «тычок» после паузы
 
-  function tick() { try { h.selectionChanged(); } catch(_) {} }
-  function bump(style) { try { h.impactOccurred(style || 'medium'); } catch(_) {} }
+  function tick(){
+    // лёгкий «тик» во время прокрутки (iOS пропускает только если это внутри жеста)
+    window.Telegram?.WebApp?.HapticFeedback?.selectionChanged?.();
+    // console.log('[HB] tick');
+  }
+  function bump(){
+    // отчётливый «тычок» когда отпустили/остановилось
+    var h = window.Telegram?.WebApp?.HapticFeedback;
+    if (h?.impactOccurred) h.impactOccurred('medium');
+    else h?.notificationOccurred?.('success');
+    // console.log('[HB] bump');
+  }
 
-  // — гейт на реальный touch-жест
-  root.addEventListener('touchstart', function(){ touching = true; clearTimeout(stopTimer); }, {passive:true});
-  root.addEventListener('touchend',   function(){ touching = false; }, {passive:true});
-  root.addEventListener('touchcancel',function(){ touching = false; }, {passive:true});
+  // гейт на реальный touch-жест
+  root.addEventListener('touchstart', function(){ touching = true;  clearTimeout(stopTimer); }, {passive:true});
+  root.addEventListener('touchend',   function(){ touching = false;                            }, {passive:true});
+  root.addEventListener('touchcancel',function(){ touching = false;                            }, {passive:true});
 
-  // — редкий «тик» во время движения + «тычок» на стопе
+  // редкие «тики» + «тычок» на стопе
   scroller.addEventListener('scroll', function(){
-    if (!touching) return;
+    if (!touching) return;                                // только во время жеста
     var now = (performance && performance.now) ? performance.now() : Date.now();
     if (now - lastTick >= TICK_EVERY) { lastTick = now; tick(); }
     clearTimeout(stopTimer);
-    stopTimer = setTimeout(function(){ bump('medium'); }, STOP_DELAY);
+    stopTimer = setTimeout(bump, STOP_DELAY);
   }, {passive:true});
 
-  // — быстрый «тик» при явном выборе даты
+  // быстрый «тик» по явному тапу на дату
   root.addEventListener('click', function(e){
     if (e.target.closest && e.target.closest('.item')) tick();
   }, {passive:true});
