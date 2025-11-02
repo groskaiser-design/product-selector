@@ -1012,6 +1012,10 @@ function updateLastTimeDisplay(timestamp){
 }
 window.setLastMeasurementTime = setLastMeasurementTime;
 window.getLastMeasurementTime = getLastMeasurementTime;
+// === Row lock: держим целевой row после сохранения, чтобы не откатываться
+var __desiredRow = null, __desiredRowUntil = 0;
+function lockDesiredRow(row, ms){ __desiredRow = Number(row)||null; __desiredRowUntil = Date.now() + (ms||60000); }
+function desiredRow(){ return (Date.now() < __desiredRowUntil) ? __desiredRow : null; }
 
 function getSaveBtn(){ return document.getElementById('saveBtn'); }
 function setSavingState(isSaving){
@@ -1363,7 +1367,6 @@ function handleSaveClick(e){
 
 /* ============================================================
  *  BLOCK E: Front data flow (AI + last inputs)
- *  — ЕДИНЫЙ bootstrap + безопасная дозагрузка по мере готовности
  * ============================================================ */
 (function frontDataFlowInit(){
   const tg = window.Telegram?.WebApp;
@@ -2016,10 +2019,16 @@ PageLaunch→UpdateComment: ${comment} s`;
 
     try{
       const res = await apiFrontMacros(reqRow, controller.signal);
+      // Не принимаем ответы со старым row (держим только >= текущего)
+      if (res?.row && reqRow && Number(res.row) < Number(reqRow)) {
+        const wait = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
+        return { done:false, wait };
+      }
       if (runId !== _macrosRunId) return { done:true };
 
-      if (res?.row && res.row !== reqRow && typeof setRowCalcForUser === 'function'){
-        setRowCalcForUser(res.row);
+      const serverRow = Number(res?.row);
+      if (Number.isFinite(serverRow) && (reqRow == null || serverRow > reqRow)) {
+        setRowCalcForUser(serverRow); // только вперёд
       }
 
       renderValuesSafe(res?.macros || {}, res?.status || 'WAITING');
@@ -2447,8 +2456,9 @@ function renderChart(data, status){
       const res = await apiFrontChartData(reqRow, controller.signal);
       if (runId !== _chartRunId) return { done:true };
 
-      if (res?.row && res.row !== reqRow && typeof setRowCalcForUser === 'function'){
-        setRowCalcForUser(res.row);
+      const serverRow = Number(res?.row);
+      if (Number.isFinite(serverRow) && (reqRow == null || serverRow > reqRow)) {
+        setRowCalcForUser(serverRow); // только вперёд
       }
 
       renderChartSafe(res?.data || [], res?.status || 'WAITING');
@@ -2503,7 +2513,6 @@ function renderChart(data, status){
   // первый запуск
   window.startChartFlow();
 })();
-
 
 
 // ============================================================
