@@ -120,20 +120,14 @@
       .scroller:hover::-webkit-scrollbar-thumb{ background-color: rgba(255,255,255,.55); }
       .scroller::-webkit-scrollbar-corner{ background: transparent; }
 
-      /* Делаем верх блока из двух строк: 1) название, 2) Факт/План/∆ */
-      #pfHApp .top{
-        align-items: flex-start;
-        flex-wrap: wrap;        /* важно: разрешаем перенос */
-        gap: 4px 0;             /* вертикальный/горизонтальный зазоры между строками */
-      }
-      #pfHApp .top .name{
-        flex: 1 0 100%;         /* занять всю ширину -> переносит .vals на следующую строку */
-        display: block;
-      }
-      #pfHApp .top .vals{
-        gap: 6px;               /* при желании подправьте интервал между «Факт/План/∆» */
-        margin-top: 0;          /* можно чуть увеличить: 2–4px, если нужно больше воздуха */
-      }
+      /* Делаем верх блока из двух строк */
+      #pfHApp .top{ align-items:flex-start; flex-wrap:wrap; gap:4px 0; }
+      #pfHApp .top .name{ flex:1 0 100%; display:block; }
+      #pfHApp .top .vals{ gap:6px; margin-top:0; }
+
+      /* Кнопка теста (показывается только в debug-режиме) */
+      .haptic-test{ position:fixed; right:12px; bottom:12px; z-index:9999; padding:10px 12px; border-radius:12px; background:rgba(0,0,0,.35); color:#fff; border:1px solid rgba(255,255,255,.35); backdrop-filter:blur(8px); font-size:14px }
+      .haptic-test[hidden]{ display:none }
     </style>
   </head>
   <body>
@@ -162,7 +156,7 @@
 
     <!-- Доп. тесты серии (оставлены как есть) -->
     <template id="pfSeries_array">[ { "date":"2025-01-01", "data": { "fat": {"unit":"%","plan":18,"fact":23}, "neck": {"unit":"см","plan":39,"fact":42} } }, { "date":"2025-02-01", "data": { "fat": {"unit":"%","plan":18,"fact":22}, "neck": {"unit":"см","plan":39,"fact":41} } }, { "date":"2025-03-01", "data": { "fat": {"unit":"%","plan":18,"fact":21}, "neck": {"unit":"см","plan":39,"fact":40} } } ]</template>
-    <template id="pfSeries_single">{ "series": { "2025-05-01": { "fat": {"unit":"%","plan":18,"fact":18}, "bicep": {"unit":"см","plan":44,"fact":44} } } }</template>
+    <template id="pfSeries_single">{ "series": { "2025-05-01": { "fat": {"unit":"%","plan":18,"fact":18}, "bicep": { "unit":"см","plan":44,"fact":44} } } }</template>
     <template id="pfSeries_two">{ "series": { "2025-01-01": { "fat": {"unit":"%","plan":18,"fact":22} }, "2025-01-15": { "fat": {"unit":"%","plan":18,"fact":21} } } }</template>
     <template id="pfSeries_unsorted">{ "series": { "2025-12-01": { "fat": {"unit":"%","plan":18,"fact":22} }, "2025-01-01": { "fat": {"unit":"%","plan":18,"fact":23} }, "2025-06-01": { "fat": {"unit":"%","plan":18,"fact":20} } } }</template>
 
@@ -184,21 +178,53 @@
       { "date":"2025-01-01",   "data": { "fat": {"unit":"%","plan":18,"fact":19} } }
     ]</template>
 
+    <button class="haptic-test" id="hTest" hidden>Тест хаптики</button>
+
     <script>
       (function(){
+        /* === Telegram ready (если в Mini App) === */
+        document.addEventListener('DOMContentLoaded', function(){
+          try { window.Telegram?.WebApp?.ready?.(); } catch(_){}
+        });
+
         /* === HAPTICS (централизовано) === */
         const HAPTIC = (() => {
           const TMA = (typeof window !== 'undefined') ? window.Telegram?.WebApp : null;
-          const canVibrate = typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function';
-          function select(){  // «тик» при фиксации новой даты
+          const ua = (typeof navigator !== 'undefined' && navigator.userAgent) ? navigator.userAgent : '';
+          const isIOS = /iPhone|iPad|iPod/i.test(ua);
+          const canVibrateApi = typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function';
+          const onHttps = typeof location !== 'undefined' && location.protocol === 'https:';
+          // вибрация доступна в вебе в основном на Android и по https
+          const vibrateAvailable = canVibrateApi && !isIOS && onHttps;
+
+          function select(){ // «тик» при фиксации новой даты
             try { TMA?.HapticFeedback?.selectionChanged?.(); } catch(_) {}
-            try { if (canVibrate) navigator.vibrate(10); } catch(_) {}
+            try { if (vibrateAvailable) navigator.vibrate(20); } catch(_) {}
           }
-          function impact(type='light'){ // лёгкий «тычок» на начало взаимодействия
+          function impact(type='light'){ // «тычок» на начало взаимодействия
             try { TMA?.HapticFeedback?.impactOccurred?.(type); } catch(_) {}
-            try { if (canVibrate) navigator.vibrate(7); } catch(_) {}
+            try { if (vibrateAvailable) navigator.vibrate(25); } catch(_) {}
           }
-          return { select, impact, enabled: true };
+          function notify(type='success'){
+            try { TMA?.HapticFeedback?.notificationOccurred?.(type); } catch(_) {}
+            try { if (vibrateAvailable) navigator.vibrate([10,40,10]); } catch(_) {}
+          }
+
+          const enabled = !!(TMA?.HapticFeedback) || vibrateAvailable;
+          return { select, impact, notify, enabled };
+        })();
+
+        // показать кнопку теста, если есть поддержка и ?debug=1
+        (function(){
+          const showDebug = new URLSearchParams(location.search).get('debug') === '1';
+          const btn = document.getElementById('hTest');
+          if (btn && showDebug && HAPTIC.enabled){
+            btn.hidden = false;
+            btn.addEventListener('click', function(){
+              HAPTIC.impact('light');
+              setTimeout(()=>HAPTIC.select(), 160);
+            }, {passive:true});
+          }
         })();
 
         const LABELS = { fat:'% Жира', neck:'Шея', shoulders:'Плечи', chest:'Грудь', waist:'Талия', hips:'Ягодицы', thigh:'Бедро', calf:'Икра', bicep:'Бицепс' };
@@ -406,7 +432,7 @@
             const maskEl = tl ? tl.querySelector('.wheel-mask') : null;
             if(!tl || !wheel) return;
 
-            // Тычок при первом касании/нажатии на колесо
+            // «тычок» при первом касании/нажатии на колесо
             wheel.addEventListener('pointerdown', () => { if (HAPTIC.enabled) HAPTIC.impact('light'); }, { passive:true });
 
             const n = (norm && Array.isArray(norm.rows)) ? norm.rows.length : 0;
@@ -520,6 +546,17 @@
             }
 
             wheel.addEventListener('scroll', onScroll, { passive:true });
+
+            // Где поддерживается - «официальный» сигнал окончания прокрутки
+            if ('onscrollend' in window || 'onscrollend' in document){
+              wheel.addEventListener('scrollend', function(){
+                if (pendingHapticForIndex === active){
+                  if (HAPTIC.enabled) HAPTIC.select();
+                  pendingHapticForIndex = -1;
+                }
+              }, {passive:true});
+            }
+
             wheel.addEventListener('wheel', function(e){ if(Math.abs(e.deltaY) > Math.abs(e.deltaX)){ e.preventDefault(); wheel.scrollLeft += e.deltaY; } }, { passive:false });
             wheel.addEventListener('keydown', function(e){ if(e.key==='ArrowLeft'){ e.preventDefault(); centerTo(active-1, true, 'smooth'); } else if(e.key==='ArrowRight'){ e.preventDefault(); centerTo(active+1, true, 'smooth'); } });
             window.addEventListener('resize', function(){ resizeSpacers(); centerTo(active, false, 'auto'); syncMask(); }, { passive:true });
