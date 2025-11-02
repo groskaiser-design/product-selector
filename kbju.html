@@ -1,9 +1,8 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-<meta name="viewport"content="width=device-width, initial-scale=1,maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="tma:home-url" content="./index.html" />
 <meta name="tma:home-hash" content="" />
 <title>КБЖУ — анкета</title>
@@ -905,22 +904,27 @@ async function confirmSavedAfterTimeout(prevRowCalc){
 }
 
 // --- Ждем, пока новые данные появятся на сервере (ДОЛЖНА БЫТЬ ВНЕ других функций!) ---
-// --- Ждём, пока новые данные появятся на сервере (ДОЛЖНА БЫТЬ ВНЕ других функций!) ---
 async function waitForFreshData(rowCalcAfterSave, fastMs = 10000, slowMs = 60000) {
-  const t0 = Date.now();
+  const api = (window && typeof window.apiFrontBootstrap === 'function')
+    ? window.apiFrontBootstrap
+    : (typeof apiFrontBootstrap === 'function' ? apiFrontBootstrap : null);
+
+  if (!api) return null;
+
   let seenFront = false, seenMacros = false, seenChart = false;
+  const t0 = Date.now();
 
   // Фаза A — быстрая
   while (Date.now() - t0 < fastMs) {
     try {
-      const b = await apiFrontBootstrap(rowCalcAfterSave);
+      const b = await api(rowCalcAfterSave);
       const sameRow = Number(b?.row) === Number(rowCalcAfterSave);
+
       if (b?.front)  seenFront  = seenFront  || !!(b.front.ready  || b.front.html);
       if (b?.macros) seenMacros = seenMacros || !!b.macros.ready;
       if (b?.chart)  seenChart  = seenChart  || !!b.chart.ready;
-      const allReady = seenFront && seenMacros && seenChart;
 
-      if (allReady || sameRow) return b;
+      if ((seenFront && seenMacros && seenChart) || sameRow) return b;
     } catch(_) {}
     await new Promise(res => setTimeout(res, 200));
   }
@@ -929,17 +933,16 @@ async function waitForFreshData(rowCalcAfterSave, fastMs = 10000, slowMs = 60000
   const t1 = Date.now();
   while (Date.now() - t1 < slowMs) {
     try {
-      const b = await apiFrontBootstrap(rowCalcAfterSave);
+      const b = await api(rowCalcAfterSave);
       const sameRow = Number(b?.row) === Number(rowCalcAfterSave);
       const allReady = !!(b?.front?.ready) && !!(b?.macros?.ready) && !!(b?.chart?.ready);
-
       if (allReady || sameRow) return b;
     } catch(_) {}
     await new Promise(res => setTimeout(res, 750));
   }
-
   return null;
 }
+
 
 
   
@@ -1234,7 +1237,6 @@ function updateSaveButton() {
 })();
   
 /* === КНОПКА СОХРАНЕНИЯ: Сохраняем ВЕСЬ ПАКЕТ === */
-/* === КНОПКА СОХРАНЕНИЯ: Сохраняем ВЕСЬ ПАКЕТ === */
 function handleSaveClick(e){
   if (e && e.preventDefault) { try { e.preventDefault(); } catch(_){} }
   if (!canSaveNow()) {
@@ -1242,7 +1244,7 @@ function handleSaveClick(e){
     return;
   }
 
-  // ✅ Валидация перед отправкой
+  // ✅ Валидация до отправки
   if (!isFormValid()) {
     const tg = window.Telegram?.WebApp;
     try { tg?.HapticFeedback?.notificationOccurred?.('error'); } catch(_){}
@@ -1259,75 +1261,65 @@ function handleSaveClick(e){
   setSavingState(true);
   try { tg?.HapticFeedback?.impactOccurred?.('light'); } catch(_){}
 
-  // единый “снимок” формы
+  // ЕДИНЫЙ снимок формы
   const values = { ...collectWheelValues(), ...collectSurveyValues() };
 
-  // ⚠️ сразу очищаем старый кэш макросов (чтобы не мигали устаревшие цифры)
+  // Сразу очищаем кэш (чтобы не мигали старые числа)
   try {
     const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
     localStorage.removeItem('macros:vals:' + String(uid));
+    localStorage.removeItem('chart:data:' + String(uid));
   } catch(_){}
 
-  Promise.resolve()
-    .then(() => saveMeasurementsToDB(values, saveId))
+  // === ВАЖНО: запускаем сохранение, но UI обновляем СРАЗУ (оптимистично)
+  const saveTask = saveMeasurementsToDB(values, saveId);
+
+  // Оптимистичный UI: закрываем анкету, скроллим вверх, запускаем потоки и показываем попап
+  collapseAccordionSafe();
+  requestAnimationFrame(()=>requestAnimationFrame(scrollTopNoJump));
+  setTimeout(()=>{
+    try { startFrontDataFlow(); } catch(_){}
+    try { window.startMacrosFlow(); } catch(_){}
+    try { window.startChartFlow(); } catch(_){}
+  }, 0);
+
+  // ↯ МГНОВЕННЫЙ попап: не ждём сеть
+  try { tg?.HapticFeedback?.notificationOccurred?.('success'); } catch(_){}
+  showPopup('Готово','Данные отправлены. Обновляем…','success');
+
+  // Дальше — «доводим» состояние, когда сервер ответит
+  saveTask
     .then(async (res)=>{
       const rowCalc = Number(res?.row_calc);
       if (Number.isFinite(rowCalc)) setRowCalcForUser(rowCalc);
       const ts = res?.ts_iso ? Date.parse(res.ts_iso) : Date.now();
       setLastMeasurementTime(ts);
 
-            // +++ кэш анкеты
+      // Кэш анкеты
       try {
         const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
         saveInputsCache({ row: rowCalc || null, inputs: values, updated_at: new Date().toISOString() }, uid);
       } catch(_){}
 
-      // закрываем анкету, скроллим вверх
-      collapseAccordionSafe();
-      requestAnimationFrame(()=>requestAnimationFrame(scrollTopNoJump));
-
-      // --- Главное добавление: ждем пока сервер реально обновится ---
-      await waitForFreshData(rowCalc); // ФУНКЦИЯ ДОЛЖНА БЫТЬ ОТДЕЛЬНОЙ ВНЕ!!!
-
-      // после этого только запускаем потоки:
-      try { startFrontDataFlow(); } catch(_){}
-      try { window.startMacrosFlow(); } catch(_){}
-      try { window.startChartFlow(); } catch(_){}
-
-      try { tg?.HapticFeedback?.notificationOccurred?.('success'); } catch(_){}
-      showPopup('Готово','Данные сохранены.','success');
+      // Мягкое ожидание «свежих» данных (не блокирует UI)
+      void waitForFreshData(rowCalc).catch(()=>{});
     })
     .catch(async (err)=>{
       const msg = String((err && err.message) || err || '');
 
-      // Таймаут/сетевые сбои — делаем пост-чек: возможно, запись уже в базе
+      // Таймаут/сеть: попробуем пост-чек факта сохранения
       if ((err && err.code === 408) || /timeout|network/i.test(msg)) {
         const confirmed = await confirmSavedAfterTimeout(prevRowCalc).catch(()=>null);
         if (confirmed != null) {
           setRowCalcForUser(Number(confirmed));
           setLastMeasurementTime(Date.now());
           setUnlockTime(Date.now() + 4000);
-
-          // закрываем анкету, скроллим вверх
-          collapseAccordionSafe();
-          requestAnimationFrame(()=>requestAnimationFrame(scrollTopNoJump));
-          
-          // показываем результат сразу
-          try { tg?.HapticFeedback?.notificationOccurred?.('success'); } catch(_){}
-          showPopup('Готово','Данные сохранены.','success');
-          
-          // потоки запускаем сразу (они сами дополучат данные)
-          try { startFrontDataFlow(); } catch(_){}
-          try { window.startMacrosFlow(); } catch(_){}
-          try { window.startChartFlow(); } catch(_){}
-          
-          // а ожидание свежих данных — в фоне, без блокировки UI
-          void waitForFreshData(rowCalc, 10000, 60000).catch(()=>{});
+          // тихо подождём свежих данных (не блокируя)
+          void waitForFreshData(confirmed, 10000, 60000).catch(()=>{});
           return;
         }
-        // не подтвердили — мягко сообщаем и всё равно пробуем подтянуть фронтовые данные
         setUnlockTime(Date.now() + 2000);
-        showPopup('Не сохранено (возможно ушло)','Сервер не успел ответить вовремя. Возможно, данные уже сохранены. Проверьте «Последний замер».','error');
+        showPopup('Не подтверждено', 'Сервер не успел ответить. Проверьте «Последний замер».', 'error');
         try { startFrontDataFlow(); } catch(_){}
         return;
       }
@@ -1348,6 +1340,7 @@ function handleSaveClick(e){
       SAVE_IN_PROGRESS = false;
     });
 }
+
 
 
 (function bindSave(){
@@ -1386,8 +1379,10 @@ async function apiFrontBootstrap(requestedRow){
     action: 'front_bootstrap',
     init_data: String(tg?.initData || ''),
     row: Number(requestedRow || 0) || undefined
-  };
+  }
+    window.apiFrontBootstrap = apiFrontBootstrap;
 
+  
   const t0 = performance?.now ? performance.now() : Date.now();
   const resp = await fetch(BACKEND, {
     method: 'POST',
@@ -1533,7 +1528,7 @@ window.apiFrontBootstrap = apiFrontBootstrap;
       }
     }
 
-    if (isAdmin() && typeof window.__pageLaunchToUpdateWheel === 'number' === false) {
+     if (isAdmin() && typeof window.__pageLaunchToUpdateWheel !== 'number') {
       window.__pageLaunchToUpdateWheel = performance.now() - window.__pageLoadTime;
       try { updatePerfUI && updatePerfUI(); } catch(_){}
     }
