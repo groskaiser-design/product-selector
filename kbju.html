@@ -12,7 +12,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0039'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0040'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -1096,6 +1096,20 @@ function collectSurveyValues(){
   return out;
 }
 
+/* === CACHE: inputs (анкета) === */
+const INPUTS_KEY_PREFIX = 'inputs:vals:';
+if (typeof currentUserId !== 'function') {
+  function currentUserId(){
+    try { return window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'anon'; }
+    catch(_) { return 'anon'; }
+  }
+}
+function inputsKey(uid){ return INPUTS_KEY_PREFIX + String(uid ?? currentUserId()); }
+function saveInputsCache(obj, uid){ try { localStorage.setItem(inputsKey(uid), JSON.stringify(obj)); } catch(_){} }
+function loadInputsCache(uid){
+  try { const raw = localStorage.getItem(inputsKey(uid)); return raw ? JSON.parse(raw) : null; }
+  catch(_) { return null; }
+}
 
 
 // ============================================================
@@ -1238,6 +1252,12 @@ function handleSaveClick(e){
       if (Number.isFinite(rowCalc)) setRowCalcForUser(rowCalc);
       const ts = res?.ts_iso ? Date.parse(res.ts_iso) : Date.now();
       setLastMeasurementTime(ts);
+
+            // +++ кэш анкеты
+      try {
+        const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
+        saveInputsCache({ row: rowCalc || null, inputs: values, updated_at: new Date().toISOString() }, uid);
+      } catch(_){}
 
       // закрываем анкету, скроллим вверх
       collapseAccordionSafe();
@@ -1589,6 +1609,17 @@ async function apiFrontBootstrap(requestedRow){
   setAIStatus('Ждём данные…');
   setAnalyticsPlaceholder();
   (async function bootstrapThenHydrate(){
+    // мгновенный seed из localStorage (если есть)
+    try {
+      const seed = (typeof loadInputsCache === 'function') ? loadInputsCache() : null;
+      if (seed && seed.inputs) {
+        applyInputsToWheels(seed.inputs);
+        applyInputsToSurvey(seed.inputs);
+      } else {
+        ensureAllWheelsOnce();
+      }
+    } catch(_) { ensureAllWheelsOnce(); }
+
     const reqRow = (typeof getRowCalcForUser === 'function') ? getRowCalcForUser() : null;
     try{
       const b = await apiFrontBootstrap(reqRow);
@@ -1601,12 +1632,24 @@ async function apiFrontBootstrap(requestedRow){
       if (b.inputs && b.inputs.found && b.inputs.inputs){
         applyInputsToWheels(b.inputs.inputs);
         applyInputsToSurvey(b.inputs.inputs);
+
+        try {
+          const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
+          saveInputsCache({ row: b.row || null, inputs: b.inputs.inputs, updated_at: b.updated_at || new Date().toISOString() }, uid);
+        } catch(_){}
+        
       } else {
         try{
           const r = await apiLastInputs();
           if (r && r.found && r.inputs){
             applyInputsToWheels(r.inputs);
             applyInputsToSurvey(r.inputs);
+
+                      try {
+            const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
+            saveInputsCache({ row: b?.row || null, inputs: r.inputs, updated_at: new Date().toISOString() }, uid);
+          } catch(_){}
+            
           } else {
             ensureAllWheelsOnce();
           }
@@ -2071,8 +2114,6 @@ function injectKBJUStylesOnce(){
   s.textContent = css;
   document.head.appendChild(s);
 }
-
-
 
   // ---------- 2) Компонент графика (из канваса; без демо-данных) ----------
   (function exposeRenderKBJU7(){
