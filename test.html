@@ -61,14 +61,22 @@
       }
 
       /* Контейнер со скроллом: показываем 5 строк, остальное прокручивается */
-      .scroller{position:relative;overflow:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;border-radius:16px}
+      .scroller{position:relative;overflow:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;scroll-snap-type:y proximity;border-radius:16px}
+      /* подсказка: прыгающая стрелка, как намёк на скролл */
+      .scroll-hint{position:relative;left:auto;bottom:auto;transform:none;margin:10px auto 0;opacity:.65;pointer-events:none;transition:opacity .2s ease;animation:hint-bounce 1.2s infinite;width:18px;height:18px}
+      .scroll-hint.hidden{opacity:0;animation:none;height:0;margin-top:0;overflow:hidden}
+      .scroll-hint svg{display:block;width:18px;height:18px;filter:drop-shadow(0 1px 2px rgba(0,0,0,.25))}
+      @keyframes hint-bounce{0%,100%{transform:translate(-50%,0)}50%{transform:translate(-50%,4px)}}
+      /* визуальный намёк на скролл: нижний фейд показывается, когда есть скрытый контент */
+      
+      
 
       /* Единая стеклянная панель */
       .list{display:flex;flex-direction:column;gap:0;padding:8px 10px;border-radius:16px;overflow:hidden;
         background:linear-gradient(180deg,rgba(255,255,255,.12),rgba(255,255,255,.06));
         border:1px solid rgba(255,255,255,.30);
       }
-      .row{display:flex;flex-direction:column;gap:8px;padding:10px 4px}
+      .row{display:flex;flex-direction:column;gap:8px;padding:10px 4px;scroll-snap-align:start}
       .row+.row{border-top:1px solid rgba(255,255,255,.22);margin-top:8px;padding-top:16px}
 
       /* Заголовок строки */
@@ -117,6 +125,11 @@
     <div class="card" id="pfHApp" role="region" aria-label="План против факта — диаграмма отклонений">
       <div class="scroller" id="scroller">
         <div class="list" id="rows"></div>
+      </div>
+      <div class="scroll-hint" id="scrollHint" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M6 9l6 6 6-6" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
       </div>
       <div class="sr-only" id="live" aria-live="polite"></div>
     </div>
@@ -226,7 +239,7 @@
               (function(d){ row.addEventListener('click', function(){ live.textContent = d.label+': план '+fmt(d.target,d)+', факт '+fmt(d.actual,d)+', отклонение '+fmtDelta(delta,d); }); })(d);
               rowsEl.appendChild(row);
             }
-            limitToRows(5);
+            limitToRows(5); updateHint();
           }
 
           function limitToRows(n){
@@ -236,7 +249,14 @@
             maxH += 2; scroller.style.maxHeight = Math.ceil(maxH) + 'px';
           }
 
-          window.addEventListener('resize', function(){ limitToRows(5); });
+          function updateHint(){
+            var hint = el.querySelector('#scrollHint'); if(!hint) return;
+            var hasMore = scroller.scrollHeight > scroller.clientHeight + 2;
+            var nearBottom = Math.ceil(scroller.scrollTop + scroller.clientHeight) >= scroller.scrollHeight - 2;
+            hint.classList.toggle('hidden', !hasMore || nearBottom);
+          }
+          window.addEventListener('resize', function(){ limitToRows(5); updateHint(); });
+          scroller.addEventListener('scroll', updateHint, { passive:true });
 
           function fmt(n,d){ return d.unit==='%' ? (round(n,1)+'%') : (round(n,1)+' '+d.unit); }
           function fmtDelta(n,d){ if(!isFinite(n)) return '—'; var s=n>0?'+':''; return d.unit==='%'? (s+round(n,1)+' п.п.') : (s+round(n,1)+' '+d.unit); }
