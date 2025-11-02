@@ -519,93 +519,132 @@
           }
         })();
       })();
-    </script>
+      /* ==== HAPTIC DEBUG LOGGER ==== */
+(function(){
+  const tg = window.Telegram && window.Telegram.WebApp;
+  const hf = tg && tg.HapticFeedback;
+  const fmt = (x)=> (typeof x==='string'? x.trim().replace(/\s+/g,' ') : x);
+  const log = (...a)=> console.log('[HLOG]', ...a);
 
-<!-- TELEGRAM HAPTIC (touch-gated for virtual wheel) -->
-<script>
-(function () {
-  var tg = window.Telegram && window.Telegram.WebApp;
-  if (!tg || !tg.HapticFeedback) return;
-  try { tg.ready && tg.ready(); } catch(_) {}
-  var h = tg.HapticFeedback;
+  const state = { listeners: [], mo:null, scroller:null, orig:{} };
 
-  // безопасные вызовы
-  function tick(){ try{ h.selectionChanged && h.selectionChanged(); }catch(_){} }
-  function bump(style){ try{ h.impactOccurred && h.impactOccurred(style||'medium'); }catch(_){} }
-
-  // 1) клики по строкам метрик
-  var rows = document.getElementById('rows');
-  if (rows) rows.addEventListener('click', function(e){
-    if (e.target.closest && e.target.closest('.row')) bump('medium');
+  // 0) статус окружения
+  log('env', {
+    inTelegram: !!tg, haptic: !!(hf),
+    platform: tg && tg.platform, version: tg && tg.version
   });
 
-  // 2) колесо дат (виртуальный скролл) — триггерим в контексте touch
-  var root = document.getElementById('dateWheel');
-  if (!root) return;
+  // 1) пропатчим HapticFeedback, чтобы видеть ВЫЗОВЫ
+  if (hf) {
+    state.orig.selectionChanged  = hf.selectionChanged;
+    state.orig.impactOccurred    = hf.impactOccurred;
+    state.orig.notificationOccured = hf.notificationOccurred;
 
-  var interacting = false;
-  var lastActive = null;
-  var lastTickAt = 0;
-  var stopTimer = 0;
-  var TICK_EVERY = 220;   // не чаще 1 раза в ~0.2s
-  var STOP_DELAY = 180;   // «тычок» после паузы
+    hf.selectionChanged = function(){
+      log('HAPTIC selectionChanged()');
+      return state.orig.selectionChanged && state.orig.selectionChanged.apply(this, arguments);
+    };
+    hf.impactOccurred = function(style){
+      log('HAPTIC impactOccurred()', style||'light');
+      return state.orig.impactOccurred && state.orig.impactOccurred.apply(this, arguments);
+    };
+    hf.notificationOccurred = function(type){
+      log('HAPTIC notificationOccurred()', type||'success');
+      return state.orig.notificationOccured && state.orig.notificationOccured.apply(this, arguments);
+    };
+  }
 
-  function getActiveEl(){
-    var a = root.querySelector('.item.active');
-    if (a) return a;
-    // fallback: ближайший к центру
-    var items = root.querySelectorAll('.item');
-    if (!items.length) return null;
-    var r = root.getBoundingClientRect(), cx = r.left + r.width/2;
-    var best = null, bestd = 1e9;
-    for (var i=0;i<items.length;i++){
-      var ir = items[i].getBoundingClientRect();
-      var c = ir.left + ir.width/2;
-      var d = Math.abs(c - cx);
-      if (d < bestd){ bestd = d; best = items[i]; }
+  // 2) найдём колесо и реальный скроллер (если он нативный)
+  const root = document.querySelector('#dateWheel');
+  function isScrollableX(el){
+    const cs = getComputedStyle(el);
+    const ox = cs.overflowX;
+    const can = (ox==='auto'||ox==='scroll'||ox==='overlay');
+    return can && (el.scrollWidth - el.clientWidth > 1);
+  }
+  function findScroller(r){
+    if (!r) return null;
+    if (isScrollableX(r)) return r;
+    for (const el of r.querySelectorAll('*')) if (isScrollableX(el)) return el;
+    return null;
+  }
+  state.scroller = findScroller(root);
+  log('dateWheel root:', !!root, 'scroller:', state.scroller);
+
+  function on(el, ev, fn, opts){
+    el.addEventListener(ev, fn, opts||false);
+    state.listeners.push(()=> el.removeEventListener(ev, fn, opts||false));
+  }
+
+  // 3) логируем touch-жесты (для виртуального колеса это критично)
+  if (root){
+    on(root, 'touchstart',  e=> log('touchstart', e.touches.length));
+    on(root, 'touchmove',   e=> log('touchmove'));
+    on(root, 'touchend',    e=> log('touchend'));
+    on(root, 'click',       e=> { const it = e.target.closest && e.target.closest('.item'); if (it) log('click .item', fmt(it.textContent)); });
+    on(root, 'keydown',     e=> { if (e.key==='ArrowLeft'||e.key==='ArrowRight') log('keydown', e.key); });
+  }
+
+  // 4) логируем scroll, если он нативный (если «тишина» — значит колесо виртуальное)
+  if (state.scroller){
+    on(state.scroller, 'scroll', ()=> log('scroll', {left: state.scroller.scrollLeft, width: state.scroller.scrollWidth}));
+    if ('onscrollend' in window) on(state.scroller, 'scrollend', ()=> log('scrollend'));
+  } else {
+    log('no native scroller found (колесо, вероятно, виртуальное через transform)');
+  }
+
+  // 5) лог смены активного элемента (работает и для виртуального колеса)
+  function activeInfo(){
+    const a = root && root.querySelector('.item.active');
+    if (!a) return null;
+    const idx = +a.dataset.idx || Array.prototype.indexOf.call(a.parentElement ? a.parentElement.children : [], a);
+    return { idx, text: fmt(a.textContent) };
+  }
+  let last = JSON.stringify(activeInfo());
+  function checkActive(){
+    const cur = JSON.stringify(activeInfo());
+    if (cur !== last){
+      last = cur;
+      log('ACTIVE changed ->', cur);
     }
-    return best;
   }
-
-  function maybeTick(){
-    var now = (performance && performance.now) ? performance.now() : Date.now();
-    var a = getActiveEl();
-    if (!a || !interacting) return;
-    if (a !== lastActive && (now - lastTickAt) >= TICK_EVERY){
-      lastActive = a;
-      lastTickAt = now;
-      tick();                  // лёгкий «тик» при смене выбранного
+  state.mo = new MutationObserver((muts)=> {
+    for (const m of muts){
+      if (m.type==='attributes' && m.attributeName==='class' && m.target.classList && m.target.classList.contains('item')) { checkActive(); return; }
+      if (m.type==='childList') { checkActive(); return; }
     }
-  }
+  });
+  if (root) state.mo.observe(root, {subtree:true, childList:true, attributes:true, attributeFilter:['class']});
+  checkActive();
 
-  function endBump(){
-    interacting = false;
-    bump('medium');            // отчётливый «тычок» после остановки
-  }
+  // 6) утилиты выключения/проверки
+  window.__hlog = {
+    status(){
+      log('STATUS', {
+        inTelegram: !!tg, haptic: !!hf,
+        root: !!root, scroller: !!state.scroller,
+        active: activeInfo()
+      });
+    },
+    disable(){
+      try{
+        state.listeners.forEach(off=>off());
+        state.listeners.length = 0;
+        state.mo && state.mo.disconnect();
+        if (hf && state.orig.selectionChanged)  hf.selectionChanged  = state.orig.selectionChanged;
+        if (hf && state.orig.impactOccurred)    hf.impactOccurred    = state.orig.impactOccurred;
+        if (hf && state.orig.notificationOccured) hf.notificationOccurred = state.orig.notificationOccured;
+        log('HLOG disabled');
+      }catch(e){ console.warn(e); }
+    }
+  };
 
-  root.addEventListener('touchstart', function(){
-    interacting = true;
-    clearTimeout(stopTimer);
-    maybeTick();               // быстрый первый «тик»
-  }, {passive:true});
-
-  root.addEventListener('touchmove', function(){
-    interacting = true;
-    maybeTick();
-    clearTimeout(stopTimer);
-    stopTimer = setTimeout(endBump, STOP_DELAY);
-  }, {passive:true});
-
-  root.addEventListener('touchend', function(){
-    clearTimeout(stopTimer);
-    endBump();
-  }, {passive:true});
-
-  // если активный меняется классом/перерисовкой — учитываем, но только во время жеста
-  var mo = new MutationObserver(function(){ if (interacting) maybeTick(); });
-  mo.observe(root, {subtree:true, childList:true, attributes:true, attributeFilter:['class']});
+  log('HLOG ready. Use __hlog.status() / __hlog.disable()');
 })();
-</script>
+
+    </script>
+
+
 
 
 
