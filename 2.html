@@ -521,7 +521,7 @@
       })();
     </script>
 
-    <!-- TELEGRAM HAPTIC (virt-wheel safe) -->
+<!-- TELEGRAM HAPTIC (touch-gated for virtual wheel) -->
 <script>
 (function () {
   var tg = window.Telegram && window.Telegram.WebApp;
@@ -530,76 +530,80 @@
   var h = tg.HapticFeedback;
 
   // безопасные вызовы
-  function tick()  { try { h.selectionChanged && h.selectionChanged(); } catch(_) {} }
-  function bump(s) { try { h.impactOccurred && h.impactOccurred(s||'light'); } catch(_) {} }
+  function tick(){ try{ h.selectionChanged && h.selectionChanged(); }catch(_){} }
+  function bump(style){ try{ h.impactOccurred && h.impactOccurred(style||'medium'); }catch(_){} }
 
   // 1) клики по строкам метрик
   var rows = document.getElementById('rows');
-  if (rows) {
-    rows.addEventListener('click', function (e) {
-      if (e.target.closest && e.target.closest('.row')) bump('light');
-    });
-  }
+  if (rows) rows.addEventListener('click', function(e){
+    if (e.target.closest && e.target.closest('.row')) bump('medium');
+  });
 
-  // 2) колесо дат — без scroll, только по смене .item.active
+  // 2) колесо дат (виртуальный скролл) — триггерим в контексте touch
   var root = document.getElementById('dateWheel');
   if (!root) return;
 
-  var lastIdx = -1;
+  var interacting = false;
+  var lastActive = null;
   var lastTickAt = 0;
-  var moving = false;
   var stopTimer = 0;
+  var TICK_EVERY = 220;   // не чаще 1 раза в ~0.2s
+  var STOP_DELAY = 180;   // «тычок» после паузы
 
-  function now() { return (window.performance && performance.now) ? performance.now() : Date.now(); }
-
-  function onActiveChanged() {
+  function getActiveEl(){
     var a = root.querySelector('.item.active');
-    if (!a) return;
-
-    var idx = +a.dataset.idx;
-    if (!Number.isFinite(idx)) {
-      // fallback если нет data-idx: считаем порядковый номер
-      var p = a.parentNode;
-      idx = Array.prototype.indexOf.call(p ? p.children : [], a);
+    if (a) return a;
+    // fallback: ближайший к центру
+    var items = root.querySelectorAll('.item');
+    if (!items.length) return null;
+    var r = root.getBoundingClientRect(), cx = r.left + r.width/2;
+    var best = null, bestd = 1e9;
+    for (var i=0;i<items.length;i++){
+      var ir = items[i].getBoundingClientRect();
+      var c = ir.left + ir.width/2;
+      var d = Math.abs(c - cx);
+      if (d < bestd){ bestd = d; best = items[i]; }
     }
-    if (idx === -1) return;
-
-    var t = now();
-    moving = true;
-
-    // лёгкий тик при смене выбора — но не чаще 90мс
-    if (idx !== lastIdx && (t - lastTickAt) >= 90) {
-      lastTickAt = t;
-      tick();
-    }
-    lastIdx = idx;
-
-    // «тычок» после остановки (160мс без изменений)
-    clearTimeout(stopTimer);
-    stopTimer = setTimeout(function () {
-      if (moving) { moving = false; bump('medium'); }
-    }, 160);
+    return best;
   }
 
-  // следим за сменой класса/перерисовкой
-  var mo = new MutationObserver(function (muts) {
-    for (var i=0;i<muts.length;i++) {
-      var m = muts[i];
-      if (m.type === 'attributes' && m.attributeName === 'class' && m.target.classList && m.target.classList.contains('item')) {
-        onActiveChanged(); return;
-      }
-      if (m.type === 'childList') { onActiveChanged(); return; }
+  function maybeTick(){
+    var now = (performance && performance.now) ? performance.now() : Date.now();
+    var a = getActiveEl();
+    if (!a || !interacting) return;
+    if (a !== lastActive && (now - lastTickAt) >= TICK_EVERY){
+      lastActive = a;
+      lastTickAt = now;
+      tick();                  // лёгкий «тик» при смене выбранного
     }
-  });
-  mo.observe(root, { subtree: true, childList: true, attributes: true, attributeFilter: ['class'] });
+  }
 
-  // тик и по явному выбору
-  root.addEventListener('click', function (e) {
-    if (e.target.closest && e.target.closest('.item')) onActiveChanged();
-  }, { passive: true });
+  function endBump(){
+    interacting = false;
+    bump('medium');            // отчётливый «тычок» после остановки
+  }
 
-  // начальная синхронизация
-  onActiveChanged();
+  root.addEventListener('touchstart', function(){
+    interacting = true;
+    clearTimeout(stopTimer);
+    maybeTick();               // быстрый первый «тик»
+  }, {passive:true});
+
+  root.addEventListener('touchmove', function(){
+    interacting = true;
+    maybeTick();
+    clearTimeout(stopTimer);
+    stopTimer = setTimeout(endBump, STOP_DELAY);
+  }, {passive:true});
+
+  root.addEventListener('touchend', function(){
+    clearTimeout(stopTimer);
+    endBump();
+  }, {passive:true});
+
+  // если активный меняется классом/перерисовкой — учитываем, но только во время жеста
+  var mo = new MutationObserver(function(){ if (interacting) maybeTick(); });
+  mo.observe(root, {subtree:true, childList:true, attributes:true, attributeFilter:['class']});
 })();
 </script>
 
