@@ -120,24 +120,20 @@
       .scroller:hover::-webkit-scrollbar-thumb{ background-color: rgba(255,255,255,.55); }
       .scroller::-webkit-scrollbar-corner{ background: transparent; }
 
-/* Делаем верх блока из двух строк: 1) название, 2) Факт/План/∆ */
-#pfHApp .top{
-  align-items: flex-start;
-  flex-wrap: wrap;        /* важно: разрешаем перенос */
-  gap: 4px 0;             /* вертикальный/горизонтальный зазоры между строками */
-}
-
-#pfHApp .top .name{
-  flex: 1 0 100%;         /* занять всю ширину -> переносит .vals на следующую строку */
-  display: block;
-}
-
-#pfHApp .top .vals{
-  gap: 6px;               /* при желании подправьте интервал между «Факт/План/∆» */
-  margin-top: 0;          /* можно чуть увеличить: 2–4px, если нужно больше воздуха */
-}
-
-      
+      /* Делаем верх блока из двух строк: 1) название, 2) Факт/План/∆ */
+      #pfHApp .top{
+        align-items: flex-start;
+        flex-wrap: wrap;        /* важно: разрешаем перенос */
+        gap: 4px 0;             /* вертикальный/горизонтальный зазоры между строками */
+      }
+      #pfHApp .top .name{
+        flex: 1 0 100%;         /* занять всю ширину -> переносит .vals на следующую строку */
+        display: block;
+      }
+      #pfHApp .top .vals{
+        gap: 6px;               /* при желании подправьте интервал между «Факт/План/∆» */
+        margin-top: 0;          /* можно чуть увеличить: 2–4px, если нужно больше воздуха */
+      }
     </style>
   </head>
   <body>
@@ -190,6 +186,21 @@
 
     <script>
       (function(){
+        /* === HAPTICS (централизовано) === */
+        const HAPTIC = (() => {
+          const TMA = (typeof window !== 'undefined') ? window.Telegram?.WebApp : null;
+          const canVibrate = typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function';
+          function select(){  // «тик» при фиксации новой даты
+            try { TMA?.HapticFeedback?.selectionChanged?.(); } catch(_) {}
+            try { if (canVibrate) navigator.vibrate(10); } catch(_) {}
+          }
+          function impact(type='light'){ // лёгкий «тычок» на начало взаимодействия
+            try { TMA?.HapticFeedback?.impactOccurred?.(type); } catch(_) {}
+            try { if (canVibrate) navigator.vibrate(7); } catch(_) {}
+          }
+          return { select, impact, enabled: true };
+        })();
+
         const LABELS = { fat:'% Жира', neck:'Шея', shoulders:'Плечи', chest:'Грудь', waist:'Талия', hips:'Ягодицы', thigh:'Бедро', calf:'Икра', bicep:'Бицепс' };
         const ORDER = ['fat','neck','shoulders','chest','waist','hips','thigh','calf','bicep'];
 
@@ -328,9 +339,6 @@
             var nearBottom = Math.ceil(st + scroller.clientHeight) >= scroller.scrollHeight - 2;
 
             // Decide arrow direction:
-            // - at top -> point down
-            // - at bottom -> point up
-            // - otherwise -> follow last scroll direction
             var showUp = false;
             if (nearTop && !nearBottom) showUp = false;
             else if (nearBottom && !nearTop) showUp = true;
@@ -398,6 +406,9 @@
             const maskEl = tl ? tl.querySelector('.wheel-mask') : null;
             if(!tl || !wheel) return;
 
+            // Тычок при первом касании/нажатии на колесо
+            wheel.addEventListener('pointerdown', () => { if (HAPTIC.enabled) HAPTIC.impact('light'); }, { passive:true });
+
             const n = (norm && Array.isArray(norm.rows)) ? norm.rows.length : 0;
             if(n <= 1){ tl.hidden = true; return; }
 
@@ -415,7 +426,6 @@
               const scale = 1.5; // шире чипа на 50%
               const w = Math.round(rect.width * scale + padX*2);
               const h = Math.round(rect.height + padY*2);
-              // Прибиваем подложку к центру области колеса
               const centerX = wr.left + wr.width/2;
               const left = Math.round(centerX - w/2 - pr.left);
               const top  = Math.round((wr.top - pr.top) + (wr.height - h)/2);
@@ -447,8 +457,10 @@
             function resizeSpacers(){ const edge = Math.max(0, Math.floor(wheel.clientWidth/2)); wheel.style.setProperty('--edge', edge+'px'); }
             ensureSpacers();
 
-            let active = -1, rafId = 0, snapTimer = 0;
+            let active = -1, rafId = 0, snapTimer = 0, pendingHapticForIndex = -1;
+
             function setAria(){ for(let k=0;k<items.length;k++){ if(!items[k]) continue; items[k].setAttribute('aria-selected', String(k===active)); items[k].setAttribute('tabindex', k===active? '0':'-1'); } }
+
             function activate(i, announce){
               if(i === active || i < 0 || i >= n) return;
               if(items[active]){ items[active].classList.remove('active'); items[active].setAttribute('aria-selected','false'); }
@@ -458,13 +470,21 @@
               api && api.setData(norm.rows[i]||[]);
               syncMask();
             }
+
             function centerTo(i, announce, behavior){
-              i = Math.max(0, Math.min(n-1, i)); const el = items[i]; if(!el) return;
+              i = Math.max(0, Math.min(n-1, i));
+              const el = items[i];
+              if(!el) return;
+
+              const was = active;
               const target = el.offsetLeft + el.offsetWidth/2 - wheel.clientWidth/2;
               wheel.scrollTo({ left: Math.max(0, target), behavior: (behavior||'auto') });
               activate(i, announce);
               syncMask();
+
+              if (announce && i !== was) pendingHapticForIndex = i; // ждём «тик» после фиксации
             }
+
             function onScroll(){
               if(rafId) cancelAnimationFrame(rafId);
               rafId = requestAnimationFrame(function(){
@@ -475,15 +495,25 @@
                   if(d < bestDist){ bestDist = d; best = k; }
                 }
                 const changed = best !== active;
+                if (changed) pendingHapticForIndex = best; // помечаем ожидание «тика» на фиксации
                 activate(best, changed);
                 syncMask();
+
                 if(snapTimer) clearTimeout(snapTimer);
                 snapTimer = setTimeout(function(){
                   const el = items[active]; if(!el) return;
                   const target = el.offsetLeft + el.offsetWidth/2 - wheel.clientWidth/2;
                   const curCenter = wheel.scrollLeft + wheel.clientWidth/2;
-                  if(Math.abs(curCenter - (el.offsetLeft + el.offsetWidth/2)) > 3){
+
+                  // Если заметно не по центру — дотягиваем
+                  if (Math.abs(curCenter - (el.offsetLeft + el.offsetWidth/2)) > 3){
                     wheel.scrollTo({ left: Math.max(0, target), behavior: 'auto' });
+                  }
+
+                  // Колесо «встало на место» → одиночный «тик»
+                  if (pendingHapticForIndex === active){
+                    if (HAPTIC.enabled) HAPTIC.select();
+                    pendingHapticForIndex = -1;
                   }
                 }, 140);
               });
