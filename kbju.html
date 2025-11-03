@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0045'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0046'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -1843,14 +1843,17 @@ function handleSaveClick(e){
   window.startMacrosFlow();
 })();
 
-//-- ============================================================
+
+// ============================================================
 //  BLOCK E2 — Analytics Chart (KBJU7, SVG + легенда)
-// ==============================================================
+// ============================================================
+
 (function chartKBJUInit(){
   const tg = window.Telegram?.WebApp;
   const BACKEND = (typeof BACKEND_URL !== 'undefined' && BACKEND_URL) ? BACKEND_URL : '';
   const host = () => document.getElementById('analytics');
 
+  /* ---------------- Styles (once) ---------------- */
   function injectKBJUStylesOnce(){
     if (document.getElementById('kbju7-styles')) return;
     const css = `
@@ -1897,21 +1900,29 @@ function handleSaveClick(e){
   @media (max-width: 340px){
     .kbju7-info{ gap:6px; }
     .legend-tap{ padding:6px 8px; }
-  }
-  `;
+  }`;
     const s = document.createElement('style');
     s.id = 'kbju7-styles';
     s.textContent = css;
     document.head.appendChild(s);
   }
 
+  /* ---------------- Renderer (once) ---------------- */
   (function exposeRenderKBJU7(){
     if (window.renderKBJU7) return;
-    window.renderKBJU7 = function renderKBJU7(host, data, opts={}){
-      const root = typeof host === 'string' ? document.getElementById(host) : host; if (!root) return;
+
+    window.renderKBJU7 = function renderKBJU7(hostElOrId, data, opts = {}){
+      const root = typeof hostElOrId === 'string' ? document.getElementById(hostElOrId) : hostElOrId; 
+      if (!root) return;
+
       const scr  = root.querySelector('#kbju7-scroll');
       let svg = root.querySelector('#kbju7-svg');
-      if (!svg) { const s = document.createElementNS('http://www.w3.org/2000/svg','svg'); s.setAttribute('id','kbju7-svg'); (scr || root).appendChild(s); svg = s; }
+      if (!svg) {
+        const s = document.createElementNS('http://www.w3.org/2000/svg','svg');
+        s.setAttribute('id','kbju7-svg');
+        (scr || root).appendChild(s);
+        svg = s;
+      }
       const infP = root.querySelector('#kbju7-p');
       const infF = root.querySelector('#kbju7-f');
       const infC = root.querySelector('#kbju7-c');
@@ -1919,8 +1930,9 @@ function handleSaveClick(e){
       const list = (data||[]).slice().sort((a,b)=> new Date(a.date) - new Date(b.date));
       if (!list.length){ svg.innerHTML = '<text x="8" y="20" fill="#fff" opacity=".8">Нет данных</text>'; return; }
 
-      const H = 160, DATE_PAD = 18; const LIFT = 8; const TOP_PAD = 14;
-      const visible = Number(opts.visible||7); const shape = opts.shape || 'clip-capsule';
+      const H = 160, DATE_PAD = 18, LIFT = 8, TOP_PAD = 14;
+      const visible = Number(opts.visible||7);
+      const shape = opts.shape || 'clip-capsule';
 
       function computeBarW(){
         const W = (scr && scr.clientWidth) || root.clientWidth || 320;
@@ -1930,11 +1942,12 @@ function handleSaveClick(e){
       }
       const fmtD = d => { try{ return new Date(d).toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit'}); }catch{ return d; } };
 
-      function draw(){
+      function draw(animateNowOverride){
         const { bar:BAR, gap:GAP } = computeBarW();
         const outerR = parseFloat(getComputedStyle(root).getPropertyValue('--r')) || 18;
         const contentW = list.length * (BAR + GAP) + GAP;
         const filter = root.getAttribute('data-filter') || 'all';
+        const DO_ANIM = (animateNowOverride !== undefined) ? !!animateNowOverride : !!opts.animate;
 
         let gramsMax;
         if (filter==='prot') gramsMax = Math.max(50, ...list.map(d => (d.protein_g||0)));
@@ -1984,7 +1997,9 @@ function handleSaveClick(e){
           const rc = rect(x, yBase - hC, BAR, hC, 0); rc.setAttribute('fill', 'rgba(52,211,153,.85)');
           const rp = rect(x, yBase - (hC + hP), BAR, hP, 0); rp.setAttribute('fill', 'rgba(96,165,250,.85)');
           const rf = rect(x, yBase - (hC + hP + hF), BAR, hF, 0); rf.setAttribute('fill', 'rgba(245,158,11,.85)');
-          rc.classList.add('bar-anim','seg','carb'); rp.classList.add('bar-anim','seg','prot'); rf.classList.add('bar-anim','seg','fat');
+          if (DO_ANIM) { rc.classList.add('bar-anim'); rp.classList.add('bar-anim'); rf.classList.add('bar-anim'); }
+          rc.classList.add('seg','carb'); rp.classList.add('seg','prot'); rf.classList.add('seg','fat');
+
           group.appendChild(rc); group.appendChild(rp); group.appendChild(rf);
           gBars.appendChild(group); groups.push(group);
 
@@ -2025,14 +2040,19 @@ function handleSaveClick(e){
           selOutline.style.transition = 'transform .2s ease, opacity .12s ease';
           gSel.appendChild(selOutline); outlines.push(selOutline);
 
-          const hit = rect(x, 0, BAR, H, outerR); hit.setAttribute('fill','transparent'); hit.style.cursor='pointer';
-          hit.addEventListener('click', ()=> select(i, d)); gHit.appendChild(hit);
+          const hit = rect(x, 0, BAR, H, outerR); 
+          hit.setAttribute('fill','transparent'); 
+          hit.style.cursor='pointer';
+          hit.addEventListener('click', ()=> select(i, d), { passive:true });
+          gHit.appendChild(hit);
         });
 
         svg.innerHTML = '';
         svg.appendChild(defs); svg.appendChild(gBars); svg.appendChild(gSel); svg.appendChild(gHit);
 
-        requestAnimationFrame(()=>{ svg.querySelectorAll('.bar-anim').forEach(el=> el.classList.add('show')); });
+        if (DO_ANIM) {
+          requestAnimationFrame(()=>{ svg.querySelectorAll('.bar-anim').forEach(el=> el.classList.add('show')); });
+        }
 
         select(list.length-1, list[list.length-1]);
         if (scr){ scr.scrollLeft = scr.scrollWidth; }
@@ -2058,13 +2078,17 @@ function handleSaveClick(e){
         }
       }
 
+      // Первый отрис — по opts.animate; ресайз — без анимации
       draw();
-
       if (root.__kbjuResizeHandler){ try{ window.removeEventListener('resize', root.__kbjuResizeHandler); }catch(_){ } }
-      var __kbjuRaf = 0;
-      root.__kbjuResizeHandler = function(){ cancelAnimationFrame(__kbjuRaf); __kbjuRaf = requestAnimationFrame(draw); };
+      let __kbjuRaf = 0;
+      root.__kbjuResizeHandler = function(){
+        cancelAnimationFrame(__kbjuRaf);
+        __kbjuRaf = requestAnimationFrame(()=> draw(false));
+      };
       window.addEventListener('resize', root.__kbjuResizeHandler, { passive:true });
 
+      // Легенда: переключение без анимации
       (function bindLegend(){
         if (!root || root.__legendBound) return;
         const info = root.querySelector('#kbju7-info'); if (!info) return;
@@ -2079,13 +2103,14 @@ function handleSaveClick(e){
             b.classList.toggle('active', on);
             b.setAttribute('aria-pressed', String(on));
           });
-          renderKBJU7(host, data, opts);
+          renderKBJU7(root, data, { ...opts, animate:false });
         }, { passive: true });
         root.__legendBound = true;
       })();
     };
   })();
 
+  /* ---------------- Host & helpers ---------------- */
   function ensureKBJUHost(){
     const el = host(); if (!el) return null;
     let box = el.querySelector('#chart-kbju7-box');
@@ -2122,7 +2147,20 @@ function handleSaveClick(e){
     }).filter(x=>x.date);
   }
 
-  function renderChart(data, status){
+  /* ------------- Render controller (de-dup + 1-time anim) ------------- */
+  let _chartAnimatedOnce = false;
+  let _chartLastSig = '';  // сигнатура «row|updated_at|len:lastDate:lastSum»
+  function sigOf(data, meta){
+    const list = normalizeChartData(data);
+    const len = list.length;
+    const last = len ? list[len-1] : null;
+    const sum = len ? Math.round((last.protein_g||0)+(last.fat_g||0)+(last.carbs_g||0)) : 0;
+    const tail = `${len}:${last?last.date:'-'}:${sum}`;
+    const metaPart = `${meta?.row ?? ''}|${meta?.updated_at ?? ''}|${meta?.status ?? ''}`;
+    return metaPart + '|' + tail;
+  }
+
+  function renderChart(data, status, meta){
     injectKBJUStylesOnce();
     const box = ensureKBJUHost(); if (!box) return;
     const hint = box.querySelector('#chart-hint');
@@ -2130,7 +2168,11 @@ function handleSaveClick(e){
 
     if (status === 'READY' && data && data.length){
       if (hint){ hint.style.display = 'block'; hint.textContent = 'Динамика вашей нормы БЖУ'; }
-      window.renderKBJU7(hostId, normalizeChartData(data), { visible:7, shape:'clip-capsule' });
+      const thisSig = sigOf(data, meta);
+      const firstTime = !_chartAnimatedOnce;
+      window.renderKBJU7(hostId, normalizeChartData(data), { visible:7, shape:'clip-capsule', animate: firstTime });
+      _chartAnimatedOnce = true;             // анимируем только первый READY
+      _chartLastSig = thisSig;
       return;
     }
     if (status === 'EMPTY' || status === 'WAITING'){
@@ -2150,17 +2192,24 @@ function handleSaveClick(e){
   function saveChartCache(obj, uid){ try { localStorage.setItem(chartKey(uid ?? currentUserId()), JSON.stringify(obj)); } catch(_){} }
   function loadChartCache(uid){ try { const raw = localStorage.getItem(chartKey(uid ?? currentUserId())); return raw ? JSON.parse(raw) : null; } catch(_) { return null; } }
 
+  /* ---------------- Polling ---------------- */
   let _chartTimer = 0;
   let _chartRunId = 0;
   let _chartAbort = null;
   let _chartStatus = 'INIT';
   const STATUS_RANK = { INIT:0, NO_ROW:1, WAITING:2, EMPTY:3, READY:4 };
-  function renderChartSafe(data, nextStatus){
-    const cur = STATUS_RANK[_chartStatus] ?? 0;
-    const nxt = STATUS_RANK[nextStatus] ?? 0;
-    if (nxt < cur) return;
-    renderChart(data, nextStatus);
+
+  function renderChartSafe(data, nextStatus, meta){
+    const nextSig = sigOf(data, meta);
+    const curRank = STATUS_RANK[_chartStatus] ?? 0;
+    const nxtRank = STATUS_RANK[nextStatus] ?? 0;
+
+    // если статус не «улучшается» и сигнатура совпадает — пропускаем перерисовку
+    if (nextSig === _chartLastSig && nxtRank <= curRank) return;
+
+    renderChart(data, nextStatus, meta);
     _chartStatus = nextStatus;
+    _chartLastSig = nextSig;
   }
 
   async function apiFrontChartData(requestedRow, signal){
@@ -2175,16 +2224,13 @@ function handleSaveClick(e){
     return json;
   }
 
-  function targetRow(){
-    return (typeof desiredRow === 'function' && desiredRow() != null)
-      ? desiredRow()
-      : (typeof getRowCalcForUser === 'function' ? getRowCalcForUser() : null);
-  }
-
   async function pollOnce(runId){
     if (runId !== _chartRunId) return { done:true };
 
-    const reqRow = targetRow();
+    const reqRow =
+      (typeof desiredRow === 'function' && desiredRow() != null)
+        ? desiredRow()
+        : getRowCalcForUser();
 
     if (_chartAbort) { try{ _chartAbort.abort(); }catch(_){ } }
     const controller = new AbortController();
@@ -2194,34 +2240,29 @@ function handleSaveClick(e){
       const res = await apiFrontChartData(reqRow, controller.signal);
       if (runId !== _chartRunId) return { done:true };
 
-      // 🔒 Не показываем ответ, если он старее требуемого row
-      if (res?.row && reqRow && Number(res.row) < Number(reqRow)) {
-        renderChartSafe([], 'WAITING');
-        const waitOld = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
-        return { done:false, wait: waitOld };
-      }
-
       const serverRow = Number(res?.row);
       if (Number.isFinite(serverRow) && (reqRow == null || serverRow > reqRow)) {
         setRowCalcForUser(serverRow);
       }
 
-      // ⏳ Пока не READY — держим заглушку (не рисуем историю)
-      if (!res?.ready) {
-        const status = res?.status || 'WAITING';
-        renderChartSafe([], status);
-        const wait = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
-        return { done:false, wait };
-      }
+      // де-дуб: если ничего нового — не дёргаем отрисовку
+      const nextStatus = res?.status || 'WAITING';
+      const data = res?.data || [];
+      const meta = { row: res?.row, updated_at: res?.updated_at, status: nextStatus };
+      const nextSig = sigOf(data, meta);
+      const unchanged = (nextSig === _chartLastSig);
 
-      // ✅ READY: рисуем и кешируем (если не старее reqRow)
-      const data = Array.isArray(res?.data) ? res.data : [];
-      renderChartSafe(data, 'READY');
-      if (!(reqRow && Number(res.row || 0) < Number(reqRow))) {
-        saveChartCache({ row: res.row, data: data, updated_at: res.updated_at });
-      }
-      return { done:true };
+      if (!unchanged) renderChartSafe(data, nextStatus, meta);
 
+      if (res?.ready){
+        // кэш — только если не старее целевого row
+        if (!(reqRow && Number(res.row || 0) < Number(reqRow))) {
+          saveChartCache({ row: res.row, data: res.data, updated_at: res.updated_at });
+        }
+        return { done:true };
+      }
+      const wait = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
+      return { done:false, wait };
     } catch(err){
       if (err?.name === 'AbortError') return { done:true };
       if (runId !== _chartRunId) return { done:true };
@@ -2245,11 +2286,24 @@ function handleSaveClick(e){
     injectKBJUStylesOnce();
     ensureKBJUHost();
 
-    // ✅ Показываем кэш только если он не старее desiredRow()
-    const target = targetRow();
+    // Показываем кэш, если он не старее desiredRow()
+    const target =
+      (typeof desiredRow === 'function' && desiredRow() != null)
+        ? desiredRow()
+        : getRowCalcForUser();
+
     const cached = loadChartCache();
     if (cached?.data && !(target && Number(cached.row || 0) < Number(target))) {
-      renderChartSafe(cached.data, 'READY');
+      // первый READY из кэша — считаем «первым показом», можно анимировать
+      const meta = { row: cached.row, updated_at: cached.updated_at, status: 'READY' };
+      const canAnimate = !_chartAnimatedOnce;
+      window.renderKBJU7('kbju7-host', normalizeChartData(cached.data), { visible:7, shape:'clip-capsule', animate: canAnimate });
+      _chartAnimatedOnce = true;
+      _chartStatus = 'READY';
+      _chartLastSig = sigOf(cached.data, meta);
+    } else {
+      // пока ждём — без дерганий
+      renderChart([], 'WAITING', { row:null, updated_at:null, status:'WAITING' });
     }
 
     clearTimeout(_chartTimer);
@@ -2267,8 +2321,9 @@ function handleSaveClick(e){
     }
   });
 
-  window.startChartFlow();
+  // ⚠️ НЕ автозапускаем здесь — стартует frontDataFlow()
 })();
+
 
 
 
