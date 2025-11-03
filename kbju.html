@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0044'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0045'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -2175,13 +2175,16 @@ function handleSaveClick(e){
     return json;
   }
 
+  function targetRow(){
+    return (typeof desiredRow === 'function' && desiredRow() != null)
+      ? desiredRow()
+      : (typeof getRowCalcForUser === 'function' ? getRowCalcForUser() : null);
+  }
+
   async function pollOnce(runId){
     if (runId !== _chartRunId) return { done:true };
 
-    const reqRow =
-      (typeof desiredRow === 'function' && desiredRow() != null)
-        ? desiredRow()
-        : getRowCalcForUser();
+    const reqRow = targetRow();
 
     if (_chartAbort) { try{ _chartAbort.abort(); }catch(_){ } }
     const controller = new AbortController();
@@ -2191,21 +2194,34 @@ function handleSaveClick(e){
       const res = await apiFrontChartData(reqRow, controller.signal);
       if (runId !== _chartRunId) return { done:true };
 
+      // 🔒 Не показываем ответ, если он старее требуемого row
+      if (res?.row && reqRow && Number(res.row) < Number(reqRow)) {
+        renderChartSafe([], 'WAITING');
+        const waitOld = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
+        return { done:false, wait: waitOld };
+      }
+
       const serverRow = Number(res?.row);
       if (Number.isFinite(serverRow) && (reqRow == null || serverRow > reqRow)) {
         setRowCalcForUser(serverRow);
       }
 
-      renderChartSafe(res?.data || [], res?.status || 'WAITING');
-
-      if (res?.ready){
-        if (!(reqRow && Number(res.row || 0) < Number(reqRow))) {
-          saveChartCache({ row: res.row, data: res.data, updated_at: res.updated_at });
-        }
-        return { done:true };
+      // ⏳ Пока не READY — держим заглушку (не рисуем историю)
+      if (!res?.ready) {
+        const status = res?.status || 'WAITING';
+        renderChartSafe([], status);
+        const wait = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
+        return { done:false, wait };
       }
-      const wait = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
-      return { done:false, wait };
+
+      // ✅ READY: рисуем и кешируем (если не старее reqRow)
+      const data = Array.isArray(res?.data) ? res.data : [];
+      renderChartSafe(data, 'READY');
+      if (!(reqRow && Number(res.row || 0) < Number(reqRow))) {
+        saveChartCache({ row: res.row, data: data, updated_at: res.updated_at });
+      }
+      return { done:true };
+
     } catch(err){
       if (err?.name === 'AbortError') return { done:true };
       if (runId !== _chartRunId) return { done:true };
@@ -2230,11 +2246,7 @@ function handleSaveClick(e){
     ensureKBJUHost();
 
     // ✅ Показываем кэш только если он не старее desiredRow()
-    const target =
-      (typeof desiredRow === 'function' && desiredRow() != null)
-        ? desiredRow()
-        : getRowCalcForUser();
-
+    const target = targetRow();
     const cached = loadChartCache();
     if (cached?.data && !(target && Number(cached.row || 0) < Number(target))) {
       renderChartSafe(cached.data, 'READY');
@@ -2257,6 +2269,7 @@ function handleSaveClick(e){
 
   window.startChartFlow();
 })();
+
 
 
 /* ============================================================
