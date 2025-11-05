@@ -280,57 +280,73 @@ function scrollToBottom(){ requestAnimationFrame(()=>{ chatArea.scrollTop = chat
 function showTyping(){ isTyping = true; chatArea.appendChild(createTypingIndicator()); scrollToBottom(); }
 function hideTyping(){ isTyping = false; const tip=document.getElementById('typingIndicator'); if(tip) tip.remove(); }
 
-/* ====== 6) Логика отправки и очистки ====== */
-async function sendMessage(){
+// async function getMockAIResponse(userMessage) {
+//   await new Promise(r => setTimeout(r, 800 + Math.random() * 700));
+//   return 'Привет! 👋';
+// }
+async function sendMessage() {
   const text = messageInput.value.trim();
   if (!text || isTyping) return;
 
-  if (window.Telegram?.WebApp?.HapticFeedback) window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+  if (window.Telegram?.WebApp?.HapticFeedback) {
+    window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+  }
 
-  const userMessage = { role:'user', content:text, timestamp:Date.now() };
-  messages.push(userMessage); saveMessages(); addMessageToChat(userMessage);
+  // добавляем сообщение пользователя в UI/локальное хранилище
+  const userMessage = { role: 'user', content: text, timestamp: Date.now() };
+  messages.push(userMessage);
+  saveMessages();
+  addMessageToChat(userMessage);
 
-  messageInput.value=''; messageInput.style.height='auto'; updateSendButton();
+  // чистим инпут
+  messageInput.value = '';
+  messageInput.style.height = 'auto';
+  updateSendButton();
+
+  // индикатор набора
   showTyping();
 
-  try{
-    // вызов бэкенда: send_message
+  try {
+    // ВЫЗОВ БЭКЕНДА
     const resp = await callBackend('send_message', { message: text });
+    console.log('backend response:', resp);
 
     hideTyping();
 
     if (!resp || !resp.success) {
-      const errText = (resp && (resp.error || resp.code)) ? `Ошибка: ${resp.code || ''} ${resp.error || ''}` : 'Сеть недоступна';
-      const aiError = { role:'ai', content: errText.trim(), timestamp: Date.now() };
-      messages.push(aiError); saveMessages(); addMessageToChat(aiError);
+      const errText = (resp && (resp.error || resp.code))
+        ? `Ошибка: ${resp.code || ''} ${resp.error || ''}`
+        : 'Ошибка сети. Попробуйте снова.';
+      const aiError = { role: 'ai', content: errText.trim(), timestamp: Date.now() };
+      messages.push(aiError);
+      saveMessages();
+      addMessageToChat(aiError);
       return;
     }
 
-    // удачный ответ
-    if (window.Telegram?.WebApp?.HapticFeedback) window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
+    if (window.Telegram?.WebApp?.HapticFeedback) {
+      window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
+    }
 
-    const answer = resp.text || (resp.status === 'timeout' ? 'Ответ формируется дольше обычного — попробуйте ещё раз.' : 'Готово.');
-    const aiMessage = { role:'ai', content: answer, timestamp: Date.now() };
+    const answer = resp.text
+      || (resp.status === 'timeout'
+          ? 'Ответ формируется дольше обычного — попробуйте ещё раз.'
+          : 'Готово.');
 
-    messages.push(aiMessage); saveMessages(); addMessageToChat(aiMessage);
-  } catch(err){
+    const aiMessage = { role: 'ai', content: answer, timestamp: Date.now() };
+    messages.push(aiMessage);
+    saveMessages();
+    addMessageToChat(aiMessage);
+  } catch (error) {
     hideTyping();
-    const aiError = { role:'ai', content:'Ошибка сети. Попробуйте снова.', timestamp:Date.now() };
-    messages.push(aiError); saveMessages(); addMessageToChat(aiError);
-    console.error(err);
+    console.error('network error:', error);
+    const aiError = { role: 'ai', content: 'Ошибка сети. Попробуйте снова.', timestamp: Date.now() };
+    messages.push(aiError);
+    saveMessages();
+    addMessageToChat(aiError);
   }
 }
 
-function clearChat(){
-  if (messages.length === 0) return;
-  showConfirmModal('Очистить чат?','Вся история сообщений будет удалена', async ()=>{
-    // локально очищаем
-    messages = []; saveMessages(); renderMessages();
-    // на бэке создаём новый thread
-    try { await callBackend('clear_history'); } catch(_) {}
-    if (window.Telegram?.WebApp?.HapticFeedback) window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
-  });
-}
 
 /* ====== 7) Удаление сообщения и модалка ====== */
 function deleteMessage(index){
