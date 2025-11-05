@@ -3,14 +3,16 @@
 <head>
   <meta name="viewport"
         content="width=device-width, initial-scale=1, maximum-scale=1,
-                 user-scalable=no, viewport-fit=cover" />
+                 user-scalable=no, viewport-fit=cover, interactive-widget=overlays-content" />
   <meta charset="UTF-8" />
   <title>AI Чат</title>
 
-  <!-- === SMART VERSION CONTROL === -->
+  <!-- === SMART VERSION CONTROL: обновляем только при смене версии (без перезагрузок) === -->
   <script>
+  // Фиксируем момент загрузки
   window.__pageLoadTime = (window.performance && performance.now) ? performance.now() : Date.now();
-  const APP_HTML_VERSION = 'v2025-0011';
+  // ↑ Меняй при каждом релизе
+  const APP_HTML_VERSION = 'v2025-0005';
 
   if (!window.__vc_done) {
     window.__vc_done = true;
@@ -21,11 +23,13 @@
         const v = url.searchParams.get('v');
         if (v !== APP_HTML_VERSION) {
           url.searchParams.set('v', APP_HTML_VERSION);
+          // мягкая замена адреса без новой записи и без reload
           history.replaceState(null, '', url.href);
         }
       } catch (_) {}
     })();
 
+    // При возврате из bfcache — лишь синхронизируем параметр, НЕ перезагружаем
     window.addEventListener('pageshow', () => {
       try {
         const url = new URL(location.href);
@@ -41,6 +45,7 @@
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
   <style>
+    html, body, #app, .container {height: 100%; min-height: 100vh; }
     html, body, button, [role="button"], .btn { touch-action: manipulation; }
     input, select, textarea { font-size: 16px; }
 
@@ -54,14 +59,19 @@
       --inputBorder: rgba(255,255,255,.24);
       --shadow: 0 8px 28px rgba(0,0,0,.18);
       --okA:#fbbf24; --okB:#f59e0b;
-      --maxw: 560px;
+
+      /* ==== Ключевые переменные для стабилизации ==== */
+      --vh: 100svh;    /* стабильная высота экрана (по умолчанию) */
+      --kb: 0px;       /* высота перекрытия клавиатурой (JS выставит) */
+      --input-h: 56px; /* реальная высота панели ввода (JS измерит) */
+      --maxw: 560px;   /* макс. ширина контейнера */
     }
 
     *{ box-sizing:border-box; margin:0; padding:0; }
     html,body{ height:100%; }
     html{ background:transparent; }
     body{
-      min-height: 100vh;
+      min-height: var(--vh);
       background:transparent; color:#fff;
       font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;
       position:relative; isolation:isolate; display:flex; flex-direction:column;
@@ -79,7 +89,7 @@
     .container{
       position:relative; z-index:1; width:100%;
       max-width: var(--maxw); margin:0 auto; display:flex; flex-direction:column;
-      min-height: 100vh;
+      min-height: var(--vh);
     }
     @supports (min-height: 100dvh){
       .container{ min-height: 100dvh; }
@@ -103,9 +113,10 @@
       flex:1; overflow-y:auto; overflow-x:hidden; padding:16px 14px;
       display:flex; flex-direction:column; gap:12px;
       -webkit-overflow-scrolling:touch; scrollbar-width:thin; scrollbar-color:rgba(255,255,255,.3) transparent;
-      /* ИСПРАВЛЕНО: фиксированный отступ снизу */
-      padding-bottom: calc(16px + env(safe-area-inset-bottom) + 80px);
-      scroll-padding-bottom: 100px;
+
+      /* ключ: даём место под инпут + клавиатуру */
+      padding-bottom: calc(16px + env(safe-area-inset-bottom) + var(--input-h) + var(--kb));
+      scroll-padding-bottom: calc(var(--input-h) + 24px);
     }
     .chat-area::-webkit-scrollbar{ width:6px; }
     .chat-area::-webkit-scrollbar-thumb{ background:rgba(255,255,255,.3); border-radius:3px; }
@@ -135,11 +146,12 @@
     .typing-dot:nth-child(3){ animation-delay:.4s; }
     @keyframes typing{ 0%,60%,100%{ transform:translateY(0); opacity:.7; } 30%{ transform:translateY(-10px); opacity:1; } }
 
+    /* ==== инпут-панель: фиксируем к вьюпорту и центрируем по max-width ==== */
     .input-area{
       position: fixed; left: 50%; transform: translateX(-50%) translateZ(0);
       bottom: 0; width: min(100%, var(--maxw)); padding:12px 14px;
       padding-bottom: max(env(safe-area-inset-bottom), 8px);
-      background: transparent;
+      background: transparent; will-change: transform;
       z-index: 5;
     }
     .input-wrapper{ display:flex; gap:10px; align-items:flex-end; }
@@ -218,7 +230,7 @@
 
     <div class="input-area">
       <div class="input-wrapper">
-        <textarea class="input-field" id="messageInput" placeholder="Введите сообщение..." rows="1"></textarea>
+        <textarea class="input-field" id="messageInput" placeholder="Задайте вопрос..." rows="1"></textarea>
         <button class="send-btn" id="sendBtn" disabled>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <line x1="22" y1="2" x2="11" y2="13"></line>
@@ -251,7 +263,7 @@
     tg.expand();
     tg.setHeaderColor?.('secondary_bg_color');
     if (tg.isVersionAtLeast?.('6.1')) tg.disableVerticalSwipes?.();
-    tg.disableClosingConfirmation?.();
+    tg.disableClosingConfirmation?.(); // чтобы Telegram не перехватывал закрытие
   } catch (_) {}
 
   const HOME = document.querySelector('meta[name="tma:home-url"]')?.content || './router.html';
@@ -260,11 +272,12 @@
     const el = document.activeElement;
     if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) {
       try { el.blur(); } catch(_){}
-      return true;
+      return true; // клавиатуру закрыли — навигацию пока не делаем
     }
     return false;
   }
 
+  // Кастомная кнопка «Назад»: сперва закрыть клавиатуру, потом перейти на HOME
   try {
     tg.BackButton?.offClick?.();
     tg.BackButton?.show?.();
@@ -275,61 +288,65 @@
     });
   } catch (_) {}
 
+  // Системный «назад» (если появится): при открытой клавиатуре — только blur, без хождения по истории
   window.addEventListener('popstate', () => {
     if (closeKeyboardIfNeeded()) {
+      // отменяем пустой шаг назад, чтобы стек не страдал
       try { history.forward(); } catch(_){}
     }
   }, { passive:true });
 })();
 
 
-  /* ====== 0.1) ИСПРАВЛЕНО: Простая стабилизация без прыжков ====== */
+  /* ====== 0.1) iOS/Telegram стабилизация высоты и клавиатуры ====== */
   (function initKeyboardStabilizer(){
-    const tg = window.Telegram && window.Telegram.WebApp;
+    const tg   = window.Telegram && window.Telegram.WebApp;
+    const vv   = window.visualViewport;
+    const root = document.documentElement;
     const chat = document.getElementById('chatArea');
-    
-    // УБРАЛИ: все сложные манипуляции с visualViewport
-    // УБРАЛИ: принудительный scrollTop
-    // УБРАЛИ: динамические CSS переменные --kb
-    
-    // Просто плавно докручиваем чат при изменении высоты
-    let lastHeight = window.innerHeight;
-    let scrollTimeout = null;
-    
-    function handleResize() {
-      const currentHeight = window.innerHeight;
-      const heightChanged = Math.abs(currentHeight - lastHeight) > 50;
-      
-      if (heightChanged && chat) {
-        // Даём небольшую задержку чтобы анимация клавиатуры завершилась
-        clearTimeout(scrollTimeout);
-        scrollTimeout = setTimeout(() => {
-          // Плавно докручиваем вниз
-          chat.scrollTo({
-            top: chat.scrollHeight,
-            behavior: 'smooth'
-          });
-        }, 200);
+    const inputArea = document.querySelector('.input-area');
+    const input = document.getElementById('messageInput');
+    const setVar = (n,v)=> root.style.setProperty(n, v);
+
+    function measureInput(){
+      const h = (inputArea && inputArea.offsetHeight) || 56;
+      setVar('--input-h', h + 'px');
+    }
+    function update(){
+      // 1) стабильная высота экрана
+      let vh = window.innerHeight;
+      if (tg && tg.viewportStableHeight) vh = tg.viewportStableHeight;
+      setVar('--vh', Math.round(vh) + 'px');
+
+      // 2) высота перекрытия клавиатурой
+      let kb = 0;
+      if (vv) {
+        const occluded = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+        kb = Math.round(occluded);
       }
-      
-      lastHeight = currentHeight;
+      setVar('--kb', kb + 'px');
+
+      // 3) докрутить чат вниз без «мягкой» анимации
+      if (chat) chat.scrollTop = chat.scrollHeight;
     }
 
-    // Telegram событие (работает в Mini App)
-    if (tg && tg.onEvent) {
-      tg.onEvent('viewportChanged', (e) => {
-        if (e && e.isStateStable) {
-          handleResize();
-        }
-      });
-    }
+    measureInput();
+    update();
 
-    // Резервный для обычного resize
-    window.addEventListener('resize', handleResize);
+    if (tg && tg.onEvent){
+      tg.onEvent('viewportChanged', (e)=>{ if (e && e.isStateStable) { measureInput(); update(); } });
+    }
+    if (vv){
+      vv.addEventListener('resize', ()=> { measureInput(); update(); });
+      vv.addEventListener('scroll',  ()=> { update(); });
+    }
+    window.addEventListener('orientationchange', ()=> setTimeout(()=>{ measureInput(); update(); }, 300));
+    window.addEventListener('resize', ()=> { measureInput(); update(); });
+    input && input.addEventListener('focus', ()=> setTimeout(()=> update(), 250));
   })();
 
   /* ====== 1) Конфиг фронта ====== */
-  const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbz1fXF1OKxoku0ZbbSSu2uxnlndaiilEjWh3mR1GFoaOtM8eWoggAjwoDOVLetR3H7C/exec';
+  const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbz1fXF1OKxoku0ZbbSSu2uxnlndaiilEjWh3mR1GFoaOtM8eWoggAjwoDOVLetR3H7C/exec'; // ← ЗАМЕНИ при необходимости
   const REQUEST_TIMEOUT_MS = 45000;
 
   /* ====== 2) Состояние и DOM ====== */
@@ -359,6 +376,7 @@
     return { id: u.id || null, first_name: u.first_name || '', username: u.username || '' };
   }
 
+  // fetch с таймаутом (AbortController)
   function fetchWithTimeout(url, options = {}, ms = REQUEST_TIMEOUT_MS) {
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), ms);
@@ -366,6 +384,7 @@
       .finally(() => clearTimeout(id));
   }
 
+  // единый вызов бэка (без preflight → text/plain)
   async function callBackend(action, payload) {
     const u = getUser();
     const body = Object.assign({
@@ -412,6 +431,7 @@
 
     messageDiv.appendChild(del); messageDiv.appendChild(bubble); messageDiv.appendChild(time);
 
+    // long-press для показа delete
     let longPressTimer;
     const startLP = ()=>{ longPressTimer = setTimeout(()=>{ messageDiv.classList.add('show-delete'); if(window.Telegram?.WebApp?.HapticFeedback){ window.Telegram.WebApp.HapticFeedback.impactOccurred('medium'); } },100); };
     const cancelLP = ()=>{ clearTimeout(longPressTimer); };
@@ -555,6 +575,7 @@
   document.getElementById('modalCancel').addEventListener('click', hideConfirmModal);
   document.getElementById('modalConfirm').addEventListener('click', ()=>{ if (modalCallback) modalCallback(); hideConfirmModal(); });
 
+  // глобальный делегированный слушатель — скрывать delete у всех сообщений
   document.addEventListener('click', (e) => {
     document.querySelectorAll('.message.show-delete').forEach(el => {
       if (!el.contains(e.target)) el.classList.remove('show-delete');
@@ -566,6 +587,7 @@
   /* ====== 9) Init ====== */
   loadData(); updateSendButton();
 
+  // Prevent zoom on double tap (iOS)
   let lastTouchEnd = 0;
   document.addEventListener('touchend', (e)=>{ const now=Date.now(); if(now-lastTouchEnd<=300){ e.preventDefault(); } lastTouchEnd=now; }, { passive:false });
   </script>
