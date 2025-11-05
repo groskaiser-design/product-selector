@@ -7,12 +7,10 @@
   <meta charset="UTF-8" />
   <title>AI Чат</title>
 
-  <!-- === SMART VERSION CONTROL: обновляем только при смене версии (без перезагрузок) === -->
+  <!-- === SMART VERSION CONTROL === -->
   <script>
-  // Фиксируем момент загрузки
   window.__pageLoadTime = (window.performance && performance.now) ? performance.now() : Date.now();
-  // ↑ Меняй при каждом релизе
-  const APP_HTML_VERSION = 'v2025-0005';
+  const APP_HTML_VERSION = 'v2025-0007'; // ← обновлена версия
 
   if (!window.__vc_done) {
     window.__vc_done = true;
@@ -23,13 +21,11 @@
         const v = url.searchParams.get('v');
         if (v !== APP_HTML_VERSION) {
           url.searchParams.set('v', APP_HTML_VERSION);
-          // мягкая замена адреса без новой записи и без reload
           history.replaceState(null, '', url.href);
         }
       } catch (_) {}
     })();
 
-    // При возврате из bfcache — лишь синхронизируем параметр, НЕ перезагружаем
     window.addEventListener('pageshow', () => {
       try {
         const url = new URL(location.href);
@@ -59,11 +55,10 @@
       --shadow: 0 8px 28px rgba(0,0,0,.18);
       --okA:#fbbf24; --okB:#f59e0b;
 
-      /* ==== Ключевые переменные для стабилизации ==== */
-      --vh: 100svh;    /* стабильная высота экрана (по умолчанию) */
-      --kb: 0px;       /* высота перекрытия клавиатурой (JS выставит) */
-      --input-h: 56px; /* реальная высота панели ввода (JS измерит) */
-      --maxw: 560px;   /* макс. ширина контейнера */
+      /* ==== Стабильные переменные ==== */
+      --vh: 100svh;
+      --input-h: 56px; /* статическая высота инпута */
+      --maxw: 560px;
     }
 
     *{ box-sizing:border-box; margin:0; padding:0; }
@@ -113,9 +108,9 @@
       display:flex; flex-direction:column; gap:12px;
       -webkit-overflow-scrolling:touch; scrollbar-width:thin; scrollbar-color:rgba(255,255,255,.3) transparent;
 
-      /* ключ: даём место под инпут + клавиатуру */
-      padding-bottom: calc(16px + env(safe-area-inset-bottom) + var(--input-h) + var(--kb));
-      scroll-padding-bottom: calc(var(--input-h) + 24px);
+      /* ИСПРАВЛЕНО: фиксированный padding вместо динамического */
+      padding-bottom: calc(16px + env(safe-area-inset-bottom) + 80px);
+      scroll-padding-bottom: 100px;
     }
     .chat-area::-webkit-scrollbar{ width:6px; }
     .chat-area::-webkit-scrollbar-thumb{ background:rgba(255,255,255,.3); border-radius:3px; }
@@ -145,7 +140,7 @@
     .typing-dot:nth-child(3){ animation-delay:.4s; }
     @keyframes typing{ 0%,60%,100%{ transform:translateY(0); opacity:.7; } 30%{ transform:translateY(-10px); opacity:1; } }
 
-    /* ==== инпут-панель: фиксируем к вьюпорту и центрируем по max-width ==== */
+    /* ==== инпут-панель ==== */
     .input-area{
       position: fixed; left: 50%; transform: translateX(-50%) translateZ(0);
       bottom: 0; width: min(100%, var(--maxw)); padding:12px 14px;
@@ -262,7 +257,7 @@
     tg.expand();
     tg.setHeaderColor?.('secondary_bg_color');
     if (tg.isVersionAtLeast?.('6.1')) tg.disableVerticalSwipes?.();
-    tg.disableClosingConfirmation?.(); // чтобы Telegram не перехватывал закрытие
+    tg.disableClosingConfirmation?.();
   } catch (_) {}
 
   const HOME = document.querySelector('meta[name="tma:home-url"]')?.content || './router.html';
@@ -271,12 +266,11 @@
     const el = document.activeElement;
     if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) {
       try { el.blur(); } catch(_){}
-      return true; // клавиатуру закрыли — навигацию пока не делаем
+      return true;
     }
     return false;
   }
 
-  // Кастомная кнопка «Назад»: сперва закрыть клавиатуру, потом перейти на HOME
   try {
     tg.BackButton?.offClick?.();
     tg.BackButton?.show?.();
@@ -287,65 +281,121 @@
     });
   } catch (_) {}
 
-  // Системный «назад» (если появится): при открытой клавиатуре — только blur, без хождения по истории
   window.addEventListener('popstate', () => {
     if (closeKeyboardIfNeeded()) {
-      // отменяем пустой шаг назад, чтобы стек не страдал
       try { history.forward(); } catch(_){}
     }
   }, { passive:true });
 })();
 
 
-  /* ====== 0.1) iOS/Telegram стабилизация высоты и клавиатуры ====== */
+  /* ====== 0.1) ИСПРАВЛЕННАЯ iOS/Telegram стабилизация клавиатуры ====== */
   (function initKeyboardStabilizer(){
     const tg   = window.Telegram && window.Telegram.WebApp;
     const vv   = window.visualViewport;
     const root = document.documentElement;
     const chat = document.getElementById('chatArea');
-    const inputArea = document.querySelector('.input-area');
     const input = document.getElementById('messageInput');
-    const setVar = (n,v)=> root.style.setProperty(n, v);
+    
+    let isUserScrolling = false;
+    let scrollTimeout = null;
+    let lastScrollTop = 0;
 
-    function measureInput(){
-      const h = (inputArea && inputArea.offsetHeight) || 56;
-      setVar('--input-h', h + 'px');
-    }
-    function update(){
-      // 1) стабильная высота экрана
+    // Флаг, чтобы избежать циклического скроллинга
+    let preventAutoScroll = false;
+
+    function updateViewportHeight(){
       let vh = window.innerHeight;
       if (tg && tg.viewportStableHeight) vh = tg.viewportStableHeight;
-      setVar('--vh', Math.round(vh) + 'px');
-
-      // 2) высота перекрытия клавиатурой
-      let kb = 0;
-      if (vv) {
-        const occluded = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-        kb = Math.round(occluded);
-      }
-      setVar('--kb', kb + 'px');
-
-      // 3) докрутить чат вниз без «мягкой» анимации
-      if (chat) chat.scrollTop = chat.scrollHeight;
+      root.style.setProperty('--vh', Math.round(vh) + 'px');
     }
 
-    measureInput();
-    update();
+    // ИСПРАВЛЕНО: мягкий скролл без принудительного прыжка
+    function scrollToBottomSmooth(){
+      if (!chat || preventAutoScroll || isUserScrolling) return;
+      
+      requestAnimationFrame(() => {
+        const isNearBottom = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 150;
+        if (isNearBottom) {
+          // Плавно докручиваем только если пользователь уже внизу
+          chat.scrollTo({
+            top: chat.scrollHeight,
+            behavior: 'smooth'
+          });
+        }
+      });
+    }
 
+    // Определяем, скроллит ли пользователь вручную
+    if (chat) {
+      chat.addEventListener('scroll', () => {
+        clearTimeout(scrollTimeout);
+        
+        const currentScrollTop = chat.scrollTop;
+        const isScrollingUp = currentScrollTop < lastScrollTop;
+        
+        if (isScrollingUp) {
+          isUserScrolling = true;
+          preventAutoScroll = true;
+        }
+        
+        lastScrollTop = currentScrollTop;
+        
+        // Если доскроллили вниз - разрешаем авто-скролл
+        const isAtBottom = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 10;
+        if (isAtBottom) {
+          isUserScrolling = false;
+          preventAutoScroll = false;
+        }
+        
+        scrollTimeout = setTimeout(() => {
+          isUserScrolling = false;
+        }, 150);
+      }, { passive: true });
+    }
+
+    // Обновляем только высоту viewport, БЕЗ принудительного скролла
+    function update(){
+      updateViewportHeight();
+      // Убрали принудительный scrollTop!
+    }
+
+    // При фокусе на инпуте - разрешаем авто-скролл
+    if (input) {
+      input.addEventListener('focus', () => {
+        preventAutoScroll = false;
+        setTimeout(() => {
+          scrollToBottomSmooth();
+        }, 300);
+      });
+    }
+
+    // Инициализация
+    updateViewportHeight();
+
+    // ИСПРАВЛЕНО: меньше слушателей, без агрессивного update()
     if (tg && tg.onEvent){
-      tg.onEvent('viewportChanged', (e)=>{ if (e && e.isStateStable) { measureInput(); update(); } });
+      tg.onEvent('viewportChanged', (e)=> { 
+        if (e && e.isStateStable) {
+          updateViewportHeight();
+        }
+      });
     }
+    
+    // ИСПРАВЛЕНО: убрали scroll listener от visualViewport
     if (vv){
-      vv.addEventListener('resize', ()=> { measureInput(); update(); });
-      vv.addEventListener('scroll',  ()=> { update(); });
+      vv.addEventListener('resize', updateViewportHeight);
     }
-    window.addEventListener('orientationchange', ()=> setTimeout(()=>{ measureInput(); update(); }, 300));
-    window.addEventListener('resize', ()=> { measureInput(); update(); });
-    input && input.addEventListener('focus', ()=> setTimeout(()=> update(), 250));
+    
+    window.addEventListener('orientationchange', ()=> setTimeout(updateViewportHeight, 300));
+    window.addEventListener('resize', updateViewportHeight);
+
+    // Экспортируем функцию для использования в других местах
+    window.__scrollToBottomSmooth = scrollToBottomSmooth;
   })();
 
   /* ====== 1) Конфиг фронта ====== */
-  const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbz1fXF1OKxoku0ZbbSSu2uxnlndaiilEjWh3mR1GFoaOtM8eWoggAjwoDOVLetR3H7C/exec'; // ← ЗАМЕНИ при необходимости
+  const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbz1fXF1OKxoku0ZbbSSu2uxnlndaiilEjWh3mR1GFoaOtM8eWoggAjwoDOVLetR3H7C/exec';
   const REQUEST_TIMEOUT_MS = 45000;
 
   /* ====== 2) Состояние и DOM ====== */
@@ -375,7 +425,6 @@
     return { id: u.id || null, first_name: u.first_name || '', username: u.username || '' };
   }
 
-  // fetch с таймаутом (AbortController)
   function fetchWithTimeout(url, options = {}, ms = REQUEST_TIMEOUT_MS) {
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), ms);
@@ -383,7 +432,6 @@
       .finally(() => clearTimeout(id));
   }
 
-  // единый вызов бэка (без preflight → text/plain)
   async function callBackend(action, payload) {
     const u = getUser();
     const body = Object.assign({
@@ -430,7 +478,6 @@
 
     messageDiv.appendChild(del); messageDiv.appendChild(bubble); messageDiv.appendChild(time);
 
-    // long-press для показа delete
     let longPressTimer;
     const startLP = ()=>{ longPressTimer = setTimeout(()=>{ messageDiv.classList.add('show-delete'); if(window.Telegram?.WebApp?.HapticFeedback){ window.Telegram.WebApp.HapticFeedback.impactOccurred('medium'); } },100); };
     const cancelLP = ()=>{ clearTimeout(longPressTimer); };
@@ -455,13 +502,23 @@
     if(messages.length){ messages.forEach((m,i)=> chatArea.appendChild(createMessageElement(m,i))); }
     scrollToBottom();
   }
+  
   function addMessageToChat(message){
     if (emptyState.style.display !== 'none') emptyState.style.display = 'none';
     const index = messages.length - 1;
     chatArea.appendChild(createMessageElement(message, index));
     scrollToBottom();
   }
-  function scrollToBottom(){ requestAnimationFrame(()=>{ chatArea.scrollTop = chatArea.scrollHeight; }); }
+  
+  // ИСПРАВЛЕНО: используем мягкий скролл
+  function scrollToBottom(){ 
+    if (window.__scrollToBottomSmooth) {
+      window.__scrollToBottomSmooth();
+    } else {
+      requestAnimationFrame(()=>{ chatArea.scrollTop = chatArea.scrollHeight; });
+    }
+  }
+  
   function showTyping(){ isTyping = true; chatArea.appendChild(createTypingIndicator()); scrollToBottom(); }
   function hideTyping(){ isTyping = false; const tip=document.getElementById('typingIndicator'); if(tip) tip.remove(); }
 
@@ -574,7 +631,6 @@
   document.getElementById('modalCancel').addEventListener('click', hideConfirmModal);
   document.getElementById('modalConfirm').addEventListener('click', ()=>{ if (modalCallback) modalCallback(); hideConfirmModal(); });
 
-  // глобальный делегированный слушатель — скрывать delete у всех сообщений
   document.addEventListener('click', (e) => {
     document.querySelectorAll('.message.show-delete').forEach(el => {
       if (!el.contains(e.target)) el.classList.remove('show-delete');
@@ -586,7 +642,6 @@
   /* ====== 9) Init ====== */
   loadData(); updateSendButton();
 
-  // Prevent zoom on double tap (iOS)
   let lastTouchEnd = 0;
   document.addEventListener('touchend', (e)=>{ const now=Date.now(); if(now-lastTouchEnd<=300){ e.preventDefault(); } lastTouchEnd=now; }, { passive:false });
   </script>
