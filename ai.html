@@ -172,8 +172,8 @@ if (window.Telegram && window.Telegram.WebApp) {
 }
 
 /* ====== 1) Конфиг фронта ====== */
-const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbwT_Loiu2vPhhRjN2ev8Yh4FXm7QbN1iWtjYE3mkY_qqu1LjBtkmjbsIuM9IoRhAU_6/exec'; // ← ЗАМЕНИ
-// Чтобы не было CORS preflight, шлём только Content-Type: text/plain, без кастомных заголовков.
+const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbz1fXF1OKxoku0ZbbSSu2uxnlndaiilEjWh3mR1GFoaOtM8eWoggAjwoDOVLetR3H7C/exec'; // ← ЗАМЕНИ
+const REQUEST_TIMEOUT_MS = 45000; // FIX: таймаут сети
 
 /* ====== 2) Состояние и DOM ====== */
 let messages = [];
@@ -194,35 +194,41 @@ const modalConfirm = document.getElementById('modalConfirm');
 let modalCallback = null;
 
 /* ====== 3) Хелперы Telegram и API ====== */
-// initData для проверки подписи на бэке (если включено)
 function getInitData() {
   return (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData) || '';
 }
-// user для user_id и user_data
 function getUser() {
   const u = (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe && window.Telegram.WebApp.initDataUnsafe.user) || {};
-  return {
-    id: u.id || null,
-    first_name: u.first_name || '',
-    username: u.username || ''
-  };
+  return { id: u.id || null, first_name: u.first_name || '', username: u.username || '' };
 }
-// единый вызов бэка
+
+// FIX: fetch с таймаутом (AbortController)
+function fetchWithTimeout(url, options = {}, ms = REQUEST_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), ms);
+  return fetch(url, { ...options, signal: controller.signal })
+    .finally(() => clearTimeout(id));
+}
+
+// единый вызов бэка (без preflight → text/plain)
 async function callBackend(action, payload) {
   const u = getUser();
   const body = Object.assign({
-    action: action,
+    action,
     user_id: u.id || localStorage.getItem('debug_uid') || (function(){ const x='debug-' + Math.floor(Math.random()*1e9); localStorage.setItem('debug_uid', x); return x; })(),
     user_data: { first_name: u.first_name, username: u.username },
     init_data: getInitData()
   }, payload || {});
-  const res = await fetch(BACKEND_URL, {
+
+  const res = await fetchWithTimeout(BACKEND_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain' },
     body: JSON.stringify(body)
   });
+
   let data;
-  try { data = await res.json(); } catch(e) { data = { success:false, code:'bad_json', error:'Invalid JSON from backend' }; }
+  try { data = await res.json(); }
+  catch(e) { data = { success:false, code:'bad_json', error:'Invalid JSON from backend' }; }
   return data;
 }
 
@@ -239,23 +245,31 @@ function saveMessages() {
 
 /* ====== 5) Рендер ====== */
 function formatTime(date){ const h=String(date.getHours()).padStart(2,'0'); const m=String(date.getMinutes()).padStart(2,'0'); return h+':'+m; }
+
 function createMessageElement(message, index){
   const messageDiv = document.createElement('div');
   messageDiv.className = 'message ' + message.role; messageDiv.dataset.index = index;
+
   const bubble = document.createElement('div'); bubble.className='message-bubble'; bubble.textContent = message.content;
   const time = document.createElement('div'); time.className='message-time'; time.textContent = formatTime(new Date(message.timestamp));
   const del = document.createElement('button'); del.className='delete-btn'; del.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2M10 11v6M14 11v6"/></svg>';
   del.onclick = (e)=>{ e.stopPropagation(); deleteMessage(index); };
+
   messageDiv.appendChild(del); messageDiv.appendChild(bubble); messageDiv.appendChild(time);
 
+  // long-press для показа delete
   let longPressTimer;
   const startLP = ()=>{ longPressTimer = setTimeout(()=>{ messageDiv.classList.add('show-delete'); if(window.Telegram?.WebApp?.HapticFeedback){ window.Telegram.WebApp.HapticFeedback.impactOccurred('medium'); } },500); };
   const cancelLP = ()=>{ clearTimeout(longPressTimer); };
-  bubble.addEventListener('touchstart', startLP, { passive:true }); ['touchend','touchcancel','touchmove'].forEach(ev=>bubble.addEventListener(ev,cancelLP));
-  document.addEventListener('click', (e)=>{ if(!messageDiv.contains(e.target)) messageDiv.classList.remove('show-delete'); });
+  bubble.addEventListener('touchstart', startLP, { passive:true });
+  ['touchend','touchcancel','touchmove'].forEach(ev=>bubble.addEventListener(ev,cancelLP));
+
+  // ⚠️ БЫЛО: добавляли document.addEventListener на КАЖДОЕ сообщение → утечки/лаги
+  // Убрано. Смотри глобальный делегированный слушатель ниже (FIX).
 
   return messageDiv;
 }
+
 function createTypingIndicator(){
   const messageDiv=document.createElement('div'); messageDiv.className='message ai'; messageDiv.id='typingIndicator';
   const bubble=document.createElement('div'); bubble.className='message-bubble';
@@ -263,6 +277,7 @@ function createTypingIndicator(){
   indicator.innerHTML='<div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div>';
   bubble.appendChild(indicator); messageDiv.appendChild(bubble); return messageDiv;
 }
+
 function renderMessages(){
   const tip=document.getElementById('typingIndicator'); if(tip) tip.remove();
   chatArea.querySelectorAll('.message').forEach(m=>m.remove());
@@ -280,10 +295,7 @@ function scrollToBottom(){ requestAnimationFrame(()=>{ chatArea.scrollTop = chat
 function showTyping(){ isTyping = true; chatArea.appendChild(createTypingIndicator()); scrollToBottom(); }
 function hideTyping(){ isTyping = false; const tip=document.getElementById('typingIndicator'); if(tip) tip.remove(); }
 
-// async function getMockAIResponse(userMessage) {
-//   await new Promise(r => setTimeout(r, 800 + Math.random() * 700));
-//   return 'Привет! 👋';
-// }
+/* ====== 6) Отправка ====== */
 async function sendMessage() {
   const text = messageInput.value.trim();
   if (!text || isTyping) return;
@@ -292,22 +304,18 @@ async function sendMessage() {
     window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
   }
 
-  // добавляем сообщение пользователя в UI/локальное хранилище
   const userMessage = { role: 'user', content: text, timestamp: Date.now() };
   messages.push(userMessage);
   saveMessages();
   addMessageToChat(userMessage);
 
-  // чистим инпут
   messageInput.value = '';
   messageInput.style.height = 'auto';
   updateSendButton();
 
-  // индикатор набора
   showTyping();
 
   try {
-    // ВЫЗОВ БЭКЕНДА
     const resp = await callBackend('send_message', { message: text });
     console.log('backend response:', resp);
 
@@ -347,14 +355,38 @@ async function sendMessage() {
   }
 }
 
-
-/* ====== 7) Удаление сообщения и модалка ====== */
+/* ====== 7) Удаление/очистка и модалка ====== */
 function deleteMessage(index){
   showConfirmModal('Удалить сообщение?','Это действие нельзя отменить', ()=>{
     messages.splice(index,1); saveMessages(); renderMessages();
     if (window.Telegram?.WebApp?.HapticFeedback) window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
   });
 }
+
+// FIX: была ссылка на clearChat, но функции не было — добавляем.
+function clearChat(){
+  if (messages.length === 0) return;
+  showConfirmModal('Очистить чат?','Вся история сообщений будет удалена у вас локально и начнётся новый диалог с ассистентом.', async ()=>{
+    // 1) локально
+    messages = []; saveMessages(); renderMessages();
+    // 2) сообщаем бэку: создать новый thread
+    try {
+      const resp = await callBackend('clear_history', {});
+      if (!resp || !resp.success) {
+        const aiMsg = { role:'ai', content:'Не удалось сбросить историю на сервере. Можно продолжать, но история на стороне ассистента не обнулилась.', timestamp: Date.now() };
+        messages.push(aiMsg); saveMessages(); addMessageToChat(aiMsg);
+      } else {
+        const aiMsg = { role:'ai', content:'История очищена. Начните новый диалог. ✨', timestamp: Date.now() };
+        messages.push(aiMsg); saveMessages(); addMessageToChat(aiMsg);
+      }
+    } catch (e) {
+      const aiMsg = { role:'ai', content:'Сервер недоступен, локальная история очищена.', timestamp: Date.now() };
+      messages.push(aiMsg); saveMessages(); addMessageToChat(aiMsg);
+    }
+    if (window.Telegram?.WebApp?.HapticFeedback) window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
+  });
+}
+
 function showConfirmModal(title,text,onConfirm){
   modalTitle.textContent = title; modalText.textContent = text; modalCallback = onConfirm; confirmModal.classList.add('show');
   if (window.Telegram?.WebApp?.HapticFeedback) window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
@@ -371,6 +403,14 @@ messageInput.addEventListener('keydown', (e)=>{ if(e.key==='Enter' && !e.shiftKe
 clearBtn.addEventListener('click', clearChat);
 document.getElementById('modalCancel').addEventListener('click', hideConfirmModal);
 document.getElementById('modalConfirm').addEventListener('click', ()=>{ if (modalCallback) modalCallback(); hideConfirmModal(); });
+
+// FIX: один ГЛОБАЛЬНЫЙ делегированный слушатель — скрывать delete у всех сообщений
+document.addEventListener('click', (e) => {
+  document.querySelectorAll('.message.show-delete').forEach(el => {
+    if (!el.contains(e.target)) el.classList.remove('show-delete');
+  });
+});
+
 confirmModal.addEventListener('click', (e)=>{ if(e.target===confirmModal) hideConfirmModal(); });
 messageInput.addEventListener('focus', ()=>{ setTimeout(scrollToBottom, 300); });
 
