@@ -7,34 +7,35 @@
   <meta charset="UTF-8" />
   <title>AI Чат</title>
 
-  <!-- === SMART VERSION CONTROL: обновляем только при смене версии === -->
+  <!-- === SMART VERSION CONTROL: обновляем только при смене версии (без перезагрузок) === -->
   <script>
   // Фиксируем момент загрузки
   window.__pageLoadTime = (window.performance && performance.now) ? performance.now() : Date.now();
   // ↑ Меняй при каждом релизе
-  const APP_HTML_VERSION = 'v2025-0003';
+  const APP_HTML_VERSION = 'v2025-0004';
 
   if (!window.__vc_done) {
     window.__vc_done = true;
 
-    (function smartVersionCheck(){
+    (function smartVersionOnce(){
       try {
         const url = new URL(location.href);
         const v = url.searchParams.get('v');
         if (v !== APP_HTML_VERSION) {
           url.searchParams.set('v', APP_HTML_VERSION);
-          location.replace(url.href);
+          // мягкая замена адреса без новой записи и без reload
+          history.replaceState(null, '', url.href);
         }
       } catch (_) {}
     })();
 
-    // Обновляемся при возврате из bfcache
-    window.addEventListener('pageshow', (e) => {
+    // При возврате из bfcache — лишь синхронизируем параметр, НЕ перезагружаем
+    window.addEventListener('pageshow', () => {
       try {
-        if (e.persisted) {
-          const url = new URL(location.href);
+        const url = new URL(location.href);
+        if (url.searchParams.get('v') !== APP_HTML_VERSION) {
           url.searchParams.set('v', APP_HTML_VERSION);
-          location.replace(url.href);
+          history.replaceState(null, '', url.href);
         }
       } catch (_) {}
     }, { once: true });
@@ -199,16 +200,15 @@
     .modal h3{ font-size:18px; font-weight:900; margin-bottom:12px; }
     .modal p{ font-size:14px; opacity:.9; margin-bottom:20px; line-height:1.5; }
     .modal-buttons{ display:flex; gap:10px; }
-    .modal-btn{ flex:1; padding:12px; border:0; border-radius:12px; font-weight:700; font-size:14px; cursor:pointer; transition:.2s; -webkit-tap-highlight-color:transparent; }
+    .modal-btn{ display:inline-flex; align-items:center; justify-content:center; gap:8px;
+      flex:1; padding:12px; border:0; border-radius:12px; font-weight:700; font-size:14px; cursor:pointer; transition:.2s; -webkit-tap-highlight-color:transparent; }
     .modal-btn.cancel{ background:rgba(255,255,255,.15); color:#fff; }
     .modal-btn.confirm{ background:linear-gradient(135deg,var(--okA),var(--okB)); color:#fff; }
     .modal-btn:active{ transform:scale(.96); }
   </style>
 
-<meta name="tma:home-url" content="./router.html" />
-<meta name="tma:home-hash" content="" />
-
-
+  <meta name="tma:home-url" content="./router.html" />
+  <meta name="tma:home-hash" content="" />
 </head>
 <body>
 
@@ -259,30 +259,40 @@
   try {
     tg.ready();
     tg.expand();
-    tg.setHeaderColor?.('secondary_bg_color'); // опционально, как в образце
+    tg.setHeaderColor?.('secondary_bg_color');
     if (tg.isVersionAtLeast?.('6.1')) tg.disableVerticalSwipes?.();
+    tg.disableClosingConfirmation?.(); // чтобы Telegram не перехватывал закрытие
   } catch (_) {}
 
-  // Показать кнопку «Назад» и повесить обработчик
-  try {
-    const metaHome = document.querySelector('meta[name="tma:home-url"]')?.content || 'router.html';
+  const HOME = document.querySelector('meta[name="tma:home-url"]')?.content || './router.html';
 
-    tg.BackButton?.offClick?.(); // на всякий случай снимаем старые
+  function closeKeyboardIfNeeded(){
+    const el = document.activeElement;
+    if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) {
+      try { el.blur(); } catch(_){}
+      return true; // клавиатуру закрыли — навигацию пока не делаем
+    }
+    return false;
+  }
+
+  // Кастомная кнопка «Назад»: сперва закрыть клавиатуру, потом перейти на HOME
+  try {
+    tg.BackButton?.offClick?.();
     tg.BackButton?.show?.();
     tg.BackButton?.onClick?.(()=>{
-      // 1) если есть куда вернуться в истории — идём назад
-      if (history.length > 1) {
-        try { history.back(); return; } catch(_) {}
-      }
-      // 2) иначе — на «домой» из meta
-      try { location.href = metaHome; return; } catch(_) {}
-      // 3) последний шанс — закрыть веб-апп
-      try { tg.close?.(); } catch(_) {}
+      if (closeKeyboardIfNeeded()) return;
+      try { location.assign(HOME); }
+      catch(_) { try { location.href = HOME; } catch(__) { tg.close?.(); } }
     });
   } catch (_) {}
 
-  // (не обязательно) если хочешь убрать лишние подтверждения закрытия
-  try { tg.disableClosingConfirmation?.(); } catch(_) {}
+  // Системный «назад» (если появится): при открытой клавиатуре — только blur, без хождения по истории
+  window.addEventListener('popstate', () => {
+    if (closeKeyboardIfNeeded()) {
+      // отменяем пустой шаг назад, чтобы стек не страдал
+      try { history.forward(); } catch(_){}
+    }
+  }, { passive:true });
 })();
 
 
