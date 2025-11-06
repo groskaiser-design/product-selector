@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0047'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0048'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -1238,6 +1238,7 @@ function handleSaveClick(e){
   requestAnimationFrame(()=>requestAnimationFrame(scrollTopNoJump));
   setTimeout(()=>{
     try { startFrontDataFlow(); } catch(_){}
+    try { window.startFrontDataFlow(); } catch(_){}  // ← AI комментарий
     try { window.startMacrosFlow(); } catch(_){}
     try { window.startChartFlow(); } catch(_){}
   }, 0);
@@ -1313,367 +1314,244 @@ function handleSaveClick(e){
 })();
 
 /* ============================================================
- *  BLOCK E: Front data flow (AI + last inputs)
+ *  BLOCK E: Front data flow (AI comment) — УНИФИЦИРОВАННЫЙ
  * ============================================================ */
 (function frontDataFlowInit(){
   const tg = window.Telegram?.WebApp;
   const BACKEND = (typeof BACKEND_URL !== 'undefined' && BACKEND_URL) ? BACKEND_URL : '';
 
   const elAI = ()=>document.getElementById('ai-comment');
-  const elAnalytics = ()=>document.getElementById('analytics');
 
+  /* ---------- Кэш комментария ---------- */
+  const COMMENT_KEY_PREFIX = 'comment:html:';
+  function currentUserId(){ 
+    try { return window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'anon'; } 
+    catch(_){ return 'anon'; } 
+  }
+  function commentKey(uid){ return COMMENT_KEY_PREFIX + String(uid ?? currentUserId()); }
+  function saveCommentCache(obj, uid){ 
+    try { localStorage.setItem(commentKey(uid), JSON.stringify(obj)); } 
+    catch(_){} 
+  }
+  function loadCommentCache(uid){ 
+    try { 
+      const raw = localStorage.getItem(commentKey(uid)); 
+      return raw ? JSON.parse(raw) : null; 
+    } catch(_) { return null; } 
+  }
+
+  /* ---------- Render helpers ---------- */
   function setAIStatus(text){
     const host = elAI(); if (!host) return;
     host.innerHTML = `<div class="field"><div class="help">${text}</div></div>`;
   }
-  function setAnalyticsPlaceholder(){
-    const host = elAnalytics(); if (!host) return;
-    host.innerHTML = `<div class="field"><div class="help">После сохранения появятся графики.</div></div>`;
+
+  // Сигнатура для анти-дублирования
+  function sigOf(html, row){
+    if (!html) return 'empty';
+    return `${row || 0}|${html.length}|${html.slice(0,50)}`;
   }
 
-  // === 0) API: единый бутстрап-пакет
-  async function apiFrontBootstrap(requestedRow){
+  let _commentLastSig = '';
+  let _commentTimer = 0;
+  let _commentRunId = 0;
+  let _commentAbort = null;
+  let _commentStatus = 'INIT';
+  const STATUS_RANK = { INIT:0, NO_ROW:1, WAITING:2, READY:3 };
+
+  function renderAIComment(html, rowCalc, status){
+    if (isAdmin() && typeof window.__pageLaunchToUpdateComment !== 'number' && status === 'READY') {
+      window.__pageLaunchToUpdateComment = performance.now() - window.__pageLoadTime;
+      if (typeof window.updatePerfUI === 'function') window.updatePerfUI();
+    }
+
+    const host = elAI(); if (!host) return;
+    
+    if (status === 'READY' && html){
+      host.innerHTML = `<div class="field">${html}</div>`;
+      return;
+    }
+    if (status === 'WAITING'){
+      host.innerHTML = `<div class="field"><div class="help">Обрабатываем… (ждём комментарий)</div></div>`;
+      return;
+    }
+    if (status === 'NO_ROW'){
+      host.innerHTML = `<div class="field"><div class="help">Сначала заполните анкету и сохраните.</div></div>`;
+      return;
+    }
+    host.innerHTML = `<div class="field"><div class="help">—</div></div>`;
+  }
+
+  function renderAICommentSafe(html, rowCalc, nextStatus){
+    const cur = STATUS_RANK[_commentStatus] ?? 0;
+    const nxt = STATUS_RANK[nextStatus] ?? 0;
+    if (nxt < cur) return; // не откатываем статус
+
+    const nextSig = `${nextStatus}|${sigOf(html, rowCalc)}`;
+    if (nextSig === _commentLastSig) return; // дедупликация
+
+    renderAIComment(html, rowCalc, nextStatus);
+    _commentStatus = nextStatus;
+    _commentLastSig = nextSig;
+  }
+
+  /* ---------- API ---------- */
+  async function apiFrontComment(requestedRow, signal){
     const payload = {
-      action: 'front_bootstrap',
+      action: 'front_comment',
       init_data: String(tg?.initData || ''),
       row: Number(requestedRow || 0) || undefined
-    }
-    window.apiFrontBootstrap = apiFrontBootstrap;
+    };
 
-    const t0 = performance?.now ? performance.now() : Date.now();
     const resp = await fetch(BACKEND, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
       body: JSON.stringify(payload),
       cache: 'no-store',
       credentials: 'omit',
-      mode: 'cors'
+      mode: 'cors',
+      signal
     });
 
     const raw = await resp.text();
-    let json = null; try { json = raw ? JSON.parse(raw) : null; } catch(_){}
+    let json = null; 
+    try { json = raw ? JSON.parse(raw) : null; } 
+    catch(_){}
 
-    const t1 = performance?.now ? performance.now() : Date.now();
-    window.__frontBootstrapLastMs = +(t1 - t0).toFixed(1);
-    try { updatePerfUI && updatePerfUI(); } catch(_){}
-
-    if (!resp.ok || !json || json.ok !== true) {
-      const reason = json?.error || `HTTP ${resp.status}`;
-      throw new Error(reason);
-    }
-    return json;
-  }
-  window.apiFrontBootstrap = apiFrontBootstrap;
-
-  async function apiFrontWait(timeoutSec){
-    const payload = {
-      action:'front_wait',
-      init_data:String(tg?.initData || ''),
-      timeout_sec: Math.max(0, Math.min(25, Number(timeoutSec)||25))
-    };
-    const t0 = performance?.now ? performance.now() : Date.now();
-    const resp = await fetch(BACKEND, {
-      method:'POST',
-      headers:{'Content-Type':'text/plain;charset=UTF-8'},
-      body:JSON.stringify(payload),
-      cache:'no-store', credentials:'omit', mode:'cors'
-    });
-    const raw = await resp.text();
-    let json = null; try{ json = raw ? JSON.parse(raw) : null; }catch(_){}
-    const t1 = performance?.now ? performance.now() : Date.now();
-    window.__frontWaitLastMs = +(t1 - t0).toFixed(1);
-    try { updatePerfUI && updatePerfUI(); } catch(_){}
     if (!resp.ok || !json) throw new Error(`HTTP ${resp.status}`);
     return json;
   }
 
-  async function apiLastInputs(){
-    if (isAdmin() && typeof window.__pageLaunchToRequestSent !== 'number') {
-      window.__pageLaunchToRequestSent = performance.now() - window.__pageLoadTime;
-      if (typeof window.updatePerfUI === 'function') window.updatePerfUI();
-    }
-    const payload = { action:'user_last_inputs', init_data: String(tg?.initData || '') };
-    const t0 = performance?.now ? performance.now() : Date.now();
-    const resp = await fetch(BACKEND, {
-      method:'POST',
-      headers:{'Content-Type':'text/plain;charset=UTF-8'},
-      body:JSON.stringify(payload),
-      cache:'no-store', credentials:'omit', mode:'cors'
-    });
-    const raw = await resp.text();
-    let json = null; try{ json = raw ? JSON.parse(raw) : null; }catch(_){}
-    const t1 = performance?.now ? performance.now() : Date.now();
-    window.__lastInputsFetchMs = +(t1 - t0).toFixed(1);
-
-    if (isAdmin() && typeof window.__pageLaunchToResponseReceived !== 'number') {
-      window.__pageLaunchToResponseReceived = performance.now() - window.__pageLoadTime;
-      if (typeof window.updatePerfUI === 'function') window.updatePerfUI();
-    }
-
-    try { updatePerfUI && updatePerfUI(); } catch(_){}
-    if (!resp.ok || !json || json.ok !== true) throw new Error(json?.error || `HTTP ${resp.status}`);
-    return json;
+  function targetRow(){
+    return (typeof desiredRow === 'function' && desiredRow() != null)
+      ? desiredRow()
+      : (typeof getRowCalcForUser === 'function' ? getRowCalcForUser() : null);
   }
 
-  function renderAIComment(html){
-    if (isAdmin() && typeof window.__pageLaunchToUpdateComment !== 'number') {
-      window.__pageLaunchToUpdateComment = performance.now() - window.__pageLoadTime;
-      if (typeof window.updatePerfUI === 'function') window.updatePerfUI();
+  /* ---------- Polling ---------- */
+  async function pollOnce(runId){
+    if (runId !== _commentRunId) return { done:true };
+
+    const reqRow = targetRow();
+
+    if (_commentAbort) { 
+      try{ _commentAbort.abort(); }
+      catch(_){ } 
     }
-    const host = elAI(); if (!host) return;
-    host.innerHTML = html
-      ? `<div class="field">${html}</div>`
-      : `<div class="field"><div class="help">Комментарий пока не готов…</div></div>`;
-  }
+    const controller = new AbortController();
+    _commentAbort = controller;
 
-  function applyInputsToWheels(inputs){
-    if (!inputs || typeof inputs !== 'object') return;
-    ensureAllWheelsOnce();
+    try{
+      const res = await apiFrontComment(reqRow, controller.signal);
+      if (runId !== _commentRunId) return { done:true };
 
-    for (const [k, vRaw] of Object.entries(inputs)){
-      const cfg = CFG[k]; if (!cfg) continue;
-      const el  = fieldByKey[k];
-      const w   = wheels[k];
-
-      const v = numOrNull(vRaw);
-
-      if (v == null){
-        window.__pendingInputs = window.__pendingInputs || {};
-        window.__pendingInputs[k] = null;
-        if (cfg.optional && el){
-          let cb = el.querySelector('#opt_'+k);
-          if (!cb){
-            const opt = document.createElement('div');
-            opt.className = 'optline';
-            opt.innerHTML = `<label style="display:flex;align-items:center;gap:8px;opacity:.95">
-                <input type="checkbox" id="opt_${k}"> нет данных
-              </label>`;
-            el.appendChild(opt);
-            cb = opt.querySelector('input');
-          }
-          cb.checked = true;
-          if (w && w.setDisabled) w.setDisabled(true, /*programmatic*/true);
-        }
-        continue;
+      // Не показываем старый ответ
+      if (res?.row && reqRow && Number(res.row) < Number(reqRow)) {
+        renderAICommentSafe('', null, 'WAITING');
+        const waitOld = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
+        return { done:false, wait: waitOld };
       }
 
-      if (cfg.optional && el){
-        const cb = el.querySelector('#opt_'+k);
-        if (cb){ cb.checked = false; }
-        if (w && w.setDisabled) w.setDisabled(false, /*programmatic*/true);
+      const serverRow = Number(res?.row);
+      if (Number.isFinite(serverRow) && (reqRow == null || serverRow > reqRow)) {
+        setRowCalcForUser(serverRow);
       }
 
-      const target = (k === 'age') ? Math.round(v) : v;
-      const cur = (w && typeof w.getModelValue === 'function') ? w.getModelValue() : (w ? w.value : null);
-      const changed = (cur == null) || Math.abs(Number(cur) - Number(target)) > 0.001;
-
-      if (changed){
-        if (w) {
-          w.setValue(target);
-        } else {
-          window.__pendingInputs = window.__pendingInputs || {};
-          window.__pendingInputs[k] = target;
-        }
+      if (!res?.ready){
+        const status = res?.status || 'WAITING';
+        renderAICommentSafe('', null, status);
+        const wait = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
+        return { done:false, wait };
       }
-    }
 
-    if (isAdmin() && typeof window.__pageLaunchToUpdateWheel === 'number') {
-      try { updatePerfUI && updatePerfUI(); } catch(_){}
-    } else if (isAdmin()) {
-      window.__pageLaunchToUpdateWheel = performance.now() - window.__pageLoadTime;
-      try { updatePerfUI && updatePerfUI(); } catch(_){}
-    }
-  }
+      // READY
+      const html = res?.html || '';
+      renderAICommentSafe(html, serverRow, 'READY');
 
-  function applyInputsToSurvey(inputs){
-    if (!inputs || typeof inputs !== 'object') return;
-
-    if (typeof inputs.gender === 'string'){
-      document.querySelectorAll('.binary-btn[data-field="gender"]').forEach(b=>{
-        const on = b.dataset.value === inputs.gender;
-        b.classList.toggle('active', on);
-        b.setAttribute('aria-pressed', on ? 'true':'false');
-      });
-    }
-
-    const selectSingle = (field, val) => {
-      const list = document.querySelector(`.choice-list[data-field="${field}"][data-type="single"]`);
-      if (!list) return;
-      list.querySelectorAll('.choice-item').forEach(i=>{
-        const on = String(i.dataset.value) === String(val);
-        i.classList.toggle('selected', on);
-        i.setAttribute('aria-checked', on ? 'true':'false');
-      });
-    };
-    const selectMultiple = (field, arr) => {
-      const list = document.querySelector(`.choice-list[data-field="${field}"][data-type="multiple"]`);
-      if (!list) return;
-      const set = new Set(Array.isArray(arr) ? arr : []);
-      if (set.has('none')){
-        list.querySelectorAll('.choice-item').forEach(i=>{
-          const on = i.dataset.value === 'none';
-          i.classList.toggle('selected', on);
-          i.setAttribute('aria-checked', on ? 'true':'false');
+      // Сохраняем в кэш (если не старее reqRow)
+      if (html && !(reqRow && Number(res.row || 0) < Number(reqRow))) {
+        saveCommentCache({ 
+          row: res.row, 
+          html, 
+          updated_at: res.updated_at || new Date().toISOString() 
         });
-        return;
       }
-      list.querySelectorAll('.choice-item').forEach(i=>{
-        const on = set.has(i.dataset.value);
-        i.classList.toggle('selected', on);
-        i.setAttribute('aria-checked', on ? 'true':'false');
-      });
-    };
 
-    [
-      'body_comp','ethnicity','job_type','steps_per_day','workouts_per_week','workout_duration',
-      'workout_intensity','neat_level','sleep_hours','weight_history','main_goal','goal_pace',
-      'pregnancy_lactation','cycle_regular'
-    ].forEach(k=>{ if (inputs[k] != null) selectSingle(k, inputs[k]); });
+      // Отправляем ACK серверу
+      try {
+        fetch(BACKEND, {
+          method:'POST',
+          headers:{'Content-Type':'text/plain;charset=UTF-8'},
+          body: JSON.stringify({ 
+            action:'front_ack', 
+            init_data:String(tg?.initData || '') 
+          }),
+          cache:'no-store', 
+          credentials:'omit', 
+          mode:'cors'
+        }).catch(()=>{});
+      } catch(_){}
 
-    if (inputs.chronic_conditions) selectMultiple('chronic_conditions', inputs.chronic_conditions);
+      return { done:true };
 
-    try{
-      const sys = document.getElementById('opt_fat');
-      const bfn = document.getElementById('bf-none');
-      const duo = document.querySelector('.field[data-key="fat"] .duo');
-      if (sys && bfn){
-        bfn.checked = !!sys.checked;
-        if (duo) duo.classList.toggle('disabled', bfn.checked);
-      }
-    }catch(_){}
-
-    try { updateCycleVisibility(); updateBodyCompVisibility(); } catch(_){}
-  }
-
-  let _pollTimer = 0;
-  async function pollOnce(){
-    try{
-      const res = await apiFrontWait(25);
-      if (res?.ready){
-        renderAIComment(res.html || '');
-        try {
-          fetch(BACKEND, {
-            method:'POST',
-            headers:{'Content-Type':'text/plain;charset=UTF-8'},
-            body: JSON.stringify({ action:'front_ack', init_data:String(tg?.initData || '') }),
-            cache:'no-store', credentials:'omit', mode:'cors'
-          }).catch(()=>{});
-        } catch(_){}
-        return {done:true};
-      }
-      setAIStatus('Обрабатываем… (ждём комментарий)');
-      const wait = Math.max(300, Math.min(2000, Number(res?.retry_after_ms) || 1000));
-      return {done:false, wait};
-    } catch(_){
-      setAIStatus('Не удалось загрузить данные. Попробуйте позже.');
-      return {done:false, wait:1500};
+    } catch(err){
+      if (err?.name === 'AbortError') return { done:true };
+      if (runId !== _commentRunId) return { done:true };
+      renderAICommentSafe('', null, 'WAITING');
+      return { done:false, wait: 1000 };
     }
   }
-  async function pollLoop(){
-    clearTimeout(_pollTimer);
-    const r = await pollOnce();
-    if (r.done) return;
-    _pollTimer = setTimeout(()=>pollLoop(), r.wait);
+
+  async function pollLoop(runId){
+    if (runId !== _commentRunId) return;
+    clearTimeout(_commentTimer);
+    const r = await pollOnce(runId);
+    if (r.done || runId !== _commentRunId) return;
+    _commentTimer = setTimeout(()=>pollLoop(runId), r.wait);
   }
-  window.startFrontDataFlow = function(){ pollLoop(); };
 
-  setAIStatus('Ждём данные…');
-  setAnalyticsPlaceholder();
-  (async function bootstrapThenHydrate(){
-    try {
-      const seed = (typeof loadInputsCache === 'function') ? loadInputsCache() : null;
-      if (seed && seed.inputs) {
-        applyInputsToWheels(seed.inputs);
-        applyInputsToSurvey(seed.inputs);
-      } else {
-        ensureAllWheelsOnce();
+  /* ---------- Public start ---------- */
+  window.startFrontDataFlow = function(){
+    _commentRunId += 1;
+    const runId = _commentRunId;
+    _commentStatus = 'INIT';
+    _commentLastSig = ''; // обнуляем сигнатуру
+
+    // Показываем кэш (если не старее desiredRow)
+    const target = targetRow();
+    const cached = loadCommentCache();
+    if (cached?.html && !(target && Number(cached.row || 0) < Number(target))) {
+      renderAICommentSafe(cached.html, cached.row, 'READY');
+    } else {
+      setAIStatus('Ждём данные…');
+    }
+
+    clearTimeout(_commentTimer);
+    if (_commentAbort){ 
+      try{ _commentAbort.abort(); }
+      catch(_){ } 
+      _commentAbort = null; 
+    }
+
+    pollLoop(runId);
+  };
+
+  /* ---------- Visibility change ---------- */
+  document.addEventListener('visibilitychange', ()=>{
+    if (document.visibilityState === 'hidden'){
+      clearTimeout(_commentTimer);
+      if (_commentAbort){ 
+        try{ _commentAbort.abort(); }
+        catch(_){ } 
+        _commentAbort = null; 
       }
-    } catch(_) { ensureAllWheelsOnce(); }
-
-    // ✅ ВАЖНО: минимальный row — по desiredRow()
-    const reqRow =
-      (typeof desiredRow === 'function' && desiredRow() != null)
-        ? desiredRow()
-        : ((typeof getRowCalcForUser === 'function') ? getRowCalcForUser() : null);
-
-    try{
-      const b = await apiFrontBootstrap(reqRow);
-      if (!b || b.ok !== true) throw new Error('bootstrap_failed');
-
-      if (b.row) { try { setRowCalcForUser(b.row); } catch(_){ } }
-
-      if (b.inputs && b.inputs.found && b.inputs.inputs){
-        applyInputsToWheels(b.inputs.inputs);
-        applyInputsToSurvey(b.inputs.inputs);
-        try {
-          const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
-          saveInputsCache({ row: b.row || null, inputs: b.inputs.inputs, updated_at: b.updated_at || new Date().toISOString() }, uid);
-        } catch(_){}
-      } else {
-        try{
-          const r = await apiLastInputs();
-          if (r && r.found && r.inputs){
-            applyInputsToWheels(r.inputs);
-            applyInputsToSurvey(r.inputs);
-            try {
-              const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
-              saveInputsCache({ row: b?.row || null, inputs: r.inputs, updated_at: new Date().toISOString() }, uid);
-            } catch(_){}
-          } else {
-            ensureAllWheelsOnce();
-          }
-        } catch { ensureAllWheelsOnce(); }
-      }
-
-      if (b.front && b.front.html){
-        renderAIComment(b.front.html || '');
-      } else {
-        setAIStatus('Обрабатываем… (ждём комментарий)');
-        window.startFrontDataFlow();
-      }
-
-      try{
-        const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
-        if (b.macros){
-          const macrosRow = Number(b.macros.row || b.row || 0);
-          // ✅ не кладём старее reqRow
-          if (b.macros.ready && b.macros.macros && !(reqRow && macrosRow < Number(reqRow))) {
-            const seed = { row: b.macros.row || b.row || null, macros: b.macros.macros, updated_at: b.macros.updated_at };
-            localStorage.setItem('macros:vals:' + String(uid), JSON.stringify(seed));
-          }
-          try { window.startMacrosFlow(); } catch(_){}
-        } else { try { window.startMacrosFlow(); } catch(_){} }
-      } catch(_){}
-
-      try{
-        const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
-        if (b.chart){
-          const chartRow = Number(b.chart.row || b.row || 0);
-          // ✅ не кладём старее reqRow
-          if (b.chart.ready && Array.isArray(b.chart.data) && !(reqRow && chartRow < Number(reqRow))) {
-            const seed = { row: b.chart.row || b.row || null, data: b.chart.data, updated_at: b.chart.updated_at };
-            localStorage.setItem('chart:data:' + String(uid), JSON.stringify(seed));
-          }
-          try { window.startChartFlow(); } catch(_){}
-      } else { try { window.startChartFlow(); } catch(_){ } }
-      } catch(_){}
-
-    } catch {
+    } else {
       window.startFrontDataFlow();
-      try{
-        const r = await apiLastInputs();
-        if (r && r.found && r.inputs){
-          applyInputsToWheels(r.inputs);
-          applyInputsToSurvey(r.inputs);
-        } else {
-          ensureAllWheelsOnce();
-        }
-      } catch { ensureAllWheelsOnce(); }
-      try { window.startMacrosFlow(); } catch(_){}
-      try { window.startChartFlow(); } catch(_){}
     }
-  })();
+  });
 
+  /* ---------- Initial start ---------- */
+  window.startFrontDataFlow();
 })();
 
 /* ============================================================
