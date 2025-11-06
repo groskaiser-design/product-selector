@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0049'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0050'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -1232,6 +1232,8 @@ function handleSaveClick(e){
     localStorage.removeItem('chart:data:' + String(uid));
     localStorage.removeItem('comment:html:' + String(uid)); // ✅ ДОБАВЛЕНО
   } catch(_){}
+  // Очисти UI комментария
+  setAIStatus('Обрабатываем… (ждём новый комментарий)');
 
   const saveTask = saveMeasurementsToDB(values, saveId);
 
@@ -1600,7 +1602,10 @@ function handleSaveClick(e){
     if (r.done) return;
     _pollTimer = setTimeout(()=>pollLoop(), r.wait);
   }
-  window.startFrontDataFlow = function(){ pollLoop(); };
+  window.startFrontDataFlow = function(){ 
+  setAIStatus('Обрабатываем… (ждём комментарий)');
+  pollLoop(); 
+  };
 
   setAIStatus('Ждём данные…');
   setAnalyticsPlaceholder();
@@ -1653,16 +1658,21 @@ function handleSaveClick(e){
       if (b.front && b.front.html){
         renderAIComment(b.front.html || '');
       } else {
-        // Загрузи из кэша
-        try {
-          const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
-          const cachedComment = loadCommentCache(uid);
-          if (cachedComment?.html && !(reqRow && Number(cachedComment.row || 0) < Number(reqRow))) {
-            renderAIComment(cachedComment.html);
-          } else {
-            setAIStatus('Обрабатываем… (ждём комментарий)');
-          }
-        } catch(_){ setAIStatus('Обрабатываем… (ждём комментарий)'); }
+        // Кэш показываем ТОЛЬКО при первой загрузке (reqRow === null)
+        if (!reqRow) {
+          try {
+            const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
+            const cachedComment = loadCommentCache(uid);
+            if (cachedComment?.html) {
+              renderAIComment(cachedComment.html);
+            } else {
+              setAIStatus('Обрабатываем… (ждём комментарий)');
+            }
+          } catch(_){ setAIStatus('Обрабатываем… (ждём комментарий)'); }
+        } else {
+          // После save — не показываем старый кэш
+          setAIStatus('Обрабатываем… (ждём новый комментарий)');
+        }
         window.startFrontDataFlow();
       }
 
@@ -1702,12 +1712,12 @@ function handleSaveClick(e){
         }
       } catch { ensureAllWheelsOnce(); }
       
-      // Загрузи комментарий из кэша при ошибке
-      try {
-        const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
-        const cachedComment = loadCommentCache(uid);
-        if (cachedComment?.html) renderAIComment(cachedComment.html);
-      } catch(_){}
+// Загрузи комментарий из кэша при ошибке
+  try {
+    const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
+    const cachedComment = loadCommentCache(uid);
+    if (cachedComment?.html) renderAIComment(cachedComment.html);
+  } catch(_){}
       
       try { window.startMacrosFlow(); } catch(_){}
       try { window.startChartFlow(); } catch(_){}
