@@ -2,428 +2,348 @@
 <html lang="ru">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Telegram Mini App — Камера/Галерея (System Camera Only)</title>
-
-    <!-- Tailwind (CDN для прототипа) -->
-    <script src="https://cdn.tailwindcss.com"></script>
-
-    <!-- React 18 UMD + ReactDOM + Babel (для JSX в одном файле) -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <title>FoodCam — системная камера и галерея (без React)</title>
     <meta name="theme-color" content="#0a7cff" />
+
+    <!-- Чистый HTML/JS/CSS без внешних зависимостей — работает в WebView/Telegram -->
     <style>
-      html, body { height: 100%; }
-      body { -webkit-tap-highlight-color: transparent; }
+      :root{
+        --bg:#ffffff; --text:#111827; --muted:#6b7280; --primary:#2563eb; --primary-contrast:#ffffff;
+        --ring:#e5e7eb; --card:#f9fafb; --danger:#ef4444; --success:#16a34a;
+      }
+      *{box-sizing:border-box} html,body{height:100%} body{margin:0;background:var(--bg);color:var(--text);
+        -webkit-font-smoothing:antialiased;font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif}
+      .container{max-width:720px;margin:0 auto;padding:24px}
+      h1{font-size:22px;margin:0 0 6px}
+      p.muted{margin:0 0 16px;color:var(--muted);font-size:14px}
+      .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+      .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;
+        padding:12px 16px;border-radius:16px;border:1px solid transparent;background:#fff;color:#111827;
+        box-shadow:0 1px 2px rgba(0,0,0,.05);font-weight:600;cursor:pointer;transition:.15s transform}
+      .btn:active{transform:scale(.98)}
+      .btn-primary{background:var(--primary);color:var(--primary-contrast)}
+      .btn-outline{background:#fff;border-color:var(--ring)}
+      .btn-ghost{background:transparent;border-color:var(--ring)}
+      .hidden{display:none !important}
+      .card{border:1px solid var(--ring);border-radius:16px;background:#fff}
+      .pad{padding:16px}
+      .info{background:var(--card);color:var(--muted);border-radius:16px;padding:12px}
+      .error{background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;border-radius:12px;padding:12px;margin:12px 0}
+      .success{background:#ecfdf5;color:#065f46;border:1px solid #a7f3d0;border-radius:12px;padding:12px;display:flex;gap:12px;align-items:center}
+      .meta{color:var(--muted);font-size:12px;margin-top:6px}
+      .preview-img{max-height:360px;width:100%;object-fit:contain;display:block;border-radius:16px}
+      textarea{width:100%;min-height:112px;padding:12px;border-radius:16px;border:1px solid var(--ring);resize:none;font-size:14px}
+      .right{display:flex;justify-content:flex-end}
+      .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+      .progress{height:12px;background:#f3f4f6;border-radius:999px;overflow:hidden}
+      .bar{height:100%;background:var(--primary);width:0%}
+      footer{margin-top:24px;text-align:center;color:var(--muted);font-size:12px}
+      .icon{width:20px;height:20px;display:inline-block;vertical-align:middle}
+      .sr-only{position:absolute;left:-10000px}
     </style>
   </head>
-  <body class="min-h-screen w-full bg-[rgb(var(--tg-theme-bg-color,255,255,255))] text-[rgb(var(--tg-theme-text-color,17,24,39))]">
-    <div id="root"></div>
+  <body>
+    <main class="container">
+      <header>
+        <h1>Сделайте фото системной камерой или выберите из галереи</h1>
+        <p class="muted">Используем <b>только системную камеру</b> (rear), без живого превью. Комментарий — по желанию.</p>
+      </header>
 
-    <script type="text/babel">
-      const { useEffect, useMemo, useRef, useState } = React;
+      <div id="error" class="error hidden"></div>
 
-      function FoodCamPrototype() {
-        // --- Core state
-        const [phase, setPhase] = useState("idle"); // idle | preparing | preview | sending | success
-        const [entryMethod, setEntryMethod] = useState(null); // "system" | "gallery"
-        const [error, setError] = useState(null);
-        const [comment, setComment] = useState("");
-        const [charLimit] = useState(800);
+      <!-- IDLE -->
+      <section id="sec-idle">
+        <div class="row">
+          <button id="btn-system" class="btn btn-primary" aria-label="Открыть системную камеру (rear)">
+            <span class="icon" aria-hidden="true">📷</span> Системная камера
+          </button>
+          <button id="btn-gallery" class="btn btn-outline" aria-label="Выбрать фото из галереи">
+            <span class="icon" aria-hidden="true">🖼️</span> Галерея
+          </button>
+        </div>
 
-        // --- Image preview
-        const [previewURL, setPreviewURL] = useState(null);    // ObjectURL
-        const [previewBlob, setPreviewBlob] = useState(null);  // Blob (compressed)
-        const [previewMeta, setPreviewMeta] = useState(null);  // { width, height, type, size }
+        <div class="info" style="margin-top:12px">
+          <span class="icon" aria-hidden="true">💡</span>
+          <span>Кнопка «Системная камера» открывает встроенную камеру устройства через системный диалог. На десктопе откроется выбор файла.</span>
+        </div>
 
-        // --- Progress
-        const [sendProgress, setSendProgress] = useState(0);
+        <!-- Hidden inputs -->
+        <input id="file-gallery" type="file" accept="image/*" class="hidden" />
+        <input id="file-system" type="file" accept="image/*" capture="environment" class="hidden" />
+      </section>
 
-        // --- Inputs
-        const galleryInputRef = useRef(null);
-        const systemCamInputRef = useRef(null); // capture=environment
+      <!-- PREPARING -->
+      <section id="sec-preparing" class="hidden">
+        <div class="card pad" style="text-align:center">
+          <div style="font-weight:600;margin-bottom:6px">Подготавливаем фото…</div>
+          <div class="muted">Сжимаем изображение и нормализуем ориентацию</div>
+        </div>
+      </section>
 
-        // --- Telegram WebApp integration (safe)
-        const tg = useMemo(() => (typeof window !== "undefined" ? window.Telegram?.WebApp : undefined), []);
-        useEffect(() => { try { tg?.expand?.(); tg?.ready?.(); } catch {} }, [tg]);
+      <!-- PREVIEW -->
+      <section id="sec-preview" class="hidden">
+        <div class="card">
+          <img id="img-preview" alt="Предпросмотр фото" class="preview-img" />
+        </div>
+        <div id="meta" class="meta"></div>
 
-        // --- Utils -----------------------------------------------------------
-        function haptic(type = "light") { try { tg?.HapticFeedback?.impactOccurred?.(type); } catch {} }
-        function log(event, payload = {}) { console.log("[telemetry]", event, payload); }
+        <div style="margin-top:12px">
+          <label for="comment" style="font-weight:600;font-size:14px;display:block;margin-bottom:6px">Комментарий (необязательно)</label>
+          <textarea id="comment" placeholder="Например: треска 200 г и рис 150 г"></textarea>
+          <div class="right"><span id="counter" class="meta">0/800</span></div>
+        </div>
 
-        function onClickSystemCamera() {
-          setError(null);
-          setEntryMethod("system");
-          systemCamInputRef.current?.click();
-        }
-        function onClickGallery() {
-          setError(null);
-          setEntryMethod("gallery");
-          galleryInputRef.current?.click();
-        }
+        <div class="grid2" style="margin-top:12px">
+          <button id="btn-replace" class="btn btn-outline">Заменить фото</button>
+          <button id="btn-send" class="btn btn-primary" disabled><span class="icon" aria-hidden="true">✅</span> Отправить</button>
+        </div>
 
-        // Robust image loader (createImageBitmap → <img/> fallback)
-        async function loadBitmapFromFile(file) {
-          // Try createImageBitmap with EXIF orientation
-          if (window.createImageBitmap) {
-            try { return await createImageBitmap(file, { imageOrientation: "from-image" }); }
-            catch (e1) {
-              try { return await createImageBitmap(file); } catch (e2) {}
-            }
-          }
-          // Fallback via HTMLImageElement
-          const url = URL.createObjectURL(file);
-          const img = await new Promise((resolve, reject) => {
-            const el = new Image();
-            el.onload = () => resolve(el);
-            el.onerror = (err) => reject(err);
-            el.src = url;
-          });
-          // caller will draw and then can revoke URL
-          return { width: img.naturalWidth || img.width, height: img.naturalHeight || img.height, _img: img, _url: url };
-        }
+        <div class="info" style="margin-top:12px">
+          Фото можно заменить. Комментарий — опционален. EXIF-данные удаляются при сжатии.
+        </div>
+      </section>
 
-        async function onPickFile(file) {
-          if (!file) return;
-          setError(null);
-          setPhase("preparing");
+      <!-- SENDING -->
+      <section id="sec-sending" class="hidden">
+        <div class="card pad">
+          <div style="font-weight:600;margin-bottom:6px">Отправляем фото ассистенту…</div>
+          <div class="progress"><div id="bar" class="bar"></div></div>
+          <div class="meta" style="margin-top:6px">Это имитация загрузки для прототипа.</div>
+          <div style="margin-top:12px"><button id="btn-cancel" class="btn btn-ghost">Отмена</button></div>
+        </div>
+      </section>
 
-          try {
-            const loaded = await loadBitmapFromFile(file);
-
-            // Prepare canvas
-            const maxSide = 2000;
-            const srcW = loaded.width;
-            const srcH = loaded.height;
-            const scale = Math.min(1, maxSide / Math.max(srcW, srcH));
-            const cw = Math.max(1, Math.round(srcW * scale));
-            const ch = Math.max(1, Math.round(srcH * scale));
-
-            const canvas = document.createElement("canvas");
-            canvas.width = cw; canvas.height = ch;
-            const ctx = canvas.getContext("2d");
-
-            if (loaded instanceof ImageBitmap) {
-              ctx.drawImage(loaded, 0, 0, cw, ch);
-            } else {
-              ctx.drawImage(loaded._img, 0, 0, cw, ch);
-              try { URL.revokeObjectURL(loaded._url); } catch {}
-            }
-
-            const out = await compressFromCanvas(canvas);
-
-            // Cleanup previous preview
-            if (previewURL) { try { URL.revokeObjectURL(previewURL); } catch {} }
-
-            setPreviewURL(out.url);
-            setPreviewBlob(out.blob);
-            setPreviewMeta({ width: out.width, height: out.height, type: out.blob.type, size: out.blob.size });
-            setPhase("preview");
-            log(entryMethod === "system" ? "shot_taken_system" : "image_selected_gallery",
-                { w: out.width, h: out.height, size: out.blob.size, type: out.blob.type });
-          } catch (e) {
-            console.error(e);
-            setError("Не удалось обработать файл. Убедитесь, что это изображение (JPEG/PNG/HEIC/WEBP).");
-            setPhase("idle");
-          }
-        }
-
-        async function compressFromCanvas(canvas) {
-          // Optional second-stage downscale if canvas still > 2000px side
-          const maxSide = 2000;
-          const { width, height } = canvas;
-          const scale = Math.min(1, maxSide / Math.max(width, height));
-          let work = canvas;
-          if (scale < 1) {
-            const cw = Math.max(1, Math.round(width * scale));
-            const ch = Math.max(1, Math.round(height * scale));
-            const tmp = document.createElement("canvas");
-            tmp.width = cw; tmp.height = ch;
-            const c = tmp.getContext("2d");
-            c.drawImage(canvas, 0, 0, cw, ch);
-            work = tmp;
-          }
-          // Try WebP, fallback JPEG — EXIF stripped by design
-          let blob = await new Promise((res) => work.toBlob(res, "image/webp", 0.85));
-          if (!blob || blob.type !== "image/webp") {
-            blob = await new Promise((res) => work.toBlob(res, "image/jpeg", 0.85));
-          }
-          const url = URL.createObjectURL(blob);
-          return { blob, url, width: work.width, height: work.height };
-        }
-
-        function replacePhoto() {
-          if (entryMethod === "system") {
-            systemCamInputRef.current?.click();
-          } else {
-            galleryInputRef.current?.click();
-          }
-        }
-
-        function handleSendStub() {
-          setPhase("sending"); setSendProgress(0); haptic("light");
-          log("send_clicked", { hasPhoto: Boolean(previewBlob), commentLength: comment.length });
-          const startedAt = Date.now();
-          const int = setInterval(() => {
-            setSendProgress((p) => {
-              if (p >= 100) {
-                clearInterval(int);
-                haptic("light");
-                setPhase("success");
-                log("upload_success", { ms: Date.now() - startedAt });
-                return 100;
-              }
-              return Math.min(100, p + Math.random() * 18 + 4);
-            });
-          }, 180);
-        }
-
-        function downloadPayload() {
-          const rid = (crypto && crypto.randomUUID) ? crypto.randomUUID()
-                    : `rid-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-          const meta = {
-            ok: true,
-            request_id: rid,
-            comment,
-            image: previewMeta,
-            image_object_url: previewURL, // только для демо
-            ts: new Date().toISOString(),
-          };
-          const blob = new Blob([JSON.stringify(meta, null, 2)], { type: "application/json" });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = url; a.download = "payload_stub.json";
-          document.body.appendChild(a); a.click(); a.remove();
-          URL.revokeObjectURL(url);
-        }
-
-        function resetAll() {
-          try { if (previewURL) URL.revokeObjectURL(previewURL); } catch {}
-          setError(null);
-          setComment("");
-          setPreviewURL(null);
-          setPreviewBlob(null);
-          setPreviewMeta(null);
-          setSendProgress(0);
-          setPhase("idle");
-        }
-
-        // --- Icons -----------------------------------------------------------
-        const IconImage = (props) => (
-          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={props.className}>
-            <rect x="3" y="5" width="18" height="14" rx="2" stroke="currentColor" strokeWidth="1.5"/>
-            <path d="M7 15l3-3 3 3 4-4 3 3" stroke="currentColor" strokeWidth="1.5"/>
-            <circle cx="8" cy="9" r="1.5" fill="currentColor"/>
-          </svg>
-        );
-        const IconCamera = (props) => (
-          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={props.className}>
-            <path d="M9 7l1.5-2h3L15 7h3a2 2 0 012 2v8a2 2 0 01-2 2H6a2 2 0 01-2-2V9a2 2 0 012-2h3z" stroke="currentColor" strokeWidth="1.5"/>
-            <circle cx="12" cy="13" r="4" stroke="currentColor" strokeWidth="1.5"/>
-          </svg>
-        );
-        const IconCheck = (props) => (
-          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={props.className}>
-            <path d="M4 12l5 5 11-11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-          </svg>
-        );
-        const IconInfo = (props) => (
-          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={props.className}>
-            <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.5"/>
-            <path d="M12 8.5h.01M11 11h2v6h-2z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-          </svg>
-        );
-
-        // --- Render ----------------------------------------------------------
-        return (
-          <div className="min-h-screen w-full">
-            <div className="mx-auto max-w-md px-4 py-6">
-              <header className="mb-4">
-                <h1 className="text-2xl font-semibold tracking-tight">
-                  Сделайте фото системной камерой или выберите из галереи
-                </h1>
-                <p className="text-sm text-gray-500">
-                  Используем <b>только системную камеру</b> (rear), без живого превью.
-                  Комментарий — по желанию.
-                </p>
-              </header>
-
-              {error && (
-                <div className="mb-4 rounded-xl border border-red-300 bg-red-50 p-3 text-sm text-red-700">
-                  {error}
-                </div>
-              )}
-
-              {phase === "idle" && (
-                <section className="space-y-4">
-                  <div className="grid grid-cols-2 gap-3">
-                    <button
-                      className="flex items-center justify-center gap-2 rounded-2xl bg-blue-600 px-4 py-3 text-base font-medium text-white shadow-sm transition active:scale-[0.98]"
-                      onClick={onClickSystemCamera}
-                      aria-label="Открыть системную камеру (rear)"
-                    >
-                      <IconCamera className="h-5 w-5" /> Системная камера
-                    </button>
-
-                    <button
-                      className="flex items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 text-base font-medium shadow-sm ring-1 ring-gray-200 transition active:scale-[0.98]"
-                      onClick={onClickGallery}
-                      aria-label="Выбрать фото из галереи"
-                    >
-                      <IconImage className="h-5 w-5" /> Галерея
-                    </button>
-                  </div>
-
-                  <div className="rounded-2xl bg-gray-50 p-3 text-sm text-gray-600">
-                    <div className="flex items-start gap-2">
-                      <IconInfo className="mt-0.5 h-5 w-5" />
-                      <p>
-                        Кнопка «Системная камера» открывает нативное окно съёмки устройства
-                        через системный диалог. На десктопе откроется выбор файла.
-                      </p>
-                    </div>
-                  </div>
-
-                  <!-- Hidden inputs -->
-                  <input
-                    ref={galleryInputRef}
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(e) => onPickFile(e.target.files?.[0])}
-                  />
-                  <input
-                    ref={systemCamInputRef}
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    className="hidden"
-                    onChange={(e) => onPickFile(e.target.files?.[0])}
-                  />
-                </section>
-              )}
-
-              {phase === "preparing" && (
-                <section className="space-y-4">
-                  <div className="rounded-2xl border border-gray-200 p-6 text-center">
-                    <p className="mb-2 text-base font-medium">Подготавливаем фото…</p>
-                    <p className="text-sm text-gray-500">Сжимаем изображение и нормализуем ориентацию</p>
-                  </div>
-                </section>
-              )}
-
-              {phase === "preview" && (
-                <section className="space-y-4">
-                  <div className="overflow-hidden rounded-2xl ring-1 ring-gray-200">
-                    <img
-                      src={previewURL}
-                      alt="Предпросмотр фото"
-                      className="max-h-[360px] w-full object-contain"
-                      style={{ imageOrientation: "from-image" }}
-                    />
-                  </div>
-
-                  {previewMeta && (
-                    <div className="text-xs text-gray-500">
-                      {previewMeta.width}×{previewMeta.height} • {(previewMeta.size / 1024).toFixed(0)} KB • {previewMeta.type}
-                    </div>
-                  )}
-
-                  <div>
-                    <label htmlFor="comment" className="mb-1 block text-sm font-medium">Комментарий (необязательно)</label>
-                    <textarea
-                      id="comment"
-                      value={comment}
-                      onChange={(e) => setComment(e.target.value.slice(0, charLimit))}
-                      placeholder="Например: треска 200 г и рис 150 г"
-                      className="h-28 w-full resize-none rounded-2xl border border-gray-200 bg-white p-3 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                    <div className="mt-1 text-right text-xs text-gray-500">{comment.length}/{charLimit}</div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <button
-                      onClick={replacePhoto}
-                      className="flex items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 text-base font-medium shadow-sm ring-1 ring-gray-200 transition active:scale-[0.98]"
-                    >
-                      Заменить фото
-                    </button>
-                    <button
-                      onClick={handleSendStub}
-                      disabled={!previewBlob}
-                      className="flex items-center justify-center gap-2 rounded-2xl bg-blue-600 px-4 py-3 text-base font-medium text-white shadow-sm transition active:scale-[0.98] disabled:opacity-50"
-                    >
-                      <IconCheck className="h-5 w-5" /> Отправить
-                    </button>
-                  </div>
-
-                  <div className="rounded-2xl bg-gray-50 p-3 text-xs text-gray-600">
-                    Фото можно заменить. Комментарий — опционален. EXIF-данные удаляются при сжатии.
-                  </div>
-                </section>
-              )}
-
-              {phase === "sending" && (
-                <section className="space-y-4">
-                  <div className="rounded-2xl border border-gray-200 p-6">
-                    <p className="mb-2 text-base font-medium">Отправляем фото ассистенту…</p>
-                    <div className="h-3 w-full overflow-hidden rounded-full bg-gray-100">
-                      <div className="h-3 rounded-full bg-blue-600 transition-[width]" style={{ width: `${sendProgress}%` }} />
-                    </div>
-                    <p className="mt-2 text-xs text-gray-500">Это имитация загрузки для прототипа.</p>
-                    <div className="mt-4 flex gap-2">
-                      <button
-                        onClick={() => { setPhase("preview"); setSendProgress(0); log("upload_canceled"); }}
-                        className="rounded-xl px-4 py-2 text-sm font-medium ring-1 ring-gray-200"
-                      >
-                        Отмена
-                      </button>
-                    </div>
-                  </div>
-                </section>
-              )}
-
-              {phase === "success" && (
-                <section className="space-y-4">
-                  <div className="flex items-center gap-3 rounded-2xl border border-green-200 bg-green-50 p-4">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-green-600/90 text-white">
-                      <IconCheck className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <div className="text-base font-medium">Фото отправлено (заглушка)</div>
-                      <div className="text-sm text-gray-600">В этой версии мы ничего не отправляем, но показываем, как выглядел бы поток.</div>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <button
-                      onClick={downloadPayload}
-                      className="rounded-2xl bg-white px-4 py-3 text-base font-medium shadow-sm ring-1 ring-gray-200"
-                    >
-                      Скачать payload.json
-                    </button>
-                    <button
-                      onClick={resetAll}
-                      className="rounded-2xl bg-blue-600 px-4 py-3 text-base font-medium text-white shadow-sm"
-                    >
-                      Сделать новое фото
-                    </button>
-                  </div>
-                </section>
-              )}
-
-              <footer className="mt-8 text-center text-xs text-gray-400">
-                Мы не сохраняем оригиналы фото без вашего согласия. Эта страница — интерактивный прототип.
-              </footer>
-            </div>
+      <!-- SUCCESS -->
+      <section id="sec-success" class="hidden">
+        <div class="success">
+          <span class="icon" aria-hidden="true">✅</span>
+          <div>
+            <div style="font-weight:600">Фото отправлено (заглушка)</div>
+            <div class="meta">В этой версии мы ничего не отправляем, но показываем, как выглядел бы поток.</div>
           </div>
-        );
+        </div>
+        <div class="grid2" style="margin-top:12px">
+          <button id="btn-download" class="btn btn-outline">Скачать payload.json</button>
+          <button id="btn-new" class="btn btn-primary">Сделать новое фото</button>
+        </div>
+      </section>
+
+      <footer>Мы не сохраняем оригиналы фото без вашего согласия. Эта страница — интерактивный прототип.</footer>
+    </main>
+
+    <script>
+      // ---- Мини-хелперы/состояние -----------------------------------------
+      const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
+      try { tg && tg.expand && tg.expand(); tg && tg.ready && tg.ready(); } catch(e){}
+
+      const $ = (id) => document.getElementById(id);
+      const secIdle = $('sec-idle'), secPrep = $('sec-preparing'), secPrev = $('sec-preview'),
+            secSend = $('sec-sending'), secOk = $('sec-success'), errBox = $('error');
+
+      const btnSystem = $('btn-system'), btnGallery = $('btn-gallery'),
+            inSystem = $('file-system'), inGallery = $('file-gallery');
+
+      const imgPrev = $('img-preview'), metaBox = $('meta'), ta = $('comment'),
+            counter = $('counter'), btnReplace = $('btn-replace'), btnSend = $('btn-send'),
+            btnCancel = $('btn-cancel'), bar = $('bar'), btnDownload = $('btn-download'), btnNew = $('btn-new');
+
+      let phase = 'idle';           // idle | preparing | preview | sending | success
+      let entryMethod = null;       // 'system' | 'gallery'
+      let previewURL = null;        // ObjectURL
+      let previewBlob = null;       // Blob
+      let previewMeta = null;       // {width,height,type,size}
+      const CHAR_LIMIT = 800;
+
+      function setPhase(next){
+        phase = next;
+        secIdle.classList.toggle('hidden', next!=='idle');
+        secPrep.classList.toggle('hidden', next!=='preparing');
+        secPrev.classList.toggle('hidden', next!=='preview');
+        secSend.classList.toggle('hidden', next!=='sending');
+        secOk.classList.toggle('hidden', next!=='success');
+      }
+      function setError(msg){
+        if(!msg){ errBox.classList.add('hidden'); errBox.textContent=''; return; }
+        errBox.textContent = msg;
+        errBox.classList.remove('hidden');
+      }
+      function haptic(type){ try { tg && tg.HapticFeedback && tg.HapticFeedback.impactOccurred(type || 'light'); } catch(e){} }
+      function log(ev, payload){ try { console.log('[telemetry]', ev, payload||{}); } catch(e){} }
+
+      // toBlob polyfill (старые WebKit)
+      if(!HTMLCanvasElement.prototype.toBlob){
+        HTMLCanvasElement.prototype.toBlob = function(callback, type, quality){
+          const dataURL = this.toDataURL(type, quality).split(',')[1];
+          const bin = atob(dataURL); const len = bin.length; const arr = new Uint8Array(len);
+          for(let i=0;i<len;i++) arr[i] = bin.charCodeAt(i);
+          callback(new Blob([arr], {type: type || 'image/png'}));
+        }
       }
 
-      const root = ReactDOM.createRoot(document.getElementById("root"));
-      root.render(<FoodCamPrototype />);
+      // ---- Системная камера / галерея --------------------------------------
+      btnSystem.addEventListener('click', () => { setError(null); entryMethod='system'; inSystem.click(); });
+      btnGallery.addEventListener('click', () => { setError(null); entryMethod='gallery'; inGallery.click(); });
+
+      inSystem.addEventListener('change', (e)=> handlePickedFile(e.target.files && e.target.files[0]));
+      inGallery.addEventListener('change', (e)=> handlePickedFile(e.target.files && e.target.files[0]));
+
+      btnReplace.addEventListener('click', () => {
+        if(entryMethod==='system') inSystem.click(); else inGallery.click();
+      });
+
+      ta.addEventListener('input', () => {
+        if(ta.value.length > CHAR_LIMIT) ta.value = ta.value.slice(0, CHAR_LIMIT);
+        counter.textContent = ta.value.length + '/' + CHAR_LIMIT;
+      });
+
+      btnSend.addEventListener('click', startStubUpload);
+      btnCancel.addEventListener('click', () => { setPhase('preview'); bar.style.width='0%'; });
+      btnDownload.addEventListener('click', downloadPayload);
+      btnNew.addEventListener('click', resetAll);
+
+      window.addEventListener('beforeunload', () => { if(previewURL){ try{ URL.revokeObjectURL(previewURL); }catch(e){} } });
+
+      // ---- Pipeline ---------------------------------------------------------
+      async function handlePickedFile(file){
+        if(!file) return;
+        setError(null);
+        setPhase('preparing');
+
+        try{
+          const loaded = await loadBitmap(file);
+
+          const maxSide = 2000;
+          const srcW = loaded.width, srcH = loaded.height;
+          const scale = Math.min(1, maxSide / Math.max(srcW, srcH));
+          const cw = Math.max(1, Math.round(srcW * scale));
+          const ch = Math.max(1, Math.round(srcH * scale));
+
+          const canvas = document.createElement('canvas');
+          canvas.width = cw; canvas.height = ch;
+          const ctx = canvas.getContext('2d');
+
+          if(loaded.bitmap){
+            ctx.drawImage(loaded.bitmap, 0, 0, cw, ch);
+            try{ loaded.bitmap.close && loaded.bitmap.close(); }catch(e){}
+          }else{
+            ctx.drawImage(loaded.img, 0, 0, cw, ch);
+            try{ URL.revokeObjectURL(loaded.url); }catch(e){}
+          }
+
+          const out = await compressFromCanvas(canvas);
+
+          // cleanup previous
+          if(previewURL){ try{ URL.revokeObjectURL(previewURL); }catch(e){} }
+
+          previewURL = out.url;
+          previewBlob = out.blob;
+          previewMeta = { width: out.width, height: out.height, type: out.blob.type, size: out.blob.size };
+
+          imgPrev.src = previewURL;
+          metaBox.textContent = `${previewMeta.width}×${previewMeta.height} • ${Math.round(previewMeta.size/1024)} KB • ${previewMeta.type}`;
+          btnSend.disabled = !previewBlob;
+
+          setPhase('preview');
+          log(entryMethod==='system' ? 'shot_taken_system' : 'image_selected_gallery', previewMeta);
+        }catch(err){
+          console.error(err);
+          setError('Не удалось обработать файл. Убедитесь, что это изображение (JPEG/PNG/HEIC/WEBP).');
+          setPhase('idle');
+        }
+      }
+
+      async function loadBitmap(file){
+        // createImageBitmap с ориентацией (если поддерживается); иначе <img>
+        if('createImageBitmap' in window){
+          try{
+            const bitmap = await createImageBitmap(file, { imageOrientation:'from-image' });
+            return { bitmap, width: bitmap.width, height: bitmap.height };
+          }catch(e1){
+            try{
+              const bitmap = await createImageBitmap(file);
+              return { bitmap, width: bitmap.width, height: bitmap.height };
+            }catch(e2){}
+          }
+        }
+        const url = URL.createObjectURL(file);
+        const img = await new Promise((resolve, reject)=>{
+          const el = new Image();
+          el.onload = ()=> resolve(el);
+          el.onerror = (er)=> reject(er);
+          el.src = url;
+        });
+        return { img, url, width: img.naturalWidth || img.width, height: img.naturalHeight || img.height };
+      }
+
+      async function compressFromCanvas(canvas){
+        // downscale ещё раз, если нужно
+        const maxSide = 2000;
+        const w = canvas.width, h = canvas.height;
+        const scale = Math.min(1, maxSide / Math.max(w,h));
+        let work = canvas;
+        if(scale < 1){
+          const cw = Math.max(1, Math.round(w * scale)), ch = Math.max(1, Math.round(h * scale));
+          const tmp = document.createElement('canvas'); tmp.width=cw; tmp.height=ch;
+          tmp.getContext('2d').drawImage(canvas, 0, 0, cw, ch);
+          work = tmp;
+        }
+        let blob = await new Promise(res=> work.toBlob(res, 'image/webp', .85));
+        if(!blob || blob.type !== 'image/webp'){
+          blob = await new Promise(res=> work.toBlob(res, 'image/jpeg', .85));
+        }
+        const url = URL.createObjectURL(blob);
+        return { blob, url, width: work.width, height: work.height };
+      }
+
+      // ---- Upload stub ------------------------------------------------------
+      function startStubUpload(){
+        setPhase('sending');
+        bar.style.width='0%';
+        haptic('light');
+        log('send_clicked',{ hasPhoto: !!previewBlob, commentLen: (ta.value||'').length });
+        const started = Date.now();
+        const timer = setInterval(()=>{
+          const cur = parseFloat(bar.style.width) || 0;
+          const next = Math.min(100, cur + Math.random()*18 + 4);
+          bar.style.width = next + '%';
+          if(next >= 100){
+            clearInterval(timer);
+            haptic('light');
+            setPhase('success');
+            log('upload_success', { ms: Date.now()-started });
+          }
+        }, 180);
+      }
+
+      function downloadPayload(){
+        const rid = (crypto && crypto.randomUUID) ? crypto.randomUUID() : ('rid-' + Date.now() + '-' + Math.random().toString(16).slice(2));
+        const payload = {
+          ok: true,
+          request_id: rid,
+          comment: ta.value || '',
+          image: previewMeta,
+          image_object_url: previewURL, // только для демонстрации
+          ts: new Date().toISOString()
+        };
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type:'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url; a.download = 'payload_stub.json';
+        document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+      }
+
+      function resetAll(){
+        setError(null);
+        try{ if(previewURL) URL.revokeObjectURL(previewURL); }catch(e){}
+        previewURL = null; previewBlob = null; previewMeta = null;
+        ta.value = ''; counter.textContent = '0/800'; bar.style.width='0%';
+        btnSend.disabled = true; entryMethod = null;
+        setPhase('idle');
+      }
+
+      // ---- Стартовое состояние ---------------------------------------------
+      setPhase('idle');
+      counter.textContent = '0/800';
     </script>
   </body>
 </html>
