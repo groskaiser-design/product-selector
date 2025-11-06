@@ -3,383 +3,474 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>План vs Факт — диаграмма отклонений (мобайл)</title>
+    <title>Telegram Mini App — Камера/Галерея (Prototype)</title>
+    <!-- Tailwind (Play CDN — ок для прототипа) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React 18 UMD + Babel Standalone (для JSX в одном файле) -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <meta name="theme-color" content="#0a7cff" />
     <style>
-      /* ===== COSMETICS: шрифты, размеры, радиусы, цвета (настраиваемые переменные) ===== */
-      :root{
-        /* Типографика */
-        --font-family: ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial;
-        --name-size: clamp(10px, 3.2vw, 12px);  /* адаптация до 10px на узких экранах */
-        --name-weight: 400;                      /* толщина названия */
-        --meta-size: clamp(10px, 3.2vw, 12px);  /* размер «Факт | План | ∆» */
-        --value-size: clamp(10px, 3.8vw, 14px); /* размер чисел */
-        --value-weight: 800;                     /* толщина чисел */
-        --line-name: 1.25;
-
-        /* Геометрия полос */
-        --gauge-height: 28px;      /* высота серой плановой полосы */
-        --plan-radius: 6px;        /* радиус плана */
-        --fact-radius: 3px;        /* радиус факта */
-        --fact-height: 50%;        /* толщина факта относительно плана */
-
-        /* Цвета текста */
-        --text:#ffffff;
-        --muted:rgba(255,255,255,.82); /* немного выше контраст */
-
-        /* Цвета факта */
-        --fact-green:#22c55e;      /* зелёный */
-        --fact-orange:#f59e0b;     /* оранжевый */
-        --fact-red:#ef4444;        /* красный (% Жира и Талия при переборе) */
-
-        /* Цвета плана */
-        --plan-fill: rgba(255,255,255,.38);
-        --plan-border: rgba(255,255,255,.52);
-
-        /* Обводка, тени */
-        --fact-contour: rgba(255,255,255,.95);
-        --shadow:0 8px 24px rgba(27,35,78,.22);
-
-        /* Фон страницы */
-        --page-grad-from:#7B6EF6;
-        --page-grad-to:#6F7FF0;
-
-        /* Внешние поля страницы */
-        --outer-pad: clamp(12px, 4.5vw, 18px);
-      }
-
-      *{box-sizing:border-box}
-      body{
-        margin:0; color:var(--text);
-        font-family:var(--font-family);
-        -webkit-font-smoothing:antialiased;
-        min-height:100vh;
-        background:linear-gradient(180deg,var(--page-grad-from) 0%,var(--page-grad-to) 100%);
-        background-attachment:fixed;
-      }
-      /* Контейнер страницы с безопасными отступами по краям */
-      .page{
-        padding: var(--outer-pad);
-        padding-left: max(var(--outer-pad), env(safe-area-inset-left));
-        padding-right: max(var(--outer-pad), env(safe-area-inset-right));
-        padding-top: max(var(--outer-pad), env(safe-area-inset-top));
-        padding-bottom: max(var(--outer-pad), env(safe-area-inset-bottom));
-      }
-
-      .card{max-width:680px;margin:clamp(8px,4vw,20px) auto;padding:12px;border-radius:20px;
-        background:linear-gradient(180deg,rgba(255,255,255,.22) 0%,rgba(255,255,255,.14) 100%);
-        backdrop-filter:blur(22px) saturate(1.35);
-        border:1.5px solid rgba(255,255,255,.45);
-        box-shadow:var(--shadow);
-      }
-
-      /* Контейнер со скроллом: показываем 5 строк, остальное прокручивается */
-      .scroller{position:relative;overflow:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;scroll-snap-type:y proximity;scroll-behavior:smooth;border-radius:16px}
-      /* подсказка: прыгающая стрелка, как намёк на скролл */
-      .scroll-hint{position:relative;left:auto;bottom:auto;transform:none;margin:10px auto 0;opacity:.65;pointer-events:none;transition:opacity .2s ease;animation:hint-bounce 1.2s infinite;width:18px;height:18px}
-      .scroll-hint.hidden{opacity:0;animation:none;height:0;margin-top:0;overflow:hidden}
-      .scroll-hint svg{display:block;width:18px;height:18px;filter:drop-shadow(0 1px 2px rgba(0,0,0,.25))}
-      @keyframes hint-bounce{0%,100%{transform:translateY(0)}50%{transform:translateY(4px)}}
-
-      /* Единая стеклянная панель */
-      .list{display:flex;flex-direction:column;gap:0;padding:8px 10px;border-radius:16px;overflow:hidden;
-        background:linear-gradient(180deg,rgba(255,255,255,.12),rgba(255,255,255,.06));
-        border:1px solid rgba(255,255,255,.30);
-      }
-      .row{display:flex;flex-direction:column;gap:8px;padding:10px 4px;scroll-snap-align:start}
-      .row+.row{border-top:1px solid rgba(255,255,255,.22);margin-top:8px;padding-top:16px}
-
-      /* Заголовок строки */
-      .top{display:flex;align-items:baseline;justify-content:flex-start;gap:10px;flex-wrap:wrap}
-      .name{font-size: var(--name-size) !important; font-weight: var(--name-weight) !important; line-height: var(--line-name)}
-      .vals{display:flex;flex-wrap:wrap;gap:4px;font-size:var(--meta-size);line-height:1.25}
-      .vals .kv{display:inline-flex;align-items:baseline;gap:2px}
-      .vals .lab{color:var(--muted);margin-right:2px}
-      .vals .val{font-weight:var(--value-weight);font-size:var(--value-size)}
-      .dot{color:var(--muted);margin:0 2px}
-
-      /* Полосы: план (серый), факт (зелёный/оранжевый/красный) */
-      .gauge{position:relative;height:var(--gauge-height);border-radius:var(--plan-radius)}
-      .plan{position:absolute;inset:0 auto 0 0;width:var(--wp,0%);border-radius:var(--plan-radius);
-        background:var(--plan-fill);border:1px solid var(--plan-border);
-        box-shadow:inset 0 -1px 0 rgba(255,255,255,.18);z-index:1}
-      .fact{position:absolute;left:0;top:50%;transform:translateY(-50%);height:var(--fact-height);width:var(--wf,0%);
-        min-width:6px;border-radius:var(--fact-radius);border:1px solid var(--fact-contour);
-        /* Фолбэк для старых устройств */
-        background: var(--fact-green);
-        box-shadow:inset 0 -1px 0 rgba(255,255,255,.16),0 10px 24px -14px rgba(9,25,52,.55);
-        transform-origin:left center;transition:width .22s ease;z-index:2}
-      .fact.orange{ background: var(--fact-orange); }
-      .fact.red{ background: var(--fact-red); }
-
-      /* Улучшенная заливка для современных движков */
-      @supports (background: color-mix(in oklab, white 50%, black)){
-        .fact{ background: linear-gradient(180deg,rgba(255,255,255,.12),rgba(255,255,255,0) 60%),
-                           color-mix(in oklab,var(--fact-green) 88%, transparent); }
-        .fact.orange{ background: linear-gradient(180deg,rgba(255,255,255,.12),rgba(255,255,255,0) 60%),
-                                   color-mix(in oklab,var(--fact-orange) 88%, transparent); }
-        .fact.red{ background: linear-gradient(180deg,rgba(255,255,255,.12),rgba(255,255,255,0) 60%),
-                                   color-mix(in oklab,var(--fact-red) 88%, transparent); }
-      }
-
-      .fact.neutral{ /* когда delta нет — нейтральный вид */
-        background: rgba(255,255,255,.08);
-        border-color: rgba(255,255,255,.6);
-        box-shadow: inset 0 -1px 0 rgba(255,255,255,.12);
-      }
-
-      .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
-      @media (prefers-reduced-motion:reduce){.fact{transition:none} .scroller{scroll-behavior:auto} .scroll-hint{animation:none}}
+      html, body { height: 100%; }
+      body { -webkit-tap-highlight-color: transparent; }
     </style>
   </head>
-  <body>
-    <div class="page">
-      <div class="card" id="pfHApp" role="region" aria-label="План против факта — диаграмма отклонений">
-        <div class="scroller" id="scroller">
-          <div class="list" id="rows"></div>
-        </div>
-        <div class="scroll-hint" id="scrollHint" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M6 9l6 6 6-6" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <body class="min-h-screen w-full bg-[rgb(var(--tg-theme-bg-color,255,255,255))] text-[rgb(var(--tg-theme-text-color,17,24,39))]">
+    <div id="root"></div>
+
+    <script type="text/babel">
+      const { useEffect, useMemo, useRef, useState } = React;
+
+      function FoodCamPrototype() {
+        // --- Core state
+        const [phase, setPhase] = useState("idle"); // idle | camera | preview | preparing | sending | success
+        const [entryMethod, setEntryMethod] = useState(null); // "camera" | "gallery"
+        const [error, setError] = useState(null);
+        const [comment, setComment] = useState("");
+        const [charLimit] = useState(800);
+
+        // --- Media refs
+        const videoRef = useRef(null);
+        const streamRef = useRef(null);
+        const trackRef = useRef(null);
+        const [torchSupported, setTorchSupported] = useState(false);
+        const [torchOn, setTorchOn] = useState(false);
+
+        // --- Image preview
+        const [previewURL, setPreviewURL] = useState(null); // object URL
+        const [previewBlob, setPreviewBlob] = useState(null); // Blob after compression
+        const [previewMeta, setPreviewMeta] = useState(null); // { width, height, type, size }
+
+        // --- Progress / processing
+        const [isProcessing, setIsProcessing] = useState(false);
+        const [sendProgress, setSendProgress] = useState(0);
+
+        // --- Hidden inputs (gallery + system camera fallback)
+        const galleryInputRef = useRef(null);
+        const systemCamInputRef = useRef(null); // capture=environment
+
+        // --- Telegram WebApp integration (optional, safe-guarded)
+        const tg = useMemo(() => (typeof window !== "undefined" ? window.Telegram?.WebApp : undefined), []);
+
+        useEffect(() => {
+          try { tg?.expand?.(); tg?.ready?.(); } catch (e) {}
+          return () => stopStream();
+        }, [tg]);
+
+        // --- Helpers -------------------------------------------------------------
+        const isMobile = useMemo(() => {
+          if (typeof navigator === "undefined") return false;
+          return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+        }, []);
+
+        function haptic(type = "light") {
+          try { tg?.HapticFeedback?.impactOccurred?.(type); } catch (e) {}
+        }
+
+        function log(event, payload = {}) {
+          console.log(`[telemetry] ${event}`, payload);
+        }
+
+        function stopStream() {
+          try {
+            if (trackRef.current) { try { trackRef.current.stop(); } catch (e) {} }
+            if (streamRef.current) {
+              streamRef.current.getTracks?.().forEach((t) => { try { t.stop(); } catch (e) {} });
+            }
+          } catch (e) {}
+          trackRef.current = null;
+          streamRef.current = null;
+          if (videoRef.current) videoRef.current.srcObject = null;
+        }
+
+        async function applyTorch(next) {
+          if (!trackRef.current) return;
+          try {
+            await trackRef.current.applyConstraints({ advanced: [{ torch: next }] });
+            setTorchOn(next);
+          } catch (e) {
+            setTorchSupported(false);
+            setTorchOn(false);
+          }
+        }
+
+        async function ensureRearDeviceId() {
+          try {
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const videoInputs = devices.filter((d) => d.kind === "videoinput");
+            const rear = videoInputs.find((d) => /back|rear|environment/i.test(d.label));
+            return rear?.deviceId || null;
+          } catch (e) { return null; }
+        }
+
+        async function startCameraStream(withDeviceId = null) {
+          setError(null);
+          let constraints = { video: { facingMode: { ideal: "environment" } } };
+          if (withDeviceId) constraints = { video: { deviceId: { exact: withDeviceId } } };
+
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia(constraints);
+            streamRef.current = stream;
+            const track = stream.getVideoTracks?.()[0];
+            trackRef.current = track || null;
+
+            // Torch support
+            const caps = track?.getCapabilities?.();
+            setTorchSupported(Boolean(caps && "torch" in caps));
+
+            if (videoRef.current) {
+              videoRef.current.srcObject = stream;
+              await videoRef.current.play();
+            }
+
+            // Retry with explicit rear deviceId if available
+            const rearId = await ensureRearDeviceId();
+            if (rearId && withDeviceId === null) {
+              try {
+                stopStream();
+                await startCameraStream(rearId);
+                return;
+              } catch (e) {}
+            }
+
+            setPhase("camera");
+            setEntryMethod("camera");
+            log("camera_opened", { rearId: withDeviceId || rearId || null });
+          } catch (e) {
+            log("camera_open_failed", { message: String(e) });
+            setError("Не удалось открыть заднюю камеру. Выберите фото из галереи или воспользуйтесь системной камерой.");
+            setPhase("idle");
+          }
+        }
+
+        async function handleShutter() {
+          if (!videoRef.current) return;
+          try {
+            haptic("light");
+            const vw = videoRef.current.videoWidth || 0;
+            const vh = videoRef.current.videoHeight || 0;
+            if (!vw || !vh) throw new Error("Видео не готово");
+
+            const canvas = document.createElement("canvas");
+            canvas.width = vw;
+            canvas.height = vh;
+            const ctx = canvas.getContext("2d");
+            ctx.drawImage(videoRef.current, 0, 0, vw, vh);
+
+            setPhase("preparing");
+            setIsProcessing(true);
+            const out = await compressFromCanvas(canvas);
+            setIsProcessing(false);
+
+            stopStream();
+
+            setPreviewURL(out.url);
+            setPreviewBlob(out.blob);
+            setPreviewMeta({ width: out.width, height: out.height, type: out.blob.type, size: out.blob.size });
+            setPhase("preview");
+            setEntryMethod("camera");
+            log("shot_taken", { w: out.width, h: out.height, size: out.blob.size, type: out.blob.type });
+          } catch (e) {
+            setError("Не удалось сделать снимок. Попробуйте ещё раз или выберите фото из галереи.");
+            setPhase("camera");
+          }
+        }
+
+        async function onPickFromGallery(file) {
+          if (!file) return;
+          setError(null);
+          setPhase("preparing");
+          setIsProcessing(true);
+          try {
+            let bitmap;
+            try { bitmap = await createImageBitmap(file, { imageOrientation: "from-image" }); }
+            catch (e) { bitmap = await createImageBitmap(file); }
+
+            const maxSide = 2000;
+            const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+            const cw = Math.max(1, Math.round(bitmap.width * scale));
+            const ch = Math.max(1, Math.round(bitmap.height * scale));
+            const canvas = document.createElement("canvas");
+            canvas.width = cw;
+            canvas.height = ch;
+            const ctx = canvas.getContext("2d");
+            ctx.drawImage(bitmap, 0, 0, cw, ch);
+
+            const out = await compressFromCanvas(canvas);
+            setPreviewURL(out.url);
+            setPreviewBlob(out.blob);
+            setPreviewMeta({ width: out.width, height: out.height, type: out.blob.type, size: out.blob.size });
+            setPhase("preview");
+            setEntryMethod("gallery");
+            log("image_selected", { w: out.width, h: out.height, size: out.blob.size, type: out.blob.type });
+          } catch (e) {
+            setError("Не удалось обработать файл. Убедитесь, что это изображение (JPEG/PNG/HEIC/WEBP).");
+            setPhase("idle");
+          } finally { setIsProcessing(false); }
+        }
+
+        function onClickGallery() { galleryInputRef.current?.click(); }
+        function onClickSystemCamera() { systemCamInputRef.current?.click(); }
+
+        async function compressFromCanvas(canvas) {
+          const maxSide = 2000;
+          const { width, height } = canvas;
+          let cw = width, ch = height;
+          const scale = Math.min(1, maxSide / Math.max(width, height));
+          if (scale < 1) {
+            cw = Math.max(1, Math.round(width * scale));
+            ch = Math.max(1, Math.round(height * scale));
+            const tmp = document.createElement("canvas");
+            tmp.width = cw; tmp.height = ch;
+            const tctx = tmp.getContext("2d");
+            tctx.drawImage(canvas, 0, 0, cw, ch);
+            canvas = tmp;
+          }
+          let blob = await new Promise((res) => canvas.toBlob(res, "image/webp", 0.85));
+          if (!blob || blob.type !== "image/webp") {
+            blob = await new Promise((res) => canvas.toBlob(res, "image/jpeg", 0.85));
+          }
+          const url = URL.createObjectURL(blob);
+          return { blob, url, width: canvas.width, height: canvas.height };
+        }
+
+        function resetAll() {
+          setError(null); setComment(""); setPreviewURL(null); setPreviewBlob(null); setPreviewMeta(null);
+          setSendProgress(0); setTorchOn(false); setTorchSupported(false); stopStream(); setPhase("idle");
+        }
+
+        function replacePhoto() {
+          if (entryMethod === "camera") {
+            resetPreviewOnly();
+            if (navigator.mediaDevices?.getUserMedia) startCameraStream(); else onClickSystemCamera();
+          } else { resetPreviewOnly(); onClickGallery(); }
+        }
+
+        function resetPreviewOnly() {
+          setPreviewURL(null); setPreviewBlob(null); setPreviewMeta(null); setPhase("idle");
+        }
+
+        function handleSendStub() {
+          setPhase("sending"); setSendProgress(0); haptic("light");
+          log("send_clicked", { hasPhoto: Boolean(previewBlob), commentLength: comment.length });
+          const startedAt = Date.now();
+          const interval = setInterval(() => {
+            setSendProgress((p) => {
+              if (p >= 100) {
+                clearInterval(interval); haptic("light"); setPhase("success");
+                log("upload_success", { ms: Date.now() - startedAt });
+                return 100;
+              }
+              return Math.min(100, p + Math.random() * 18 + 4);
+            });
+          }, 180);
+        }
+
+        function downloadPayload() {
+          const rid = (crypto && crypto.randomUUID) ? crypto.randomUUID() : `rid-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+          const meta = {
+            ok: true,
+            request_id: rid,
+            comment,
+            image: previewMeta,
+            image_object_url: previewURL,
+            ts: new Date().toISOString(),
+          };
+          const blob = new Blob([JSON.stringify(meta, null, 2)], { type: "application/json" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url; a.download = "payload_stub.json"; document.body.appendChild(a); a.click(); a.remove();
+          URL.revokeObjectURL(url);
+        }
+
+        // --- Icons -----------------------------------------------------------
+        const IconCamera = (props) => (
+          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={props.className}>
+            <path d="M9 7l1.5-2h3L15 7h3a2 2 0 012 2v8a2 2 0 01-2 2H6a2 2 0 01-2-2V9a2 2 0 012-2h3z" stroke="currentColor" strokeWidth="1.5"/>
+            <circle cx="12" cy="13" r="4" stroke="currentColor" strokeWidth="1.5"/>
           </svg>
-        </div>
-        <div class="sr-only" id="live" aria-live="polite"></div>
-      </div>
-    </div>
+        );
+        const IconImage = (props) => (
+          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={props.className}>
+            <rect x="3" y="5" width="18" height="14" rx="2" stroke="currentColor" strokeWidth="1.5"/>
+            <path d="M7 15l3-3 3 3 4-4 3 3" stroke="currentColor" strokeWidth="1.5"/>
+            <circle cx="8" cy="9" r="1.5" fill="currentColor"/>
+          </svg>
+        );
+        const IconFlash = (props) => (
+          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={props.className}>
+            <path d="M7 2h10l-5 8h5l-10 12 3-9H7V2z" stroke="currentColor" strokeWidth="1.5"/>
+          </svg>
+        );
+        const IconSwap = (props) => (
+          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={props.className}>
+            <path d="M7 7h10M7 7l2-2M7 7l2 2M17 17H7m10 0l-2-2m2 2l-2 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+          </svg>
+        );
+        const IconCheck = (props) => (
+          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={props.className}>
+            <path d="M4 12l5 5 11-11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+          </svg>
+        );
+        const IconInfo = (props) => (
+          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={props.className}>
+            <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.5"/>
+            <path d="M12 8.5h.01M11 11h2v6h-2z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+          </svg>
+        );
 
-    <!-- ТЕСТОВЫЕ ДАННЫЕ. ВНИМАНИЕ: НЕТ НИ ОДНОГО <script type="application/json"> -->
-    <template id="pfData">{ "fat": { "unit": "%", "plan": 18, "fact": 23, "delta": -5 }, "neck": { "unit": "см", "plan": 39, "fact": 42, "delta": -3 }, "shoulders": { "unit": "см", "plan": 140, "fact": 127, "delta": 13 }, "chest": { "unit": "см", "plan": 115, "fact": 115, "delta": 0 }, "waist": { "unit": "см", "plan": 89, "fact": 91, "delta": -2 }, "hips": { "unit": "см", "plan": 102, "fact": 100, "delta": 2 }, "thigh": { "unit": "см", "plan": 62, "fact": 58, "delta": 4 }, "calf": { "unit": "см", "plan": 44, "fact": 35, "delta": 9 }, "bicep": { "unit": "см", "plan": 44, "fact": 41, "delta": 3 } }</template>
+        // --- Render ----------------------------------------------------------
+        return (
+          <div className="min-h-screen w-full">
+            <div className="mx-auto max-w-md px-4 py-6">
+              <header className="mb-4">
+                <h1 className="text-2xl font-semibold tracking-tight">Сфотографируйте блюдо или выберите фото</h1>
+                <p className="text-sm text-gray-500">Снимаем <b>только задней камерой</b>. Можно прикрепить из галереи. Комментарий — по желанию.</p>
+              </header>
 
-    <template id="pfData_missingDelta">{ "fat": { "unit": "%", "plan": 18, "fact": 23 }, "neck": { "unit": "см", "plan": 39, "fact": 42 }, "shoulders": { "unit": "см", "plan": 140, "fact": 127 }, "chest": { "unit": "см", "plan": 115, "fact": 115 }, "waist": { "unit": "см", "plan": 89, "fact": 91 }, "hips": { "unit": "см", "plan": 102, "fact": 100 }, "thigh": { "unit": "см", "plan": 62, "fact": 58 }, "calf": { "unit": "см", "plan": 44, "fact": 35 }, "bicep": { "unit": "см", "plan": 44, "fact": 41 } }</template>
+              {error && (
+                <div className="mb-4 rounded-xl border border-red-300 bg-red-50 p-3 text-sm text-red-700">{error}</div>
+              )}
 
-    <template id="pfData_extreme">{ "fat": { "unit": "%", "plan": 15, "fact": 35, "delta": -20 }, "neck": { "unit": "см", "plan": 39, "fact": 39, "delta": 0 }, "shoulders": { "unit": "см", "plan": 140, "fact": 160, "delta": -20 }, "chest": { "unit": "см", "plan": 115, "fact": 100, "delta": 15 }, "waist": { "unit": "см", "plan": 89, "fact": 120, "delta": -31 }, "hips": { "unit": "см", "plan": 102, "fact": 102, "delta": 0 }, "thigh": { "unit": "см", "plan": 62, "fact": 50, "delta": 12 }, "calf": { "unit": "см", "plan": 44, "fact": 30, "delta": 14 }, "bicep": { "unit": "см", "plan": 44, "fact": 60, "delta": -16 } }</template>
+              {phase === "idle" && (
+                <section className="space-y-4">
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      className={`flex items-center justify-center gap-2 rounded-2xl px-4 py-3 text-base font-medium shadow-sm transition active:scale-[0.98] ${
+                        isMobile && navigator.mediaDevices?.getUserMedia
+                          ? "bg-blue-600 text-white"
+                          : "bg-gray-200 text-gray-500 cursor-not-allowed"
+                      }`}
+                      onClick={() => {
+                        if (isMobile && navigator.mediaDevices?.getUserMedia) startCameraStream();
+                        else setError("Съёмка недоступна на этом устройстве. Используйте галерею.");
+                      }}
+                      disabled={!(isMobile && navigator.mediaDevices?.getUserMedia)}
+                      aria-label="Снять задней камерой"
+                    >
+                      <IconCamera className="h-5 w-5" /> Снять
+                    </button>
 
-    <!-- ДОП. ТЕСТ №4: минимальный набор (проверка устойчивости разметки) -->
-    <template id="pfData_minimal">{ "fat": { "unit": "%", "plan": 20, "fact": 22, "delta": -2 }, "bicep": { "unit": "см", "plan": 44, "fact": 41, "delta": 3 } }</template>
+                    <button
+                      className="flex items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 text-base font-medium shadow-sm ring-1 ring-gray-200 transition active:scale-[0.98]"
+                      onClick={() => galleryInputRef.current?.click()}
+                      aria-label="Выбрать фото из галереи"
+                    >
+                      <IconImage className="h-5 w-5" /> Галерея
+                    </button>
+                  </div>
 
-    <!-- ДОП. ТЕСТ №5: пустой шаблон (не должен ломать рендер) -->
-    <template id="pfData_empty"></template>
+                  <div className="rounded-2xl bg-gray-50 p-3 text-sm text-gray-600">
+                    <div className="flex items-start gap-2">
+                      <IconInfo className="mt-0.5 h-5 w-5" />
+                      <p>Снимайте сверху, при хорошем освещении. На iOS, если камера не открывается, используйте системную камеру или выберите из галереи.</p>
+                    </div>
+                  </div>
 
-    <!-- ДОП. ТЕСТ №6: намеренно "кривой" JSON для проверки санитайзера -->
-    <template id="pfData_malformed">
-      { /* комментарий */
-        “fat”: { "unit": "%", "plan": 18, "fact": 23, "delta":  }, // пустая дельта
-        "neck": { "unit": "см", "plan": 39, "fact": 42, },         // висячая запятая
-        "bicep": { "unit": "см", "plan": 44, "fact": 41 }
+                  {/* Hidden inputs */}
+                  <input ref={galleryInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => onPickFromGallery(e.target.files?.[0])} />
+                  <input ref={systemCamInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => onPickFromGallery(e.target.files?.[0])} />
+
+                  <div className="flex gap-2">
+                    <button className="rounded-xl px-4 py-2 text-sm font-medium ring-1 ring-gray-200" onClick={() => systemCamInputRef.current?.click()}>
+                      Открыть системную камеру
+                    </button>
+                  </div>
+                </section>
+              )}
+
+              {phase === "camera" && (
+                <section className="space-y-4">
+                  <div className="relative overflow-hidden rounded-2xl bg-black">
+                    <video ref={videoRef} playsInline muted className="h-[360px] w-full object-contain" />
+                    <div className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-3 bg-gradient-to-t from-black/60 to-transparent p-4">
+                      {torchSupported && (
+                        <button onClick={() => applyTorch(!torchOn)} className={`flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium ring-1 ring-white/20 text-white ${torchOn ? "bg-white/20" : "bg-black/30"}`} aria-pressed={torchOn}>
+                          <IconFlash className="h-5 w-5" /> Подсветка
+                        </button>
+                      )}
+                      <button onClick={handleShutter} className="mx-auto h-14 w-14 rounded-full border-4 border-white/80 bg-white/95 shadow-lg active:scale-95" aria-label="Сделать снимок" />
+                      <button onClick={() => { stopStream(); setPhase("idle"); }} className="rounded-xl px-3 py-2 text-sm font-medium text-white ring-1 ring-white/20">Отмена</button>
+                    </div>
+                  </div>
+                </section>
+              )}
+
+              {phase === "preparing" && (
+                <section className="space-y-4">
+                  <div className="rounded-2xl border border-gray-200 p-6 text-center">
+                    <p className="mb-2 text-base font-medium">Подготавливаем фото…</p>
+                    <p className="text-sm text-gray-500">Сжимаем изображение и нормализуем ориентацию</p>
+                  </div>
+                </section>
+              )}
+
+              {phase === "preview" && (
+                <section className="space-y-4">
+                  <div className="overflow-hidden rounded-2xl ring-1 ring-gray-200">
+                    <img src={previewURL} alt="Предпросмотр фото" className="max-h-[360px] w-full object-contain" style={{ imageOrientation: "from-image" }} />
+                  </div>
+
+                  {previewMeta && (
+                    <div className="text-xs text-gray-500">{previewMeta.width}×{previewMeta.height} • {(previewMeta.size / 1024).toFixed(0)} KB • {previewMeta.type}</div>
+                  )}
+
+                  <div>
+                    <label htmlFor="comment" className="mb-1 block text-sm font-medium">Комментарий (необязательно)</label>
+                    <textarea id="comment" value={comment} onChange={(e) => setComment(e.target.value.slice(0, charLimit))} placeholder="Например: треска 200 г и рис 150 г" className="h-28 w-full resize-none rounded-2xl border border-gray-200 bg-white p-3 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                    <div className="mt-1 text-right text-xs text-gray-500">{comment.length}/{charLimit}</div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <button onClick={replacePhoto} className="flex items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 text-base font-medium shadow-sm ring-1 ring-gray-200 transition active:scale-[0.98]"><IconSwap className="h-5 w-5" /> Заменить фото</button>
+                    <button onClick={handleSendStub} disabled={!previewBlob} className="flex items-center justify-center gap-2 rounded-2xl bg-blue-600 px-4 py-3 text-base font-medium text-white shadow-sm transition active:scale-[0.98] disabled:opacity-50"><IconCheck className="h-5 w-5" /> Отправить</button>
+                  </div>
+
+                  <div className="rounded-2xl bg-gray-50 p-3 text-xs text-gray-600">Фото можно заменить. Комментарий — опционален. Мы удаляем EXIF-данные при сжатии.</div>
+                </section>
+              )}
+
+              {phase === "sending" && (
+                <section className="space-y-4">
+                  <div className="rounded-2xl border border-gray-200 p-6">
+                    <p className="mb-2 text-base font-medium">Отправляем фото ассистенту…</p>
+                    <div className="h-3 w-full overflow-hidden rounded-full bg-gray-100">
+                      <div className="h-3 rounded-full bg-blue-600 transition-[width]" style={{ width: `${sendProgress}%` }} />
+                    </div>
+                    <p className="mt-2 text-xs text-gray-500">Это имитация загрузки для прототипа.</p>
+                    <div className="mt-4 flex gap-2">
+                      <button onClick={() => { setPhase("preview"); setSendProgress(0); log("upload_canceled"); }} className="rounded-xl px-4 py-2 text-sm font-medium ring-1 ring-gray-200">Отмена</button>
+                    </div>
+                  </div>
+                </section>
+              )}
+
+              {phase === "success" && (
+                <section className="space-y-4">
+                  <div className="flex items-center gap-3 rounded-2xl border border-green-200 bg-green-50 p-4">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-green-600/90 text-white"><IconCheck className="h-5 w-5" /></div>
+                    <div>
+                      <div className="text-base font-medium">Фото отправлено (заглушка)</div>
+                      <div className="text-sm text-gray-600">В этой версии мы ничего не отправляем, но показываем, как выглядел бы поток.</div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <button onClick={downloadPayload} className="rounded-2xl bg-white px-4 py-3 text-base font-medium shadow-sm ring-1 ring-gray-200">Скачать payload.json</button>
+                    <button onClick={resetAll} className="rounded-2xl bg-blue-600 px-4 py-3 text-base font-medium text-white shadow-sm">Сделать новое фото</button>
+                  </div>
+                </section>
+              )}
+
+              <footer className="mt-8 text-center text-xs text-gray-400">Мы не сохраняем оригиналы фото без вашего согласия. Эта страница — интерактивный прототип.</footer>
+            </div>
+          </div>
+        );
       }
-    </template>
 
-    <script>
-      (function(){
-        const LABELS = { fat:'% Жира', neck:'Шея', shoulders:'Плечи', chest:'Грудь', waist:'Талия', hips:'Бёдра/Ягодицы', thigh:'Бедро', calf:'Икра', bicep:'Бицепс' };
-        const ORDER = ['fat','neck','shoulders','chest','waist','hips','thigh','calf','bicep'];
-
-        // Telegram Mini App / WebApp Haptics + fallback
-        const TG = (typeof window !== 'undefined' && window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
-        try { TG && TG.ready && TG.ready(); } catch(_){}
-        const HAPTICS = {
-          enabled: true,
-          impact(type){ try{ if(!this.enabled) return; if(TG && TG.HapticFeedback && TG.HapticFeedback.impactOccurred){ TG.HapticFeedback.impactOccurred(type||'light'); return; } if('vibrate' in navigator) navigator.vibrate(10);}catch(e){} },
-          selection(){ try{ if(!this.enabled) return; if(TG && TG.HapticFeedback && TG.HapticFeedback.selectionChanged){ TG.HapticFeedback.selectionChanged(); return; } if('vibrate' in navigator) navigator.vibrate(6);}catch(e){} },
-          edge(){ this.impact('light'); },
-          notify(kind){ try{ if(!this.enabled) return; if(TG && TG.HapticFeedback && TG.HapticFeedback.notificationOccurred){ TG.HapticFeedback.notificationOccurred(kind||'success'); return; } if('vibrate' in navigator) navigator.vibrate([8,60,8]); }catch(e){} }
-        };
-
-        function parseJSONFromTemplate(id){
-          const el = document.getElementById(id);
-          if (!el || el.tagName !== 'TEMPLATE') return null;
-          // Извлекаем текст из <template> (учёт .content для разных окружений)
-          let raw = '';
-          if (el.content && typeof el.content.textContent === 'string') raw = el.content.textContent; else raw = el.textContent || '';
-          raw = raw.trim();
-          if (!raw || (raw[0] !== '{' && raw[0] !== '[')) return null;
-          // 1) строгий парсинг
-          try { return JSON.parse(raw); } catch (e) {
-            console.warn('[pf] strict JSON.parse failed for #' + id + ':', e);
-            // 2) мягкий санитайзер БЕЗ регулярных выражений (устойчив к среде Canvas)
-            function softSanitizeJSON(txt){
-              let s = String(txt);
-              // Убрать блочные комментарии /* ... */
-              for(;;){ const i = s.indexOf('/*'); if(i === -1) break; const j = s.indexOf('*/', i+2); s = (j === -1) ? (s.slice(0,i) + s.slice(i+2)) : (s.slice(0,i) + s.slice(j+2)); }
-              // Убрать построчные комментарии //...  (но не http://)
-              s = s.split('\n').map(line => { const idx = line.indexOf('//'); return (idx > 0 && line[idx-1] === ':') ? line : (idx !== -1 ? line.slice(0, idx) : line); }).join('\n');
-              // Смарт-кавычки → стандартные
-              s = s.split('“').join('"').split('”').join('"').split('‘').join("'").split('’').join("'");
-              // Убрать висячие запятые перед } или ]
-              let out = '';
-              for(let i=0;i<s.length;i++){
-                const ch = s[i];
-                if(ch === ','){
-                  let k=i+1; while(k<s.length && (s[k]===' '||s[k]==='\t'||s[k]==='\r'||s[k]==='\n')) k++;
-                  if(k<s.length && (s[k] === '}' || s[k] === ']')){ continue; }
-                }
-                out += ch;
-              }
-              s = out;
-              // Пустая delta → null ("delta": )
-              let res = '';
-              for(let i=0;i<s.length;){
-                const p = s.indexOf('"delta"', i);
-                if(p === -1){ res += s.slice(i); break; }
-                res += s.slice(i, p + 7);
-                let c = p + 7; while(c < s.length && s[c] !== ':') c++;
-                if(c >= s.length){ i = c; break; }
-                res += s.slice(p + 7, c + 1);
-                let k = c + 1; while(k<s.length && (s[k]===' '||s[k]==='\t'||s[k]==='\r'||s[k]==='\n')) k++;
-                if(k<s.length && (s[k] === ',' || s[k] === '}')){ res += ' null'; i = k; }
-                else { i = k; }
-              }
-              return res;
-            }
-            try { return JSON.parse(softSanitizeJSON(raw)); } catch (e2) { console.error('Bad JSON in <template>#' + id, e2); return null; }
-          }
-        }
-
-        function toRows(json){
-          var rows=[]; if(!json) return rows;
-          for(var i=0;i<ORDER.length;i++){
-            var key = ORDER[i];
-            var it = json[key];
-            if(!it) continue;
-
-            var unit = it.unit || (key==='fat' ? '%' : 'см');
-            // Если нет числа — строку НЕ показываем
-            var planRaw = (it.plan != null ? it.plan : it.target);
-            var factRaw = (it.fact != null ? it.fact : it.actual);
-            var plan = Number(planRaw);
-            var fact = Number(factRaw);
-            if(!isFinite(plan) || !isFinite(fact)) continue;
-
-            var delta = (it.hasOwnProperty('delta') && isFinite(Number(it.delta))) ? Number(it.delta) : null;
-            rows.push({ key: key, label: (LABELS[key]||key), unit: unit, target: plan, actual: fact, delta: delta });
-          }
-          return rows;
-        }
-
-        function render(el, initialData){
-          var state = { data: initialData };
-          var rowsEl = el.querySelector('#rows');
-          var live = el.querySelector('#live');
-          var scroller = el.querySelector('#scroller');
-
-          // --- Haptics wiring (snap + edges) ---
-          var hObs = null, lastSnapIndex = -1, edgeLock = false;
-          function onScrollEdge(){
-            if(edgeLock) return;
-            var atTop = scroller.scrollTop <= 0;
-            var atBottom = Math.ceil(scroller.scrollTop + scroller.clientHeight) >= scroller.scrollHeight;
-            if(atTop || atBottom){ edgeLock = true; HAPTICS.edge(); setTimeout(function(){ edgeLock=false; }, 400); }
-          }
-          function setupHaptics(){
-            if(hObs && hObs.disconnect) hObs.disconnect();
-            lastSnapIndex = -1; hObs = null;
-            var rows = Array.prototype.slice.call(rowsEl.querySelectorAll('.row'));
-            if(!rows.length || !('IntersectionObserver' in window)) return;
-            hObs = new IntersectionObserver(function(entries){
-              entries.forEach(function(en){
-                if(en.isIntersecting && en.intersectionRatio > 0.95){
-                  var idx = rows.indexOf(en.target);
-                  if(idx !== -1 && idx !== lastSnapIndex){ lastSnapIndex = idx; HAPTICS.selection(); }
-                }
-              });
-            }, { root: scroller, threshold: [0.5, 0.95, 1] });
-            rows.forEach(function(r){ hObs.observe(r); });
-          }
-
-          function buildDomains(list){
-            var cmMax = 0; for(var i=0;i<list.length;i++){ var d=list[i]; var u=(d.unit||'').trim(); if(u!=='%') cmMax=Math.max(cmMax, (d.target||0), (d.actual||0)); }
-            return { '%':100, 'см':cmMax||1, 'cm':cmMax||1 };
-          }
-
-          function draw(){
-            var data = state.data || []; var maxByUnit = buildDomains(data); rowsEl.innerHTML='';
-            for(var i=0;i<data.length;i++){
-              var d = data[i]; var delta = (isFinite(d.delta) ? d.delta : null); var unitMax = maxByUnit[(d.unit||'').trim()] || 1;
-              var wp = Math.max(0, Math.min(100, ((d.target||0)/unitMax)*100));
-              var wf = Math.max(0, Math.min(100, ((d.actual||0)/unitMax)*100));
-
-              var row = document.createElement('div'); row.className='row';
-              var top = document.createElement('div'); top.className='top';
-              top.innerHTML = '<span class="name">'+(d.key==='fat' ? (LABELS[d.key]||d.label) : (d.label+' ('+d.unit+')'))+'</span>'+
-                '<span class="vals">'+
-                  '<span class="kv"><span class="lab">Факт:</span> <b class="val">'+fmtNoUnit(d.actual)+'</b></span>'+
-                  '<span class="dot">•</span>'+
-                  '<span class="kv"><span class="lab">План:</span> <b class="val">'+fmtNoUnit(d.target)+'</b></span>'+
-                  '<span class="dot">•</span>'+
-                  '<span class="kv"><span class="lab">∆:</span> <b class="val">'+fmtDeltaNoUnit(delta)+(isFinite(delta)? (delta>0? ' ▲' : (delta<0? ' ▼' : '')) : '')+'</b></span>'+
-                '</span>';
-
-              var g = document.createElement('div'); g.className='gauge';
-              var plan = document.createElement('div'); plan.className='plan'; plan.style.setProperty('--wp', wp+'%');
-              var fact = document.createElement('div'); fact.className='fact'; fact.style.setProperty('--wf', wf+'%');
-
-              // ЛОГИКА ЦВЕТА ФАКТА
-              if (isFinite(delta)) {
-                if (d.key === 'fat' || d.key === 'waist') {
-                  if (d.actual > d.target) fact.classList.add('red'); // перебор жира/талии — плохо
-                  // недобор/равно — зелёный (норма/хорошо)
-                } else {
-                  if (d.actual < d.target) fact.classList.add('orange'); // недобор по мышцам — предупреждение
-                  // перебор по мышцам — зелёный (норма/хорошо)
-                }
-              } else { fact.classList.add('neutral'); }
-
-              g.appendChild(plan); g.appendChild(fact); row.appendChild(top); row.appendChild(g);
-
-              (function(d){ row.addEventListener('click', function(){ live.textContent = d.label+': план '+fmt(d.target,d)+', факт '+fmt(d.actual,d)+', отклонение '+fmtDelta(delta,d); HAPTICS.selection(); }); })(d);
-              rowsEl.appendChild(row);
-            }
-            limitToRows(5); updateHint(); setupHaptics();
-          }
-
-          function limitToRows(n){
-            var items = rowsEl.children; var rows=[]; for(var i=0;i<items.length;i++){ if(items[i].classList.contains('row')) rows.push(items[i]); }
-            if(!rows.length) return; var csList = getComputedStyle(rowsEl); var maxH = parseFloat(csList.paddingTop) + parseFloat(csList.paddingBottom);
-            for(var i=0;i<Math.min(n,rows.length);i++){ var r=rows[i]; var cs=getComputedStyle(r); maxH += r.offsetHeight + parseFloat(cs.marginTop||0) + parseFloat(cs.marginBottom||0); }
-            maxH += 2; scroller.style.maxHeight = Math.ceil(maxH) + 'px';
-          }
-
-          function updateHint(){
-            var hint = el.querySelector('#scrollHint'); if(!hint) return;
-            var hasMore = scroller.scrollHeight > scroller.clientHeight + 2;
-            var nearBottom = Math.ceil(scroller.scrollTop + scroller.clientHeight) >= scroller.scrollHeight - 2;
-            hint.classList.toggle('hidden', !hasMore || nearBottom);
-          }
-          window.addEventListener('resize', function(){ limitToRows(5); updateHint(); });
-          scroller.addEventListener('scroll', updateHint, { passive:true });
-          scroller.addEventListener('scroll', onScrollEdge, { passive:true });
-
-          function fmt(n,d){ return d.unit==='%' ? (round(n,1)+'%') : (round(n,1)+' '+d.unit); }
-          function fmtDelta(n,d){ if(!isFinite(n)) return '—'; var s=n>0?'+':''; return d.unit==='%'? (s+round(n,1)+' п.п.') : (s+round(n,1)+' '+d.unit); }
-          function fmtNoUnit(n){ return round(n,1); }
-          function fmtDeltaNoUnit(n){ if(!isFinite(n)) return '—'; var s=n>0?'+':''; return s+round(n,1); }
-          function round(n,p){ var m=Math.pow(10, (p||1)); return Math.round(n*m)/m; }
-
-          draw();
-
-          return { setData:function(json){ state.data = toRows(json); draw(); } };
-        }
-
-        // Инициализация данных
-        var container = document.getElementById('pfHApp');
-        var params = new URLSearchParams(location.search);
-        var caseName = (params.get('case')||'').toLowerCase();
-        if (typeof HAPTICS !== 'undefined') { HAPTICS.enabled = params.get('haptics') !== '0'; }
-
-        var input = null;
-        if(typeof window !== 'undefined' && window.PLAN_FACT_JSON){ input = window.PLAN_FACT_JSON; }
-        else if(caseName === 'missing'){ input = parseJSONFromTemplate('pfData_missingDelta'); }
-        else if(caseName === 'extreme'){ input = parseJSONFromTemplate('pfData_extreme'); }
-        else if(caseName === 'minimal'){ input = parseJSONFromTemplate('pfData_minimal'); }
-        else if(caseName === 'empty'){ input = parseJSONFromTemplate('pfData_empty'); }
-        else if(caseName === 'malformed'){ input = parseJSONFromTemplate('pfData_malformed'); }
-        else { input = parseJSONFromTemplate('pfData'); }
-        if (input == null) { console.warn('pf: template data is null/empty — using {}'); input = {}; }
-
-        var api = render(container, toRows(input||{}));
-        if(typeof window!== 'undefined'){
-          window.PlanFactChart = { mount:function(el, json){ return render(el, toRows(json)); }, setData:function(json){ api && api.setData(json); } };
-        }
-      })();
+      const root = ReactDOM.createRoot(document.getElementById('root'));
+      root.render(<FoodCamPrototype />);
     </script>
   </body>
 </html>
