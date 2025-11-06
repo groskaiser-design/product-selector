@@ -3,13 +3,16 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Telegram Mini App — Камера/Галерея (Prototype)</title>
-    <!-- Tailwind (Play CDN — ок для прототипа) -->
+    <title>Telegram Mini App — Камера/Галерея (System Camera Only)</title>
+
+    <!-- Tailwind (CDN для прототипа) -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- React 18 UMD + Babel Standalone (для JSX в одном файле) -->
+
+    <!-- React 18 UMD + ReactDOM + Babel (для JSX в одном файле) -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
     <meta name="theme-color" content="#0a7cff" />
     <style>
       html, body { height: 100%; }
@@ -24,241 +27,151 @@
 
       function FoodCamPrototype() {
         // --- Core state
-        const [phase, setPhase] = useState("idle"); // idle | camera | preview | preparing | sending | success
-        const [entryMethod, setEntryMethod] = useState(null); // "camera" | "gallery"
+        const [phase, setPhase] = useState("idle"); // idle | preparing | preview | sending | success
+        const [entryMethod, setEntryMethod] = useState(null); // "system" | "gallery"
         const [error, setError] = useState(null);
         const [comment, setComment] = useState("");
         const [charLimit] = useState(800);
 
-        // --- Media refs
-        const videoRef = useRef(null);
-        const streamRef = useRef(null);
-        const trackRef = useRef(null);
-        const [torchSupported, setTorchSupported] = useState(false);
-        const [torchOn, setTorchOn] = useState(false);
-
         // --- Image preview
-        const [previewURL, setPreviewURL] = useState(null); // object URL
-        const [previewBlob, setPreviewBlob] = useState(null); // Blob after compression
-        const [previewMeta, setPreviewMeta] = useState(null); // { width, height, type, size }
+        const [previewURL, setPreviewURL] = useState(null);    // ObjectURL
+        const [previewBlob, setPreviewBlob] = useState(null);  // Blob (compressed)
+        const [previewMeta, setPreviewMeta] = useState(null);  // { width, height, type, size }
 
-        // --- Progress / processing
-        const [isProcessing, setIsProcessing] = useState(false);
+        // --- Progress
         const [sendProgress, setSendProgress] = useState(0);
 
-        // --- Hidden inputs (gallery + system camera fallback)
+        // --- Inputs
         const galleryInputRef = useRef(null);
         const systemCamInputRef = useRef(null); // capture=environment
 
-        // --- Telegram WebApp integration (optional, safe-guarded)
+        // --- Telegram WebApp integration (safe)
         const tg = useMemo(() => (typeof window !== "undefined" ? window.Telegram?.WebApp : undefined), []);
+        useEffect(() => { try { tg?.expand?.(); tg?.ready?.(); } catch {} }, [tg]);
 
-        useEffect(() => {
-          try { tg?.expand?.(); tg?.ready?.(); } catch (e) {}
-          return () => stopStream();
-        }, [tg]);
+        // --- Utils -----------------------------------------------------------
+        function haptic(type = "light") { try { tg?.HapticFeedback?.impactOccurred?.(type); } catch {} }
+        function log(event, payload = {}) { console.log("[telemetry]", event, payload); }
 
-        // --- Helpers -------------------------------------------------------------
-        const isMobile = useMemo(() => {
-          if (typeof navigator === "undefined") return false;
-          return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-        }, []);
-
-        function haptic(type = "light") {
-          try { tg?.HapticFeedback?.impactOccurred?.(type); } catch (e) {}
-        }
-
-        function log(event, payload = {}) {
-          console.log(`[telemetry] ${event}`, payload);
-        }
-
-        function stopStream() {
-          try {
-            if (trackRef.current) { try { trackRef.current.stop(); } catch (e) {} }
-            if (streamRef.current) {
-              streamRef.current.getTracks?.().forEach((t) => { try { t.stop(); } catch (e) {} });
-            }
-          } catch (e) {}
-          trackRef.current = null;
-          streamRef.current = null;
-          if (videoRef.current) videoRef.current.srcObject = null;
-        }
-
-        async function applyTorch(next) {
-          if (!trackRef.current) return;
-          try {
-            await trackRef.current.applyConstraints({ advanced: [{ torch: next }] });
-            setTorchOn(next);
-          } catch (e) {
-            setTorchSupported(false);
-            setTorchOn(false);
-          }
-        }
-
-        async function ensureRearDeviceId() {
-          try {
-            const devices = await navigator.mediaDevices.enumerateDevices();
-            const videoInputs = devices.filter((d) => d.kind === "videoinput");
-            const rear = videoInputs.find((d) => /back|rear|environment/i.test(d.label));
-            return rear?.deviceId || null;
-          } catch (e) { return null; }
-        }
-
-        async function startCameraStream(withDeviceId = null) {
+        function onClickSystemCamera() {
           setError(null);
-          let constraints = { video: { facingMode: { ideal: "environment" } } };
-          if (withDeviceId) constraints = { video: { deviceId: { exact: withDeviceId } } };
-
-          try {
-            const stream = await navigator.mediaDevices.getUserMedia(constraints);
-            streamRef.current = stream;
-            const track = stream.getVideoTracks?.()[0];
-            trackRef.current = track || null;
-
-            // Torch support
-            const caps = track?.getCapabilities?.();
-            setTorchSupported(Boolean(caps && "torch" in caps));
-
-            if (videoRef.current) {
-              videoRef.current.srcObject = stream;
-              await videoRef.current.play();
-            }
-
-            // Retry with explicit rear deviceId if available
-            const rearId = await ensureRearDeviceId();
-            if (rearId && withDeviceId === null) {
-              try {
-                stopStream();
-                await startCameraStream(rearId);
-                return;
-              } catch (e) {}
-            }
-
-            setPhase("camera");
-            setEntryMethod("camera");
-            log("camera_opened", { rearId: withDeviceId || rearId || null });
-          } catch (e) {
-            log("camera_open_failed", { message: String(e) });
-            setError("Не удалось открыть заднюю камеру. Выберите фото из галереи или воспользуйтесь системной камерой.");
-            setPhase("idle");
-          }
+          setEntryMethod("system");
+          systemCamInputRef.current?.click();
+        }
+        function onClickGallery() {
+          setError(null);
+          setEntryMethod("gallery");
+          galleryInputRef.current?.click();
         }
 
-        async function handleShutter() {
-          if (!videoRef.current) return;
-          try {
-            haptic("light");
-            const vw = videoRef.current.videoWidth || 0;
-            const vh = videoRef.current.videoHeight || 0;
-            if (!vw || !vh) throw new Error("Видео не готово");
-
-            const canvas = document.createElement("canvas");
-            canvas.width = vw;
-            canvas.height = vh;
-            const ctx = canvas.getContext("2d");
-            ctx.drawImage(videoRef.current, 0, 0, vw, vh);
-
-            setPhase("preparing");
-            setIsProcessing(true);
-            const out = await compressFromCanvas(canvas);
-            setIsProcessing(false);
-
-            stopStream();
-
-            setPreviewURL(out.url);
-            setPreviewBlob(out.blob);
-            setPreviewMeta({ width: out.width, height: out.height, type: out.blob.type, size: out.blob.size });
-            setPhase("preview");
-            setEntryMethod("camera");
-            log("shot_taken", { w: out.width, h: out.height, size: out.blob.size, type: out.blob.type });
-          } catch (e) {
-            setError("Не удалось сделать снимок. Попробуйте ещё раз или выберите фото из галереи.");
-            setPhase("camera");
+        // Robust image loader (createImageBitmap → <img/> fallback)
+        async function loadBitmapFromFile(file) {
+          // Try createImageBitmap with EXIF orientation
+          if (window.createImageBitmap) {
+            try { return await createImageBitmap(file, { imageOrientation: "from-image" }); }
+            catch (e1) {
+              try { return await createImageBitmap(file); } catch (e2) {}
+            }
           }
+          // Fallback via HTMLImageElement
+          const url = URL.createObjectURL(file);
+          const img = await new Promise((resolve, reject) => {
+            const el = new Image();
+            el.onload = () => resolve(el);
+            el.onerror = (err) => reject(err);
+            el.src = url;
+          });
+          // caller will draw and then can revoke URL
+          return { width: img.naturalWidth || img.width, height: img.naturalHeight || img.height, _img: img, _url: url };
         }
 
-        async function onPickFromGallery(file) {
+        async function onPickFile(file) {
           if (!file) return;
           setError(null);
           setPhase("preparing");
-          setIsProcessing(true);
-          try {
-            let bitmap;
-            try { bitmap = await createImageBitmap(file, { imageOrientation: "from-image" }); }
-            catch (e) { bitmap = await createImageBitmap(file); }
 
+          try {
+            const loaded = await loadBitmapFromFile(file);
+
+            // Prepare canvas
             const maxSide = 2000;
-            const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
-            const cw = Math.max(1, Math.round(bitmap.width * scale));
-            const ch = Math.max(1, Math.round(bitmap.height * scale));
+            const srcW = loaded.width;
+            const srcH = loaded.height;
+            const scale = Math.min(1, maxSide / Math.max(srcW, srcH));
+            const cw = Math.max(1, Math.round(srcW * scale));
+            const ch = Math.max(1, Math.round(srcH * scale));
+
             const canvas = document.createElement("canvas");
-            canvas.width = cw;
-            canvas.height = ch;
+            canvas.width = cw; canvas.height = ch;
             const ctx = canvas.getContext("2d");
-            ctx.drawImage(bitmap, 0, 0, cw, ch);
+
+            if (loaded instanceof ImageBitmap) {
+              ctx.drawImage(loaded, 0, 0, cw, ch);
+            } else {
+              ctx.drawImage(loaded._img, 0, 0, cw, ch);
+              try { URL.revokeObjectURL(loaded._url); } catch {}
+            }
 
             const out = await compressFromCanvas(canvas);
+
+            // Cleanup previous preview
+            if (previewURL) { try { URL.revokeObjectURL(previewURL); } catch {} }
+
             setPreviewURL(out.url);
             setPreviewBlob(out.blob);
             setPreviewMeta({ width: out.width, height: out.height, type: out.blob.type, size: out.blob.size });
             setPhase("preview");
-            setEntryMethod("gallery");
-            log("image_selected", { w: out.width, h: out.height, size: out.blob.size, type: out.blob.type });
+            log(entryMethod === "system" ? "shot_taken_system" : "image_selected_gallery",
+                { w: out.width, h: out.height, size: out.blob.size, type: out.blob.type });
           } catch (e) {
+            console.error(e);
             setError("Не удалось обработать файл. Убедитесь, что это изображение (JPEG/PNG/HEIC/WEBP).");
             setPhase("idle");
-          } finally { setIsProcessing(false); }
+          }
         }
-
-        function onClickGallery() { galleryInputRef.current?.click(); }
-        function onClickSystemCamera() { systemCamInputRef.current?.click(); }
 
         async function compressFromCanvas(canvas) {
+          // Optional second-stage downscale if canvas still > 2000px side
           const maxSide = 2000;
           const { width, height } = canvas;
-          let cw = width, ch = height;
           const scale = Math.min(1, maxSide / Math.max(width, height));
+          let work = canvas;
           if (scale < 1) {
-            cw = Math.max(1, Math.round(width * scale));
-            ch = Math.max(1, Math.round(height * scale));
+            const cw = Math.max(1, Math.round(width * scale));
+            const ch = Math.max(1, Math.round(height * scale));
             const tmp = document.createElement("canvas");
             tmp.width = cw; tmp.height = ch;
-            const tctx = tmp.getContext("2d");
-            tctx.drawImage(canvas, 0, 0, cw, ch);
-            canvas = tmp;
+            const c = tmp.getContext("2d");
+            c.drawImage(canvas, 0, 0, cw, ch);
+            work = tmp;
           }
-          let blob = await new Promise((res) => canvas.toBlob(res, "image/webp", 0.85));
+          // Try WebP, fallback JPEG — EXIF stripped by design
+          let blob = await new Promise((res) => work.toBlob(res, "image/webp", 0.85));
           if (!blob || blob.type !== "image/webp") {
-            blob = await new Promise((res) => canvas.toBlob(res, "image/jpeg", 0.85));
+            blob = await new Promise((res) => work.toBlob(res, "image/jpeg", 0.85));
           }
           const url = URL.createObjectURL(blob);
-          return { blob, url, width: canvas.width, height: canvas.height };
-        }
-
-        function resetAll() {
-          setError(null); setComment(""); setPreviewURL(null); setPreviewBlob(null); setPreviewMeta(null);
-          setSendProgress(0); setTorchOn(false); setTorchSupported(false); stopStream(); setPhase("idle");
+          return { blob, url, width: work.width, height: work.height };
         }
 
         function replacePhoto() {
-          if (entryMethod === "camera") {
-            resetPreviewOnly();
-            if (navigator.mediaDevices?.getUserMedia) startCameraStream(); else onClickSystemCamera();
-          } else { resetPreviewOnly(); onClickGallery(); }
-        }
-
-        function resetPreviewOnly() {
-          setPreviewURL(null); setPreviewBlob(null); setPreviewMeta(null); setPhase("idle");
+          if (entryMethod === "system") {
+            systemCamInputRef.current?.click();
+          } else {
+            galleryInputRef.current?.click();
+          }
         }
 
         function handleSendStub() {
           setPhase("sending"); setSendProgress(0); haptic("light");
           log("send_clicked", { hasPhoto: Boolean(previewBlob), commentLength: comment.length });
           const startedAt = Date.now();
-          const interval = setInterval(() => {
+          const int = setInterval(() => {
             setSendProgress((p) => {
               if (p >= 100) {
-                clearInterval(interval); haptic("light"); setPhase("success");
+                clearInterval(int);
+                haptic("light");
+                setPhase("success");
                 log("upload_success", { ms: Date.now() - startedAt });
                 return 100;
               }
@@ -268,29 +181,36 @@
         }
 
         function downloadPayload() {
-          const rid = (crypto && crypto.randomUUID) ? crypto.randomUUID() : `rid-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+          const rid = (crypto && crypto.randomUUID) ? crypto.randomUUID()
+                    : `rid-${Date.now()}-${Math.random().toString(16).slice(2)}`;
           const meta = {
             ok: true,
             request_id: rid,
             comment,
             image: previewMeta,
-            image_object_url: previewURL,
+            image_object_url: previewURL, // только для демо
             ts: new Date().toISOString(),
           };
           const blob = new Blob([JSON.stringify(meta, null, 2)], { type: "application/json" });
           const url = URL.createObjectURL(blob);
           const a = document.createElement("a");
-          a.href = url; a.download = "payload_stub.json"; document.body.appendChild(a); a.click(); a.remove();
+          a.href = url; a.download = "payload_stub.json";
+          document.body.appendChild(a); a.click(); a.remove();
           URL.revokeObjectURL(url);
         }
 
+        function resetAll() {
+          try { if (previewURL) URL.revokeObjectURL(previewURL); } catch {}
+          setError(null);
+          setComment("");
+          setPreviewURL(null);
+          setPreviewBlob(null);
+          setPreviewMeta(null);
+          setSendProgress(0);
+          setPhase("idle");
+        }
+
         // --- Icons -----------------------------------------------------------
-        const IconCamera = (props) => (
-          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={props.className}>
-            <path d="M9 7l1.5-2h3L15 7h3a2 2 0 012 2v8a2 2 0 01-2 2H6a2 2 0 01-2-2V9a2 2 0 012-2h3z" stroke="currentColor" strokeWidth="1.5"/>
-            <circle cx="12" cy="13" r="4" stroke="currentColor" strokeWidth="1.5"/>
-          </svg>
-        );
         const IconImage = (props) => (
           <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={props.className}>
             <rect x="3" y="5" width="18" height="14" rx="2" stroke="currentColor" strokeWidth="1.5"/>
@@ -298,14 +218,10 @@
             <circle cx="8" cy="9" r="1.5" fill="currentColor"/>
           </svg>
         );
-        const IconFlash = (props) => (
+        const IconCamera = (props) => (
           <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={props.className}>
-            <path d="M7 2h10l-5 8h5l-10 12 3-9H7V2z" stroke="currentColor" strokeWidth="1.5"/>
-          </svg>
-        );
-        const IconSwap = (props) => (
-          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={props.className}>
-            <path d="M7 7h10M7 7l2-2M7 7l2 2M17 17H7m10 0l-2-2m2 2l-2 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+            <path d="M9 7l1.5-2h3L15 7h3a2 2 0 012 2v8a2 2 0 01-2 2H6a2 2 0 01-2-2V9a2 2 0 012-2h3z" stroke="currentColor" strokeWidth="1.5"/>
+            <circle cx="12" cy="13" r="4" stroke="currentColor" strokeWidth="1.5"/>
           </svg>
         );
         const IconCheck = (props) => (
@@ -325,36 +241,35 @@
           <div className="min-h-screen w-full">
             <div className="mx-auto max-w-md px-4 py-6">
               <header className="mb-4">
-                <h1 className="text-2xl font-semibold tracking-tight">Сфотографируйте блюдо или выберите фото</h1>
-                <p className="text-sm text-gray-500">Снимаем <b>только задней камерой</b>. Можно прикрепить из галереи. Комментарий — по желанию.</p>
+                <h1 className="text-2xl font-semibold tracking-tight">
+                  Сделайте фото системной камерой или выберите из галереи
+                </h1>
+                <p className="text-sm text-gray-500">
+                  Используем <b>только системную камеру</b> (rear), без живого превью.
+                  Комментарий — по желанию.
+                </p>
               </header>
 
               {error && (
-                <div className="mb-4 rounded-xl border border-red-300 bg-red-50 p-3 text-sm text-red-700">{error}</div>
+                <div className="mb-4 rounded-xl border border-red-300 bg-red-50 p-3 text-sm text-red-700">
+                  {error}
+                </div>
               )}
 
               {phase === "idle" && (
                 <section className="space-y-4">
                   <div className="grid grid-cols-2 gap-3">
                     <button
-                      className={`flex items-center justify-center gap-2 rounded-2xl px-4 py-3 text-base font-medium shadow-sm transition active:scale-[0.98] ${
-                        isMobile && navigator.mediaDevices?.getUserMedia
-                          ? "bg-blue-600 text-white"
-                          : "bg-gray-200 text-gray-500 cursor-not-allowed"
-                      }`}
-                      onClick={() => {
-                        if (isMobile && navigator.mediaDevices?.getUserMedia) startCameraStream();
-                        else setError("Съёмка недоступна на этом устройстве. Используйте галерею.");
-                      }}
-                      disabled={!(isMobile && navigator.mediaDevices?.getUserMedia)}
-                      aria-label="Снять задней камерой"
+                      className="flex items-center justify-center gap-2 rounded-2xl bg-blue-600 px-4 py-3 text-base font-medium text-white shadow-sm transition active:scale-[0.98]"
+                      onClick={onClickSystemCamera}
+                      aria-label="Открыть системную камеру (rear)"
                     >
-                      <IconCamera className="h-5 w-5" /> Снять
+                      <IconCamera className="h-5 w-5" /> Системная камера
                     </button>
 
                     <button
                       className="flex items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 text-base font-medium shadow-sm ring-1 ring-gray-200 transition active:scale-[0.98]"
-                      onClick={() => galleryInputRef.current?.click()}
+                      onClick={onClickGallery}
                       aria-label="Выбрать фото из галереи"
                     >
                       <IconImage className="h-5 w-5" /> Галерея
@@ -364,36 +279,29 @@
                   <div className="rounded-2xl bg-gray-50 p-3 text-sm text-gray-600">
                     <div className="flex items-start gap-2">
                       <IconInfo className="mt-0.5 h-5 w-5" />
-                      <p>Снимайте сверху, при хорошем освещении. На iOS, если камера не открывается, используйте системную камеру или выберите из галереи.</p>
+                      <p>
+                        Кнопка «Системная камера» открывает нативное окно съёмки устройства
+                        через системный диалог. На десктопе откроется выбор файла.
+                      </p>
                     </div>
                   </div>
 
-                  {/* Hidden inputs */}
-                  <input ref={galleryInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => onPickFromGallery(e.target.files?.[0])} />
-                  <input ref={systemCamInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => onPickFromGallery(e.target.files?.[0])} />
-
-                  <div className="flex gap-2">
-                    <button className="rounded-xl px-4 py-2 text-sm font-medium ring-1 ring-gray-200" onClick={() => systemCamInputRef.current?.click()}>
-                      Открыть системную камеру
-                    </button>
-                  </div>
-                </section>
-              )}
-
-              {phase === "camera" && (
-                <section className="space-y-4">
-                  <div className="relative overflow-hidden rounded-2xl bg-black">
-                    <video ref={videoRef} playsInline muted className="h-[360px] w-full object-contain" />
-                    <div className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-3 bg-gradient-to-t from-black/60 to-transparent p-4">
-                      {torchSupported && (
-                        <button onClick={() => applyTorch(!torchOn)} className={`flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium ring-1 ring-white/20 text-white ${torchOn ? "bg-white/20" : "bg-black/30"}`} aria-pressed={torchOn}>
-                          <IconFlash className="h-5 w-5" /> Подсветка
-                        </button>
-                      )}
-                      <button onClick={handleShutter} className="mx-auto h-14 w-14 rounded-full border-4 border-white/80 bg-white/95 shadow-lg active:scale-95" aria-label="Сделать снимок" />
-                      <button onClick={() => { stopStream(); setPhase("idle"); }} className="rounded-xl px-3 py-2 text-sm font-medium text-white ring-1 ring-white/20">Отмена</button>
-                    </div>
-                  </div>
+                  <!-- Hidden inputs -->
+                  <input
+                    ref={galleryInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => onPickFile(e.target.files?.[0])}
+                  />
+                  <input
+                    ref={systemCamInputRef}
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    className="hidden"
+                    onChange={(e) => onPickFile(e.target.files?.[0])}
+                  />
                 </section>
               )}
 
@@ -409,25 +317,51 @@
               {phase === "preview" && (
                 <section className="space-y-4">
                   <div className="overflow-hidden rounded-2xl ring-1 ring-gray-200">
-                    <img src={previewURL} alt="Предпросмотр фото" className="max-h-[360px] w-full object-contain" style={{ imageOrientation: "from-image" }} />
+                    <img
+                      src={previewURL}
+                      alt="Предпросмотр фото"
+                      className="max-h-[360px] w-full object-contain"
+                      style={{ imageOrientation: "from-image" }}
+                    />
                   </div>
 
                   {previewMeta && (
-                    <div className="text-xs text-gray-500">{previewMeta.width}×{previewMeta.height} • {(previewMeta.size / 1024).toFixed(0)} KB • {previewMeta.type}</div>
+                    <div className="text-xs text-gray-500">
+                      {previewMeta.width}×{previewMeta.height} • {(previewMeta.size / 1024).toFixed(0)} KB • {previewMeta.type}
+                    </div>
                   )}
 
                   <div>
                     <label htmlFor="comment" className="mb-1 block text-sm font-medium">Комментарий (необязательно)</label>
-                    <textarea id="comment" value={comment} onChange={(e) => setComment(e.target.value.slice(0, charLimit))} placeholder="Например: треска 200 г и рис 150 г" className="h-28 w-full resize-none rounded-2xl border border-gray-200 bg-white p-3 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                    <textarea
+                      id="comment"
+                      value={comment}
+                      onChange={(e) => setComment(e.target.value.slice(0, charLimit))}
+                      placeholder="Например: треска 200 г и рис 150 г"
+                      className="h-28 w-full resize-none rounded-2xl border border-gray-200 bg-white p-3 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                    />
                     <div className="mt-1 text-right text-xs text-gray-500">{comment.length}/{charLimit}</div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-3">
-                    <button onClick={replacePhoto} className="flex items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 text-base font-medium shadow-sm ring-1 ring-gray-200 transition active:scale-[0.98]"><IconSwap className="h-5 w-5" /> Заменить фото</button>
-                    <button onClick={handleSendStub} disabled={!previewBlob} className="flex items-center justify-center gap-2 rounded-2xl bg-blue-600 px-4 py-3 text-base font-medium text-white shadow-sm transition active:scale-[0.98] disabled:opacity-50"><IconCheck className="h-5 w-5" /> Отправить</button>
+                    <button
+                      onClick={replacePhoto}
+                      className="flex items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 text-base font-medium shadow-sm ring-1 ring-gray-200 transition active:scale-[0.98]"
+                    >
+                      Заменить фото
+                    </button>
+                    <button
+                      onClick={handleSendStub}
+                      disabled={!previewBlob}
+                      className="flex items-center justify-center gap-2 rounded-2xl bg-blue-600 px-4 py-3 text-base font-medium text-white shadow-sm transition active:scale-[0.98] disabled:opacity-50"
+                    >
+                      <IconCheck className="h-5 w-5" /> Отправить
+                    </button>
                   </div>
 
-                  <div className="rounded-2xl bg-gray-50 p-3 text-xs text-gray-600">Фото можно заменить. Комментарий — опционален. Мы удаляем EXIF-данные при сжатии.</div>
+                  <div className="rounded-2xl bg-gray-50 p-3 text-xs text-gray-600">
+                    Фото можно заменить. Комментарий — опционален. EXIF-данные удаляются при сжатии.
+                  </div>
                 </section>
               )}
 
@@ -440,7 +374,12 @@
                     </div>
                     <p className="mt-2 text-xs text-gray-500">Это имитация загрузки для прототипа.</p>
                     <div className="mt-4 flex gap-2">
-                      <button onClick={() => { setPhase("preview"); setSendProgress(0); log("upload_canceled"); }} className="rounded-xl px-4 py-2 text-sm font-medium ring-1 ring-gray-200">Отмена</button>
+                      <button
+                        onClick={() => { setPhase("preview"); setSendProgress(0); log("upload_canceled"); }}
+                        className="rounded-xl px-4 py-2 text-sm font-medium ring-1 ring-gray-200"
+                      >
+                        Отмена
+                      </button>
                     </div>
                   </div>
                 </section>
@@ -449,7 +388,9 @@
               {phase === "success" && (
                 <section className="space-y-4">
                   <div className="flex items-center gap-3 rounded-2xl border border-green-200 bg-green-50 p-4">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-green-600/90 text-white"><IconCheck className="h-5 w-5" /></div>
+                    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-green-600/90 text-white">
+                      <IconCheck className="h-5 w-5" />
+                    </div>
                     <div>
                       <div className="text-base font-medium">Фото отправлено (заглушка)</div>
                       <div className="text-sm text-gray-600">В этой версии мы ничего не отправляем, но показываем, как выглядел бы поток.</div>
@@ -457,19 +398,31 @@
                   </div>
 
                   <div className="grid grid-cols-2 gap-3">
-                    <button onClick={downloadPayload} className="rounded-2xl bg-white px-4 py-3 text-base font-medium shadow-sm ring-1 ring-gray-200">Скачать payload.json</button>
-                    <button onClick={resetAll} className="rounded-2xl bg-blue-600 px-4 py-3 text-base font-medium text-white shadow-sm">Сделать новое фото</button>
+                    <button
+                      onClick={downloadPayload}
+                      className="rounded-2xl bg-white px-4 py-3 text-base font-medium shadow-sm ring-1 ring-gray-200"
+                    >
+                      Скачать payload.json
+                    </button>
+                    <button
+                      onClick={resetAll}
+                      className="rounded-2xl bg-blue-600 px-4 py-3 text-base font-medium text-white shadow-sm"
+                    >
+                      Сделать новое фото
+                    </button>
                   </div>
                 </section>
               )}
 
-              <footer className="mt-8 text-center text-xs text-gray-400">Мы не сохраняем оригиналы фото без вашего согласия. Эта страница — интерактивный прототип.</footer>
+              <footer className="mt-8 text-center text-xs text-gray-400">
+                Мы не сохраняем оригиналы фото без вашего согласия. Эта страница — интерактивный прототип.
+              </footer>
             </div>
           </div>
         );
       }
 
-      const root = ReactDOM.createRoot(document.getElementById('root'));
+      const root = ReactDOM.createRoot(document.getElementById("root"));
       root.render(<FoodCamPrototype />);
     </script>
   </body>
