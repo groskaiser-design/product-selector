@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0049'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0050'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -1676,8 +1676,8 @@ function handleSaveClick(e){
   })();
 })();
 
-  /* ============================================================
- *  BLOCK E: Front data flow (AI comment) — УНИФИЦИРОВАННЫЙ
+/* ============================================================
+ *  BLOCK EAI: Front data flow (AI comment) — АДАПТИРОВАНО ПОД БЭКЕНД
  * ============================================================ */
 (function frontDataFlowInit(){
   const tg = window.Telegram?.WebApp;
@@ -1758,10 +1758,10 @@ function handleSaveClick(e){
     _commentLastSig = nextSig;
   }
 
-  /* ---------- API ---------- */
-  async function apiFrontComment(requestedRow, signal){
+  /* ---------- API: используем front_bootstrap ---------- */
+  async function apiFrontBootstrap(requestedRow, signal){
     const payload = {
-      action: 'front_comment',
+      action: 'front_bootstrap',
       init_data: String(tg?.initData || ''),
       row: Number(requestedRow || 0) || undefined
     };
@@ -1805,38 +1805,46 @@ function handleSaveClick(e){
     _commentAbort = controller;
 
     try{
-      const res = await apiFrontComment(reqRow, controller.signal);
+      const res = await apiFrontBootstrap(reqRow, controller.signal);
       if (runId !== _commentRunId) return { done:true };
 
+      // ✅ Извлекаем данные из структуры front_bootstrap
+      const frontBlock = res?.front || {};
+      const serverRow = Number(res?.row || 0);
+      const html = frontBlock.html || '';
+      const ready = frontBlock.ready || false;
+      const status = frontBlock.status || 'WAITING';
+
       // Не показываем старый ответ
-      if (res?.row && reqRow && Number(res.row) < Number(reqRow)) {
+      if (serverRow && reqRow && serverRow < reqRow) {
         renderAICommentSafe('', null, 'WAITING');
-        const waitOld = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
+        const waitOld = 500;
         return { done:false, wait: waitOld };
       }
 
-      const serverRow = Number(res?.row);
+      // Обновляем row_calc если сервер знает больше
       if (Number.isFinite(serverRow) && (reqRow == null || serverRow > reqRow)) {
-        setRowCalcForUser(serverRow);
+        if (typeof setRowCalcForUser === 'function') {
+          setRowCalcForUser(serverRow);
+        }
       }
 
-      if (!res?.ready){
-        const status = res?.status || 'WAITING';
-        renderAICommentSafe('', null, status);
-        const wait = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
+      if (!ready){
+        const mappedStatus = mapBackendStatus(status);
+        renderAICommentSafe('', null, mappedStatus);
+        const wait = 500;
         return { done:false, wait };
       }
 
       // READY
-      const html = res?.html || '';
       renderAICommentSafe(html, serverRow, 'READY');
 
       // Сохраняем в кэш (если не старее reqRow)
-      if (html && !(reqRow && Number(res.row || 0) < Number(reqRow))) {
+      if (html && !(reqRow && serverRow < reqRow)) {
         saveCommentCache({ 
-          row: res.row, 
+          row: serverRow, 
           html, 
-          updated_at: res.updated_at || new Date().toISOString() 
+          updated_at: frontBlock.delivered_at || res.updated_at || new Date().toISOString() 
         });
       }
 
@@ -1863,6 +1871,19 @@ function handleSaveClick(e){
       renderAICommentSafe('', null, 'WAITING');
       return { done:false, wait: 1000 };
     }
+  }
+
+  // Маппинг статусов бэкенда в фронтовые
+  function mapBackendStatus(backendStatus){
+    const map = {
+      'NO_ROW': 'NO_ROW',
+      'WAITING': 'WAITING',
+      'WAIT_HTML': 'WAITING',
+      'SERVED': 'READY',
+      'ALREADY': 'READY',
+      'READY': 'READY'
+    };
+    return map[backendStatus] || 'WAITING';
   }
 
   async function pollLoop(runId){
