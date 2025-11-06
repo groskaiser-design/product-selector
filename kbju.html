@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0051'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0047'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -263,7 +263,7 @@ window.addEventListener('pageshow', (e)=>{
           <div class="row"><div class="label">Этническая принадлежность</div></div>
           <div class="choice-list" data-type="single" data-field="ethnicity" role="radiogroup" aria-label="Этническая принадлежность">
             <div class="choice-item" role="radio" aria-checked="false" data-value="european_mixed"><div class="radio-circle"></div><span class="label">Европеоидная или Смешанная</span></div>
-            <div class="choice-item" role="radio" aria-checked="false" data-value="asian"><div class="radio-circle"></div><span class="label">Азиатская</span></div>
+            <div class="choice-item" role="radio" aria-checked="false" data-value="asian"><div class="radio-circle"></div><span class="label">Азиатская (Восточная или Юго-Восточная Азия)</span></div>
             <div class="choice-item" role="radio" aria-checked="false" data-value="african"><div class="radio-circle"></div><span class="label">Африканская</span></div>
             <div class="choice-item" role="radio" aria-checked="false" data-value="prefer_not_to_say"><div class="radio-circle"></div><span class="label">Предпочитаю не указывать</span></div>
           </div>
@@ -807,7 +807,7 @@ window.forceInitAllWheels = ensureAllWheelsOnce;
 /* ===========================
  * BLOCK C — SAVE (Apps Script)
  * =========================== */
-const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbwrneCYn4rriDRTR5jPl2OqlGz73WUTuzJbicok9JQfNIsu1yc-SEm172uqTo9qyuOPvg/exec';
+const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbz_x1wyovNOUujTk_n3JWoL-fORJCtaSPm_Vz-E6LsHaMQAGpbFQNCof5w45hetNmmZ1Q/exec';
 const APP_VERSION  = 'frontend-2025-10-21';
 const REQUEST_TIMEOUT_MS = 30000;
 function nowIso(){ return new Date().toISOString(); }
@@ -1230,10 +1230,7 @@ function handleSaveClick(e){
     const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
     localStorage.removeItem('macros:vals:' + String(uid));
     localStorage.removeItem('chart:data:' + String(uid));
-    localStorage.removeItem('comment:html:' + String(uid)); // ✅ ДОБАВЛЕНО
   } catch(_){}
-  // Очисти UI комментария
-  setAIStatus('Обрабатываем… (ждём новый комментарий)');
 
   const saveTask = saveMeasurementsToDB(values, saveId);
 
@@ -1418,39 +1415,15 @@ function handleSaveClick(e){
     return json;
   }
 
-    /* ============================================================
-     *  CACHE: Comment
-     * ============================================================ */
-    const COMMENT_KEY_PREFIX = 'comment:html:';
-    function commentKey(uid){ return COMMENT_KEY_PREFIX + String(uid ?? currentUserId()); }
-    function saveCommentCache(obj, uid){ 
-      try { localStorage.setItem(commentKey(uid), JSON.stringify(obj)); } catch(_){} 
-    }
-    function loadCommentCache(uid){ 
-      try { 
-        const raw = localStorage.getItem(commentKey(uid)); 
-        return raw ? JSON.parse(raw) : null; 
-      } catch(_) { return null; } 
-    }
-  
   function renderAIComment(html){
-  if (isAdmin() && typeof window.__pageLaunchToUpdateComment !== 'number') {
-    window.__pageLaunchToUpdateComment = performance.now() - window.__pageLoadTime;
-    if (typeof window.updatePerfUI === 'function') window.updatePerfUI();
-  }
-  const host = elAI(); if (!host) return;
-  host.innerHTML = html
-    ? `<div class="field">${html}</div>`
-    : `<div class="field"><div class="help">Комментарий пока не готов…</div></div>`;
-  
-  // Сохрани в кэш
-  if (html) {
-    try {
-      const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
-      const row = (typeof getRowCalcForUser === 'function') ? getRowCalcForUser() : null;
-      saveCommentCache({ row: row, html: html, updated_at: new Date().toISOString() }, uid);
-    } catch(_){}
-  }
+    if (isAdmin() && typeof window.__pageLaunchToUpdateComment !== 'number') {
+      window.__pageLaunchToUpdateComment = performance.now() - window.__pageLoadTime;
+      if (typeof window.updatePerfUI === 'function') window.updatePerfUI();
+    }
+    const host = elAI(); if (!host) return;
+    host.innerHTML = html
+      ? `<div class="field">${html}</div>`
+      : `<div class="field"><div class="help">Комментарий пока не готов…</div></div>`;
   }
 
   function applyInputsToWheels(inputs){
@@ -1602,10 +1575,7 @@ function handleSaveClick(e){
     if (r.done) return;
     _pollTimer = setTimeout(()=>pollLoop(), r.wait);
   }
-  window.startFrontDataFlow = function(){ 
-  setAIStatus('Обрабатываем… (ждём комментарий)');
-  pollLoop(); 
-  };
+  window.startFrontDataFlow = function(){ pollLoop(); };
 
   setAIStatus('Ждём данные…');
   setAnalyticsPlaceholder();
@@ -1620,6 +1590,7 @@ function handleSaveClick(e){
       }
     } catch(_) { ensureAllWheelsOnce(); }
 
+    // ✅ ВАЖНО: минимальный row — по desiredRow()
     const reqRow =
       (typeof desiredRow === 'function' && desiredRow() != null)
         ? desiredRow()
@@ -1654,25 +1625,10 @@ function handleSaveClick(e){
         } catch { ensureAllWheelsOnce(); }
       }
 
-      // ✅ КОММЕНТАРИЙ
       if (b.front && b.front.html){
         renderAIComment(b.front.html || '');
       } else {
-        // Кэш показываем ТОЛЬКО при первой загрузке (reqRow === null)
-        if (!reqRow) {
-          try {
-            const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
-            const cachedComment = loadCommentCache(uid);
-            if (cachedComment?.html) {
-              renderAIComment(cachedComment.html);
-            } else {
-              setAIStatus('Обрабатываем… (ждём комментарий)');
-            }
-          } catch(_){ setAIStatus('Обрабатываем… (ждём комментарий)'); }
-        } else {
-          // После save — не показываем старый кэш
-          setAIStatus('Обрабатываем… (ждём новый комментарий)');
-        }
+        setAIStatus('Обрабатываем… (ждём комментарий)');
         window.startFrontDataFlow();
       }
 
@@ -1680,6 +1636,7 @@ function handleSaveClick(e){
         const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
         if (b.macros){
           const macrosRow = Number(b.macros.row || b.row || 0);
+          // ✅ не кладём старее reqRow
           if (b.macros.ready && b.macros.macros && !(reqRow && macrosRow < Number(reqRow))) {
             const seed = { row: b.macros.row || b.row || null, macros: b.macros.macros, updated_at: b.macros.updated_at };
             localStorage.setItem('macros:vals:' + String(uid), JSON.stringify(seed));
@@ -1692,6 +1649,7 @@ function handleSaveClick(e){
         const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
         if (b.chart){
           const chartRow = Number(b.chart.row || b.row || 0);
+          // ✅ не кладём старее reqRow
           if (b.chart.ready && Array.isArray(b.chart.data) && !(reqRow && chartRow < Number(reqRow))) {
             const seed = { row: b.chart.row || b.row || null, data: b.chart.data, updated_at: b.chart.updated_at };
             localStorage.setItem('chart:data:' + String(uid), JSON.stringify(seed));
@@ -1711,11 +1669,6 @@ function handleSaveClick(e){
           ensureAllWheelsOnce();
         }
       } catch { ensureAllWheelsOnce(); }
-      
-// Загрузи комментарий из кэша при ошибке
-// При ошибке bootstrap — показываем статус ожидания
-  setAIStatus('Обрабатываем… (ждём комментарий)');
-      
       try { window.startMacrosFlow(); } catch(_){}
       try { window.startChartFlow(); } catch(_){}
     }
