@@ -1230,6 +1230,7 @@ function handleSaveClick(e){
     const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
     localStorage.removeItem('macros:vals:' + String(uid));
     localStorage.removeItem('chart:data:' + String(uid));
+    localStorage.removeItem('comment:html:' + String(uid)); // ✅ ДОБАВЛЕНО
   } catch(_){}
 
   const saveTask = saveMeasurementsToDB(values, saveId);
@@ -1415,15 +1416,39 @@ function handleSaveClick(e){
     return json;
   }
 
-  function renderAIComment(html){
-    if (isAdmin() && typeof window.__pageLaunchToUpdateComment !== 'number') {
-      window.__pageLaunchToUpdateComment = performance.now() - window.__pageLoadTime;
-      if (typeof window.updatePerfUI === 'function') window.updatePerfUI();
+    /* ============================================================
+     *  CACHE: Comment
+     * ============================================================ */
+    const COMMENT_KEY_PREFIX = 'comment:html:';
+    function commentKey(uid){ return COMMENT_KEY_PREFIX + String(uid ?? currentUserId()); }
+    function saveCommentCache(obj, uid){ 
+      try { localStorage.setItem(commentKey(uid), JSON.stringify(obj)); } catch(_){} 
     }
-    const host = elAI(); if (!host) return;
-    host.innerHTML = html
-      ? `<div class="field">${html}</div>`
-      : `<div class="field"><div class="help">Комментарий пока не готов…</div></div>`;
+    function loadCommentCache(uid){ 
+      try { 
+        const raw = localStorage.getItem(commentKey(uid)); 
+        return raw ? JSON.parse(raw) : null; 
+      } catch(_) { return null; } 
+    }
+  
+  function renderAIComment(html){
+  if (isAdmin() && typeof window.__pageLaunchToUpdateComment !== 'number') {
+    window.__pageLaunchToUpdateComment = performance.now() - window.__pageLoadTime;
+    if (typeof window.updatePerfUI === 'function') window.updatePerfUI();
+  }
+  const host = elAI(); if (!host) return;
+  host.innerHTML = html
+    ? `<div class="field">${html}</div>`
+    : `<div class="field"><div class="help">Комментарий пока не готов…</div></div>`;
+  
+  // Сохрани в кэш
+  if (html) {
+    try {
+      const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
+      const row = (typeof getRowCalcForUser === 'function') ? getRowCalcForUser() : null;
+      saveCommentCache({ row: row, html: html, updated_at: new Date().toISOString() }, uid);
+    } catch(_){}
+  }
   }
 
   function applyInputsToWheels(inputs){
@@ -1590,7 +1615,6 @@ function handleSaveClick(e){
       }
     } catch(_) { ensureAllWheelsOnce(); }
 
-    // ✅ ВАЖНО: минимальный row — по desiredRow()
     const reqRow =
       (typeof desiredRow === 'function' && desiredRow() != null)
         ? desiredRow()
@@ -1625,10 +1649,20 @@ function handleSaveClick(e){
         } catch { ensureAllWheelsOnce(); }
       }
 
+      // ✅ КОММЕНТАРИЙ
       if (b.front && b.front.html){
         renderAIComment(b.front.html || '');
       } else {
-        setAIStatus('Обрабатываем… (ждём комментарий)');
+        // Загрузи из кэша
+        try {
+          const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
+          const cachedComment = loadCommentCache(uid);
+          if (cachedComment?.html && !(reqRow && Number(cachedComment.row || 0) < Number(reqRow))) {
+            renderAIComment(cachedComment.html);
+          } else {
+            setAIStatus('Обрабатываем… (ждём комментарий)');
+          }
+        } catch(_){ setAIStatus('Обрабатываем… (ждём комментарий)'); }
         window.startFrontDataFlow();
       }
 
@@ -1636,7 +1670,6 @@ function handleSaveClick(e){
         const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
         if (b.macros){
           const macrosRow = Number(b.macros.row || b.row || 0);
-          // ✅ не кладём старее reqRow
           if (b.macros.ready && b.macros.macros && !(reqRow && macrosRow < Number(reqRow))) {
             const seed = { row: b.macros.row || b.row || null, macros: b.macros.macros, updated_at: b.macros.updated_at };
             localStorage.setItem('macros:vals:' + String(uid), JSON.stringify(seed));
@@ -1649,7 +1682,6 @@ function handleSaveClick(e){
         const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
         if (b.chart){
           const chartRow = Number(b.chart.row || b.row || 0);
-          // ✅ не кладём старее reqRow
           if (b.chart.ready && Array.isArray(b.chart.data) && !(reqRow && chartRow < Number(reqRow))) {
             const seed = { row: b.chart.row || b.row || null, data: b.chart.data, updated_at: b.chart.updated_at };
             localStorage.setItem('chart:data:' + String(uid), JSON.stringify(seed));
@@ -1669,6 +1701,14 @@ function handleSaveClick(e){
           ensureAllWheelsOnce();
         }
       } catch { ensureAllWheelsOnce(); }
+      
+      // Загрузи комментарий из кэша при ошибке
+      try {
+        const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
+        const cachedComment = loadCommentCache(uid);
+        if (cachedComment?.html) renderAIComment(cachedComment.html);
+      } catch(_){}
+      
       try { window.startMacrosFlow(); } catch(_){}
       try { window.startChartFlow(); } catch(_){}
     }
