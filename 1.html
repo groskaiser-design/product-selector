@@ -61,26 +61,20 @@
     .helper{color:var(--muted);font-size:12px}
     .error{background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;border-radius:12px;padding:12px;margin:12px 0}
 
-    /* --- Card presence area (soft blur rect) --- */
+    /* --- Card presence area (soft, blurred) --- */
     .card-area{
       position:absolute; right:12px; top:50%; transform:translateY(-50%);
-      width:115px; height:183px;            /* целевой ~100x159 +15% запас */
+      width:115px; height:183px; /* целевой ~100x159 +15% запас */
       border-radius:14px;
       background:rgba(255,255,255,.12);
       box-shadow:0 0 0 1px rgba(255,255,255,.18) inset;
-      backdrop-filter:blur(10px) saturate(110%);   /* сильнее blur */
+      backdrop-filter:blur(10px) saturate(110%);
       -webkit-backdrop-filter:blur(10px) saturate(110%);
       transition:background-color .12s ease, box-shadow .12s ease;
       pointer-events:none;
     }
-    .card-area.ok{
-      background:rgba(34,197,94,.22);
-      box-shadow:0 0 0 1px rgba(34,197,94,.45) inset;
-    }
-    .card-area.neutral{
-      background:rgba(255,255,255,.12);
-      box-shadow:0 0 0 1px rgba(255,255,255,.18) inset;
-    }
+    .card-area.ok{ background:rgba(34,197,94,.22); box-shadow:0 0 0 1px rgba(34,197,94,.45) inset }
+    .card-area.neutral{ background:rgba(255,255,255,.12); box-shadow:0 0 0 1px rgba(255,255,255,.18) inset }
   </style>
 </head>
 <body>
@@ -106,7 +100,6 @@
             <div id="chipInfo" class="chip" role="status" aria-live="polite">Наведите сверху • выравнивайте…</div>
           </div>
           <button id="btnTorch" class="btn-torch hidden" aria-label="Фонарик">⚡️</button>
-
           <div class="center-level">
             <div class="level-outer">
               <div id="levelTarget" class="level-target"></div>
@@ -149,29 +142,29 @@
     jpegQ: 0.95,
     webpQ: 0.95,
 
-    // Level geometry (оставлено как в базе)
+    // Level geometry (как в базе)
     BUBBLE_R: 12,
     TARGET_R: 15,
     ENFORCE_GEOMETRY: true,
     FORWARD_MOVES_UP: false,
 
-    // Сглаживание точки уровня (EMA, как просил)
+    // EMA для точки уровня
     SMOOTH_ALPHA: 0.25,
 
-    // -------- Card presence detector (присутствие, без подгонки размеров) --------
-    DETECT_HZ: 4,           // реже, чтобы не «мигало»
-    EDGE_MARGIN_PX: 4,      // прямоугольник не должен касаться краёв зоны
-    MIN_SIZE_PX: 24,        // минимальная ширина/высота найденного прямоугольника
-    HIT_ON: 3,              // 3 подряд попадания = включить
-    HIT_OFF: 4,             // 4 подряд промаха = выключить
-    BOX_ALPHA: 0.40         // EMA для границ прямоугольника (сглаживание)
+    // -------- Card presence detector --------
+    DETECT_HZ: 4,
+    EDGE_MARGIN_PX: 4,
+    MIN_SIZE_PX: 24,
+    HIT_ON: 3,
+    HIT_OFF: 4,
+    BOX_ALPHA: 0.40
   };
 
   const S = { stream:null, track:null, torchCap:false, _torchOn:false, levelOn:false };
-  let _fx = 0, _fy = 0, _initF = false;     // EMA точки уровня
-  let _lastBlob = null;                     // текущий снимок
-  let _view = 'camera';                     // 'camera' | 'photo'
-  let _taking = false;                      // идёт съёмка (freeze/encode)
+  let _fx = 0, _fy = 0, _initF = false;           // EMA
+  let _lastBlob = null;                            // текущий снимок
+  let _view = 'camera';                            // 'camera' | 'photo'
+  let _taking = false;                             // идёт съёмка (freeze/encode)
 
   // Детектор карты
   let _detTimer=null, _chipState='';
@@ -204,7 +197,8 @@
     s = s.replace(/<[^>]*>/g, '');
     s = s.replace(/[\u0000-\u001F\u007F-\u009F]/g, '');
     s = s.replace(/(javascript:|data:|vbscript:|<script|<\/script|on\w+\s*=)/gi, '');
-    s = s.replace(/[^\p{L}\p{N}\p{M}\s.,!?:;"'()\\-–—[\\]{}#@+/&%]/gu, '');
+    // разрешаем только буквы/цифры/знаки препинания; безопасная версия с корректным экранированием ] и -
+    s = s.replace(/[^\p{L}\p{N}\p{M}\s\.,!?:;"'()\-\u2013\u2014\[\]{}#@+/&%]/gu, '');
     s = s.replace(/\s+/g, ' ').trim();
     return s;
   }
@@ -214,11 +208,8 @@
     commentWarn.classList.toggle('hidden', !show);
   }
   function updateButtons(){
-    // Переснять неактивна, когда мы в режиме камеры или идёт съёмка
     btnRetake.disabled = (_view === 'camera') || _taking;
-    // Отправить активна, если есть фото ИЛИ непустой комментарий (после санитайза)
     btnSend.disabled = !(_lastBlob || hasText()) || _taking;
-    // Спуск: только когда ровно И карта в зоне
     btnShot.disabled = !(_levelOK && _fitOK);
   }
   function showCameraUI(){
@@ -240,6 +231,7 @@
     stopDetection();
     updateButtons();
   }
+
   function setChip(text, ok){
     if(text===_chipState) return;
     _chipState=text;
@@ -345,7 +337,6 @@
     _taking = true; updateButtons();
     haptic();
 
-    // freeze кадр мгновенно
     const snapCanvas = snapshotNow();
     try {
       const previewURL = snapCanvas.toDataURL('image/webp', CONFIG.webpQ);
@@ -354,7 +345,6 @@
       showPhotoUI();
     } catch {}
 
-    // затем получаем Blob и гасим камеру
     try{
       const blob = await canvasToBlob(snapCanvas);
       _lastBlob = blob;
@@ -457,7 +447,6 @@
     levelBubble.classList.toggle('ok', _levelOK);
     levelTarget.classList.toggle('ok', _levelOK);
 
-    // статусная подсказка
     if(_levelOK && _fitOK) setChip('Ровно • Карта в зоне — можно снимать', true);
     else if(!_fitOK)       setChip('Карта вертикально в серой области справа', false);
     else                   setChip('Выравнивайте… (кнопка заблокирована)', false);
@@ -472,7 +461,7 @@
   function detectPresence(){
     if(!video.videoWidth || !video.videoHeight) return;
 
-    // даунскейл текущего кадра под размер «проба»
+    // даунскейл текущего кадра
     const wrap = document.getElementById('camWrap').getBoundingClientRect();
     const sW = 240;
     const sH = Math.round(sW * (wrap.height / wrap.width));
@@ -485,7 +474,7 @@
     const sx = Math.floor((vW - sw)/2), sy = Math.floor((vH - sh)/2);
     ctx.drawImage(video, sx, sy, sw, sh, 0, 0, sW, sH);
 
-    // ROI = координаты серой области в «пробе»
+    // ROI серой области
     const slot = cardArea.getBoundingClientRect();
     const rx = Math.max(0, Math.round((slot.left - wrap.left) / wrap.width  * sW));
     const ry = Math.max(0, Math.round((slot.top  - wrap.top ) / wrap.height * sH));
@@ -495,7 +484,7 @@
 
     const data = ctx.getImageData(rx, ry, rw, rh).data;
 
-    // проекции градиентов — ищем яркие края
+    // проекции градиентов — ищем края
     const col = new Float32Array(rw), row = new Float32Array(rh);
     const grayAt = (x,y)=>{ const i=(y*rw+x)*4; const r=data[i],g=data[i+1],b=data[i+2]; return r*0.2126+g*0.7152+b*0.0722; };
 
@@ -507,7 +496,6 @@
       }
     }
 
-    // пороги
     const maxCol = Math.max(...col), maxRow = Math.max(...row);
     const tCol = maxCol * 0.55, tRow = maxRow * 0.55;
 
@@ -533,11 +521,7 @@
 
     // полностью внутри зоны, не касаясь краёв
     const m = CONFIG.EDGE_MARGIN_PX;
-    const inside =
-      (_Lbox > m) &&
-      (_Tbox > m) &&
-      (_Rbox < (rw - 1 - m)) &&
-      (_Bbox < (rh - 1 - m));
+    const inside = (_Lbox > m) && (_Tbox > m) && (_Rbox < (rw - 1 - m)) && (_Bbox < (rh - 1 - m));
 
     applyPresence(inside);
   }
@@ -588,9 +572,8 @@
     console.assert(CONFIG.BUBBLE_R>0 && CONFIG.TARGET_R>0, 'radii positive');
   })();
   (function testInsideMath(){ const T=CONFIG.TARGET_R-CONFIG.BUBBLE_R; console.assert(T>0,'T>0'); console.assert(isInside(0,0),'center'); console.assert(isInside(T,0),'boundary'); console.assert(!isInside(T+0.01,0),'outside'); })();
-  (function testDetector(){
-    console.assert(CONFIG.DETECT_HZ>=3 && CONFIG.EDGE_MARGIN_PX>=2, 'detector sane');
-  })();
+  (function testDetector(){ console.assert(CONFIG.DETECT_HZ>=3 && CONFIG.EDGE_MARGIN_PX>=2, 'detector sane'); })();
+  (function testSanitize(){ const s = sanitizeComment(`<img src=x onerror=alert(1)> треска & рис javascript: data:`); console.assert(!/<|script|onerror|javascript:|data:/i.test(s), 'sanitize blocks dangerous patterns'); })();
   </script>
 </body>
 </html>
