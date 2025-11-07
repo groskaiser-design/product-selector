@@ -150,7 +150,7 @@
       <div class="card pad">
         <img id="photo" class="preview-img" alt="Снимок" />
         <div id="meta" class="meta"></div>
-        <div class="row" style="margin-top:10px">
+        <div class="row" style="margin-top:10px")>
           <button id="btnRetake" class="btn">Переснять</button>
           <button id="btnSave" class="btn primary">Скачать снимок</button>
         </div>
@@ -213,6 +213,12 @@
   function cmFromLagSamples(N){ return (N / S.fs) * 34300 / 2; } // см
   function lagSamplesFromCm(cm){ return Math.round((cm*2/34300)*S.fs); }
   function rms(buf){ let s=0; for(let i=0;i<buf.length;i++){ const v=buf[i]; s+=v*v; } return Math.sqrt(s/buf.length); }
+  function dot(a,b){
+    // Быстрый скалярный произведение для TypedArray/Array одинаковой длины
+    const n = Math.min(a.length, b.length); let sum = 0;
+    for(let i=0;i<n;i++){ sum += a[i]*b[i]; }
+    return sum;
+  }
 
   // ===================== CAMERA FLOW =====================
   btnOpen.addEventListener('click', openFlow);
@@ -419,10 +425,8 @@
 
   // ===================== ENV HINT =====================
   function envHint(){
-    const https = !isSecureContext ? '
-• Нужен HTTPS (или localhost).' : '';
-    return 'Камера/микрофон требуют разрешений.'+https+'
-• Включите громкость, отключите гарнитуру, положите тарелку на жёсткую поверхность.';
+    const https = !isSecureContext ? "\n• Нужен HTTPS (или localhost)." : "";
+    return `Камера/микрофон требуют разрешений.${https}\n• Включите громкость, отключите гарнитуру, положите тарелку на жёсткую поверхность.`;
   }
 
   // ===================== TEARDOWN =====================
@@ -439,6 +443,21 @@
     // 30 см → round-trip 60 см → τ≈0.00175 s → ~77 сэмплов @44.1k
     const fs=44100, z=30, N=lagSamplesFromCm(z); console.log('[test lag 30cm]', N); console.log('[cm from N]', Math.round(cmFromLagSamples(N)));
     console.assert(Math.abs(Math.round(cmFromLagSamples(N)) - z) <= 1, 'invertible cm<->samples');
+  })();
+
+  (function testCorrelate(){
+    // синтетический отклик: откладываем ref на известный лаг и проверяем поиск
+    const fs=44100, dur=CONFIG.chirpMs/1000; const ref = makeChirp(fs,dur,CONFIG.f0,CONFIG.f1);
+    const lagCm=30; const lag=lagSamplesFromCm(lagCm);
+    const rec=new Float32Array(lag+ref.length+64); rec.set(ref, lag);
+    const {lag:found, r}=correlate(ref, rec, lag-5, lag+5);
+    console.log('[test correlate] expected', lag, 'found', found, 'r', (r||0).toFixed(2));
+    console.assert(Math.abs(found-lag) <= 2, 'correlate finds correct lag');
+  })();
+
+  (function testDot(){
+    const a=new Float32Array([1,2,3]); const b=new Float32Array([4,5,6]);
+    const d=dot(a,b); console.log('[test dot] expected 32, got', d); console.assert(d===32,'dot product');
   })();
   </script>
 </body>
