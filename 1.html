@@ -32,7 +32,7 @@
       linear-gradient(90deg,#fff 1px,transparent 1px) calc(33.333% - .5px) 0/33.333% 100% repeat-x,
       linear-gradient(90deg,#fff 1px,transparent 1px) calc(66.666% - .5px) 0/33.333% 100% repeat-x}
 
-    /* top info bar — ниже фонаря */
+    /* top info bar */
     .topbar{position:absolute;left:0;right:0;top:64px;display:flex;justify-content:center;gap:10px;z-index:9;pointer-events:none}
     .chip{pointer-events:auto;display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.25);background:rgba(0,0,0,.55);color:#fff}
     .chip.ok{background:rgba(22,163,74,.9)} .chip.warn{background:rgba(245,158,11,.95)}
@@ -166,6 +166,7 @@
     s = s.replace(/\s+/g, ' ').trim();
     return s;
   }
+  function hasText(){ return sanitizeComment(commentEl.value).length > 0; }
   function showCommentWarning(show, text){
     commentWarn.textContent = text || '';
     commentWarn.classList.toggle('hidden', !show);
@@ -173,8 +174,8 @@
   function updateButtons(){
     // Переснять неактивна, когда мы в режиме камеры или идёт съёмка
     btnRetake.disabled = (_view === 'camera') || _taking;
-    // Отправить доступна, только если есть снимок (или выбран файл)
-    btnSend.disabled = !_lastBlob;
+    // Отправить активна, если есть фото ИЛИ непустой комментарий (после санитайза)
+    btnSend.disabled = !(_lastBlob || hasText()) || _taking;
   }
   function showCameraUI(){
     _view = 'camera';
@@ -211,6 +212,7 @@
     const raw = commentEl.value;
     const safe = sanitizeComment(raw);
     showCommentWarning(raw !== safe, raw !== safe ? 'Некоторые символы удалены для безопасности.' : '');
+    updateButtons();
   });
 
   function syncRadii(){
@@ -223,7 +225,7 @@
     levelTarget.style.width = tr + 'px'; levelTarget.style.height = tr + 'px';
   }
 
-  async function startCameraFlow(isRetake=false){
+  async function startCameraFlow(){
     _lastBlob = null; _taking = false;
     updateButtons();
     setError(''); syncRadii();
@@ -302,7 +304,6 @@
     try{
       const blob = await canvasToBlob(snapCanvas);
       _lastBlob = blob;
-      updateButtons();
     } finally {
       stopCamera();
       _taking = false; updateButtons();
@@ -339,6 +340,7 @@
     photo.src = url;
     stopCamera();
     showPhotoUI();
+    updateButtons();
     ev.target.value = '';
   }
 
@@ -408,9 +410,14 @@
 
   // ===================== SEND (пока отключено) =====================
   async function onSend(){
-    if(!_lastBlob) return;
     const safeText = sanitizeComment(commentEl.value);
-    console.log('DEBUG: отправка отключена. Подготовлено к отправке:', { blob:_lastBlob, comment:safeText });
+    if(!_lastBlob && !safeText){
+      setError('Пусто. Добавьте фото или комментарий.'); return;
+    }
+    console.log('DEBUG: отправка отключена. Подготовлено к отправке:', {
+      hasImage: !!_lastBlob,
+      comment: safeText
+    });
     setError('Отправка пока отключена. Подключим бэкенд/бота позже.');
   }
   btnSend.addEventListener('click', onSend);
