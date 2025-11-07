@@ -25,12 +25,13 @@
 
     .cam-overlay{position:absolute;inset:0;pointer-events:none}
 
-    .topbar{position:absolute;left:0;right:0;top:16px;display:flex;justify-content:center;gap:10px;z-index:9;pointer-events:none}
-    .chip{pointer-events:auto;display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:12px;border:1px solid rgba(255,255,255,.25);background:rgba(0,0,0,.55);color:#fff}
+    /* top info bar — отступ от вспышки (слева) и безопасная зона */
+    .topbar{position:absolute;left:0;right:0;top:64px;display:flex;justify-content:center;gap:10px;z-index:9;pointer-events:none;padding-left:72px;padding-right:12px;box-sizing:border-box}
+    .chip{pointer-events:auto;display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:12px;border:1px solid rgba(255,255,255,.25);background:rgba(0,0,0,.55);color:#fff;max-width:100%}
 
+    /* Torch */
     .btn-torch{position:absolute;left:12px;top:12px;z-index:10;pointer-events:auto;padding:6px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.3);color:#fff;background:rgba(255,255,255,.1)}
     .btn-torch.hidden{display:none}
-    .btn-cal{position:absolute;right:12px;top:12px;z-index:10;pointer-events:auto;padding:6px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.3);color:#fff;background:rgba(255,255,255,.1)}
 
     /* Level (target + dot) */
     .center-level{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;}
@@ -80,7 +81,6 @@
             <div id="chipInfo" class="chip" role="status" aria-live="polite">Выровняйте телефон, положите карту в правую зону</div>
           </div>
           <button id="btnTorch" class="btn-torch hidden" aria-label="Фонарик">⚡️</button>
-          <button id="btnCal" class="btn-cal" aria-label="Калибровать">⚙️</button>
 
           <div class="center-level">
             <div class="level-outer">
@@ -119,14 +119,14 @@
   </main>
 
   <script>
-  // ==== CONFIG / STATE (детектор усилен, точка — как была плавной) ====
+  // ==== CONFIG / STATE (детектор усилен, точка — плавная) ====
   const CONFIG = {
     maxSide: 4096, jpegQ: 0.95, webpQ: 0.95,
-    // Level
+    // Level — строго по датчикам, без пользовательской калибровки
     BUBBLE_R: 12, TARGET_R: 16, ENFORCE_GEOMETRY: true,
     LEVEL_GAIN: 1.15, ORIENT_RANGE: 24, // чувствительнее, чем 30°
     SMOOTH2_ALPHA1: 0.26, SMOOTH2_ALPHA2: 0.17, SMOOTH_DEADZONE: 0.008,
-    BASELINE_TRIM_ALPHA: 0.004, ZERO_THRESH: 0.035,
+    BASELINE_TRIM_ALPHA: 0.0035, ZERO_THRESH: 0.035, // лёгкая компенсация дрейфа
     // Presence (скорость + точность)
     DETECT_HZ: 12, EDGE_MARGIN_PX: 3, MIN_SIDE_FRAC: 0.25, BOX_ALPHA: 0.18,
     HOLD_MAX_MS: 220, HIT_ON: 1, HIT_OFF: 2,
@@ -151,7 +151,7 @@
   // ==== DOM ====
   const $=id=>document.getElementById(id);
   const err=$('err'); const video=$('video'), photo=$('photo'), overlay=$('overlay'), controls=$('controls');
-  const btnShot=$('btnShot'), btnTorch=$('btnTorch'), btnCal=$('btnCal'), chipInfo=$('chipInfo');
+  const btnShot=$('btnShot'), btnTorch=$('btnTorch'), chipInfo=$('chipInfo');
   const fileCam=$('file-cam'), fileGallery=$('file-gallery');
   const levelBubble=$('levelBubble'), levelTarget=$('levelTarget');
   const cardArea=$('cardArea'); const camWrap=$('camWrap');
@@ -169,7 +169,6 @@
   window.addEventListener('DOMContentLoaded',()=>{ start(); });
   btnShot.addEventListener('click', onShutter);
   btnTorch.addEventListener('click', toggleTorch);
-  btnCal.addEventListener('click', ()=>{ _bx=_rawNx; _by=_rawNy; });
   btnRetake.addEventListener('click',()=>{ if(btnRetake.disabled) return; start(true); });
   btnGallery.addEventListener('click',()=>fileGallery?.click());
   fileGallery.addEventListener('change', onFilePicked);
@@ -212,7 +211,7 @@
   // ==== Torch ====
   let _torchBusy=false; async function toggleTorch(){ if(!S.track||!S.torchCap||_torchBusy) return; _torchBusy=true; try{ S._torchOn=!S._torchOn; await S.track.applyConstraints({advanced:[{torch:S._torchOn}]}); }catch{ btnTorch.classList.add('hidden'); } finally{ setTimeout(()=>_torchBusy=false,200); } }
 
-  // ==== Level (sensors) ====
+  // ==== Level (sensors only) ====
   function getScreenAngle(){ let a=(screen.orientation?.angle ?? window.orientation ?? 0); a%=360; if(a<0) a+=360; return a; }
   function computeAxis(){ const angle=getScreenAngle(); const flip=(angle===180)?-1:1; const sx=flip; const sy=flip*(1); _axis={sx,sy}; }
 
@@ -251,59 +250,34 @@
     return Math.max(p80, m+0.6*s);
   }
   function smooth1D(a, alpha){ for(let i=1;i<a.length;i++){ a[i]=a[i-1]+alpha*(a[i]-a[i-1]); } return a; }
-  function close1D(a){ // морф. «закрытие» 3-окном: дилатация ≈ local max, затем сглаживание
-    const n=a.length, out=new Float32Array(n);
-    for(let i=0;i<n;i++){ let mx=a[i]; if(i>0) mx=Math.max(mx,a[i-1]); if(i<n-1) mx=Math.max(mx,a[i+1]); out[i]=mx; }
-    return out;
-  }
+  function close1D(a){ const n=a.length, out=new Float32Array(n); for(let i=0;i<n;i++){ let mx=a[i]; if(i>0) mx=Math.max(mx,a[i-1]); if(i<n-1) mx=Math.max(mx,a[i+1]); out[i]=mx; } return out; }
   function pushBox(L,R,T,B, rw,rh){ DET.lastBoxes.push([L/rw,R/rw,T/rh,B/rh]); if(DET.lastBoxes.length>3) DET.lastBoxes.shift(); const med=v=>{ const b=[...v].sort((x,y)=>x-y); const k=Math.floor(b.length/2); return b.length%2?b[k]:(b[k-1]+b[k])/2; }; const Ls=DET.lastBoxes.map(v=>v[0]), Rs=DET.lastBoxes.map(v=>v[1]), Ts=DET.lastBoxes.map(v=>v[2]), Bs=DET.lastBoxes.map(v=>v[3]); return [med(Ls)*rw, med(Rs)*rw, med(Ts)*rh, med(Bs)*rh]; }
 
-  function detectPresence(){ const vr=mapSlotToVideoRect(); if(!vr) return; // вырезаем ROI из видеокадра
-    const dW=CONFIG.DSCALE_SLOT_W, dH=Math.max(1,Math.round(dW*(vr.h/Math.max(1,vr.w)))); DET.c.width=dW; DET.c.height=dH;
-    DET.ctx.drawImage(video, vr.x,vr.y,vr.w,vr.h, 0,0,dW,dH);
+  function detectPresence(){ const vr=mapSlotToVideoRect(); if(!vr) return; const dW=CONFIG.DSCALE_SLOT_W, dH=Math.max(1,Math.round(dW*(vr.h/Math.max(1,vr.w)))); DET.c.width=dW; DET.c.height=dH; DET.ctx.drawImage(video, vr.x,vr.y,vr.w,vr.h, 0,0,dW,dH);
 
-    // --- luminance + контраст-стретч (робастный) ---
+    // luminance + контраст-стретч [p5..p95]
     const img=DET.ctx.getImageData(0,0,dW,dH); const data=img.data; const N=dW*dH; if(!DET.g||DET.g.length!==N){ DET.g=new Float32Array(N); DET.colV=new Float32Array(dW); DET.rowH=new Float32Array(dH); }
     const g=DET.g, colV=DET.colV, rowH=DET.rowH; colV.fill(0); rowH.fill(0);
     for(let i=0,j=0;i<data.length;i+=4,j++){ g[j]=data[i]*0.2126+data[i+1]*0.7152+data[i+2]*0.0722; }
-    // контраст: линейный стретч по [p5..p95]
-    const sorted=Array.from(g).sort((a,b)=>a-b); const p5=sorted[Math.floor(0.05*N)], p95=sorted[Math.floor(0.95*N)]||1; const rng=Math.max(1, p95-p5);
-    for(let i=0;i<N;i++){ g[i]=(g[i]-p5)/rng; if(g[i]<0) g[i]=0; if(g[i]>1) g[i]=1; }
+    const sorted=Array.from(g).sort((a,b)=>a-b); const p5=sorted[Math.floor(0.05*N)], p95=sorted[Math.floor(0.95*N)]||1; const rng=Math.max(1, p95-p5); for(let i=0;i<N;i++){ g[i]=(g[i]-p5)/rng; if(g[i]<0) g[i]=0; if(g[i]>1) g[i]=1; }
 
-    // --- Sobel + проекции ---
-    for(let y=1;y<dH-1;y++){
-      const y0=(y-1)*dW, y1=y*dW, y2=(y+1)*dW;
-      for(let x=1;x<dW-1;x++){
-        const i=y1+x;
-        const gx = -g[y0+x-1]-2*g[y1+x-1]-g[y2+x-1] + g[y0+x+1]+2*g[y1+x+1]+g[y2+x+1];
-        const gy = -g[y0+x-1]-2*g[y0+x]-g[y0+x+1] + g[y2+x-1]+2*g[y2+x]+g[y2+x+1];
-        const ax=Math.abs(gx), ay=Math.abs(gy);
-        colV[x]+=ax; rowH[y]+=ay;
-      }
-    }
-    // сглаживание + морф. закрытие
-    smooth1D(colV, CONFIG.BOX_ALPHA); smooth1D(rowH, CONFIG.BOX_ALPHA);
-    const colC=close1D(colV), rowC=close1D(rowH);
+    // Sobel + проекции
+    for(let y=1;y<dH-1;y++){ const y0=(y-1)*dW, y1=y*dW, y2=(y+1)*dW; for(let x=1;x<dW-1;x++){ const i=y1+x; const gx=-g[y0+x-1]-2*g[y1+x-1]-g[y2+x-1] + g[y0+x+1]+2*g[y1+x+1]+g[y2+x+1]; const gy=-g[y0+x-1]-2*g[y0+x]-g[y0+x+1] + g[y2+x-1]+2*g[y2+x]+g[y2+x+1]; const ax=Math.abs(gx), ay=Math.abs(gy); colV[x]+=ax; rowH[y]+=ay; } }
 
-    // робастные пороги
+    smooth1D(colV, CONFIG.BOX_ALPHA); smooth1D(rowH, CONFIG.BOX_ALPHA); const colC=close1D(colV), rowC=close1D(rowH);
     const tCol=robustThreshold(colC), tRow=robustThreshold(rowC);
 
     const m=CONFIG.EDGE_MARGIN_PX; let L=m; while(L<dW-m && colC[L]<tCol) L++; let R=dW-1-m; while(R>m && colC[R]<tCol) R--; let T=m; while(T<dH-m && rowC[T]<tRow) T++; let B=dH-1-m; while(B>m && rowC[B]<tRow) B--;
     if(!(R>L && B>T)){ applyPresence(false); return; }
 
-    // медиана по последним 3 рамкам (субпиксельные дрожания гасим)
     [L,R,T,B]=pushBox(L,R,T,B,dW,dH);
 
-    // геометрические проверки
     const width=R-L, height=B-T; const sizeOK=(width>=dW*CONFIG.MIN_SIDE_FRAC && height>=dH*CONFIG.MIN_SIDE_FRAC);
     const ar=height/Math.max(1,width); const arOK=(ar>=CONFIG.AR_MIN && ar<=CONFIG.AR_MAX);
     const inside=(L>m&&T>m&&R<dW-1-m&&B<dH-1-m);
 
-    // углы: окно пропорционально масштабу
     const cb=Math.max(4, Math.round(Math.min(width,height)*0.08));
-    function cornerE(cx,cy){ let s=0,c=0; for(let yy=cy; yy<Math.min(B,cy+cb); yy++){ for(let xx=cx; xx<Math.min(R,cx+cb); xx++){ const i=yy*dW+xx;
-      const gx = -g[i-dW-1]-2*g[i-1]-g[i+dW-1] + g[i-dW+1]+2*g[i+1]+g[i+dW+1];
-      const gy = -g[i-dW-1]-2*g[i-dW]-g[i-dW+1] + g[i+dW-1]+2*g[i+dW]+g[i+dW+1]; s+=Math.abs(gx)+Math.abs(gy); c++; } } return s/Math.max(1,c); }
+    function cornerE(cx,cy){ let s=0,c=0; for(let yy=cy; yy<Math.min(B,cy+cb); yy++){ for(let xx=cx; xx<Math.min(R,cx+cb); xx++){ const i=yy*dW+xx; const gx=-g[i-dW-1]-2*g[i-1]-g[i+dW-1] + g[i-dW+1]+2*g[i+1]+g[i+dW+1]; const gy=-g[i-dW-1]-2*g[i-dW]-g[i-dW+1] + g[i+dW-1]+2*g[i+dW]+g[i+dW+1]; s+=Math.abs(gx)+Math.abs(gy); c++; } } return s/Math.max(1,c); }
     const eLT=cornerE(L,T), eRT=cornerE(Math.max(L,R-cb),T), eLB=cornerE(L,Math.max(T,B-cb)), eRB=cornerE(Math.max(L,R-cb),Math.max(T,B-cb));
     const meanCorner=(eLT+eRT+eLB+eRB)/4; let strong=0; if(eLT>meanCorner*1.05) strong++; if(eRT>meanCorner*1.05) strong++; if(eLB>meanCorner*1.05) strong++; if(eRB>meanCorner*1.05) strong++;
 
@@ -315,7 +289,6 @@
   // ==== Send (заглушка) ====
   btnSend.addEventListener('click',()=>{ const t=(commentEl.value||'').trim(); if(!_lastBlob && !t){ setError('Пусто. Добавьте фото или комментарий.'); return;} setError('Отправка пока отключена.'); });
 
-  // FIX: строковые литералы без сырых переносов в кавычках
   function envHint(){
     const https = !isSecureContext ? "\n• Нужен HTTPS (или localhost)." : "";
     return "Камера требует разрешений." + https + "\n• Если камера не открывается — используйте галерею.";
@@ -323,14 +296,16 @@
 
   window.addEventListener('beforeunload',()=>{ stopCamera(); stopDetection(); stopLevelLoop(); });
 
-  // ==== TESTS (не меняем существующие, добавлены базовые проверки) ====
+  // ==== TESTS (консоль) ====
   (function tests(){
     try {
+      console.assert(!document.getElementById('btnCal'), 'btnCal removed');
+      const tb = getComputedStyle(document.querySelector('.topbar'));
+      console.assert(parseFloat(tb.top) >= 48, 'topbar clear from torch (top>=48px)');
+      console.assert(parseFloat(tb.paddingLeft) >= 60, 'topbar keeps left safe area');
       const e = envHint();
       console.assert(typeof e === 'string' && e.length > 0, 'envHint returns non-empty string');
-      console.assert(e.includes('Камера требует разрешений.'), 'envHint contains base message');
-      console.assert(robustThreshold([0,1,2,100]) >= 1, 'robustThreshold works on sample');
-      console.assert(typeof mapSlotToVideoRect === 'function', 'mapSlotToVideoRect exists');
+      console.assert(robustThreshold(new Float32Array([0,1,2,100])) >= 1, 'robustThreshold works on sample');
     } catch(err){ console.warn('Tests failed:', err); }
   })();
   </script>
