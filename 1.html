@@ -58,6 +58,7 @@
     .field{display:flex;flex-direction:column;gap:6px;margin-top:10px}
     .textarea{width:100%;min-height:68px;resize:vertical;padding:10px 12px;border:1px solid var(--ring);border-radius:12px;font:inherit;line-height:1.35}
     .helper{color:var(--muted);font-size:12px}
+
     .error{background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;border-radius:12px;padding:12px;margin:12px 0}
 
     /* --- Card presence area (striped, outlined) --- */
@@ -166,25 +167,30 @@
     SMOOTH2_ALPHA2: 0.15,
     SMOOTH_DEADZONE: 0.02,
 
-    // -------- Card presence detector v2 (процентильные пороги + проверки) --------
+    // Авто-ноль для дрейфа сенсора
+    BASELINE_TRIM_ALPHA: 0.004,
+    ZERO_THRESH: 0.06,
+
+    // -------- Card presence detector (упрощён и ослаблен) --------
     DETECT_HZ: 12,
-    EDGE_MARGIN_PX: 4,       // граница «не касаться» от краёв ROI
-    MIN_SIDE_FRAC: 0.35,     // доля от стороны ROI для min шир/выс карты
-    BOX_ALPHA: 0.18,         // сглаживание профилей
-    HOLD_MAX_MS: 180,
-    HIT_ON: 2,               // 2 попадания подряд, чтобы зажечь
-    HIT_OFF: 1,              // одно промахивание — погасить
+    EDGE_MARGIN_PX: 3,
+    MIN_SIDE_FRAC: 0.25,
+    BOX_ALPHA: 0.18,
+    HOLD_MAX_MS: 220,
+    HIT_ON: 1,
+    HIT_OFF: 2,
 
-    PERC_COL: 0.86,          // порог по вертикальному профилю (percentile)
-    PERC_ROW: 0.86,          // порог по горизонтальному профилю
+    PERC_COL: 0.80,
+    PERC_ROW: 0.80,
 
-    CORNER_BOX: 6,           // размер окна для «углов» в px (в ROI-скейле)
-    CORNER_PERC: 0.70,       // минимум: 70‑й процентиль градиента для каждого угла
+    CORNER_BOX: 6,
+    CORNER_PERC: 0.55,   // базовый порог ниже
+    CORNER_MIN_N: 2,     // достаточно двух сильных углов
 
-    AR_MIN: 1.45,            // карта вертикально ~1.586, оставим коридор
-    AR_MAX: 1.75,
+    AR_MIN: 1.35,        // corridor шире, ближе к 1.586
+    AR_MAX: 1.85,
 
-    DSCALE_W: 224            // ширина даунскейла для детектора
+    DSCALE_W: 224
   };
 
   const S = { stream:null, track:null, torchCap:false, _torchOn:false, levelOn:false };
@@ -196,6 +202,7 @@
   let _rawNx = 0, _rawNy = 0;        // входы -1..1
   let _fx1 = 0, _fy1 = 0;            // EMA1
   let _fx2 = 0, _fy2 = 0;            // EMA2
+  let _bx = 0, _by = 0;              // авто-ноль (дрейф)
   let _initF = false;
   let _rafId = null;                 // RAF
 
@@ -310,6 +317,7 @@
     _lastBlob = null; _taking = false;
     _fitOK=false; _levelOK=false;
     _hitCount=0; _missCount=0; _lastInsideTS=0;
+    _bx = 0; _by = 0; _initF = false;
     updateButtons();
     setError(''); syncRadii();
     showCameraUI();
@@ -463,11 +471,16 @@
     if(_rafId) return;
     const step=()=>{
       if(_view==='camera'){
+        // авто-ноль: когда почти по центру, медленно подтягиваем базу, чтобы компенсировать дрейф
+        const nearCenter = (Math.abs(_fx2) < CONFIG.ZERO_THRESH && Math.abs(_fy2) < CONFIG.ZERO_THRESH);
+        if(nearCenter){ _bx = _bx + CONFIG.BASELINE_TRIM_ALPHA*(_rawNx - _bx); _by = _by + CONFIG.BASELINE_TRIM_ALPHA*(_rawNy - _by); }
+
+        const rx = _rawNx - _bx; const ry = _rawNy - _by;
         const a1 = CONFIG.SMOOTH2_ALPHA1, a2 = CONFIG.SMOOTH2_ALPHA2, dz = CONFIG.SMOOTH_DEADZONE;
-        if(!_initF){ _fx1=_rawNx; _fy1=_rawNy; _fx2=_rawNx; _fy2=_rawNy; _initF=true; }
+        if(!_initF){ _fx1=rx; _fy1=ry; _fx2=rx; _fy2=ry; _initF=true; }
         else {
-          _fx1 = _fx1 + a1*(_rawNx - _fx1);
-          _fy1 = _fy1 + a1*(_rawNy - _fy1);
+          _fx1 = _fx1 + a1*(rx - _fx1);
+          _fy1 = _fy1 + a1*(ry - _fy1);
           let nx2 = _fx2 + a2*(_fx1 - _fx2);
           let ny2 = _fy2 + a2*(_fy1 - _fy2);
           if(Math.abs(nx2 - _fx2) < dz) nx2 = _fx2;
@@ -488,7 +501,7 @@
   }
   function stopLevelLoop(){ if(_rafId){ cancelAnimationFrame(_rafId); _rafId=null; } }
 
-  // ---------- PRESENCE DETECTOR v2 ----------
+  // ---------- PRESENCE DETECTOR (ослабленный, устойчивый) ----------
   function startDetection(){
     stopDetection();
     const ric = window.requestIdleCallback || function(cb, opts){ return setTimeout(cb, (opts && opts.timeout) || 120); };
@@ -591,7 +604,6 @@
     const cornerEnergy = (cx,cy)=>{
       let s=0,cnt=0; for(let y=Math.max(T,cy); y<Math.min(B,cy+CONFIG.CORNER_BOX); y++){
         for(let x=Math.max(L,cx); x<Math.min(R,cx+CONFIG.CORNER_BOX); x++){
-          // локальная сумма градиента
           const gx = Math.abs(gb[y*rw + Math.min(rw-1,x+1)] - gb[y*rw + Math.max(0,x-1)]);
           const gy = Math.abs(gb[Math.min(rh-1,y+1)*rw + x] - gb[Math.max(0,y-1)*rw + x]);
           s += gx + gy; cnt++;
@@ -604,7 +616,7 @@
     const eLB = cornerEnergy(L, Math.max(T, B-CONFIG.CORNER_BOX));
     const eRB = cornerEnergy(Math.max(L, R-CONFIG.CORNER_BOX), Math.max(T, B-CONFIG.CORNER_BOX));
 
-    // базовый уровень для сравнения — 70-й процентиль по всему ROI
+    // базовый уровень для сравнения
     const allE = new Float32Array(rw*rh);
     for(let y=1;y<rh-1;y++){
       for(let x=1;x<rw-1;x++){
@@ -614,8 +626,10 @@
       }
     }
     const eThr = percentile(allE, CONFIG.CORNER_PERC);
-    const cornersOK = (eLT>eThr && eRT>eThr && eLB>eThr && eRB>eThr);
+    let strongCorners = 0; if(eLT>eThr) strongCorners++; if(eRT>eThr) strongCorners++; if(eLB>eThr) strongCorners++; if(eRB>eThr) strongCorners++;
+    const cornersOK = (strongCorners >= CONFIG.CORNER_MIN_N);
 
+    // ok, если прямоугольник разумный, внутри и хотя бы часть углов «острая»
     const ok = inside && sizeOK && arOK && cornersOK;
     applyPresence(ok);
   }
