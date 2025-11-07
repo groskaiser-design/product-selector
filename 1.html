@@ -33,8 +33,8 @@
       linear-gradient(90deg,#fff 1px,transparent 1px) calc(33.333% - .5px) 0/33.333% 100% repeat-x,
       linear-gradient(90deg,#fff 1px,transparent 1px) calc(66.666% - .5px) 0/33.333% 100% repeat-x}
 
-    /* top info bar */
-    .topbar{position:absolute;left:0;right:0;top:10px;display:flex;justify-content:center;gap:10px;z-index:9;pointer-events:none}
+    /* top info bar — опустили ниже фонаря */
+    .topbar{position:absolute;left:0;right:0;top:64px;display:flex;justify-content:center;gap:10px;z-index:9;pointer-events:none}
     .chip{pointer-events:auto;display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.25);background:rgba(0,0,0,.55);color:#fff}
     .chip.ok{background:rgba(22,163,74,.9)} .chip.warn{background:rgba(245,158,11,.95)}
 
@@ -45,9 +45,9 @@
     /* Level (ONLY ONE TARGET CIRCLE) */
     .center-level{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
     .level-outer{position:relative;width:140px;height:140px;border-radius:50%;}
-    .level-target{position:absolute;left:50%;top:50%;width:36px;height:36px;transform:translate(-50%,-50%);border-radius:50%;border:2px solid rgba(255,255,255,.75);background:rgba(0,0,0,.15);backdrop-filter:blur(3px)}
+    .level-target{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);border-radius:50%;border:2px solid rgba(255,255,255,.75);background:rgba(0,0,0,.15);backdrop-filter:blur(3px)}
     .level-target.ok{border-color:#34d399}
-    .level-bubble{position:absolute;left:50%;top:50%;width:22px;height:22px;transform:translate(-50%,-50%);border-radius:50%;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.35);transition:transform .08s linear,background-color .15s}
+    .level-bubble{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);border-radius:50%;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.35);transition:transform .08s linear,background-color .15s}
     .level-bubble.ok{background:#22c55e}
 
     /* bottom controls */
@@ -127,14 +127,15 @@
   <script>
   // ===================== CONFIG / STATE =====================
   const CONFIG = {
-    idealFacing: { facingMode: { ideal: 'environment' } },
-    // Увеличили итоговую сторону и качество
-    maxSide: 3200,           // было 2000
-    jpegQ: 0.95,             // повысили до 0.95
+    // Камера: стремимся к высокой матрице
+    idealFacing: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+    maxSide: 4096,          // ↑ ещё выше, чтобы не душить качество
+    jpegQ: 0.95,
     webpQ: 0.95,
-    // Радиусы в пикселях (синхронизированы с CSS):
-    TARGET_R: 18, // level-target: width:36 => r=18
-    BUBBLE_R: 11, // level-bubble: width:22 => r=11
+    // Геометрия точки/круга (зададим размером точки, круг = +5%)
+    BUBBLE_R: 12,           // px (зелёная точка)
+    TARGET_FACTOR: 1.05,    // круг на 5% больше точки
+    TARGET_R: null,         // вычислим при запуске
   };
 
   const S = { stream:null, track:null, torchCap:false, _torchOn:false, levelOn:false };
@@ -163,41 +164,75 @@
   btnSave.addEventListener('click', ()=>{ const a=document.createElement('a'); a.href=photo.src; a.download='photo.jpg'; document.body.appendChild(a); a.click(); a.remove(); });
   btnRetake.addEventListener('click', ()=>{ secPrev.classList.add('hidden'); secCam.classList.remove('hidden'); openFlow(); });
 
-  async function openFlow(){ setError(''); await enableLevelSensors(); const camOk = await openCameraGUM(); if(!camOk){ try{ fileSystem?.click(); }catch{} } }
+  function syncRadii(){
+    CONFIG.TARGET_R = Math.round(CONFIG.BUBBLE_R * CONFIG.TARGET_FACTOR);
+    const br = CONFIG.BUBBLE_R*2; const tr = CONFIG.TARGET_R*2;
+    levelBubble.style.width = br+'px'; levelBubble.style.height = br+'px';
+    levelTarget.style.width = tr+'px'; levelTarget.style.height = tr+'px';
+  }
+
+  async function openFlow(){ setError(''); syncRadii(); await enableLevelSensors(); const camOk = await openCameraGUM(); if(!camOk){ try{ fileSystem?.click(); }catch{} } }
 
   async function openCameraGUM(){
     if(!canUseGUM()){ setError('Камера недоступна.', envHint()); return false; }
     const perm = await queryPerm('camera'); if(perm==='denied'){ setError('Доступ к камере запрещён.', envHint()); return false; }
-    try{ const s = await navigator.mediaDevices.getUserMedia({video: CONFIG.idealFacing, audio:false}); await bindStream(s); const caps=S.track?.getCapabilities?.()||{}; btnTorch.classList.toggle('hidden', !caps.torch); S.torchCap=!!caps.torch; return true; }catch(e){ console.warn(e); setError('Не удалось открыть камеру.', envHint()); return false; }
+    try{
+      // Пытаемся сразу запросить приличную матрицу
+      const s = await navigator.mediaDevices.getUserMedia({video: CONFIG.idealFacing, audio:false});
+      await bindStream(s);
+      await upgradeResolution(); // попытка дожать до max caps
+      const caps=S.track?.getCapabilities?.()||{}; btnTorch.classList.toggle('hidden', !caps.torch); S.torchCap=!!caps.torch; return true;
+    }catch(e){ console.warn(e); setError('Не удалось открыть камеру.', envHint()); return false; }
   }
+
   async function bindStream(stream){ stopCamera(); S.stream=stream; S.track=stream.getVideoTracks()[0]; video.srcObject=stream; try{ await video.play(); }catch{}; secCam.classList.remove('hidden'); secPrev.classList.add('hidden'); }
+
+  async function upgradeResolution(){
+    try{
+      const caps = S.track.getCapabilities?.() || {};
+      const wants = {};
+      if(caps.width && caps.width.max) wants.width = caps.width.max;
+      if(caps.height && caps.height.max) wants.height = caps.height.max;
+      if(Object.keys(wants).length){ try{ await S.track.applyConstraints(wants); }catch(e){ console.warn('applyConstraints(max) failed', e); }
+      }
+      const st = S.track.getSettings?.() || {}; console.log('Video settings:', st);
+    }catch(e){ console.warn('upgradeResolution failed', e); }
+  }
+
   function stopCamera(){ try{ video.pause(); video.srcObject=null }catch{}; try{ S.track?.stop() }catch{}; try{ S.stream?.getTracks()?.forEach(t=>t.stop()) }catch{}; S.stream=null; S.track=null; }
   async function toggleTorch(){ if(!S.track || !S.torchCap) return; try{ S._torchOn=!S._torchOn; await S.track.applyConstraints({advanced:[{torch:S._torchOn}]}); haptic(); }catch{ btnTorch.classList.add('hidden'); } }
 
   async function onShutter(){ if(btnShot.disabled) return; haptic(); await takeShot(); }
+
   async function takeShot(){
     if(!video.videoWidth || !video.videoHeight) return;
+    // 1) Пытаемся взять полный кадр через ImageCapture (часто даёт максимальное разрешение)
+    if('ImageCapture' in window && S.track){
+      try{
+        const ic = new ImageCapture(S.track);
+        const blob = await ic.takePhoto();
+        const url = URL.createObjectURL(blob);
+        photo.onload = ()=>{ meta.textContent = `${photo.naturalWidth}×${photo.naturalHeight} • ${blob.type||'image'}`; };
+        photo.src = url;
+        secCam.classList.add('hidden'); secPrev.classList.remove('hidden');
+        return;
+      }catch(e){ console.warn('ImageCapture failed, fallback to canvas', e); }
+    }
+    // 2) Фолбэк: снимаем кадр из <video>, сохранив высокую сторону и качество
     const srcW=video.videoWidth, srcH=video.videoHeight;
     const scale = Math.min(1,  CONFIG.maxSide/Math.max(srcW,srcH));
     const w=Math.max(1,Math.round(srcW*scale)), h=Math.max(1,Math.round(srcH*scale));
     const c=document.createElement('canvas'); c.width=w; c.height=h;
     const ctx=c.getContext('2d');
-    // повышаем качество ресайза
     try{ ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality='high'; }catch{}
     ctx.drawImage(video,0,0,w,h);
-    // Пытаемся сначала webp (0.95), затем jpeg (0.95)
     let url = '';
     try{ url = c.toDataURL('image/webp', CONFIG.webpQ); }catch{}
     if(!url || !/^data:image\/webp/.test(url)){
       try{ url = c.toDataURL('image/jpeg', CONFIG.jpegQ); }catch{}
     }
-    if(!url){ // крайней случай
-      url = c.toDataURL();
-    }
-    photo.src=url;
-    meta.textContent = `${w}×${h}`;
-    secCam.classList.add('hidden');
-    secPrev.classList.remove('hidden');
+    if(!url){ url = c.toDataURL(); }
+    photo.src=url; meta.textContent = `${w}×${h}`; secCam.classList.add('hidden'); secPrev.classList.remove('hidden');
   }
 
   // ===================== LEVEL SENSORS =====================
@@ -207,7 +242,7 @@
   function onOrient(e){ const pitch=e.beta??0, roll=e.gamma??0; paintLevel(pitch,roll) }
   function onMotion(e){ const a=e.accelerationIncludingGravity||{}; const x=a.x||0,y=a.y||0,z=a.z||0; const pitch=(Math.atan2(-x,Math.sqrt(y*y+z*z))*180/Math.PI)||0; const roll=(Math.atan2(y,z)*180/Math.PI)||0; paintLevel(pitch,roll); }
   function paintLevel(pitch, roll){
-    const R=70;
+    const R=70; // рабочая зона движения
     const nx=clamp(roll/30,-1,1), ny=clamp(pitch/30,-1,1);
     const dx=nx*R*0.45, dy=-ny*R*0.45;
     levelBubble.style.transform=`translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
@@ -232,6 +267,11 @@
   function stopAll(){ stopCamera(); }
 
   // ===================== TESTS (console) =====================
+  (function testRadii(){
+    syncRadii();
+    console.assert(CONFIG.TARGET_R === Math.round(CONFIG.BUBBLE_R*CONFIG.TARGET_FACTOR), 'target = bubble*1.05 (rounded)');
+    console.assert(CONFIG.TARGET_R > CONFIG.BUBBLE_R, 'target bigger than bubble');
+  })();
   (function testInsideMath(){ const TR=CONFIG.TARGET_R, BR=CONFIG.BUBBLE_R; const T=TR-BR; console.assert(T>0,'T>0'); console.assert(isInside(0,0),'center'); console.assert(isInside(T,0),'boundary'); console.assert(!isInside(T+0.01,0),'outside'); })();
   (function testEnvHint(){ const h=envHint(); console.assert(typeof h==='string' && h.includes('Камера требует разрешений.'), 'envHint string content'); })();
   </script>
