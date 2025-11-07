@@ -36,17 +36,16 @@
     /* top info bar */
     .topbar{position:absolute;left:0;right:0;top:10px;display:flex;justify-content:center;gap:10px;z-index:9;pointer-events:none}
     .chip{pointer-events:auto;display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.25);background:rgba(0,0,0,.55);color:#fff}
-    .chip.ok{background:rgba(22,163,74,.9)} .chip.warn{background:rgba(245,158,11,.95)} .chip.bad{background:rgba(239,68,68,.95)}
+    .chip.ok{background:rgba(22,163,74,.9)} .chip.warn{background:rgba(245,158,11,.95)}
 
     /* Torch */
     .btn-torch{position:absolute;left:12px;top:12px;z-index:10;pointer-events:auto;padding:6px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.3);color:#fff;background:rgba(255,255,255,.1)}
     .btn-torch.hidden{display:none}
 
-    /* Level (center) */
+    /* Level (ONLY ONE TARGET CIRCLE) */
     .center-level{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
-    .level-outer{position:relative;width:140px;height:140px;border-radius:50%;border:2px solid rgba(255,255,255,.6);background:rgba(0,0,0,.2);backdrop-filter:blur(4px)}
-    .level-ring{position:absolute;left:50%;top:50%;width:90px;height:90px;transform:translate(-50%,-50%);border-radius:50%;border:2px dashed rgba(255,255,255,.45)}
-    .level-target{position:absolute;left:50%;top:50%;width:36px;height:36px;transform:translate(-50%,-50%);border-radius:50%;border:2px solid rgba(255,255,255,.55)}
+    .level-outer{position:relative;width:140px;height:140px;border-radius:50%; /* no border to avoid extra circles */}
+    .level-target{position:absolute;left:50%;top:50%;width:36px;height:36px;transform:translate(-50%,-50%);border-radius:50%;border:2px solid rgba(255,255,255,.75);background:rgba(0,0,0,.15);backdrop-filter:blur(3px)}
     .level-target.ok{border-color:#34d399}
     .level-bubble{position:absolute;left:50%;top:50%;width:22px;height:22px;transform:translate(-50%,-50%);border-radius:50%;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.35);transition:transform .08s linear,background-color .15s}
     .level-bubble.ok{background:#22c55e}
@@ -54,7 +53,6 @@
     /* bottom controls */
     .controls{position:absolute;left:0;right:0;bottom:0;padding:12px;display:flex;gap:10px;align-items:center;justify-content:center;background:linear-gradient(to top, rgba(0,0,0,.55), rgba(0,0,0,0));color:#fff}
     .shutter{width:72px;height:72px;border-radius:999px;border:4px solid rgba(255,255,255,.9);background:#fff;cursor:pointer;box-shadow:0 2px 12px rgba(0,0,0,.4)}
-    .shutter[disabled]{opacity:.45;cursor:not-allowed;border-color:rgba(255,255,255,.5)}
 
     /* preview */
     .card{border:1px solid var(--ring);border-radius:16px;background:#fff}
@@ -69,7 +67,7 @@
   <main class="container">
     <header>
       <h1>Камера с уровнем (без звука)</h1>
-      <p class="muted">Держите телефон <b>строго горизонтально</b>. Ориентируйтесь по уровню в центре. Снимок делается вручную — без акустики/эхо.</p>
+      <p class="muted">Остался <b>один маленький круг</b> в центре. Точка зеленеет, только когда <b>полностью внутри</b> круга.</p>
     </header>
 
     <div id="err" class="error hidden"></div>
@@ -97,10 +95,9 @@
           <!-- torch -->
           <button id="btnTorch" class="btn-torch hidden" aria-label="Фонарик">⚡️</button>
 
-          <!-- level -->
+          <!-- level: only one target circle + dot -->
           <div class="center-level">
             <div class="level-outer">
-              <div class="level-ring"></div>
               <div id="levelTarget" class="level-target"></div>
               <div id="levelBubble" class="level-bubble"></div>
             </div>
@@ -131,13 +128,13 @@
   const CONFIG = {
     idealFacing: { facingMode: { ideal: 'environment' } },
     maxSide: 2000,
-    levelThreshold: 5,   // градусов — зелёная зона
+    // Радиусы в пикселях (синхронизированы с CSS):
+    TARGET_R: 18, // level-target: width:36 => r=18
+    BUBBLE_R: 11, // level-bubble: width:22 => r=11
+    levelThresholdDeg: 5, // влияет только на скорость наведения (визуал)
   };
 
-  const S = {
-    stream:null, track:null, torchCap:false, _torchOn:false,
-    levelOn:false,
-  };
+  const S = { stream:null, track:null, torchCap:false, _torchOn:false, levelOn:false };
 
   // ===================== DOM =====================
   const $ = id => document.getElementById(id);
@@ -163,11 +160,7 @@
   btnSave.addEventListener('click', ()=>{ const a=document.createElement('a'); a.href=photo.src; a.download='photo.jpg'; document.body.appendChild(a); a.click(); a.remove(); });
   btnRetake.addEventListener('click', ()=>{ secPrev.classList.add('hidden'); secCam.classList.remove('hidden'); openFlow(); });
 
-  async function openFlow(){
-    setError('');
-    await enableLevelSensors();
-    const camOk = await openCameraGUM(); if(!camOk){ try{ fileSystem?.click(); }catch{} }
-  }
+  async function openFlow(){ setError(''); await enableLevelSensors(); const camOk = await openCameraGUM(); if(!camOk){ try{ fileSystem?.click(); }catch{} } }
 
   async function openCameraGUM(){
     if(!canUseGUM()){ setError('Камера недоступна.', envHint()); return false; }
@@ -185,7 +178,23 @@
   async function enableLevelSensors(){ if(S.levelOn) return; let ok=false; try{ if(typeof DeviceOrientationEvent!=='undefined' && typeof DeviceOrientationEvent.requestPermission==='function'){ try{ const p=await DeviceOrientationEvent.requestPermission(); if(p==='granted'){ window.addEventListener('deviceorientation',onOrient,true); ok=true; } }catch{} } if(!ok && 'ondeviceorientation' in window){ window.addEventListener('deviceorientation',onOrient,true); ok=true; } if(!ok){ if(typeof DeviceMotionEvent!=='undefined' && typeof DeviceMotionEvent.requestPermission==='function'){ try{ const p2=await DeviceMotionEvent.requestPermission(); if(p2==='granted'){ window.addEventListener('devicemotion',onMotion,true); ok=true; } }catch{} } else if('ondevicemotion' in window){ window.addEventListener('devicemotion',onMotion,true); ok=true; } } }catch{} S.levelOn=ok; permHint.classList.toggle('hidden', ok); }
   function onOrient(e){ const pitch=e.beta??0, roll=e.gamma??0; paintLevel(pitch,roll) }
   function onMotion(e){ const a=e.accelerationIncludingGravity||{}; const x=a.x||0,y=a.y||0,z=a.z||0; const pitch=(Math.atan2(-x,Math.sqrt(y*y+z*z))*180/Math.PI)||0; const roll=(Math.atan2(y,z)*180/Math.PI)||0; paintLevel(pitch,roll); }
-  function paintLevel(pitch, roll){ const R=70, T=18, nx=clamp(roll/30,-1,1), ny=clamp(pitch/30,-1,1); const dx=nx*R*0.45, dy=-ny*R*0.45; levelBubble.style.transform=`translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`; const ok=Math.hypot(dx,dy)<=T; levelBubble.classList.toggle('ok',ok); levelTarget.classList.toggle('ok',ok); chipInfo.textContent = ok ? 'Ровно — можно снимать' : (Math.abs(pitch)+Math.abs(roll) < 30 ? 'Выравнивайте…' : 'Наведите сверху'); chipInfo.className = 'chip ' + (ok?'ok':'warn'); }
+  function paintLevel(pitch, roll){
+    // нормируем наклоны в -1..1 и переводим в смещения точки в пределах визуальной области
+    const R=70; // визуальная рабочая зона (px), влияет на чувствительность
+    const nx=clamp(roll/30,-1,1), ny=clamp(pitch/30,-1,1);
+    const dx=nx*R*0.45, dy=-ny*R*0.45; // пиксели
+    levelBubble.style.transform=`translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+
+    // «полностью внутри»: dist + bubbleR <= targetR
+    const dist=Math.hypot(dx,dy);
+    const okFully = dist <= (CONFIG.TARGET_R - CONFIG.BUBBLE_R);
+
+    levelBubble.classList.toggle('ok', okFully);
+    levelTarget.classList.toggle('ok', okFully);
+
+    chipInfo.textContent = okFully ? 'Ровно — точка внутри круга' : 'Выравнивайте…';
+    chipInfo.className = 'chip ' + (okFully ? 'ok' : 'warn');
+  }
 
   // ===================== ENV HINT =====================
   function envHint(){
@@ -198,7 +207,8 @@
   function stopAll(){ stopCamera(); }
 
   // ===================== TESTS (console) =====================
-  (function testClamp(){ console.assert(clamp(5,0,10)===5,'clamp mid'); console.assert(clamp(-1,0,10)===0,'clamp low'); console.assert(clamp(99,0,10)===10,'clamp high'); })();
+  (function testInside(){ // проверяем математику «полностью внутри»
+    const TR=CONFIG.TARGET_R, BR=CONFIG.BUBBLE_R; const T=TR-BR; console.assert(T>0,'T>0'); console.assert(Math.hypot(0,0)<=T,'center is inside'); console.assert(Math.hypot(T,0)<=T,'on boundary inside'); console.assert(!(Math.hypot(T+0.1,0)<=T),'outside if beyond');})();
   (function testEnvHint(){ const h=envHint(); console.assert(typeof h==='string' && h.includes('Камера требует разрешений.'), 'envHint string content'); })();
   </script>
 </body>
