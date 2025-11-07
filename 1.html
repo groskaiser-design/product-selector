@@ -35,7 +35,6 @@
     /* top info bar */
     .topbar{position:absolute;left:0;right:0;top:64px;display:flex;justify-content:center;gap:10px;z-index:9;pointer-events:none}
     .chip{pointer-events:auto;display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.25);background:rgba(0,0,0,.55);color:#fff}
-    .chip.ok{background:rgba(22,163,74,.9)} .chip.warn{background:rgba(245,158,11,.95)}
 
     /* Torch */
     .btn-torch{position:absolute;left:12px;top:12px;z-index:10;pointer-events:auto;padding:6px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.3);color:#fff;background:rgba(255,255,255,.1)}
@@ -71,12 +70,18 @@
         repeating-linear-gradient(45deg,
           rgba(255,255,255,.18) 0 10px,
           rgba(255,255,255,0) 10px 20px);
-      /* никакого backdrop-filter, чтобы не закрывать карту */
+      /* без backdrop-filter, чтобы не закрывать карту */
       box-shadow:0 0 0 1px rgba(0,0,0,.15) inset; /* тонкий внутренний контраст */
       pointer-events:none;
     }
     .card-area.ok{ border-color:#22c55e; box-shadow:0 0 0 2px rgba(34,197,94,.45) inset }
-    .card-area.neutral{ border-color:rgba(255,255,255,.95) }
+
+    /* --- Bottom indicators --- */
+    .indicators{position:absolute;left:0;right:0;bottom:96px;display:flex;gap:10px;justify-content:center;z-index:9;pointer-events:none}
+    .ind{pointer-events:auto;display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:12px;background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.2);color:#fff;backdrop-filter:blur(2px)}
+    .ind .bulb{width:12px;height:12px;border-radius:50%;background:var(--warn);box-shadow:0 0 0 2px rgba(0,0,0,.25) inset}
+    .ind.ok .bulb{background:var(--ok)}
+    .ind .label{font-size:12px;opacity:.95}
   </style>
 </head>
 <body>
@@ -99,7 +104,7 @@
         <div id="overlay" class="cam-overlay">
           <div class="grid"></div>
           <div class="topbar">
-            <div id="chipInfo" class="chip" role="status" aria-live="polite">Наведите сверху • выравнивайте…</div>
+            <div id="chipInfo" class="chip" role="status" aria-live="polite">Выровняйте телефон, положите карту в серую зону</div>
           </div>
           <button id="btnTorch" class="btn-torch hidden" aria-label="Фонарик">⚡️</button>
           <div class="center-level">
@@ -110,7 +115,13 @@
           </div>
 
           <!-- Card presence area (striped) -->
-          <div id="cardArea" class="card-area neutral" aria-label="Область для карты (портрет)"></div>
+          <div id="cardArea" class="card-area" aria-label="Область для карты (портрет)"></div>
+
+          <!-- Bottom two indicators -->
+          <div class="indicators">
+            <div id="indLevel" class="ind"><span class="bulb"></span><span class="label">Ровно</span></div>
+            <div id="indCard" class="ind"><span class="bulb"></span><span class="label">Карта</span></div>
+          </div>
         </div>
 
         <!-- shutter (only for camera mode) -->
@@ -150,20 +161,19 @@
     ENFORCE_GEOMETRY: true,
     FORWARD_MOVES_UP: false,
 
-    // EMA для точки уровня
-    SMOOTH_ALPHA: 0.25,            // legacy (оставляем, вдруг пригодится)
-    SMOOTH2_ALPHA1: 0.22,          // первая ступень EMA
-    SMOOTH2_ALPHA2: 0.15,          // вторая ступень EMA
-    SMOOTH_DEADZONE: 0.02,         // 2% нормализованной шкалы — микродедзона против дрожи
+    // Двухступенчатый EMA + дед-зона
+    SMOOTH2_ALPHA1: 0.22,
+    SMOOTH2_ALPHA2: 0.15,
+    SMOOTH_DEADZONE: 0.02,
 
     // -------- Card presence detector --------
-    DETECT_HZ: 10,                 // быстрее отклик
+    DETECT_HZ: 10,
     EDGE_MARGIN_PX: 4,
     MIN_SIZE_PX: 24,
     HIT_ON: 2,
     HIT_OFF: 2,
-    BOX_ALPHA: 0.20,               // меньше инерция границ
-    HOLD_MAX_MS: 250               // максимум удержания "зелёного" без новых попаданий
+    BOX_ALPHA: 0.20,
+    HOLD_MAX_MS: 250
   };
 
   const S = { stream:null, track:null, torchCap:false, _torchOn:false, levelOn:false };
@@ -171,20 +181,20 @@
   let _view = 'camera';              // 'camera' | 'photo'
   let _taking = false;               // идёт съёмка (freeze/encode)
 
-  // Данные уровня (двухступенчатый EMA + дедзона, отрисовка в RAF)
+  // Данные уровня
   let _rawNx = 0, _rawNy = 0;        // входы -1..1
   let _fx1 = 0, _fy1 = 0;            // EMA1
-  let _fx2 = 0, _fy2 = 0;            // EMA2 (используем его)
+  let _fx2 = 0, _fy2 = 0;            // EMA2
   let _initF = false;
-  let _rafId = null;                 // RAF петля рендера пузырька
+  let _rafId = null;                 // RAF
 
   // Детектор карты
-  let _detIdle=null, _chipState='';
-  let _lastDetTS=0;                  // троттлинг детектора
+  let _detIdle=null;
+  let _lastDetTS=0;                  // троттлинг
   let _fitOK=false, _levelOK=false;
   let _Lbox=null,_Rbox=null,_Tbox=null,_Bbox=null;
   let _hitCount=0,_missCount=0;
-  let _lastInsideTS=0;               // для HOLD_MAX_MS
+  let _lastInsideTS=0;               // HOLD
 
   // ===================== DOM =====================
   const $ = id => document.getElementById(id);
@@ -194,6 +204,7 @@
   const fileCam=$('file-cam'), fileGallery=$('file-gallery');
   const levelBubble=$('levelBubble'), levelTarget=$('levelTarget');
   const cardArea=$('cardArea');
+  const indLevel=$('indLevel'), indCard=$('indCard');
   const meta=$('meta');
   const btnRetake=$('btnRetake'), btnGallery=$('btnGallery'), btnSend=$('btnSend');
   const commentEl=$('comment'), commentWarn=$('commentWarn');
@@ -225,6 +236,12 @@
     btnSend.disabled = !(_lastBlob || hasText()) || _taking;
     btnShot.disabled = !(_levelOK && _fitOK);
   }
+  function syncIndicators(){
+    indLevel.classList.toggle('ok', _levelOK);
+    indCard.classList.toggle('ok', _fitOK);
+    indLevel.setAttribute('aria-label', _levelOK ? 'Ровно: ок' : 'Ровно: нет');
+    indCard.setAttribute('aria-label', _fitOK ? 'Карта: ок' : 'Карта: нет');
+  }
   function showCameraUI(){
     _view = 'camera';
     video.classList.remove('hidden');
@@ -232,9 +249,11 @@
     controls.classList.remove('hidden');
     photo.classList.add('hidden');
     meta.textContent = '';
+    chipInfo.textContent = 'Выровняйте телефон, положите карту в серую зону';
     startDetection();
     startLevelLoop();
     updateButtons();
+    syncIndicators();
   }
   function showPhotoUI(){
     _view = 'photo';
@@ -245,13 +264,6 @@
     stopDetection();
     stopLevelLoop();
     updateButtons();
-  }
-
-  function setChip(text, ok){
-    if(text===_chipState) return;
-    _chipState=text;
-    chipInfo.textContent = text;
-    chipInfo.className = 'chip ' + (ok ? 'ok' : 'warn');
   }
 
   // ===================== AUTOSTART =====================
@@ -286,7 +298,7 @@
 
   async function startCameraFlow(){
     _lastBlob = null; _taking = false;
-    _fitOK=false; _levelOK=false; _chipState='';
+    _fitOK=false; _levelOK=false;
     _Lbox=_Rbox=_Tbox=_Bbox=null; _hitCount=0; _missCount=0; _lastInsideTS=0;
     updateButtons();
     setError(''); syncRadii();
@@ -457,9 +469,7 @@
         levelBubble.style.transform=`translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
         _levelOK = isInside(dx,dy);
         levelBubble.classList.toggle('ok', _levelOK); levelTarget.classList.toggle('ok', _levelOK);
-        if(_levelOK && _fitOK) setChip('Ровно • Карта в зоне — можно снимать', true);
-        else if(!_fitOK) setChip('Карта вертикально в полосатой области справа', false);
-        else setChip('Выравнивайте… (кнопка заблокирована)', false);
+        syncIndicators();
         updateButtons();
       }
       _rafId=requestAnimationFrame(step);
@@ -555,14 +565,14 @@
     const now = performance.now();
     if(hit){ _lastInsideTS = now; _hitCount++; _missCount=0; } else { _missCount++; _hitCount=0; }
 
-    // быстрая, но стабильная гистерезис-логика + ограничение по времени удержания
+    // гистерезис + ограничение времени удержания
     let ok = (_hitCount >= CONFIG.HIT_ON) ? true : (_missCount >= CONFIG.HIT_OFF ? false : _fitOK);
     if(!hit && ok && (now - _lastInsideTS) > CONFIG.HOLD_MAX_MS){ ok = false; }
 
     if(ok!==_fitOK){
       _fitOK = ok;
       cardArea.classList.toggle('ok', ok);
-      cardArea.classList.toggle('neutral', !ok);
+      syncIndicators();
       updateButtons();
     }
   }
@@ -597,6 +607,7 @@
   (function testInsideMath(){ const T=CONFIG.TARGET_R-CONFIG.BUBBLE_R; console.assert(T>0,'T>0'); console.assert(isInside(0,0),'center'); console.assert(isInside(T,0),'boundary'); console.assert(!isInside(T+0.01,0),'outside'); })();
   (function testDetectorSetup(){ console.assert(typeof startDetection==='function' && typeof stopDetection==='function', 'detector functions exist'); console.assert(CONFIG.DETECT_HZ>=8 && CONFIG.HOLD_MAX_MS<=300, 'detector fast response'); })();
   (function testRAF(){ console.assert(typeof startLevelLoop==='function' && typeof stopLevelLoop==='function', 'raf loop exists'); })();
+  (function testIndicators(){ console.assert(document.getElementById('indLevel') && document.getElementById('indCard'), 'indicators exist'); })();
   (function testSanitize(){ const s = sanitizeComment(`<img src=x onerror=alert(1)> треска & рис javascript: data:`); console.assert(!/<|script|onerror|javascript:|data:/i.test(s), 'sanitize blocks dangerous patterns'); })();
   </script>
 </body>
