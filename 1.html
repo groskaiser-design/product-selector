@@ -54,15 +54,15 @@
     .shutter{width:72px;height:72px;border-radius:999px;border:4px solid rgba(255,255,255,.9);background:#fff;cursor:pointer;box-shadow:0 2px 12px rgba(0,0,0,.4)}
     .shutter[disabled]{opacity:.45;cursor:not-allowed;border-color:rgba(255,255,255,.5)}
 
-    /* Reference slot (bank card) */
+    /* Card slot (portrait, fixed px) */
     .card-slot{
       position:absolute; right:10px; top:50%; transform:translateY(-50%);
-      width:40%; aspect-ratio: 1.586; /* 85.60/53.98 */
-      border:2px dashed rgba(255,255,255,.85); border-radius:10px;
-      background:rgba(255,255,255,.06);
-      box-shadow:inset 0 0 0 2px rgba(0,0,0,.25);
+      width:70px; height:111px; /* short=70, long=70*1.586≈111 */
+      border:2px dashed rgba(255,255,255,.9); border-radius:10px;
+      background:rgba(0,0,0,.2);
+      box-shadow:inset 0 0 0 2px rgba(0,0,0,.35);
     }
-    .card-slot.ok{ border-color:#22c55e; box-shadow:inset 0 0 0 2px rgba(34,197,94,.35) }
+    .card-slot.ok{ border-color:#22c55e; box-shadow:inset 0 0 0 2px rgba(34,197,94,.4) }
     .card-slot.warn{ border-color:#ef4444; box-shadow:inset 0 0 0 2px rgba(239,68,68,.35) }
 
     /* meta + input */
@@ -79,7 +79,6 @@
 
     <!-- SINGLE VIEW -->
     <section id="sec-main">
-      <!-- скрытые инпуты для fallback -->
       <input id="file-cam" type="file" accept="image/*" capture="environment" class="hidden" />
       <input id="file-gallery" type="file" accept="image/*" class="hidden" />
 
@@ -92,11 +91,9 @@
         <!-- overlays (only for camera mode) -->
         <div id="overlay" class="cam-overlay">
           <div class="grid"></div>
-
           <div class="topbar">
-            <div id="chipInfo" class="chip" role="status" aria-live="polite">Положите карту в рамку справа</div>
+            <div id="chipInfo" class="chip" role="status" aria-live="polite">Положите карту вертикально в рамку</div>
           </div>
-
           <button id="btnTorch" class="btn-torch hidden" aria-label="Фонарик">⚡️</button>
 
           <div class="center-level">
@@ -106,8 +103,8 @@
             </div>
           </div>
 
-          <!-- reference slot -->
-          <div id="cardSlot" class="card-slot warn" aria-label="Область для банковской карты"></div>
+          <!-- fixed-px reference slot -->
+          <div id="cardSlot" class="card-slot warn" aria-label="Область для банковской карты (портрет)"></div>
         </div>
 
         <!-- shutter (only for camera mode) -->
@@ -120,8 +117,8 @@
 
       <!-- Комментарий + кнопки -->
       <div class="field">
-        <label for="comment" class="helper">Комментарий (необязательно). Например: «треска и рис».</label>
-        <textarea id="comment" class="textarea" maxlength="200" placeholder="Например: «треска и рис»"></textarea>
+        <label for="comment" class="helper">Комментарий (необязательно, но он повысит точность)</label>
+        <textarea id="comment" class="textarea" maxlength="200" placeholder="Например: «Треска 150 г и рис 200 г»"></textarea>
         <div id="commentWarn" class="helper hidden"></div>
       </div>
 
@@ -141,28 +138,38 @@
     jpegQ: 0.95,
     webpQ: 0.95,
 
+    // Level
     BUBBLE_R: 12,
     TARGET_R: 16,
     ENFORCE_GEOMETRY: true,
     FORWARD_MOVES_UP: false,
-
     SMOOTH_ALPHA: 0.25,
 
-    // --- Slot / detection ---
-    CARD_AR: 85.60/53.98,   // банковская карта
-    SLOT_TOL: 0.05,         // ±5%
-    DETECT_HZ: 8            // частота детекции ~8 раз/сек
+    // Card slot (portrait, fixed in px)
+    CARD_AR: 85.60/53.98,      // ≈ 1.586 (long/short)
+    CARD_SHORT_PX: 70,         // short side in px (width of portrait card)
+    TOL: 0.05,                 // ±5% tolerance
+    DETECT_HZ: 5               // light detector, 5 Hz
   };
 
-  const S = { stream:null, track:null, torchCap:false, _torchOn:false, levelOn:false };
-  let _fx = 0, _fy = 0, _initF = false;           // EMA (уровень)
-  let _levelOK = false;
-  let _fitOK = false;
+  // Derived
+  CONFIG.CARD_LONG_PX = Math.round(CONFIG.CARD_SHORT_PX * CONFIG.CARD_AR); // 70*1.586≈111
+  CONFIG.CARD_W = CONFIG.CARD_SHORT_PX; // portrait: width=short
+  CONFIG.CARD_H = CONFIG.CARD_LONG_PX;  // height=long
+  CONFIG.MIN_W = Math.round(CONFIG.CARD_W * (1 - CONFIG.TOL)); // 67
+  CONFIG.MAX_W = Math.round(CONFIG.CARD_W * (1 + CONFIG.TOL)); // 74
+  CONFIG.MIN_H = Math.round(CONFIG.CARD_H * (1 - CONFIG.TOL)); // 105
+  CONFIG.MAX_H = Math.round(CONFIG.CARD_H * (1 + CONFIG.TOL)); // 117
 
-  let _lastBlob = null;                            // текущий снимок
-  let _view = 'camera';                            // 'camera' | 'photo'
-  let _taking = false;                             // идёт freeze/encode
-  let _detTimer = null;                            // таймер детекции
+  const S = { stream:null, track:null, torchCap:false, _torchOn:false, levelOn:false };
+  let _fx=0,_fy=0,_initF=false; // EMA for level
+  let _levelOK=false, _fitOK=false;
+  let _lastBlob=null, _view='camera', _taking=false;
+  let _detTimer=null, _chipState='';
+
+  // EMA for measured card size (stabilize detector)
+  let _wEMA=null, _hEMA=null;
+  const SIZE_ALPHA = 0.35;
 
   // ===================== DOM =====================
   const $ = id => document.getElementById(id);
@@ -170,11 +177,11 @@
   const camWrap=$('camWrap');
   const video=$('video'), photo=$('photo'), overlay=$('overlay'), controls=$('controls');
   const btnShot=$('btnShot'), btnTorch=$('btnTorch'), chipInfo=$('chipInfo');
-  const fileCam=$('file-cam'), fileGallery=$('file-gallery');
   const levelBubble=$('levelBubble'), levelTarget=$('levelTarget');
   const cardSlot=$('cardSlot');
   const meta=$('meta');
   const btnRetake=$('btnRetake'), btnGallery=$('btnGallery'), btnSend=$('btnSend');
+  const fileCam=$('file-cam'), fileGallery=$('file-gallery');
   const commentEl=$('comment'), commentWarn=$('commentWarn');
 
   // ===================== UTILS =====================
@@ -184,7 +191,6 @@
   function haptic(){ try{ window.Telegram?.WebApp?.HapticFeedback?.impactOccurred?.('light'); }catch{} }
   function canUseGUM(){ return !!(navigator.mediaDevices?.getUserMedia) && isSecureContext; }
   async function queryPerm(name){ try{ const p=await navigator.permissions?.query?.({name}); return p?.state??null }catch{return null} }
-
   function sanitizeComment(input){
     let s = String(input||'').slice(0, 200);
     s = s.replace(/<[^>]*>/g, '');
@@ -195,28 +201,30 @@
     return s;
   }
   function hasText(){ return sanitizeComment(commentEl.value).length > 0; }
-  function showCommentWarning(show, text){
-    commentWarn.textContent = text || '';
-    commentWarn.classList.toggle('hidden', !show);
-  }
+
   function updateButtons(){
     btnRetake.disabled = (_view === 'camera') || _taking;
-    btnSend.disabled = !(_lastBlob || hasText()) || _taking;
-    // Спуск — только если уровень ок и карта попала в слот
-    btnShot.disabled = !(_levelOK && _fitOK);
+    btnSend.disabled   = !(_lastBlob || hasText()) || _taking;
+    btnShot.disabled   = !(_levelOK && _fitOK);
+  }
+  function setChip(text, ok){
+    if(text===_chipState) return;
+    _chipState=text;
+    chipInfo.textContent = text;
+    chipInfo.className = 'chip ' + (ok ? 'ok' : 'warn');
   }
   function showCameraUI(){
-    _view = 'camera';
+    _view='camera';
     video.classList.remove('hidden');
     overlay.classList.remove('hidden');
     controls.classList.remove('hidden');
     photo.classList.add('hidden');
-    meta.textContent = '';
+    meta.textContent='';
     startDetection();
     updateButtons();
   }
   function showPhotoUI(){
-    _view = 'photo';
+    _view='photo';
     video.classList.add('hidden');
     overlay.classList.add('hidden');
     controls.classList.add('hidden');
@@ -227,6 +235,9 @@
 
   // ===================== AUTOSTART =====================
   window.addEventListener('DOMContentLoaded', () => {
+    // ensure slot has the exact px size we calculated
+    cardSlot.style.width  = CONFIG.CARD_W + 'px';
+    cardSlot.style.height = CONFIG.CARD_H + 'px';
     startCameraFlow();
     try { window.Telegram?.WebApp?.ready?.(); } catch {}
   });
@@ -239,12 +250,11 @@
   fileGallery.addEventListener('change', onFilePicked);
   fileCam.addEventListener('change', onFilePicked);
   commentEl.addEventListener('input', ()=>{
-    const raw = commentEl.value;
-    const safe = sanitizeComment(raw);
-    showCommentWarning(raw !== safe, raw !== safe ? 'Некоторые символы удалены для безопасности.' : '');
+    const raw = commentEl.value, safe = sanitizeComment(raw);
+    commentWarn.textContent = (raw!==safe)? 'Некоторые символы удалены для безопасности.' : '';
+    commentWarn.classList.toggle('hidden', raw===safe);
     updateButtons();
   });
-  window.addEventListener('resize', ()=>{ /* пересчёт на случай ресайза */ });
 
   function syncRadii(){
     let bubble = Number(CONFIG.BUBBLE_R)||0;
@@ -257,14 +267,13 @@
   }
 
   async function startCameraFlow(){
-    _lastBlob = null; _taking = false;
-    _fitOK = false; _levelOK = false;
+    _lastBlob=null; _taking=false; _fitOK=false; _levelOK=false; _wEMA=null; _hEMA=null; _chipState='';
     updateButtons();
     setError(''); syncRadii();
     showCameraUI();
     await enableLevelSensors();
     const camOk = await openCameraGUM();
-    if(!camOk){ try{ fileCam?.click(); }catch{} } // fallback
+    if(!camOk){ try{ fileCam?.click(); }catch{} }
   }
 
   async function openCameraGUM(){
@@ -320,10 +329,9 @@
   // ---------- FREEZE-FIRST SHUTTER ----------
   async function onShutter(){
     if(btnShot.disabled || _taking) return;
-    _taking = true; updateButtons();
-    haptic();
+    _taking = true; updateButtons(); haptic();
 
-    const snapCanvas = snapshotNow(); // мгновенный freeze
+    const snapCanvas = snapshotNow();
     try {
       const previewURL = snapCanvas.toDataURL('image/webp', CONFIG.webpQ);
       photo.src = previewURL;
@@ -341,15 +349,14 @@
   }
 
   function snapshotNow(){
-    // Рисуем "как на экране": cover-кроп исходного кадра в канвас
-    const eW = camWrap.clientWidth, eH = camWrap.clientHeight;
-    const vW = video.videoWidth, vH = video.videoHeight;
-    const c=document.createElement('canvas'); c.width=eW; c.height=eH;
+    // копируем кадр исходного видео (без ресайза экрана) — стабильнее
+    const srcW = video.videoWidth, srcH = video.videoHeight;
+    const scale = Math.min(1,  CONFIG.maxSide/Math.max(srcW,srcH));
+    const w=Math.max(1,Math.round(srcW*scale)), h=Math.max(1,Math.round(srcH*scale));
+    const c=document.createElement('canvas'); c.width=w; c.height=h;
     const ctx=c.getContext('2d', { alpha:false, desynchronized:true, willReadFrequently:true });
-    const scale = Math.max(eW/vW, eH/vH);
-    const sw = Math.round(eW/scale), sh = Math.round(eH/scale);
-    const sx = Math.floor((vW - sw)/2), sy = Math.floor((vH - sh)/2);
-    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, eW, eH);
+    try{ ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality='high'; }catch{}
+    ctx.drawImage(video,0,0,w,h);
     return c;
   }
   function canvasToBlob(c){
@@ -361,7 +368,7 @@
     });
   }
 
-  // ---------- ГАЛЕРЕЯ ----------
+  // ---------- GALLERY ----------
   async function onFilePicked(ev){
     const file = ev.target?.files?.[0];
     if(!file) return;
@@ -420,9 +427,10 @@
     const nx = clamp(roll/30,-1,1);
     const ny = clamp(pitch/30,-1,1);
 
-    const alpha = CONFIG.SMOOTH_ALPHA;
+    // EMA сглаживание — стабильная «точка»
+    const a = CONFIG.SMOOTH_ALPHA;
     if(!_initF){ _fx = nx; _fy = ny; _initF = true; }
-    else { _fx = _fx + alpha * (nx - _fx); _fy = _fy + alpha * (ny - _fy); }
+    else { _fx = _fx + a * (nx - _fx); _fy = _fy + a * (ny - _fy); }
 
     const { sx, sy } = getAxisSigns();
     const dx = sx * _fx * R * 0.45;
@@ -434,67 +442,57 @@
     levelBubble.classList.toggle('ok', _levelOK);
     levelTarget.classList.toggle('ok', _levelOK);
 
-    updateFitChip();
+    // текст обновляем только при смене состояния (чтоб не «дёргало»)
+    if(_levelOK && _fitOK) setChip('Ровно • Референс ок — можно снимать', true);
+    else if(!_fitOK)       setChip('Положите карту в рамку (±5%)', false);
+    else                   setChip('Выравнивайте… (кнопка заблокирована)', false);
+
     updateButtons();
   }
 
-  // ---------- SLOT FIT DETECTION (±5%) ----------
-  function startDetection(){
-    stopDetection();
-    _detTimer = setInterval(()=>{ if(_view==='camera') detectCardFit(); }, 1000/CONFIG.DETECT_HZ);
-  }
+  // ---------- SIMPLE FIT DETECTOR (fixed px, 5 Hz) ----------
+  function startDetection(){ stopDetection(); _detTimer=setInterval(()=>{ if(_view==='camera') detectFit(); }, 1000/CONFIG.DETECT_HZ); }
   function stopDetection(){ if(_detTimer){ clearInterval(_detTimer); _detTimer=null; } }
 
-  function detectCardFit(){
+  function detectFit(){
     if(!video.videoWidth || !video.videoHeight) return;
 
-    // 1) подготавливаем downscale-канвас с cover-кропом (как на экране)
-    const eW = camWrap.clientWidth, eH = camWrap.clientHeight;
-    const vW = video.videoWidth, vH = video.videoHeight;
-
-    const sW = Math.min(320, eW|0); // ширина сэмпла
-    const sH = Math.round(sW * (eH/eW));
-
+    // downscale sample
+    const sW = 200;
+    const wrap = camWrap.getBoundingClientRect();
+    const sH = Math.round(sW * (wrap.height / wrap.width));
     const c = document.createElement('canvas'); c.width=sW; c.height=sH;
     const ctx = c.getContext('2d', { willReadFrequently:true, desynchronized:true });
 
-    const scale = Math.max(sW/vW, sH/vH);
+    const vW = video.videoWidth, vH = video.videoHeight;
+    const scale = Math.max(sW/vW, sH/vH); // cover
     const sw = Math.round(sW/scale), sh = Math.round(sH/scale);
     const sx = Math.floor((vW - sw)/2), sy = Math.floor((vH - sh)/2);
     ctx.drawImage(video, sx, sy, sw, sh, 0, 0, sW, sH);
 
-    // 2) координаты ROI (слота) в координатах сэмпла
+    // ROI from cardSlot rect mapped into sample
     const slot = cardSlot.getBoundingClientRect();
-    const wrap = camWrap.getBoundingClientRect();
-    const rx = Math.max(0, Math.round((slot.left - wrap.left) / wrap.width * sW));
+    const rx = Math.max(0, Math.round((slot.left - wrap.left) / wrap.width  * sW));
     const ry = Math.max(0, Math.round((slot.top  - wrap.top ) / wrap.height * sH));
     const rw = Math.min(sW - rx, Math.round(slot.width  / wrap.width  * sW));
     const rh = Math.min(sH - ry, Math.round(slot.height / wrap.height * sH));
     if(rw<12 || rh<12) return;
 
-    const img = ctx.getImageData(rx, ry, rw, rh).data;
+    const data = ctx.getImageData(rx, ry, rw, rh).data;
 
-    // 3) простая оценка границ: суммы градиентов по столбцам/строкам
-    const col = new Float32Array(rw).fill(0);
-    const row = new Float32Array(rh).fill(0);
-
-    // Быстрый градиент: |I(x+1)-I(x-1)| и |I(y+1)-I(y-1)|
-    const grayAt = (x,y)=>{
-      const i = (y*rw + x)*4;
-      const r=img[i], g=img[i+1], b=img[i+2];
-      return (r*0.2126 + g*0.7152 + b*0.0722);
-    };
+    // vertical/horizontal gradient projections
+    const col = new Float32Array(rw), row = new Float32Array(rh);
+    const grayAt = (x,y)=>{ const i=(y*rw+x)*4; const r=data[i],g=data[i+1],b=data[i+2]; return r*0.2126+g*0.7152+b*0.0722; };
 
     for(let y=1;y<rh-1;y++){
       for(let x=1;x<rw-1;x++){
         const gx = Math.abs(grayAt(x+1,y) - grayAt(x-1,y));
         const gy = Math.abs(grayAt(x,y+1) - grayAt(x,y-1));
-        col[x] += gx;
-        row[y] += gy;
+        col[x]+=gx; row[y]+=gy;
       }
     }
 
-    // 4) находим лево/право/верх/низ как позиции с сильными откликами
+    // robust threshold
     const maxCol = Math.max(...col), maxRow = Math.max(...row);
     const tCol = maxCol * 0.6, tRow = maxRow * 0.6;
 
@@ -503,49 +501,41 @@
     let T=0; while(T<rh && row[T] < tRow) T++;
     let B=rh-1; while(B>=0 && row[B] < tRow) B--;
 
-    const w = Math.max(0, R-L+1);
-    const h = Math.max(0, B-T+1);
+    let w = Math.max(0, R-L+1);
+    let h = Math.max(0, B-T+1);
+    if(w<=0 || h<=0){ setFit(false); return; }
 
-    // 5) проверки: разумная рамка и аспект-рацио близок к карте
-    const ar = (h>0)? (w/h) : 0;
-    const arOk = (Math.abs(ar - CONFIG.CARD_AR) / CONFIG.CARD_AR) <= 0.15; // мягче по АР
+    // EMA stabilize measured size
+    if(_wEMA==null){ _wEMA=w; _hEMA=h; } else {
+      _wEMA = _wEMA + SIZE_ALPHA*(w-_wEMA);
+      _hEMA = _hEMA + SIZE_ALPHA*(h-_hEMA);
+    }
 
-    // 6) попадание в слот: размеры близки к самому слоту (±5%) и AR ок
-    const wErr = Math.abs(w - rw)/rw;
-    const hErr = Math.abs(h - rh)/rh;
-    const fit = arOk && (wErr <= CONFIG.SLOT_TOL) && (hErr <= CONFIG.SLOT_TOL);
+    // convert sample px back to "slot px": here ROI equals slot, so compare directly with expected slot size in sample coords
+    // expected slot size in sample = rw×rh. Мы хотим, чтобы контур карты ≈ всему ROI (±5%)
+    const okW = (_wEMA >= rw* (1-CONFIG.TOL)) && (_wEMA <= rw* (1+CONFIG.TOL));
+    const okH = (_hEMA >= rh* (1-CONFIG.TOL)) && (_hEMA <= rh* (1+CONFIG.TOL));
 
-    // 7) UI + состояние
-    _fitOK = !!fit;
-    cardSlot.classList.toggle('ok', _fitOK);
-    cardSlot.classList.toggle('warn', !_fitOK);
-    updateFitChip();
-    updateButtons();
+    setFit(okW && okH);
   }
 
-  function updateFitChip(){
-    if(_levelOK && _fitOK){
-      chipInfo.textContent = 'Ровно • Референс ок — можно снимать';
-      chipInfo.className = 'chip ok';
-    } else if(!_fitOK){
-      chipInfo.textContent = 'Положите карту в рамку (±5%)';
-      chipInfo.className = 'chip warn';
-    } else {
-      chipInfo.textContent = 'Выравнивайте… (кнопка заблокирована)';
-      chipInfo.className = 'chip warn';
+  function setFit(ok){
+    if(ok!==_fitOK){
+      _fitOK = ok;
+      cardSlot.classList.toggle('ok', ok);
+      cardSlot.classList.toggle('warn', !ok);
+      if(_levelOK && _fitOK) setChip('Ровно • Референс ок — можно снимать', true);
+      else if(!_fitOK)       setChip('Положите карту в рамку (±5%)', false);
+      else                   setChip('Выравнивайте… (кнопка заблокирована)', false);
+      updateButtons();
     }
   }
 
   // ===================== SEND (пока отключено) =====================
   async function onSend(){
     const safeText = sanitizeComment(commentEl.value);
-    if(!_lastBlob && !safeText){
-      setError('Пусто. Добавьте фото или комментарий.'); return;
-    }
-    console.log('DEBUG: отправка отключена. Подготовлено к отправке:', {
-      hasImage: !!_lastBlob,
-      comment: safeText
-    });
+    if(!_lastBlob && !safeText){ setError('Пусто. Добавьте фото или комментарий.'); return; }
+    console.log('DEBUG: отправка отключена. Подготовлено к отправке:', { hasImage:!!_lastBlob, comment:safeText });
     setError('Отправка пока отключена. Подключим бэкенд/бота позже.');
   }
   btnSend.addEventListener('click', onSend);
@@ -563,7 +553,8 @@
   // ===================== TESTS (console) =====================
   (function testRadii(){
     console.assert(CONFIG.TARGET_R > CONFIG.BUBBLE_R || !CONFIG.ENFORCE_GEOMETRY, 'target > bubble (when enforced)');
-    console.assert(CONFIG.BUBBLE_R>0 && CONFIG.TARGET_R>0, 'radii positive');
+    console.assert(CONFIG.CARD_W===70 && CONFIG.CARD_H===111, 'slot px exact 70×111');
+    console.assert(CONFIG.MIN_W===67 && CONFIG.MAX_W===74 && CONFIG.MIN_H===105 && CONFIG.MAX_H===117, '±5% ranges');
   })();
   </script>
 </body>
