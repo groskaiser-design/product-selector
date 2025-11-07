@@ -140,9 +140,15 @@
     ENFORCE_GEOMETRY: true,
     // Как вести точку при наклоне вперёд: true = к верху экрана, false = к низу
     FORWARD_MOVES_UP: false,
+
+    // === СГЛАЖИВАНИЕ ДАТЧИКОВ (EMA) ===
+    SMOOTH_ALPHA: 0.25  // 0..1: меньше — сильнее сглаживание
   };
 
   const S = { stream:null, track:null, torchCap:false, _torchOn:false, levelOn:false };
+
+  // EMA состояние (для сглаживания пузырька)
+  let _fx = 0, _fy = 0, _initF = false;
 
   // ===================== DOM =====================
   const $ = id => document.getElementById(id);
@@ -301,14 +307,26 @@
   }
 
   function paintLevel(pitch, roll){
-    const R=70; // рабочая зона движения
-    const nx=clamp(roll/30,-1,1), ny=clamp(pitch/30,-1,1);
+    const R = 70; // рабочая зона движения
+
+    // Нормализация входа
+    const nx = clamp(roll/30,-1,1);
+    const ny = clamp(pitch/30,-1,1);
+
+    // === EMA сглаживание ===
+    const alpha = CONFIG.SMOOTH_ALPHA; // 0..1
+    if(!_initF){ _fx = nx; _fy = ny; _initF = true; }
+    else {
+      _fx = _fx + alpha * (nx - _fx);
+      _fy = _fy + alpha * (ny - _fy);
+    }
 
     // Знаки осей с учётом разворота экрана и предпочтения пользователя
     const { sx, sy } = getAxisSigns();
 
-    const dx = sx * nx * R * 0.45;
-    const dy = sy * ny * R * 0.45;
+    // Применяем сглаженные значения
+    const dx = sx * _fx * R * 0.45;
+    const dy = sy * _fy * R * 0.45;
 
     levelBubble.style.transform=`translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
 
