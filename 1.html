@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>FoodCam — акустический дальномер (BOOST, без визуального фолбэка)</title>
+  <title>FoodCam — одна камера с уровнем (без звука)</title>
   <meta name="theme-color" content="#0a7cff" />
   <style>
     :root{ --bg:#ffffff; --text:#111827; --muted:#6b7280; --ring:#e5e7eb; --primary:#2563eb; --ok:#16a34a; --warn:#f59e0b; --danger:#ef4444; }
@@ -19,7 +19,6 @@
     /* Buttons */
     .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:12px 16px; border-radius:14px;border:1px solid var(--ring);background:#fff;font-weight:600;cursor:pointer}
     .btn.primary{background:var(--primary);color:#fff;border-color:transparent}
-    .btn.ghost{background:transparent}
     .btn[disabled]{opacity:.45;cursor:not-allowed}
 
     /* CAMERA */
@@ -46,6 +45,7 @@
     /* Level (center) */
     .center-level{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
     .level-outer{position:relative;width:140px;height:140px;border-radius:50%;border:2px solid rgba(255,255,255,.6);background:rgba(0,0,0,.2);backdrop-filter:blur(4px)}
+    .level-ring{position:absolute;left:50%;top:50%;width:90px;height:90px;transform:translate(-50%,-50%);border-radius:50%;border:2px dashed rgba(255,255,255,.45)}
     .level-target{position:absolute;left:50%;top:50%;width:36px;height:36px;transform:translate(-50%,-50%);border-radius:50%;border:2px solid rgba(255,255,255,.55)}
     .level-target.ok{border-color:#34d399}
     .level-bubble{position:absolute;left:50%;top:50%;width:22px;height:22px;transform:translate(-50%,-50%);border-radius:50%;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.35);transition:transform .08s linear,background-color .15s}
@@ -55,13 +55,6 @@
     .controls{position:absolute;left:0;right:0;bottom:0;padding:12px;display:flex;gap:10px;align-items:center;justify-content:center;background:linear-gradient(to top, rgba(0,0,0,.55), rgba(0,0,0,0));color:#fff}
     .shutter{width:72px;height:72px;border-radius:999px;border:4px solid rgba(255,255,255,.9);background:#fff;cursor:pointer;box-shadow:0 2px 12px rgba(0,0,0,.4)}
     .shutter[disabled]{opacity:.45;cursor:not-allowed;border-color:rgba(255,255,255,.5)}
-
-    /* settings panel */
-    .panel{border:1px solid var(--ring);border-radius:16px;padding:12px;background:#fff;margin:12px 0}
-    .panel h3{margin:0 0 8px;font-size:16px}
-    .field{display:flex;align-items:center;gap:10px;margin:8px 0}
-    .field label{min-width:140px;color:#374151}
-    input[type="range"]{width:220px}
 
     /* preview */
     .card{border:1px solid var(--ring);border-radius:16px;background:#fff}
@@ -75,37 +68,18 @@
 <body>
   <main class="container">
     <header>
-      <h1>Камера с уровнем + акустический замер высоты (25–35 см)</h1>
-      <p class="muted">Если эхо не слышно — включи <b>BOOST</b>. Алгоритм сам подберёт полосу/громкость, применит фильтр и усреднение. Ничего не отправляется — всё локально.</p>
+      <h1>Камера с уровнем (без звука)</h1>
+      <p class="muted">Держите телефон <b>строго горизонтально</b>. Ориентируйтесь по уровню в центре. Снимок делается вручную — без акустики/эхо.</p>
     </header>
 
     <div id="err" class="error hidden"></div>
-
-    <!-- SETTINGS (для отладки/подбора акустики) -->
-    <section class="panel" id="panel">
-      <h3>Акустика — настройки/BOOST</h3>
-      <div class="field"><label>Автонастройка (BOOST)</label><input id="boost" type="checkbox" checked><span class="badge">скан полос + BPF + мульти-чирп</span></div>
-      <div class="field"><label>Громкость</label><input id="gain" type="range" min="0.02" max="0.12" step="0.005" value="0.06"><span class="badge" id="gainVal">0.06</span></div>
-      <div class="field"><label>Диапазон (кГц)</label>
-        <select id="band">
-          <option value="10000-12000">10–12</option>
-          <option value="12000-14000">12–14</option>
-          <option value="13000-16000" selected>13–16</option>
-        </select>
-      </div>
-      <div class="field"><label>Длительность чирпа (мс)</label><input id="chirpMs" type="range" min="120" max="360" step="20" value="160"><span class="badge" id="chirpVal">160</span></div>
-      <div class="field"><label>Тестовый пинг</label><button id="btnPing" class="btn">Пинг сейчас</button><span class="badge" id="diag">r=—, шум=—</span></div>
-      <div class="field"><label>Проблемы со звуком?</label><button id="btnAudioResume" class="btn">Включить звук</button><span class="badge">iOS: снимите беззвучный режим</span></div>
-      <div class="field"><label>Диагностика AEC</label><button id="btnLoopback" class="btn">Проверка прямой наводки</button><span class="badge" id="loopDiag">—</span></div>
-      <div class="field"><label>Советы</label><span class="badge">Уберите гарнитуру • Жёсткая поверхность • Поверните динамик к столу</span></div>
-    </section>
 
     <!-- CAMERA -->
     <section id="sec-camera">
       <div class="row" style="margin-bottom:10px">
         <button id="btnOpen" class="btn primary">Открыть камеру</button>
         <button id="btnStop" class="btn">Закрыть</button>
-        <span id="permHint" class="badge">Разрешите микрофон и ориентацию</span>
+        <span id="permHint" class="badge">Разрешите «Ориентация и движение»</span>
         <input id="file-system" type="file" accept="image/*" capture="environment" class="hidden" />
       </div>
 
@@ -117,8 +91,7 @@
 
           <!-- top info -->
           <div class="topbar">
-            <div id="chipDist" class="chip">Готовимся к замеру…</div>
-            <div id="chipMic" class="chip">🎙️ Микрофон: локально</div>
+            <div id="chipInfo" class="chip">Наведите сверху • выравнивайте…</div>
           </div>
 
           <!-- torch -->
@@ -127,6 +100,7 @@
           <!-- level -->
           <div class="center-level">
             <div class="level-outer">
+              <div class="level-ring"></div>
               <div id="levelTarget" class="level-target"></div>
               <div id="levelBubble" class="level-bubble"></div>
             </div>
@@ -134,7 +108,7 @@
         </div>
 
         <div class="controls">
-          <button id="btnShot" class="shutter" aria-label="Сделать снимок" disabled></button>
+          <button id="btnShot" class="shutter" aria-label="Сделать снимок"></button>
         </div>
       </div>
     </section>
@@ -157,37 +131,12 @@
   const CONFIG = {
     idealFacing: { facingMode: { ideal: 'environment' } },
     maxSide: 2000,
-    bandMinCm: 25, bandMaxCm: 35,
-
-    pingHz: 3,
-    chirpMs: 160,
-    f0: 13000, f1: 16000,
-    gain: 0.06,
-    minLagCm: 8, maxLagCm: 80,
-    goodSeq: 3,
-    corrThresh: 0.2,
-
-    // BOOST
-    boost: true,
-    bands: [[10000,12000],[12000,14000],[13000,16000]],
-    gainSteps: [0.06,0.09,0.12],
-    scanChirpMs: 260,
-    scanMinCm: 5, scanMaxCm: 120,
+    levelThreshold: 5,   // градусов — зелёная зона
   };
 
   const S = {
-    // camera
     stream:null, track:null, torchCap:false, _torchOn:false,
-    // ui
-    allowShot:false, okSeq:0,
-    // level
     levelOn:false,
-    // audio
-    actx:null, mic:null, bpf:null, proc:null, ring:new Float32Array(0), ringPos:0, ringSize:0,
-    refChirp:null, refEnergy:0, fs:44100,
-    pingTimer:null,
-    // diagnostics
-    rLast:null, noiseRMS:null,
   };
 
   // ===================== DOM =====================
@@ -195,14 +144,9 @@
   const err=$('err'), video=$('video');
   const btnOpen=$('btnOpen'), btnStop=$('btnStop'), btnTorch=$('btnTorch'), btnShot=$('btnShot'), fileSystem=$('file-system');
   const levelBubble=$('levelBubble'), levelTarget=$('levelTarget');
-  const chipDist=$('chipDist'), chipMic=$('chipMic');
+  const chipInfo=$('chipInfo');
   const secCam=$('sec-camera'), secPrev=$('sec-preview'), photo=$('photo'), meta=$('meta');
   const btnRetake=$('btnRetake'), btnSave=$('btnSave'), permHint=$('permHint');
-  const gain=$('gain'), gainVal=$('gainVal'), band=$('band'), btnPing=$('btnPing'), diag=$('diag');
-  const chirpMs=$('chirpMs'), chirpVal=$('chirpVal');
-  const btnAudioResume=$('btnAudioResume');
-  const btnLoopback=$('btnLoopback'), loopDiag=$('loopDiag');
-  const boost=$('boost');
 
   // ===================== UTILS =====================
   function setError(msg,hint){ if(!msg){ err.classList.add('hidden'); err.innerHTML=''; return; } const extra = hint?`<div class="meta" style="white-space:pre-line;margin-top:6px">${hint}</div>`:''; err.innerHTML = msg + extra; err.classList.remove('hidden'); }
@@ -210,10 +154,6 @@
   function haptic(){ try{ window.Telegram?.WebApp?.HapticFeedback?.impactOccurred?.('light'); }catch{} }
   function canUseGUM(){ return !!(navigator.mediaDevices?.getUserMedia) && isSecureContext; }
   async function queryPerm(name){ try{ const p=await navigator.permissions?.query?.({name}); return p?.state??null }catch{return null} }
-  function cmFromLagSamples(N){ return (N / S.fs) * 34300 / 2; }
-  function lagSamplesFromCm(cm){ return Math.round((cm*2/34300)*S.fs); }
-  function rms(buf){ let s=0; for(let i=0;i<buf.length;i++){ const v=buf[i]; s+=v*v; } return Math.sqrt(s/buf.length); }
-  function dot(a,b){ const n=Math.min(a.length,b.length); let sum=0; for(let i=0;i<n;i++){ sum+=a[i]*b[i]; } return sum; }
 
   // ===================== CAMERA FLOW =====================
   btnOpen.addEventListener('click', openFlow);
@@ -223,21 +163,10 @@
   btnSave.addEventListener('click', ()=>{ const a=document.createElement('a'); a.href=photo.src; a.download='photo.jpg'; document.body.appendChild(a); a.click(); a.remove(); });
   btnRetake.addEventListener('click', ()=>{ secPrev.classList.add('hidden'); secCam.classList.remove('hidden'); openFlow(); });
 
-  gain.addEventListener('input', ()=>{ CONFIG.gain=parseFloat(gain.value); gainVal.textContent=CONFIG.gain.toFixed(3); });
-  band.addEventListener('change', ()=>{ const [f0,f1]=band.value.split('-').map(x=>parseInt(x,10)); CONFIG.f0=f0; CONFIG.f1=f1; buildChirp(); updateBPF(); });
-  chirpMs.addEventListener('input', ()=>{ CONFIG.chirpMs=parseInt(chirpMs.value,10); chirpVal.textContent=String(CONFIG.chirpMs); buildChirp(); });
-  btnPing.addEventListener('click', async ()=>{ await singlePing(true); });
-  btnAudioResume.addEventListener('click', async ()=>{ try{ await S.actx?.resume?.(); }catch{} });
-  boost.addEventListener('change', ()=>{ CONFIG.boost = boost.checked; });
-  btnLoopback.addEventListener('click', loopbackTest);
-
   async function openFlow(){
-    setError(''); S.allowShot=false; btnShot.disabled=true; chipDist.className='chip'; chipDist.textContent='Готовимся к замеру…';
+    setError('');
     await enableLevelSensors();
     const camOk = await openCameraGUM(); if(!camOk){ try{ fileSystem?.click(); }catch{} }
-    const audOk = await initAudio(); if(!audOk){ setError('Нет доступа к микрофону/аудио.', envHint()); return; }
-    if(CONFIG.boost){ await autoTune(); }
-    startAcousticLoop();
   }
 
   async function openCameraGUM(){
@@ -249,120 +178,28 @@
   function stopCamera(){ try{ video.pause(); video.srcObject=null }catch{}; try{ S.track?.stop() }catch{}; try{ S.stream?.getTracks()?.forEach(t=>t.stop()) }catch{}; S.stream=null; S.track=null; }
   async function toggleTorch(){ if(!S.track || !S.torchCap) return; try{ S._torchOn=!S._torchOn; await S.track.applyConstraints({advanced:[{torch:S._torchOn}]}); haptic(); }catch{ btnTorch.classList.add('hidden'); } }
 
-  async function onShutter(){ if(!S.allowShot){ haptic(); return; } haptic(); await takeShot(); }
-  async function takeShot(){ if(!video.videoWidth || !video.videoHeight) return; const srcW=video.videoWidth, srcH=video.videoHeight; const scale = Math.min(1, CONFIG.maxSide/Math.max(srcW,srcH)); const w=Math.max(1,Math.round(srcW*scale)), h=Math.max(1,Math.round(srcH*scale)); const c=document.createElement('canvas'); c.width=w; c.height=h; c.getContext('2d').drawImage(video,0,0,w,h); let url = c.toDataURL('image/webp',0.85), type='image/webp'; if(!/^data:image\/webp/.test(url)){ url=c.toDataURL('image/jpeg',0.85); type='image/jpeg'; } photo.src=url; meta.textContent = `${w}×${h} • ${type}`; secCam.classList.add('hidden'); secPrev.classList.remove('hidden'); }
-
-  // ===================== AUDIO (ACOUSTIC RANGE) =====================
-  async function initAudio(){
-    try{
-      S.actx = new (window.AudioContext || window.webkitAudioContext)();
-      if(S.actx.state!=='running'){ try{ await S.actx.resume(); }catch{} }
-      S.fs = S.actx.sampleRate || 44100;
-      const micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation:false, noiseSuppression:false, autoGainControl:false } });
-      S.mic = S.actx.createMediaStreamSource(micStream);
-
-      // Bandpass filter for analysis
-      S.bpf = S.actx.createBiquadFilter(); S.bpf.type = 'bandpass'; updateBPF();
-
-      // ScriptProcessor (for broad support)
-      const bufSize = 4096; S.proc = S.actx.createScriptProcessor(bufSize, 1, 1);
-      S.ringSize = Math.max(S.fs*0.8|0, 44100); // ~0.8s ring
-      S.ring = new Float32Array(S.ringSize); S.ringPos=0;
-      S.proc.onaudioprocess = (e)=>{ const inp = e.inputBuffer.getChannelData(0); S.noiseRMS = rms(inp); let p=S.ringPos; const N=inp.length; for(let i=0;i<N;i++){ S.ring[p]=inp[i]; if(++p>=S.ringSize) p=0; } S.ringPos=p; const out=e.outputBuffer.getChannelData(0); for(let i=0;i<N;i++) out[i]=0; };
-
-      // connect graph: mic -> bpf -> proc -> destination (muted)
-      S.mic.connect(S.bpf); S.bpf.connect(S.proc); S.proc.connect(S.actx.destination);
-
-      buildChirp();
-
-      // Echo-cancel info
-      try{ const st=micStream.getAudioTracks?.()[0]?.getSettings?.()||{}; chipMic.textContent = `🎙️ Микрофон: локально • AEC: ${st.echoCancellation===true?'вкл':st.echoCancellation===false?'выкл':'неизв.'}`; }catch{}
-
-      return true;
-    }catch(e){ console.warn('initAudio failed', e); return false; }
-  }
-
-  function buildChirp(){ S.refChirp = makeChirp(S.fs, CONFIG.chirpMs/1000, CONFIG.f0, CONFIG.f1); S.refEnergy = dot(S.refChirp, S.refChirp); }
-  function updateBPF(){ const center=(CONFIG.f0+CONFIG.f1)/2; const bw=(CONFIG.f1-CONFIG.f0); const nyq=S.fs/2; const safeCenter=Math.min(center, nyq*0.9); const Q=Math.max(0.0001, safeCenter/Math.max(200,bw)); try{ S.bpf.frequency.value=safeCenter; S.bpf.Q.value=Q; }catch{} }
-
-  function makeChirp(fs, dur, f0, f1){ const N=Math.max(1,Math.round(fs*dur)); const buf=new Float32Array(N); const w=(i)=>0.5-0.5*Math.cos(2*Math.PI*i/(N-1)); const K=(f1-f0)/(2*dur); for(let n=0;n<N;n++){ const t=n/fs; const phase=2*Math.PI*(f0*t + K*t*t); buf[n]=Math.sin(phase)*w(n); } return buf; }
-
-  function playChirp(){ const src=S.actx.createBufferSource(); const g=S.actx.createGain(); g.gain.value=CONFIG.gain; const b=S.actx.createBuffer(1, S.refChirp.length, S.fs); b.copyToChannel(S.refChirp,0,0); src.buffer=b; src.connect(g); g.connect(S.actx.destination); src.start(); return new Promise(res=>{ src.onended=res; }); }
-
-  function ringSlice(lastSamples){ const N=Math.min(lastSamples, S.ringSize); const out=new Float32Array(N); const start=(S.ringPos - N + S.ringSize) % S.ringSize; if(start+N<=S.ringSize){ out.set(S.ring.subarray(start,start+N)); } else { const first=S.ringSize-start; out.set(S.ring.subarray(start,S.ringSize),0); out.set(S.ring.subarray(0,N-first),first); } return out; }
-
-  function correlate(ref, rec, minLag, maxLag){ const refN=ref.length; const refE=S.refEnergy||dot(ref,ref); let bestLag=-1, bestR=-1; for(let lag=minLag; lag<=maxLag; lag++){ if(lag+refN>=rec.length) break; let a=0,b=0; for(let i=0;i<refN;i++){ const v=rec[lag+i]; a+=ref[i]*v; b+=v*v; } const r=a/Math.sqrt((refE+1e-9)*(b+1e-9)); if(r>bestR){ bestR=r; bestLag=lag; } } return {lag:bestLag, r:bestR}; }
-
-  async function singlePing(showDiag){ await ensureAudio(); await playChirp(); const takeMs = Math.max(CONFIG.chirpMs + 200, 240); const rec = ringSlice(Math.round(S.fs * takeMs/1000) + S.refChirp.length + 1024); const minLag=lagSamplesFromCm(CONFIG.minLagCm); const maxLag=lagSamplesFromCm(CONFIG.maxLagCm); const {lag, r}=correlate(S.refChirp, rec, minLag, maxLag); S.rLast=r; if(showDiag){ diag.textContent = `r=${r?.toFixed?.(2) ?? '—'}, шум=${(S.noiseRMS||0).toFixed(3)}`; } return {lag,r}; }
-
-  async function ensureAudio(){ if(S.actx && S.actx.state!=='running'){ try{ await S.actx.resume(); }catch{} } }
-
-  async function autoTune(){
-    const nyq = (S.fs||44100)/2;
-    let best={r:-1,f0:CONFIG.f0,f1:CONFIG.f1,gain:CONFIG.gain};
-    const bands = CONFIG.bands.filter(([f0,f1])=> f1 < nyq*0.95);
-    const old = {f0:CONFIG.f0,f1:CONFIG.f1,gain:CONFIG.gain,chirpMs:CONFIG.chirpMs};
-
-    CONFIG.chirpMs = CONFIG.scanChirpMs; buildChirp();
-    const minLag=lagSamplesFromCm(CONFIG.scanMinCm), maxLag=lagSamplesFromCm(CONFIG.scanMaxCm);
-
-    for(const g of CONFIG.gainSteps){
-      CONFIG.gain=g;
-      for(const [f0,f1] of bands){
-        CONFIG.f0=f0; CONFIG.f1=f1; buildChirp(); updateBPF();
-        // усредняем 2 пинга
-        let acc=0, n=0; for(let k=0;k<2;k++){ await ensureAudio(); await playChirp(); const rec=ringSlice(Math.round(S.fs*(CONFIG.chirpMs+240)/1000)+S.refChirp.length+1024); const {r}=correlate(S.refChirp, rec, minLag, maxLag); if(isFinite(r)){ acc+=r; n++; } }
-        const rMean = n? acc/n : -1;
-        if(rMean>best.r){ best={r:rMean,f0,f1,gain:g}; }
-      }
-      // ранний выход если уже хорошо
-      if(best.r>=0.25) break;
-    }
-
-    // применяем
-    CONFIG.f0=best.f0; CONFIG.f1=best.f1; CONFIG.gain=best.gain; buildChirp(); updateBPF();
-    band.value = `${CONFIG.f0}-${CONFIG.f1}`;
-    gain.value = CONFIG.gain; gainVal.textContent = CONFIG.gain.toFixed(2);
-    chipDist.textContent = `BOOST: полоса ${Math.round(CONFIG.f0/1000)}–${Math.round(CONFIG.f1/1000)} кГц, r≈${best.r.toFixed(2)}`;
-
-    // вернуть пользовательскую длительность
-    CONFIG.chirpMs = parseInt(chirpMs.value,10) || old.chirpMs; buildChirp();
-  }
-
-  async function loopbackTest(){
-    // измеряем корреляцию вблизи нулевого лага — есть ли прямая наводка/эхо от динамика вообще
-    await ensureAudio(); await playChirp(); const rec=ringSlice(Math.round(S.fs*(CONFIG.chirpMs+240)/1000)+S.refChirp.length+512);
-    const nearMax = lagSamplesFromCm(5);
-    const {r}=correlate(S.refChirp, rec, 0, nearMax);
-    loopDiag.textContent = `near-r=${(r||0).toFixed(2)} (≥0.25 хорошо)`;
-    if((r||0)<0.12){ setError('Похоже, система глушит собственный звук (AEC/беззвучный режим/маршрутизация в ухо).', 'Снимите беззвучный режим, отключите BT, увеличьте громкость, разверните нижний динамик к столу. На iOS в WebView AEC может быть принудительно включён.'); }
-  }
-
-  function startAcousticLoop(){ if(S.pingTimer) clearInterval(S.pingTimer); S.okSeq=0; chipDist.textContent='Замер расстояния…'; chipDist.className='chip'; const periodMs=Math.max(250, Math.round(1000/CONFIG.pingHz)); S.pingTimer=setInterval(async()=>{ const {lag,r}=await singlePing(false); if(lag>0 && r>=CONFIG.corrThresh){ const cm=Math.round(cmFromLagSamples(lag)); const inBand=cm>=CONFIG.bandMinCm && cm<=CONFIG.bandMaxCm; chipDist.textContent=`Расстояние: ${cm} см ${inBand?'— ОК':`(нужно ${CONFIG.bandMinCm}–${CONFIG.bandMaxCm} см)`}`; chipDist.className='chip ' + (inBand ? 'ok' : 'warn'); if(inBand){ S.okSeq++; if(S.okSeq>=CONFIG.goodSeq){ S.allowShot=true; btnShot.disabled=false; pauseAcoustic(); } } else { S.allowShot=false; btnShot.disabled=true; S.okSeq=0; } } else { S.allowShot=false; btnShot.disabled=true; S.okSeq=0; chipDist.textContent=`Эхо слабое (r=${(r||0).toFixed(2)}) — BOOST попробует полосу/гейн`; chipDist.className='chip bad'; } }, periodMs); }
-
-  function pauseAcoustic(){ if(S.pingTimer){ clearInterval(S.pingTimer); S.pingTimer=null; chipDist.textContent+=' • Замер удержан'; } }
+  async function onShutter(){ haptic(); await takeShot(); }
+  async function takeShot(){ if(!video.videoWidth || !video.videoHeight) return; const srcW=video.videoWidth, srcH=video.videoHeight; const scale = Math.min(1,  CONFIG.maxSide/Math.max(srcW,srcH)); const w=Math.max(1,Math.round(srcW*scale)), h=Math.max(1,Math.round(srcH*scale)); const c=document.createElement('canvas'); c.width=w; c.height=h; c.getContext('2d').drawImage(video,0,0,w,h); let url = c.toDataURL('image/webp',0.85), type='image/webp'; if(!/^data:image\/webp/.test(url)){ url=c.toDataURL('image/jpeg',0.85); type='image/jpeg'; } photo.src=url; meta.textContent = `${w}×${h} • ${type}`; secCam.classList.add('hidden'); secPrev.classList.remove('hidden'); }
 
   // ===================== LEVEL SENSORS =====================
   async function enableLevelSensors(){ if(S.levelOn) return; let ok=false; try{ if(typeof DeviceOrientationEvent!=='undefined' && typeof DeviceOrientationEvent.requestPermission==='function'){ try{ const p=await DeviceOrientationEvent.requestPermission(); if(p==='granted'){ window.addEventListener('deviceorientation',onOrient,true); ok=true; } }catch{} } if(!ok && 'ondeviceorientation' in window){ window.addEventListener('deviceorientation',onOrient,true); ok=true; } if(!ok){ if(typeof DeviceMotionEvent!=='undefined' && typeof DeviceMotionEvent.requestPermission==='function'){ try{ const p2=await DeviceMotionEvent.requestPermission(); if(p2==='granted'){ window.addEventListener('devicemotion',onMotion,true); ok=true; } }catch{} } else if('ondevicemotion' in window){ window.addEventListener('devicemotion',onMotion,true); ok=true; } } }catch{} S.levelOn=ok; permHint.classList.toggle('hidden', ok); }
   function onOrient(e){ const pitch=e.beta??0, roll=e.gamma??0; paintLevel(pitch,roll) }
   function onMotion(e){ const a=e.accelerationIncludingGravity||{}; const x=a.x||0,y=a.y||0,z=a.z||0; const pitch=(Math.atan2(-x,Math.sqrt(y*y+z*z))*180/Math.PI)||0; const roll=(Math.atan2(y,z)*180/Math.PI)||0; paintLevel(pitch,roll); }
-  function paintLevel(pitch, roll){ const R=70, T=18, nx=clamp(roll/30,-1,1), ny=clamp(pitch/30,-1,1); const dx=nx*R*0.45, dy=-ny*R*0.45; levelBubble.style.transform=`translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`; const ok=Math.hypot(dx,dy)<=T; levelBubble.classList.toggle('ok',ok); levelTarget.classList.toggle('ok',ok); }
+  function paintLevel(pitch, roll){ const R=70, T=18, nx=clamp(roll/30,-1,1), ny=clamp(pitch/30,-1,1); const dx=nx*R*0.45, dy=-ny*R*0.45; levelBubble.style.transform=`translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`; const ok=Math.hypot(dx,dy)<=T; levelBubble.classList.toggle('ok',ok); levelTarget.classList.toggle('ok',ok); chipInfo.textContent = ok ? 'Ровно — можно снимать' : (Math.abs(pitch)+Math.abs(roll) < 30 ? 'Выравнивайте…' : 'Наведите сверху'); chipInfo.className = 'chip ' + (ok?'ok':'warn'); }
 
   // ===================== ENV HINT =====================
   function envHint(){
     const https = !isSecureContext ? "\n• Нужен HTTPS (или localhost)." : "";
-    return `Камера/микрофон требуют разрешений.${https}\n• Включите громкость, отключите гарнитуру, положите тарелку на жёсткую поверхность.`;
+    return `Камера требует разрешений.${https}\n• Если камера не открывается — проверьте права и попробуйте системную кнопку «Открыть во внешнем браузере».`;
   }
 
   // ===================== TEARDOWN =====================
   window.addEventListener('beforeunload', ()=>stopAll());
-  function stopAll(){ if(S.pingTimer){ clearInterval(S.pingTimer); S.pingTimer=null; } try{ S.proc?.disconnect(); S.mic?.disconnect(); S.bpf?.disconnect(); }catch{} try{ S.actx?.close?.(); }catch{} stopCamera(); }
+  function stopAll(){ stopCamera(); }
 
   // ===================== TESTS (console) =====================
-  (function testLag(){ const z=30, N=lagSamplesFromCm(z); console.log('[test lag 30cm]', N); console.log('[cm from N]', Math.round(cmFromLagSamples(N))); console.assert(Math.abs(Math.round(cmFromLagSamples(N)) - z) <= 1, 'invertible cm<->samples'); })();
-  (function testCorrelate(){ const fs=44100, dur=CONFIG.chirpMs/1000; const ref=makeChirp(fs,dur,CONFIG.f0,CONFIG.f1); const lagCm=30; const lag=lagSamplesFromCm(lagCm); const rec=new Float32Array(lag+ref.length+64); rec.set(ref, lag); const {lag:found, r}=correlate(ref, rec, lag-5, lag+5); console.log('[test correlate] expected', lag, 'found', found, 'r', (r||0).toFixed(2)); console.assert(Math.abs(found-lag) <= 2, 'correlate finds correct lag'); })();
-  (function testDot(){ const a=new Float32Array([1,2,3]); const b=new Float32Array([4,5,6]); const d=dot(a,b); console.log('[test dot] expected 32, got', d); console.assert(d===32,'dot product'); })();
-  (function testEnvHint(){ const h=envHint(); console.log('[test envHint]', h); console.assert(typeof h==='string' && h.length>0, 'envHint returns string'); })();
+  (function testClamp(){ console.assert(clamp(5,0,10)===5,'clamp mid'); console.assert(clamp(-1,0,10)===0,'clamp low'); console.assert(clamp(99,0,10)===10,'clamp high'); })();
+  (function testEnvHint(){ const h=envHint(); console.assert(typeof h==='string' && h.includes('Камера требует разрешений.'), 'envHint string content'); })();
   </script>
 </body>
 </html>
