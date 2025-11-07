@@ -33,7 +33,6 @@
     .topbar{position:absolute;left:0;right:0;top:64px;display:flex;justify-content:center;gap:10px;z-index:9;pointer-events:none}
     .chip{pointer-events:auto;display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.25);background:rgba(0,0,0,.55);color:#fff}
 
-    /* Torch */
     .btn-torch{position:absolute;left:12px;top:12px;z-index:10;pointer-events:auto;padding:6px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.3);color:#fff;background:rgba(255,255,255,.1)}
     .btn-torch.hidden{display:none}
 
@@ -51,7 +50,6 @@
     }
     .level-bubble.ok{background:#22c55e}
 
-    /* bottom controls inside camera */
     .controls{position:absolute;left:0;right:0;bottom:0;padding:12px;display:flex;gap:10px;align-items:center;justify-content:center;background:linear-gradient(to top, rgba(0,0,0,.55), rgba(0,0,0,0));color:#fff}
     .shutter{width:72px;height:72px;border-radius:999px;border:4px solid rgba(255,255,255,.9);background:#fff;cursor:pointer;box-shadow:0 2px 12px rgba(0,0,0,.4)}
     .shutter[disabled]{opacity:.45;cursor:not-allowed;border-color:rgba(255,255,255,.5)}
@@ -96,9 +94,12 @@
 
         <div id="overlay" class="cam-overlay">
           <div class="grid"></div>
+
           <div class="topbar">
-            <div id="chipInfo" class="chip" role="status" aria-live="polite">Выровняйте телефон, положите банковскую карту в серую зону</div>
+            <div id="chipInfo" class="chip" role="status" aria-live="polite">Выровняйте телефон, положите карту в серую зону</div>
+            <button id="btnSensors" class="chip hidden" aria-label="Включить уровень">Включить уровень</button>
           </div>
+
           <button id="btnTorch" class="btn-torch hidden" aria-label="Фонарик">⚡️</button>
 
           <div class="center-level">
@@ -124,7 +125,7 @@
       <div id="meta" class="meta"></div>
 
       <div class="field">
-        <label for="comment" class="helper">Комментарий (необязательно, но он повысит точность)</label>
+        <label for="comment" class="helper">Комментарий (необязательно)</label>
         <textarea id="comment" class="textarea" maxlength="200" placeholder="Треска 150 гр и рис 200 гр"></textarea>
         <div id="commentWarn" class="helper hidden"></div>
       </div>
@@ -140,9 +141,7 @@
   <script>
   // ===================== CONFIG / STATE =====================
   const CONFIG = {
-    // специально без aspectRatio/width/height — чтобы не провоцировать «кроп-зуум» на Android
-    frameRate: { ideal: 30, max: 30 },
-
+    frameRate: { ideal: 30, max: 30 }, // без жёстких размеров, чтобы не словить кроп-зуум
     maxSide: 4096, jpegQ: 0.95, webpQ: 0.95,
 
     // level geometry
@@ -158,15 +157,14 @@
   const S = { stream:null, track:null, torchCap:false, _torchOn:false, levelOn:false, zoomMin:null, zoomMax:null };
   let _lastBlob = null, _view='camera', _taking=false;
 
-  // RAW level inputs
+  // level state
   let _rawNx=0, _rawNy=0, _rafId=null, _levelRadius=40;
-
   let _levelOK=false, _lvlHits=0, _lvlMiss=0; const LVL_ON=2, LVL_OFF=3;
 
-  // Presence
+  // presence state
   let _detIdle=null, _lastDetTS=0, _fitOK=false, _hitCount=0,_missCount=0,_lastInsideTS=0;
 
-  // iOS
+  // iOS specifics
   const isIOS = /iP(hone|od|ad)/.test(navigator.userAgent);
   let _sensorLastTS = 0, _sensorWatch = null;
   const SENSOR_STALE_MS = 1500;
@@ -175,7 +173,7 @@
   const $ = id => document.getElementById(id);
   const err=$('err');
   const video=$('video'), photo=$('photo'), overlay=$('overlay'), controls=$('controls');
-  const btnShot=$('btnShot'), btnTorch=$('btnTorch'), chipInfo=$('chipInfo');
+  const btnShot=$('btnShot'), btnTorch=$('btnTorch'), chipInfo=$('chipInfo'), btnSensors=$('btnSensors');
   const fileGallery=$('file-gallery');
   const levelBubble=$('levelBubble'), levelTarget=$('levelTarget'), levelOuter=$('levelOuter');
   const cardArea=$('cardArea'); const camWrap=$('camWrap');
@@ -219,7 +217,6 @@
     video.classList.remove('hidden'); overlay.classList.remove('hidden'); controls.classList.remove('hidden');
     photo.classList.add('hidden');
     meta.textContent='';
-    chipInfo.textContent='Выровняйте телефон, положите банковскую карту в серую зону';
     startDetection(); startLevelLoop(); startSensorsWatchdog();
     updateButtons(); syncIndicators();
   }
@@ -241,6 +238,7 @@
   // ===================== CAMERA FLOW =====================
   btnShot.addEventListener('click', onShutter);
   btnTorch.addEventListener('click', toggleTorch);
+  btnSensors.addEventListener('click', requestSensorPermission);
   btnRetake.addEventListener('click', ()=>{ if(btnRetake.disabled) return; startCameraFlow(true); });
   btnGallery.addEventListener('click', ()=>fileGallery?.click());
   fileGallery.addEventListener('change', onFilePicked);
@@ -277,62 +275,106 @@
     recomputeRects(); computeLevelRadius(); startObservers();
     showCameraUI();
 
-    attachIOSPermissionOneShot(); // на первый тап
-    await enableLevelSensors(true); // пробуем запросить сразу (если возможно)
+    // датчики: сразу пробуем и показываем кнопку, если нужно
+    attachIOSPermissionOneShot();
+    const sensorsOK = await enableLevelSensors(true);
+    btnSensors.classList.toggle('hidden', !!sensorsOK);
 
     const camOk = await openCameraGUM();
     if(!camOk){ setError('Камера недоступна.', envHint()); return; }
 
-    if(isIOS) setTimeout(()=>{ if(_sensorLastTS===0) chipInfo.textContent='Коснитесь экрана, чтобы включить «Движение и ориентация»'; }, 900);
+    // если датчики всё ещё молчат — предлагаем кнопку
+    if(isIOS) setTimeout(()=>{ if(_sensorLastTS===0){ chipInfo.textContent='Тапните экран или кнопку ниже, чтобы включить «Движение и ориентация»'; btnSensors.classList.remove('hidden'); } }, 700);
   }
 
-  // ======== Camera selection: prefer main/wide back camera ========
+  // ======== Back camera robust open ========
   async function getPermission(){ try{ await navigator.mediaDevices.getUserMedia({ video:{ facingMode:{ ideal:'environment' } }, audio:false }); }catch{} }
-  async function pickBackCamera(){
-    const devs = await navigator.mediaDevices.enumerateDevices();
-    const cams = devs.filter(d=>d.kind==='videoinput');
-    // ранг по метке
-    const score = (L) => {
-      L = (L||'').toLowerCase();
-      let s=0;
-      if(/wide|main|standard/.test(L)) s+=5;
-      if(/back|rear/.test(L)) s+=4;
-      if(/tele|zoom|macro/.test(L)) s-=10;     // избегаем теле/макро
-      if(/ultra/.test(L)) s-=6;                // избегаем ультраширик
-      return s;
-    };
-    cams.sort((a,b)=>score(b.label)-score(a.label));
-    return (cams[0]?.deviceId)||null;
+
+  function seemsFront(track){
+    const s = track.getSettings?.()||{};
+    const label = (track.label||'').toLowerCase();
+    if (s.facingMode === 'user') return true;
+    if (s.facingMode === 'environment') return false;
+    if (label.includes('front') || label.includes('true') || label.includes('face')) return true;
+    if (label.includes('back') || label.includes('rear') || label.includes('wide') || label.includes('main')) return false;
+    return false; // по умолчанию считаем, что ок
   }
-  async function openLockedBackCamera(){
+
+  async function listCameras(){
+    const devs = await navigator.mediaDevices.enumerateDevices();
+    return devs.filter(d=>d.kind==='videoinput');
+  }
+  function scoreCameraLabel(L){
+    L=(L||'').toLowerCase();
+    let s=0;
+    if(/back|rear/.test(L)) s+=8;
+    if(/wide|main|standard/.test(L)) s+=6;
+    if(/tele|zoom|macro/.test(L)) s-=10;
+    if(/ultra/.test(L)) s-=6;
+    if(/front|true|face/.test(L)) s-=20;
+    return s;
+  }
+  async function pickBestBackId(){
+    const cams = await listCameras();
+    cams.sort((a,b)=>scoreCameraLabel(b.label)-scoreCameraLabel(a.label));
+    return cams[0]?.deviceId || null;
+  }
+
+  async function openWithConstraints(cons){
+    return navigator.mediaDevices.getUserMedia({ video: cons, audio:false });
+  }
+
+  async function openBackCameraRobust(){
     await getPermission();
-    const id = await pickBackCamera();
-    const cons = id
-      ? { video:{ deviceId:{ exact:id }, ...CONFIG.frameRate }, audio:false }
-      : { video:{ facingMode:{ exact:'environment' }, ...CONFIG.frameRate }, audio:false };
-    return navigator.mediaDevices.getUserMedia(cons);
+
+    // 1) строго environment
+    try{
+      const s = await openWithConstraints({ facingMode:{ exact:'environment' }, ...CONFIG.frameRate });
+      if(!seemsFront(s.getVideoTracks()[0])) return s;
+      s.getTracks().forEach(t=>t.stop());
+    }catch{}
+
+    // 2) deviceId по лучшему бэку
+    try{
+      const id = await pickBestBackId();
+      if(id){
+        const s = await openWithConstraints({ deviceId:{ exact:id }, ...CONFIG.frameRate });
+        if(!seemsFront(s.getVideoTracks()[0])) return s;
+        s.getTracks().forEach(t=>t.stop());
+      }
+    }catch{}
+
+    // 3) хотя бы ideal environment
+    try{
+      const s = await openWithConstraints({ facingMode:{ ideal:'environment' }, ...CONFIG.frameRate });
+      return s;
+    }catch{}
+
+    // 4) просто первое доступное (как крайний случай)
+    return openWithConstraints({ ...CONFIG.frameRate });
   }
 
   async function openCameraGUM(){
-    if(!canUseGUM()){ return false; }
-    const perm = await queryPerm('camera'); if(perm==='denied'){ return false; }
+    if(!canUseGUM()) return false;
+    const perm = await queryPerm('camera'); if(perm==='denied') return false;
+
     try{
-      const s = await openLockedBackCamera();
+      const s = await openBackCameraRobust();
       await bindStream(s);
       await stabilizeVideo(300, 1200);
       video.style.opacity='1';
 
       const caps=S.track?.getCapabilities?.()||{};
       S.torchCap=!!caps.torch;
-      S.zoomMin = (typeof caps.zoom==='number' ? caps.zoom : caps.zoom?.min ?? null);
-      S.zoomMax = (caps.zoom?.max ?? null);
       btnTorch.classList.toggle('hidden', !S.torchCap);
 
-      // ВАЖНО: не ставим «1», ставим самое широкое значение, которое поддерживается
-      if(S.zoomMin!=null){
-        try{ await S.track.applyConstraints({ advanced:[{ zoom: S.zoomMin }] }); }catch{}
+      // === ЖЁСТКО ставим самый широкий зум, если есть ===
+      const zmin = (typeof caps.zoom==='number') ? caps.zoom : (caps.zoom?.min ?? null);
+      if(zmin!=null){
+        S.zoomMin=zmin; S.zoomMax=caps.zoom?.max ?? null;
+        try{ await S.track.applyConstraints({ zoom: zmin }); }catch{}
+        try{ await S.track.applyConstraints({ advanced:[{ zoom: zmin }] }); }catch{}
       }
-
       return true;
     }catch(e){ console.warn(e); return false; }
   }
@@ -366,10 +408,7 @@
     try{
       let blob=null;
       if('ImageCapture' in window && S.track){
-        try{
-          const ic = new ImageCapture(S.track);
-          blob = await ic.takePhoto().catch(()=>null);
-        }catch{}
+        try{ const ic=new ImageCapture(S.track); blob=await ic.takePhoto().catch(()=>null); }catch{}
       }
       if(!blob){
         const snapCanvas=snapshotNow();
@@ -404,7 +443,7 @@
     });
   }
 
-  // ---------- ГАЛЕРЕЯ ----------
+  // ---------- Gallery ----------
   async function onFilePicked(ev){
     const file=ev.target?.files?.[0];
     if(!file) return;
@@ -425,7 +464,7 @@
     finally{ setTimeout(()=>{ _torchBusy=false; }, 200); }
   }
 
-  // ---------- ORIENTATION ----------
+  // ---------- Orientation / Level ----------
   function getScreenAngle(){
     let a = (screen.orientation?.angle ?? window.orientation ?? 0);
     a = ((a % 360)+360)%360;
@@ -434,10 +473,9 @@
     if (a >= 135 && a < 225) return 180;
     return 270;
   }
-  // 30° => полное смещение
   function mapTilt(pitchDeg, rollDeg){
     const a=getScreenAngle();
-    const s=30;
+    const s=30; // 30° => полное смещение
     const pr=clamp(pitchDeg/s, -1, 1);
     const rr=clamp(rollDeg /s, -1, 1);
     let nx=0, ny=0;
@@ -468,9 +506,9 @@
   }
 
   function attachIOSPermissionOneShot(){
-    if(!isIOS) return;
     const handler = async () => {
-      await requestSensorPermission();
+      const r = await requestSensorPermission();
+      btnSensors.classList.toggle('hidden', !!r);
       document.removeEventListener('pointerdown', handler, true);
     };
     document.addEventListener('pointerdown', handler, true);
@@ -487,9 +525,10 @@
         granted = (await DeviceMotionEvent.requestPermission())==='granted';
         if(granted) window.addEventListener('devicemotion', onMotion, true);
       }
-      if(granted){ S.levelOn=true; chipInfo.textContent='Выровняйте телефон, положите банковскую карту в серую зону'; }
-      else { chipInfo.textContent='Разрешите «Движение и ориентация» (тапните по экрану), затем двигайте телефон'; }
+      if(granted){ S.levelOn=true; chipInfo.textContent='Выровняйте телефон — точка станет зелёной'; }
+      else { chipInfo.textContent='Разрешите «Движение и ориентация» (кнопка сверху)'; }
     }catch{ chipInfo.textContent='Не удалось включить датчики ориентации'; }
+    return granted;
   }
 
   function onOrient(e){
@@ -510,26 +549,24 @@
     _rawNx=nx; _rawNy=ny;
   }
 
-  // iOS «перезапуск» датчиков при потере
   function startSensorsWatchdog(){
     stopSensorsWatchdog();
     _sensorWatch = setInterval(()=>{
       if(_view!=='camera') return;
       const stale = (performance.now() - _sensorLastTS) > SENSOR_STALE_MS;
       if(stale){
-        chipInfo.textContent='Тапните, чтобы обновить «Движение и ориентация»';
+        chipInfo.textContent='Тапните экран / «Включить уровень» — датчики уснули';
+        btnSensors.classList.remove('hidden');
         attachIOSPermissionOneShot();
       }
     }, 1000);
   }
   function stopSensorsWatchdog(){ if(_sensorWatch){ clearInterval(_sensorWatch); _sensorWatch=null; } }
-
-  // перезапрашиваем при возврате/смене ориентации (iOS 16–18 WebView/Safari)
   window.addEventListener('pageshow', ()=>{ if(_view==='camera'){ _sensorLastTS=0; attachIOSPermissionOneShot(); }});
   document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible' && _view==='camera'){ _sensorLastTS=0; attachIOSPermissionOneShot(); } });
   window.addEventListener('orientationchange', ()=>{ _sensorLastTS=0; attachIOSPermissionOneShot(); });
 
-  // ---------- LEVEL LOOP (RAW) ----------
+  // ---------- LEVEL LOOP ----------
   function setLevelOK(next){
     if(next){ _lvlHits++; _lvlMiss=0; } else { _lvlMiss++; _lvlHits=0; }
     const prev=_levelOK;
@@ -559,7 +596,7 @@
   }
   function stopLevelLoop(){ if(_rafId){ cancelAnimationFrame(_rafId); _rafId=null; } }
 
-  // ---------- PRESENCE DETECTOR ----------
+  // ---------- PRESENCE DETECTOR (на видео) ----------
   const DET = { c: document.createElement('canvas'), ctx:null, sW:0, sH:0, wrapRect:null, slotRect:null, g:null, gb:null, colV:null, rowH:null, allE:null };
   DET.ctx = DET.c.getContext('2d', { willReadFrequently:true, desynchronized:true });
 
@@ -671,27 +708,7 @@
     const arOK=(ar>=CONFIG.AR_MIN && ar<=CONFIG.AR_MAX);
     const inside=(L>m && T>m && R<rw-1-m && B<rh-1-m);
 
-    const cornerEnergy=(cx,cy)=>{
-      const cb=CONFIG.CORNER_BOX; let s=0,cnt=0;
-      for(let y=Math.max(T,cy); y<Math.min(B,cy+cb); y++){
-        for(let x=Math.max(L,cx); x<Math.min(R,cx+cb); x++){
-          const gx=Math.abs(gb[y*rw + Math.min(rw-1,x+1)] - gb[y*rw + Math.max(0,x-1)]);
-          const gy=Math.abs(gb[Math.min(rh-1,y+1)*rw + x] - gb[Math.max(0,y-1)*rw + x]);
-          s+=gx+gy; cnt++;
-        }
-      } return s/Math.max(1,cnt);
-    };
-    const eLT=cornerEnergy(L,T);
-    const eRT=cornerEnergy(Math.max(L, R-CONFIG.CORNER_BOX), T);
-    const eLB=cornerEnergy(L, Math.max(T, B-CONFIG.CORNER_BOX));
-    const eRB=cornerEnergy(Math.max(L, R-CONFIG.CORNER_BOX), Math.max(T, B-CONFIG.CORNER_BOX));
-
-    const [me,se]=meanStd(allE);
-    const eThr=me + 1.0*se;
-    let strongCorners=0; if(eLT>eThr) strongCorners++; if(eRT>eThr) strongCorners++; if(eLB>eThr) strongCorners++; if(eRB>eThr) strongCorners++;
-    const cornersOK=(strongCorners>=CONFIG.CORNER_MIN_N);
-
-    applyPresence(inside && sizeOK && arOK && cornersOK);
+    applyPresence(inside && sizeOK && arOK);
   }
 
   function applyPresence(hit){
@@ -706,12 +723,12 @@
     }
   }
 
-  // SEND (заглушка)
+  // ---------- SEND (stub) ----------
   async function onSend(){
     const safeText=sanitizeComment(commentEl.value);
     if(!_lastBlob && !safeText){ setError('Пусто. Добавьте фото или комментарий.'); return; }
-    console.log('DEBUG: отправка отключена.', { hasImage: !!_lastBlob, comment: safeText });
-    setError('Отправка пока отключена. Подключим бэкенд/бота позже.');
+    console.log('DEBUG send', { hasImage: !!_lastBlob, comment: safeText });
+    setError('Отправка пока отключена.');
   }
   btnSend.addEventListener('click', onSend);
 
@@ -720,11 +737,11 @@
     return `Разрешите доступ к камере.${https}`;
   }
 
-  // TEARDOWN
+  // ---------- TEARDOWN ----------
   window.addEventListener('beforeunload', ()=>stopAll());
   function stopAll(){ stopCamera(); stopDetection(); stopLevelLoop(); stopSensorsWatchdog(); }
 
-  // TESTS
+  // ---------- TESTS ----------
   (function testRadii(){
     syncRadii();
     console.assert(CONFIG.TARGET_R > CONFIG.BUBBLE_R || !CONFIG.ENFORCE_GEOMETRY, 'target > bubble (when enforced)');
