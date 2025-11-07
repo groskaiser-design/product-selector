@@ -31,10 +31,6 @@
       linear-gradient(90deg,#fff 1px,transparent 1px) calc(33.333% - .5px) 0/33.333% 100% repeat-x,
       linear-gradient(90deg,#fff 1px,transparent 1px) calc(66.666% - .5px) 0/33.333% 100% repeat-x}
 
-    /* Torch */
-    .btn-torch{position:absolute;left:12px;top:12px;z-index:10;pointer-events:auto;padding:6px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.3);color:#fff;background:rgba(255,255,255,.1)}
-    .btn-torch.hidden{display:none}
-
     /* Level (one target + dot) */
     .center-level{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
     .level-outer{position:relative;width:160px;height:160px;border-radius:50%}
@@ -51,9 +47,13 @@
     /* preview */
     .card{border:1px solid var(--ring);border-radius:16px;background:#fff}
     .pad{padding:14px}
-    .preview-img{width:100%;max-height:70vh;object-fit:contain;border-radius:12px}
+    .preview-img{width:100%;max-height:65vh;object-fit:contain;border-radius:12px}
     .meta{color:var(--muted);font-size:12px;margin-top:6px}
-    .error{background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;border-radius:12px;padding:12px;margin:12px 0}
+
+    /* input */
+    .field{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+    .textarea{width:100%;min-height:68px;resize:vertical;padding:10px 12px;border:1px solid var(--ring);border-radius:12px;font:inherit;line-height:1.35}
+    .helper{color:var(--muted);font-size:12px}
   </style>
 </head>
 <body>
@@ -65,7 +65,9 @@
       <div class="row" style="margin-bottom:10px">
         <button id="btnOpen" class="btn primary">Открыть камеру</button>
         <button id="btnStop" class="btn">Закрыть</button>
-        <input id="file-system" type="file" accept="image/*" capture="environment" class="hidden" />
+        <!-- два инпута: камера (capture) и галерея -->
+        <input id="file-cam" type="file" accept="image/*" capture="environment" class="hidden" />
+        <input id="file-gallery" type="file" accept="image/*" class="hidden" />
       </div>
 
       <div class="cam-wrap" id="camWrap" aria-label="Живое превью камеры">
@@ -73,8 +75,6 @@
 
         <div class="cam-overlay">
           <div class="grid"></div>
-
-          <!-- level: only one target circle + dot -->
           <div class="center-level">
             <div class="level-outer">
               <div id="levelTarget" class="level-target"></div>
@@ -94,9 +94,18 @@
       <div class="card pad">
         <img id="photo" class="preview-img" alt="Снимок" />
         <div id="meta" class="meta"></div>
+
+        <!-- Optional comment with sanitation -->
+        <div class="field">
+          <label for="comment" class="helper">Комментарий (необязательно). Например: «треска и рис».</label>
+          <textarea id="comment" class="textarea" maxlength="200" placeholder="Например: «треска и рис»"></textarea>
+          <div id="commentWarn" class="helper hidden"></div>
+        </div>
+
         <div class="row" style="margin-top:10px">
           <button id="btnRetake" class="btn">Переснять</button>
-          <button id="btnSave" class="btn primary">Скачать снимок</button>
+          <button id="btnGallery" class="btn">Загрузить из галереи</button>
+          <button id="btnSend" class="btn primary" disabled>Отправить</button>
         </div>
       </div>
     </section>
@@ -120,33 +129,73 @@
     SMOOTH_ALPHA: 0.25
   };
 
-  const S = { stream:null, track:null, torchCap:false, _torchOn:false, levelOn:false };
-
-  // EMA состояние
-  let _fx = 0, _fy = 0, _initF = false;
+  const S = { stream:null, track:null, levelOn:false };
+  let _fx = 0, _fy = 0, _initF = false; // EMA
+  let _lastBlob = null; // текущий снимок как Blob
 
   // ===================== DOM =====================
   const $ = id => document.getElementById(id);
   const err=$('err'), video=$('video');
-  const btnOpen=$('btnOpen'), btnStop=$('btnStop'), btnTorch=document.getElementById('btnTorch'), btnShot=$('btnShot'), fileSystem=$('file-system');
+  const btnOpen=$('btnOpen'), btnStop=$('btnStop'), btnShot=$('btnShot');
+  const fileCam=$('file-cam'), fileGallery=$('file-gallery');
   const levelBubble=$('levelBubble'), levelTarget=$('levelTarget');
   const secCam=$('sec-camera'), secPrev=$('sec-preview'), photo=$('photo'), meta=$('meta');
-  const btnRetake=$('btnRetake'), btnSave=$('btnSave');
+  const btnRetake=$('btnRetake'), btnGallery=$('btnGallery'), btnSend=$('btnSend');
+  const commentEl=$('comment'), commentWarn=$('commentWarn');
 
   // ===================== UTILS =====================
   const sleep = (ms)=>new Promise(r=>setTimeout(r,ms));
   function setError(msg,hint){ if(!msg){ err.classList.add('hidden'); err.innerHTML=''; return; } const extra = hint?`<div class="meta" style="white-space:pre-line;margin-top:6px">${hint}</div>`:''; err.innerHTML = msg + extra; err.classList.remove('hidden'); }
   function clamp(v,a,b){return Math.min(b,Math.max(a,v))}
-  function haptic(){ try{ window.Telegram?.WebApp?.HapticFeedback?.impactOccurred?.('light'); }catch{} }
   function canUseGUM(){ return !!(navigator.mediaDevices?.getUserMedia) && isSecureContext; }
   async function queryPerm(name){ try{ const p=await navigator.permissions?.query?.({name}); return p?.state??null }catch{return null} }
+
+  // Санитизация комментария: 1) обрезать 2) удалить теги 3) вычистить опасные последовательности 4) нормализовать пробелы
+  function sanitizeComment(input){
+    let s = String(input||'').slice(0, 200);
+
+    // убрать HTML-теги
+    s = s.replace(/<[^>]*>/g, '');
+
+    // убрать управляющие и невидимые символы (кроме пробела/перевода строки/табов)
+    s = s.replace(/[\u0000-\u001F\u007F-\u009F]/g, '');
+
+    // блокировать распространённые инъекции/протоколы
+    const bad = /(javascript:|data:|vbscript:|<script|<\/script|on\w+\s*=)/gi;
+    s = s.replace(bad, '');
+
+    // whitelisting: оставить буквы/цифры/знаки препинания/пробелы
+    s = s.replace(/[^\p{L}\p{N}\p{M}\s.,!?:;"'()\-–—[\]{}#@+/&%]/gu, '');
+
+    // нормализация пробелов
+    s = s.replace(/\s+/g, ' ').trim();
+
+    return s;
+  }
+
+  function showCommentWarning(show, text){
+    commentWarn.textContent = text || '';
+    commentWarn.classList.toggle('hidden', !show);
+  }
 
   // ===================== CAMERA FLOW =====================
   btnOpen.addEventListener('click', openFlow);
   btnStop.addEventListener('click', ()=>stopAll());
   btnShot.addEventListener('click', onShutter);
-  btnSave.addEventListener('click', ()=>{ const a=document.createElement('a'); a.href=photo.src; a.download='photo.jpg'; document.body.appendChild(a); a.click(); a.remove(); });
   btnRetake.addEventListener('click', ()=>{ secPrev.classList.add('hidden'); secCam.classList.remove('hidden'); openFlow(); });
+  btnGallery.addEventListener('click', ()=>fileGallery?.click());
+  fileGallery.addEventListener('change', onFilePicked);
+  fileCam.addEventListener('change', onFilePicked);
+
+  commentEl.addEventListener('input', ()=>{
+    const raw = commentEl.value;
+    const safe = sanitizeComment(raw);
+    if (raw !== safe){
+      showCommentWarning(true, 'Некоторые символы удалены для безопасности.');
+    } else {
+      showCommentWarning(false, '');
+    }
+  });
 
   function syncRadii(){
     let bubble = Number(CONFIG.BUBBLE_R)||0;
@@ -158,7 +207,12 @@
     levelTarget.style.width = tr + 'px'; levelTarget.style.height = tr + 'px';
   }
 
-  async function openFlow(){ setError(''); syncRadii(); await enableLevelSensors(); const camOk = await openCameraGUM(); if(!camOk){ try{ fileSystem?.click(); }catch{} } }
+  async function openFlow(){
+    setError(''); syncRadii();
+    await enableLevelSensors();
+    const camOk = await openCameraGUM();
+    if(!camOk){ try{ fileCam?.click(); }catch{} }
+  }
 
   async function openCameraGUM(){
     if(!canUseGUM()){ setError('Камера недоступна.', envHint()); return false; }
@@ -169,8 +223,6 @@
       await upgradeResolution();
       await stabilizeVideo(300, 1200);
       video.style.opacity = '1';
-      const caps=S.track?.getCapabilities?.()||{};
-      // Кнопка фонарика будет отображена только если доступен torch (элемент в DOM отсутствует — можно добавить при необходимости)
       return true;
     }catch(e){ console.warn(e); setError('Не удалось открыть камеру.', envHint()); return false; }
   }
@@ -209,40 +261,65 @@
   }
 
   function stopCamera(){ try{ video.pause(); video.srcObject=null }catch{}; try{ S.track?.stop() }catch{}; try{ S.stream?.getTracks()?.forEach(t=>t.stop()) }catch{}; S.stream=null; S.track=null; }
-  async function onShutter(){ if(btnShot.disabled) return; haptic(); await takeShot(); }
+
+  async function onShutter(){ if(btnShot.disabled) return; await takeShot(); }
 
   async function takeShot(){
     if(!video.videoWidth || !video.videoHeight) return;
+
+    // Отрубим камеру сразу после кадра, чтобы освободить ресурсы
+    const blob = await grabFrameBlob();
+    if(!blob) return;
+
+    _lastBlob = blob;
+    const url = URL.createObjectURL(blob);
+    photo.onload = ()=>{ meta.textContent = `${photo.naturalWidth}×${photo.naturalHeight} • ${blob.type||'image'}`; };
+    photo.src = url;
+
+    btnSend.disabled = false;
+    secCam.classList.add('hidden'); secPrev.classList.remove('hidden');
+  }
+
+  async function grabFrameBlob(){
     if('ImageCapture' in window && S.track){
       try{
         const ic = new ImageCapture(S.track);
         const blob = await ic.takePhoto();
-        const url = URL.createObjectURL(blob);
-        photo.onload = ()=>{ meta.textContent = `${photo.naturalWidth}×${photo.naturalHeight} • ${blob.type||'image'}`; };
-        photo.src = url; secCam.classList.add('hidden'); secPrev.classList.remove('hidden'); return;
+        stopCamera();
+        return blob;
       }catch(e){ console.warn('ImageCapture failed, fallback to canvas', e); }
     }
     const srcW=video.videoWidth, srcH=video.videoHeight;
+    if(!srcW || !srcH) return null;
     const scale = Math.min(1,  CONFIG.maxSide/Math.max(srcW,srcH));
     const w=Math.max(1,Math.round(srcW*scale)), h=Math.max(1,Math.round(srcH*scale));
     const c=document.createElement('canvas'); c.width=w; c.height=h;
-    const ctx=c.getContext('2d');
+    const ctx=c.getContext('2d', { alpha:false });
     try{ ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality='high'; }catch{}
     ctx.drawImage(video,0,0,w,h);
-    let url = '';
-    try{ url = c.toDataURL('image/webp', CONFIG.webpQ); }catch{}
-    if(!url || !/^data:image\/webp/.test(url)){
-      try{ url = c.toDataURL('image/jpeg', CONFIG.jpegQ); }catch{}
-    }
-    if(!url){ url = c.toDataURL(); }
-    photo.src=url; meta.textContent = `${w}×${h}`; secCam.classList.add('hidden'); secPrev.classList.remove('hidden');
+    stopCamera();
+    const prefer='image/webp';
+    let blob = await new Promise(r=>c.toBlob(b=>r(b), prefer, CONFIG.webpQ));
+    if(!blob) blob = await new Promise(r=>c.toBlob(b=>r(b), 'image/jpeg', CONFIG.jpegQ));
+    if(!blob) blob = await new Promise(r=>c.toBlob(b=>r(b)));
+    return blob;
+  }
+
+  async function onFilePicked(ev){
+    const file = ev.target?.files?.[0];
+    if(!file) return;
+    if(!file.type.startsWith('image/')){ setError('Нужен файл изображения.'); return; }
+    _lastBlob = file;
+    const url = URL.createObjectURL(file);
+    photo.onload = ()=>{ meta.textContent = `${photo.naturalWidth}×${photo.naturalHeight} • ${file.type||'image'}`; };
+    photo.src = url;
+    btnSend.disabled = false;
+    secCam.classList.add('hidden'); secPrev.classList.remove('hidden');
+    ev.target.value = ''; // сбросить, чтобы одно и то же фото можно было выбрать повторно
   }
 
   // ===================== LEVEL SENSORS =====================
-  function getScreenAngle(){
-    let a = (screen.orientation?.angle ?? window.orientation ?? 0);
-    a = a % 360; if(a < 0) a += 360; return a;
-  }
+  function getScreenAngle(){ let a = (screen.orientation?.angle ?? window.orientation ?? 0); a = a % 360; if(a < 0) a += 360; return a; }
   function getAxisSigns(){
     const angle = getScreenAngle();
     const flip180 = (angle === 180) ? -1 : 1;
@@ -279,21 +356,15 @@
 
   function paintLevel(pitch, roll){
     const R = 70;
-
-    // Нормализация
     const nx = clamp(roll/30,-1,1);
     const ny = clamp(pitch/30,-1,1);
 
-    // === EMA сглаживание ===
+    // EMA сглаживание
     const alpha = CONFIG.SMOOTH_ALPHA;
     if(!_initF){ _fx = nx; _fy = ny; _initF = true; }
-    else {
-      _fx = _fx + alpha * (nx - _fx);
-      _fy = _fy + alpha * (ny - _fy);
-    }
+    else { _fx = _fx + alpha * (nx - _fx); _fy = _fy + alpha * (ny - _fy); }
 
     const { sx, sy } = getAxisSigns();
-
     const dx = sx * _fx * R * 0.45;
     const dy = sy * _fy * R * 0.45;
 
@@ -302,14 +373,51 @@
     const okFully = isInside(dx,dy);
     levelBubble.classList.toggle('ok', okFully);
     levelTarget.classList.toggle('ok', okFully);
-
     btnShot.disabled = !okFully;
   }
+
+  // ===================== SEND =====================
+  async function onSend(){
+    if(!_lastBlob) return;
+    const safeText = sanitizeComment(commentEl.value);
+    // Пример формирования payload (ЗАМЕНИТЕ URL на свой бекенд)
+    const fd = new FormData();
+    const ext = (_lastBlob.type.includes('webp') && 'webp') || (_lastBlob.type.includes('jpeg') && 'jpg') || 'png';
+    fd.append('image', _lastBlob, `photo.${ext}`);
+    fd.append('comment', safeText);
+
+    btnSend.disabled = true; const prevText = btnSend.textContent; btnSend.textContent = 'Отправка…';
+
+    try{
+      // Вариант A: Telegram Mini App — передать только метаданные (изображение грузите на свой сервер)
+      if (window.Telegram?.WebApp?.sendData){
+        // Отправим компактный маркер и комментарий (без файла)
+        window.Telegram.WebApp.sendData(JSON.stringify({ intent:'food_photo', hasImage:true, comment: safeText }));
+      }
+
+      // Вариант B: прямой POST на ваш сервер/бот
+      // TODO: замените '/api/analyze' на ваш эндпоинт
+      // const res = await fetch('/api/analyze', { method:'POST', body: fd });
+      // if(!res.ok) throw new Error('upload failed');
+
+      // Успех: можно показать уведомление/закрыть WebApp
+      // window.Telegram?.WebApp?.close();
+    }catch(e){
+      console.warn(e);
+      setError('Не удалось отправить данные. Попробуйте ещё раз.');
+      btnSend.disabled = false;
+      btnSend.textContent = prevText;
+      return;
+    }
+
+    btnSend.textContent = 'Отправлено';
+  }
+  btnSend.addEventListener('click', onSend);
 
   // ===================== ENV HINT =====================
   function envHint(){
     const https = !isSecureContext ? "\n• Нужен HTTPS (или localhost)." : "";
-    return `Камера требует разрешений.${https}\n• Если камера не открывается — проверьте права и попробуйте системную кнопку «Открыть во внешнем браузере».`;
+    return `Камера требует разрешений.${https}\n• Если камера не открывается — используйте галерею.`;
   }
 
   // ===================== TEARDOWN =====================
@@ -323,7 +431,10 @@
     console.assert(CONFIG.BUBBLE_R>0 && CONFIG.TARGET_R>0, 'radii positive');
   })();
   (function testInsideMath(){ const T=CONFIG.TARGET_R-CONFIG.BUBBLE_R; console.assert(T>0,'T>0'); console.assert(isInside(0,0),'center'); console.assert(isInside(T,0),'boundary'); console.assert(!isInside(T+0.01,0),'outside'); })();
-  (function testEnvHint(){ const h=envHint(); console.assert(typeof h==='string' && h.includes('Камера требует разрешений.'), 'envHint string content'); })();
+  (function testSanitize(){
+    const s = sanitizeComment(`<img src=x onerror=alert(1)> треска & рис javascript: data:`);
+    console.assert(!/<|script|onerror|javascript:|data:/i.test(s), 'sanitize blocks dangerous patterns');
+  })();
   </script>
 </body>
 </html>
