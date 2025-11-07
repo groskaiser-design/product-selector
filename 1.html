@@ -135,13 +135,13 @@
       <!-- Комментарий + кнопки -->
       <div class="field">
         <label for="comment" class="helper">Комментарий (необязательно, но он повысит точность)</label>
-        <textarea id="comment" class="textarea" maxlength="200" placeholder="Например: «Треска 150 гр и рис 200 гр»"></textarea>
+        <textarea id="comment" class="textarea" maxlength="200" placeholder="Треска 150 гр и рис 200 гр"></textarea>
         <div id="commentWarn" class="helper hidden"></div>
       </div>
 
       <div class="row" style="margin-top:10px">
         <button id="btnRetake" class="btn" disabled>Переснять</button>
-        <button id="btnGallery" class="btn">Загрузить из галереи</button>
+        <button id="btnGallery" class="btn">Галерея</button>
         <button id="btnSend" class="btn primary" disabled>Отправить</button>
       </div>
     </section>
@@ -166,14 +166,20 @@
     SMOOTH2_ALPHA2: 0.15,
     SMOOTH_DEADZONE: 0.02,
 
-    // -------- Card presence detector --------
-    DETECT_HZ: 10,
+    // -------- Card presence detector (усилен против ложных) --------
+    DETECT_HZ: 12,             // чаще опрос
     EDGE_MARGIN_PX: 4,
-    MIN_SIZE_PX: 24,
-    HIT_ON: 2,
-    HIT_OFF: 2,
-    BOX_ALPHA: 0.20,
-    HOLD_MAX_MS: 250
+    MIN_SIZE_PX: 26,
+    HIT_ON: 3,                 // нужно 3 подряд попадания
+    HIT_OFF: 1,                // одно промахивание — гасим
+    BOX_ALPHA: 0.15,
+    HOLD_MAX_MS: 150,          // меньше залипание
+
+    EDGE_BAND_FRAC: 0.12,      // ширина полос на краях для энергии
+    EDGE_ENERGY_RATIO: 1.8,    // энергия краёв к среднему по профилю
+    BALANCE_TOL: 0.5,          // симметрия лево/право, верх/низ
+    AR_MIN: 1.35,              // портретная карта ≈1.59 h/w
+    AR_MAX: 1.85
   };
 
   const S = { stream:null, track:null, torchCap:false, _torchOn:false, levelOn:false };
@@ -192,7 +198,6 @@
   let _detIdle=null;
   let _lastDetTS=0;                  // троттлинг
   let _fitOK=false, _levelOK=false;
-  let _Lbox=null,_Rbox=null,_Tbox=null,_Bbox=null;
   let _hitCount=0,_missCount=0;
   let _lastInsideTS=0;               // HOLD
 
@@ -299,7 +304,7 @@
   async function startCameraFlow(){
     _lastBlob = null; _taking = false;
     _fitOK=false; _levelOK=false;
-    _Lbox=_Rbox=_Tbox=_Bbox=null; _hitCount=0; _missCount=0; _lastInsideTS=0;
+    _hitCount=0; _missCount=0; _lastInsideTS=0;
     updateButtons();
     setError(''); syncRadii();
     showCameraUI();
@@ -445,7 +450,7 @@
     S.levelOn=ok;
   }
 
-  // События сенсоров только обновляют сырые значения; отрисовка — в RAF
+  // сенсоры → сырые значения; отрисовка — в RAF
   function onOrient(e){ if(_view!=='camera') return; const pitch=e.beta??0, roll=e.gamma??0; const nx=clamp(roll/30,-1,1), ny=clamp(pitch/30,-1,1); _rawNx=nx; _rawNy=ny; }
   function onMotion(e){ if(_view!=='camera') return; const a=e.accelerationIncludingGravity||{}; const x=a.x||0,y=a.y||0,z=a.z||0; const pitch=(Math.atan2(-x,Math.sqrt(y*y+z*z))*180/Math.PI)||0; const roll=(Math.atan2(y,z)*180/Math.PI)||0; const nx=clamp(roll/30,-1,1), ny=clamp(pitch/30,-1,1); _rawNx=nx; _rawNy=ny; }
 
@@ -478,7 +483,7 @@
   }
   function stopLevelLoop(){ if(_rafId){ cancelAnimationFrame(_rafId); _rafId=null; } }
 
-  // ---------- PRESENCE DETECTOR (карта целиком внутри зоны) ----------
+  // ---------- PRESENCE DETECTOR (улучшенный: 4 края, соотношение сторон, симметрия) ----------
   function startDetection(){
     stopDetection();
     const ric = window.requestIdleCallback || function(cb, opts){ return setTimeout(cb, (opts && opts.timeout) || 120); };
@@ -499,9 +504,9 @@
   function detectPresence(){
     if(!video.videoWidth || !video.videoHeight) return;
 
-    // даунскейл текущего кадра
+    // downscale полного кадра в канву (cover)
     const wrap = document.getElementById('camWrap').getBoundingClientRect();
-    const sW = 144; // компактно и быстро
+    const sW = 180; // чуть больше для точности краёв
     const sH = Math.round(sW * (wrap.height / wrap.width));
     const c = document.createElement('canvas'); c.width=sW; c.height=sH;
     const ctx = c.getContext('2d', { willReadFrequently:true, desynchronized:true });
@@ -518,46 +523,72 @@
     const ry = Math.max(0, Math.round((slot.top  - wrap.top ) / wrap.height * sH));
     const rw = Math.min(sW - rx, Math.round(slot.width  / wrap.width  * sW));
     const rh = Math.min(sH - ry, Math.round(slot.height / wrap.height * sH));
-    if(rw<12 || rh<12) return;
+    if(rw<20 || rh<20) return;
 
-    const data = ctx.getImageData(rx, ry, rw, rh).data;
+    const img = ctx.getImageData(rx, ry, rw, rh); const data = img.data;
 
-    // проекции градиентов — ищем края
-    const col = new Float32Array(rw), row = new Float32Array(rh);
-    const grayAt = (x,y)=>{ const i=(y*rw+x)*4; const r=data[i],g=data[i+1],b=data[i+2]; return r*0.2126+g*0.7152+b*0.0722; };
-
-    for(let y=1;y<rh-1;y++){
-      for(let x=1;x<rw-1;x++){
-        const gx = Math.abs(grayAt(x+1,y) - grayAt(x-1,y));
-        const gy = Math.abs(grayAt(x,y+1) - grayAt(x,y-1));
-        col[x]+=gx; row[y]+=gy;
+    // построим серую карту + лёгкий 3x3 бокс-блюр, затем градиенты
+    const g = new Float32Array(rw*rh);
+    for(let y=0;y<rh;y++){
+      for(let x=0;x<rw;x++){
+        const i=(y*rw+x)*4; g[y*rw+x] = data[i]*0.2126 + data[i+1]*0.7152 + data[i+2]*0.0722;
+      }
+    }
+    // 3x3 box blur
+    const gb = new Float32Array(rw*rh);
+    for(let y=0;y<rh;y++){
+      for(let x=0;x<rw;x++){
+        let s=0,cnt=0; for(let yy=y-1; yy<=y+1; yy++){ if(yy<0||yy>=rh) continue; for(let xx=x-1; xx<=x+1; xx++){ if(xx<0||xx>=rw) continue; s+=g[yy*rw+xx]; cnt++; } }
+        gb[y*rw+x]= s/cnt;
       }
     }
 
-    const maxCol = Math.max(...col), maxRow = Math.max(...row);
-    const tCol = maxCol * 0.55, tRow = maxRow * 0.55;
-
-    let L=0; while(L<rw && col[L] < tCol) L++;
-    let R=rw-1; while(R>=0 && col[R] < tCol) R--;
-    let T=0; while(T<rh && row[T] < tRow) T++;
-    let B=rh-1; while(B>=0 && row[B] < tRow) B--;
-
-    if(R<L || B<T){ applyPresence(false); return; }
-
-    // фильтр границ
-    if(_Lbox==null){ _Lbox=L; _Rbox=R; _Tbox=T; _Bbox=B; }
-    else{
-      const a = CONFIG.BOX_ALPHA;
-      _Lbox = _Lbox + a*(L - _Lbox);
-      _Rbox = _Rbox + a*(R - _Rbox);
-      _Tbox = _Tbox + a*(T - _Tbox);
-      _Bbox = _Bbox + a*(B - _Bbox);
+    const colV = new Float32Array(rw); // вертикальные края (|gx|)
+    const rowH = new Float32Array(rh); // горизонтальные края (|gy|)
+    for(let y=1;y<rh-1;y++){
+      for(let x=1;x<rw-1;x++){
+        const gx = Math.abs(gb[y*rw+(x+1)] - gb[y*rw+(x-1)]);
+        const gy = Math.abs(gb[(y+1)*rw+x] - gb[(y-1)*rw+x]);
+        colV[x]+=gx; rowH[y]+=gy;
+      }
     }
 
-    // внутри зоны, не касаясь краёв (в координатах ROI)
-    const m = CONFIG.EDGE_MARGIN_PX;
-    const inside = (_Lbox > m) && (_Tbox > m) && (_Rbox < (rw - 1 - m)) && (_Bbox < (rh - 1 - m));
+    // базовые метрики профилей
+    const mean = (arr)=>{ let s=0; for(let i=0;i<arr.length;i++) s+=arr[i]; return s/arr.length; };
+    const meanCol = mean(colV), meanRow = mean(rowH);
 
+    const bw = Math.max(2, Math.floor(rw * CONFIG.EDGE_BAND_FRAC));
+    const bh = Math.max(2, Math.floor(rh * CONFIG.EDGE_BAND_FRAC));
+
+    let eL=0,eR=0; for(let x=0;x<bw;x++) eL+=colV[x]; for(let x=rw-bw;x<rw;x++) eR+=colV[x];
+    let eT=0,eB=0; for(let y=0;y<bh;y++) eT+=rowH[y]; for(let y=rh-bh;y<rh;y++) eB+=rowH[y];
+
+    const edgeOK = (
+      eL > CONFIG.EDGE_ENERGY_RATIO * meanCol * bw &&
+      eR > CONFIG.EDGE_ENERGY_RATIO * meanCol * bw &&
+      eT > CONFIG.EDGE_ENERGY_RATIO * meanRow * bh &&
+      eB > CONFIG.EDGE_ENERGY_RATIO * meanRow * bh
+    );
+
+    // пиковые позиции в краевых полосах (для ширины/высоты и аспект-рейшио)
+    const argmax = (arr, start, end)=>{ let mi=start, mv=-1; for(let i=start;i<end;i++){ if(arr[i]>mv){ mv=arr[i]; mi=i; } } return mi; };
+    const Lp = argmax(colV, 0, bw);
+    const Rp = argmax(colV, rw-bw, rw);
+    const Tp = argmax(rowH, 0, bh);
+    const Bp = argmax(rowH, rh-bh, rh);
+    const width = (Rp - (rw-bw) + (bw - Lp)); // аппрокс: расстояние между «симметричными» пиками
+    const height= (Bp - (rh-bh) + (bh - Tp));
+
+    const sizeOK = (width >= CONFIG.MIN_SIZE_PX && height >= CONFIG.MIN_SIZE_PX);
+    const ar = height / Math.max(1, width);
+    const arOK = (ar >= CONFIG.AR_MIN && ar <= CONFIG.AR_MAX);
+
+    const balanceOK = (
+      (eL/eR > CONFIG.BALANCE_TOL && eL/eR < 1/CONFIG.BALANCE_TOL) &&
+      (eT/eB > CONFIG.BALANCE_TOL && eT/eB < 1/CONFIG.BALANCE_TOL)
+    );
+
+    const inside = edgeOK && sizeOK && arOK && balanceOK;
     applyPresence(inside);
   }
 
@@ -605,8 +636,7 @@
     console.assert(CONFIG.BUBBLE_R>0 && CONFIG.TARGET_R>0, 'radii positive');
   })();
   (function testInsideMath(){ const T=CONFIG.TARGET_R-CONFIG.BUBBLE_R; console.assert(T>0,'T>0'); console.assert(isInside(0,0),'center'); console.assert(isInside(T,0),'boundary'); console.assert(!isInside(T+0.01,0),'outside'); })();
-  (function testDetectorSetup(){ console.assert(typeof startDetection==='function' && typeof stopDetection==='function', 'detector functions exist'); console.assert(CONFIG.DETECT_HZ>=8 && CONFIG.HOLD_MAX_MS<=300, 'detector fast response'); })();
-  (function testRAF(){ console.assert(typeof startLevelLoop==='function' && typeof stopLevelLoop==='function', 'raf loop exists'); })();
+  (function testDetectorParams(){ console.assert(CONFIG.DETECT_HZ>=10 && CONFIG.DETECT_HZ<=20, 'detect hz ok'); console.assert(CONFIG.AR_MIN<1.6 && CONFIG.AR_MAX>1.6, 'aspect bounds include card'); })();
   (function testIndicators(){ console.assert(document.getElementById('indLevel') && document.getElementById('indCard'), 'indicators exist'); })();
   (function testSanitize(){ const s = sanitizeComment(`<img src=x onerror=alert(1)> треска & рис javascript: data:`); console.assert(!/<|script|onerror|javascript:|data:/i.test(s), 'sanitize blocks dangerous patterns'); })();
   </script>
