@@ -41,12 +41,26 @@
       position:absolute;left:50%;top:50%;
       transform: translate(-50%, -50%) translateZ(0);
       border-radius:50%;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.35);
-      will-change:transform;
-      transition: background-color .12s;
+      will-change:transform; transition: background-color .12s;
     }
     .level-bubble.ok{background:#22c55e}
 
-    /* bottom controls */
+    /* Серый слот для карты */
+    .card-area{
+      position:absolute; right:12px; top:50%; transform:translateY(-50%);
+      width:115px; height:183px;
+      border-radius:14px;
+      border:2px solid rgba(255,255,255,.95);
+      background:
+        repeating-linear-gradient(45deg,
+          rgba(255,255,255,.18) 0 10px,
+          rgba(255,255,255,0) 10px 20px);
+      box-shadow:0 0 0 1px rgba(0,0,0,.15) inset;
+      pointer-events:none;
+    }
+    .card-area.ok{ border-color:#22c55e; box-shadow:0 0 0 2px rgba(34,197,94,.45) inset }
+
+    /* controls — ВНЕ overlay, чтобы клик точно проходил */
     .controls{position:absolute;left:0;right:0;bottom:0;padding:12px;display:flex;gap:10px;align-items:center;justify-content:center;background:linear-gradient(to top, rgba(0,0,0,.55), rgba(0,0,0,0));color:#fff}
     .shutter{width:72px;height:72px;border-radius:999px;border:4px solid rgba(255,255,255,.9);background:#fff;cursor:pointer;box-shadow:0 2px 12px rgba(0,0,0,.4)}
     .shutter[disabled]{opacity:.45;cursor:not-allowed;border-color:rgba(255,255,255,.5)}
@@ -63,7 +77,7 @@
     <div id="err" class="error hidden"></div>
 
     <section id="sec-main">
-      <!-- ТОЛЬКО ФОТО: системная камера, задняя -->
+      <!-- ТОЛЬКО ФОТО: нативная камера, задняя -->
       <input id="file-cam" type="file" accept="image/*;capture=camera" capture="environment" class="hidden" />
       <input id="file-gallery" type="file" accept="image/*" class="hidden" />
 
@@ -76,7 +90,7 @@
             <div id="chipInfo" class="chip" role="status" aria-live="polite">Выровняйте телефон — точка станет зелёной</div>
           </div>
 
-          <!-- Прицел с точкой (уровень) -->
+          <!-- Прицел с точкой -->
           <div class="center-level" id="levelUI">
             <div class="level-outer" id="levelOuter">
               <div id="levelTarget" class="level-target"></div>
@@ -84,9 +98,13 @@
             </div>
           </div>
 
-          <div id="controls" class="controls">
-            <button id="btnShot" class="shutter" aria-label="Сделать фото"></button>
-          </div>
+          <!-- СЕРАЯ ОБЛАСТЬ ДЛЯ КАРТЫ (возвращена) -->
+          <div id="cardArea" class="card-area" aria-label="Область для карты (портрет)"></div>
+        </div>
+
+        <!-- Кнопка вне overlay, чтобы на iOS/Android клик точно открывал камеру -->
+        <div id="controls" class="controls">
+          <button id="btnShot" class="shutter" aria-label="Сделать фото"></button>
         </div>
       </div>
 
@@ -108,10 +126,7 @@
 
   <script>
   // ===================== CONFIG / STATE =====================
-  const CONFIG = {
-    // геометрия уровня
-    BUBBLE_R: 12, TARGET_R: 15, ENFORCE_GEOMETRY: true,
-  };
+  const CONFIG = { BUBBLE_R: 12, TARGET_R: 15, ENFORCE_GEOMETRY: true };
 
   const S = { levelOn:false };
   let _lastBlob = null, _view='camera';
@@ -162,7 +177,7 @@
     overlay.classList.remove('hidden'); levelUI.classList.remove('hidden');
     photo.classList.add('hidden');
     meta.textContent='';
-    resetLevelState(); // автосброс уровня при каждом старте
+    resetLevelState(); // автосброс уровня при каждом старте/пересъёмке
     startLevelLoop(); startSensorsWatchdog();
     updateButtons();
   }
@@ -208,14 +223,11 @@
     if(!file) return;
     if(!file.type.startsWith('image/')){ setError('Нужен файл изображения.'); return; }
 
-    // НИЧЕГО НЕ ПЕРЕКОДИРУЕМ — сохраняем исходное качество с камеры
+    // Без перекодирования — берём оригинал с камеры
     _lastBlob=file;
 
     const url=URL.createObjectURL(file);
-    photo.onload=()=>{
-      // показать исходные размеры (для контроля качества)
-      meta.textContent = `${photo.naturalWidth}×${photo.naturalHeight} • ${file.type||'image'}`;
-    };
+    photo.onload=()=>{ meta.textContent = `${photo.naturalWidth}×${photo.naturalHeight} • ${file.type||'image'}`; };
     photo.src=url;
 
     showPhotoUI();
@@ -246,20 +258,17 @@
     if (a >= 135 && a < 225) return 180;
     return 270;
   }
-  function clamp(v,a,b){return Math.min(b,Math.max(a,v))}
   function mapTilt(pitchDeg, rollDeg){
-    const a=getScreenAngle();
-    const s=30; // 30° => полное смещение
+    const s=30, a=getScreenAngle();
     const pr=clamp(pitchDeg/s, -1, 1);
     const rr=clamp(rollDeg /s, -1, 1);
-    let nx=0, ny=0;
     switch(a){
-      case 0:   nx=rr;  ny=pr;  break;
-      case 90:  nx=-pr; ny=rr;  break;
-      case 180: nx=-rr; ny=-pr; break;
-      case 270: nx=pr;  ny=-rr; break;
+      case 0:   return { nx: rr,  ny: pr  };
+      case 90:  return { nx:-pr,  ny: rr  };
+      case 180: return { nx:-rr,  ny:-pr  };
+      case 270: return { nx: pr,  ny:-rr  };
     }
-    return { nx, ny };
+    return { nx:0, ny:0 };
   }
 
   async function enableLevelSensors(firstTry=false){
