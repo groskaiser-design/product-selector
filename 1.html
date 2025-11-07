@@ -54,21 +54,18 @@
     .field{display:flex;flex-direction:column;gap:6px;margin-top:10px}
     .textarea{width:100%;min-height:68px;resize:vertical;padding:10px 12px;border:1px solid var(--ring);border-radius:12px;font:inherit;line-height:1.35}
     .helper{color:var(--muted);font-size:12px}
+    .error{background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;border-radius:12px;padding:12px;margin:12px 0}
   </style>
 </head>
 <body>
   <main class="container">
     <div id="err" class="error hidden"></div>
 
-    <!-- CAMERA -->
+    <!-- CAMERA (автозапуск) -->
     <section id="sec-camera">
-      <div class="row" style="margin-bottom:10px">
-        <button id="btnOpen" class="btn primary">Открыть камеру</button>
-        <button id="btnStop" class="btn">Закрыть</button>
-        <!-- два инпута: камера (capture) и галерея -->
-        <input id="file-cam" type="file" accept="image/*" capture="environment" class="hidden" />
-        <input id="file-gallery" type="file" accept="image/*" class="hidden" />
-      </div>
+      <!-- скрытые инпуты для fallback -->
+      <input id="file-cam" type="file" accept="image/*" capture="environment" class="hidden" />
+      <input id="file-gallery" type="file" accept="image/*" class="hidden" />
 
       <div class="cam-wrap" id="camWrap" aria-label="Живое превью камеры">
         <video id="video" class="cam-video" playsinline muted></video>
@@ -95,7 +92,7 @@
         <img id="photo" class="preview-img" alt="Снимок" />
         <div id="meta" class="meta"></div>
 
-        <!-- Optional comment with sanitation -->
+        <!-- Комментарий с санитизацией -->
         <div class="field">
           <label for="comment" class="helper">Комментарий (необязательно). Например: «треска и рис».</label>
           <textarea id="comment" class="textarea" maxlength="200" placeholder="Например: «треска и рис»"></textarea>
@@ -136,7 +133,7 @@
   // ===================== DOM =====================
   const $ = id => document.getElementById(id);
   const err=$('err'), video=$('video');
-  const btnOpen=$('btnOpen'), btnStop=$('btnStop'), btnShot=$('btnShot');
+  const btnShot=$('btnShot');
   const fileCam=$('file-cam'), fileGallery=$('file-gallery');
   const levelBubble=$('levelBubble'), levelTarget=$('levelTarget');
   const secCam=$('sec-camera'), secPrev=$('sec-preview'), photo=$('photo'), meta=$('meta');
@@ -150,51 +147,38 @@
   function canUseGUM(){ return !!(navigator.mediaDevices?.getUserMedia) && isSecureContext; }
   async function queryPerm(name){ try{ const p=await navigator.permissions?.query?.({name}); return p?.state??null }catch{return null} }
 
-  // Санитизация комментария: 1) обрезать 2) удалить теги 3) вычистить опасные последовательности 4) нормализовать пробелы
+  // Санитизация комментария
   function sanitizeComment(input){
     let s = String(input||'').slice(0, 200);
-
-    // убрать HTML-теги
-    s = s.replace(/<[^>]*>/g, '');
-
-    // убрать управляющие и невидимые символы (кроме пробела/перевода строки/табов)
-    s = s.replace(/[\u0000-\u001F\u007F-\u009F]/g, '');
-
-    // блокировать распространённые инъекции/протоколы
-    const bad = /(javascript:|data:|vbscript:|<script|<\/script|on\w+\s*=)/gi;
-    s = s.replace(bad, '');
-
-    // whitelisting: оставить буквы/цифры/знаки препинания/пробелы
-    s = s.replace(/[^\p{L}\p{N}\p{M}\s.,!?:;"'()\-–—[\]{}#@+/&%]/gu, '');
-
-    // нормализация пробелов
-    s = s.replace(/\s+/g, ' ').trim();
-
+    s = s.replace(/<[^>]*>/g, ''); // теги
+    s = s.replace(/[\u0000-\u001F\u007F-\u009F]/g, ''); // управляющие символы
+    s = s.replace(/(javascript:|data:|vbscript:|<script|<\/script|on\w+\s*=)/gi, ''); // инъекции/протоколы
+    s = s.replace(/[^\p{L}\p{N}\p{M}\s.,!?:;"'()\-–—[\]{}#@+/&%]/gu, ''); // whitelist
+    s = s.replace(/\s+/g, ' ').trim(); // пробелы
     return s;
   }
-
   function showCommentWarning(show, text){
     commentWarn.textContent = text || '';
     commentWarn.classList.toggle('hidden', !show);
   }
 
+  // ===================== AUTOSTART CAMERA =====================
+  window.addEventListener('DOMContentLoaded', () => {
+    openFlow();
+    // Telegram Mini App hint: можно дернуть ready()
+    try { window.Telegram?.WebApp?.ready?.(); } catch {}
+  });
+
   // ===================== CAMERA FLOW =====================
-  btnOpen.addEventListener('click', openFlow);
-  btnStop.addEventListener('click', ()=>stopAll());
   btnShot.addEventListener('click', onShutter);
   btnRetake.addEventListener('click', ()=>{ secPrev.classList.add('hidden'); secCam.classList.remove('hidden'); openFlow(); });
   btnGallery.addEventListener('click', ()=>fileGallery?.click());
   fileGallery.addEventListener('change', onFilePicked);
   fileCam.addEventListener('change', onFilePicked);
-
   commentEl.addEventListener('input', ()=>{
     const raw = commentEl.value;
     const safe = sanitizeComment(raw);
-    if (raw !== safe){
-      showCommentWarning(true, 'Некоторые символы удалены для безопасности.');
-    } else {
-      showCommentWarning(false, '');
-    }
+    showCommentWarning(raw !== safe, raw !== safe ? 'Некоторые символы удалены для безопасности.' : '');
   });
 
   function syncRadii(){
@@ -211,7 +195,7 @@
     setError(''); syncRadii();
     await enableLevelSensors();
     const camOk = await openCameraGUM();
-    if(!camOk){ try{ fileCam?.click(); }catch{} }
+    if(!camOk){ try{ fileCam?.click(); }catch{} } // fallback на системную камеру
   }
 
   async function openCameraGUM(){
@@ -266,16 +250,12 @@
 
   async function takeShot(){
     if(!video.videoWidth || !video.videoHeight) return;
-
-    // Отрубим камеру сразу после кадра, чтобы освободить ресурсы
     const blob = await grabFrameBlob();
     if(!blob) return;
-
     _lastBlob = blob;
     const url = URL.createObjectURL(blob);
     photo.onload = ()=>{ meta.textContent = `${photo.naturalWidth}×${photo.naturalHeight} • ${blob.type||'image'}`; };
     photo.src = url;
-
     btnSend.disabled = false;
     secCam.classList.add('hidden'); secPrev.classList.remove('hidden');
   }
@@ -315,7 +295,7 @@
     photo.src = url;
     btnSend.disabled = false;
     secCam.classList.add('hidden'); secPrev.classList.remove('hidden');
-    ev.target.value = ''; // сбросить, чтобы одно и то же фото можно было выбрать повторно
+    ev.target.value = ''; // выбрать то же фото повторно
   }
 
   // ===================== LEVEL SENSORS =====================
@@ -376,41 +356,12 @@
     btnShot.disabled = !okFully;
   }
 
-  // ===================== SEND =====================
+  // ===================== SEND (пока отключено) =====================
   async function onSend(){
     if(!_lastBlob) return;
     const safeText = sanitizeComment(commentEl.value);
-    // Пример формирования payload (ЗАМЕНИТЕ URL на свой бекенд)
-    const fd = new FormData();
-    const ext = (_lastBlob.type.includes('webp') && 'webp') || (_lastBlob.type.includes('jpeg') && 'jpg') || 'png';
-    fd.append('image', _lastBlob, `photo.${ext}`);
-    fd.append('comment', safeText);
-
-    btnSend.disabled = true; const prevText = btnSend.textContent; btnSend.textContent = 'Отправка…';
-
-    try{
-      // Вариант A: Telegram Mini App — передать только метаданные (изображение грузите на свой сервер)
-      if (window.Telegram?.WebApp?.sendData){
-        // Отправим компактный маркер и комментарий (без файла)
-        window.Telegram.WebApp.sendData(JSON.stringify({ intent:'food_photo', hasImage:true, comment: safeText }));
-      }
-
-      // Вариант B: прямой POST на ваш сервер/бот
-      // TODO: замените '/api/analyze' на ваш эндпоинт
-      // const res = await fetch('/api/analyze', { method:'POST', body: fd });
-      // if(!res.ok) throw new Error('upload failed');
-
-      // Успех: можно показать уведомление/закрыть WebApp
-      // window.Telegram?.WebApp?.close();
-    }catch(e){
-      console.warn(e);
-      setError('Не удалось отправить данные. Попробуйте ещё раз.');
-      btnSend.disabled = false;
-      btnSend.textContent = prevText;
-      return;
-    }
-
-    btnSend.textContent = 'Отправлено';
+    console.log('DEBUG: отправка отключена. Подготовлено к отправке:', { blob:_lastBlob, comment:safeText });
+    setError('Отправка пока отключена. Подключим бэкенд/бота позже.');
   }
   btnSend.addEventListener('click', onSend);
 
