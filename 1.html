@@ -25,7 +25,7 @@
     .cam-photo{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block;background:#000}
 
     .cam-overlay{position:absolute;inset:0;pointer-events:none}
-    /* grid (убран mix-blend-mode) */
+    /* grid (без mix-blend-mode) */
     .grid{position:absolute;inset:0;opacity:.15;background:
       linear-gradient(#fff 1px, transparent 1px) 0 calc(33.333% - .5px)/100% 33.333% repeat-y,
       linear-gradient(#fff 1px, transparent 1px) 0 calc(66.666% - .5px)/100% 33.333% repeat-y,
@@ -337,18 +337,47 @@
     if(!camOk){ try{ fileCam?.click(); }catch{} } // fallback
   }
 
+  // ======== Camera selection: lock back camera & avoid reconfigure ========
+  async function getPermission() {
+    try{ await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio:false }); }catch{}
+  }
+  async function pickBackCamera(){
+    const devs = await navigator.mediaDevices.enumerateDevices();
+    const prefer = [/back/i, /rear/i, /тыл/i, /задн/i, /Back Camera/i, /Wide Camera/i];
+    const avoid = [/ultra/i, /tele/i, /macro/i, /сверх/i, /тел/i];
+    let best = null;
+    for(const d of devs){
+      if(d.kind!== 'videoinput') continue;
+      const L=d.label||'';
+      if(prefer.some(r=>r.test(L)) && !avoid.some(r=>r.test(L))){ best=d; break; }
+    }
+    if(!best) best = devs.find(d=> d.kind==='videoinput' && /back|rear/i.test(d.label||''));
+    return best?.deviceId || devs.find(d=>d.kind==='videoinput')?.deviceId || null;
+  }
+  async function openLockedBackCamera(){
+    await getPermission();
+    const id = await pickBackCamera();
+    const cons = id
+      ? { video: { deviceId: { exact: id }, frameRate: { ideal: 30, max: 30 } }, audio:false }
+      : { video: { facingMode: { exact: 'environment' }, frameRate: { ideal: 30, max: 30 } }, audio:false };
+    return navigator.mediaDevices.getUserMedia(cons);
+  }
+
   async function openCameraGUM(){
     if(!canUseGUM()){ setError('Камера недоступна.', envHint()); return false; }
     const perm = await queryPerm('camera'); if(perm==='denied'){ setError('Доступ к камере запрещён.', envHint()); return false; }
     try{
-      const s = await navigator.mediaDevices.getUserMedia({video: CONFIG.idealFacing, audio:false});
+      const s = await openLockedBackCamera();
       await bindStream(s);
-      await upgradeResolution();
       await stabilizeVideo(300, 1200);
       video.style.opacity = '1';
       const caps=S.track?.getCapabilities?.()||{};
       S.torchCap = !!caps.torch;
       btnTorch.classList.toggle('hidden', !S.torchCap);
+      // зафиксировать зум на 1.0, если доступно
+      if('zoom' in caps){
+        try{ await S.track.applyConstraints({ advanced:[{ zoom: Math.min(Math.max(1, caps.zoom?.min||1), caps.zoom?.max||1) }] }); }catch{}
+      }
       return true;
     }catch(e){ console.warn(e); setError('Не удалось открыть камеру.', envHint()); return false; }
   }
@@ -359,20 +388,6 @@
     video.style.opacity='0';
     video.srcObject=stream;
     try{ await video.play(); }catch{}
-  }
-
-  async function upgradeResolution(){
-    try{
-      const caps = S.track.getCapabilities?.() || {};
-      const wants = {};
-      if(caps.width && caps.width.max) wants.width = caps.width.max;
-      if(caps.height && caps.height.max) wants.height = caps.height.max;
-      if(caps.aspectRatio && caps.aspectRatio.max && caps.aspectRatio.min){
-        const ar = 3/4;
-        wants.aspectRatio = Math.min(caps.aspectRatio.max, Math.max(caps.aspectRatio.min, ar));
-      }
-      if(Object.keys(wants).length){ try{ await S.track.applyConstraints(wants); }catch(e){ console.warn('applyConstraints(max) failed', e); } }
-    }catch(e){ console.warn('upgradeResolution failed', e); }
   }
 
   async function stabilizeVideo(stableWindowMs=250, timeoutMs=1500){
@@ -445,7 +460,13 @@
   }
 
   // ---------- TORCH & SENSORS ----------
-  async function toggleTorch(){ if(!S.track || !S.torchCap) return; try{ S._torchOn=!S._torchOn; await S.track.applyConstraints({advanced:[{torch:S._torchOn}]}); haptic(); }catch{ btnTorch.classList.add('hidden'); } }
+  let _torchBusy=false;
+  async function toggleTorch(){
+    if(!S.track || !S.torchCap || _torchBusy) return; _torchBusy=true;
+    try{ S._torchOn=!S._torchOn; await S.track.applyConstraints({advanced:[{torch:S._torchOn}]}); haptic(); }
+    catch{ btnTorch.classList.add('hidden'); }
+    finally{ setTimeout(()=>{ _torchBusy=false; }, 200); }
+  }
 
   function getScreenAngle(){ let a = (screen.orientation?.angle ?? window.orientation ?? 0); a = a % 360; if(a < 0) a += 360; return a; }
   function computeAxisSigns(){
@@ -515,7 +536,7 @@
         const {sx,sy}=_axis; const R=70*0.45;
         const dx = sx * _fx2 * R; const dy = sy * _fy2 * R;
 
-        // без transition: мгновенный, плавный RAF-движ
+        // мгновенный RAF-сдвиг через CSS переменные (без transition)
         levelBubble.style.setProperty('--dx', `${dx}px`);
         levelBubble.style.setProperty('--dy', `${dy}px`);
 
@@ -615,7 +636,7 @@
         g[j] = data[i]*0.2126 + data[i+1]*0.7152 + data[i+2]*0.0722;
       }
     }
-    // лёгкий 3x3 бокс-блюр (сепарабельный в 2 прохода быстрее, но оставим простой)
+    // лёгкий 3x3 бокс-блюр
     for(let y=0; y<rh; y++){
       for(let x=0; x<rw; x++){
         let s=0,cnt=0;
