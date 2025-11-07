@@ -46,7 +46,7 @@
     .level-outer{position:relative;width:160px;height:160px;border-radius:50%}
     .level-target{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);border-radius:50%;border:2px solid rgba(255,255,255,.75);background:rgba(0,0,0,.15);backdrop-filter:blur(3px)}
     .level-target.ok{border-color:#34d399}
-    .level-bubble{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);border-radius:50%;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.35);transition:transform .08s linear,background-color .15s}
+    .level-bubble{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%) translateZ(0);border-radius:50%;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.35);transition:transform .08s linear,background-color .15s;will-change:transform}
     .level-bubble.ok{background:#22c55e}
 
     /* bottom controls inside camera */
@@ -66,15 +66,15 @@
       position:absolute; right:12px; top:50%; transform:translateY(-50%);
       width:115px; height:183px; /* целевой ~100x159 +15% запас */
       border-radius:14px;
-      background:rgba(255,255,255,.12);
-      box-shadow:0 0 0 1px rgba(255,255,255,.18) inset;
+      background:transparent; /* блюр под ней, не над */
       backdrop-filter:blur(10px) saturate(110%);
       -webkit-backdrop-filter:blur(10px) saturate(110%);
+      box-shadow:none;
       transition:background-color .12s ease, box-shadow .12s ease;
       pointer-events:none;
     }
-    .card-area.ok{ background:rgba(34,197,94,.22); box-shadow:0 0 0 1px rgba(34,197,94,.45) inset }
-    .card-area.neutral{ background:rgba(255,255,255,.12); box-shadow:0 0 0 1px rgba(255,255,255,.18) inset }
+    .card-area.ok{ background:transparent; box-shadow:0 0 0 2px rgba(34,197,94,.55) inset }
+    .card-area.neutral{ background:transparent; box-shadow:none }
   </style>
 </head>
 <body>
@@ -167,7 +167,8 @@
   let _taking = false;                             // идёт съёмка (freeze/encode)
 
   // Детектор карты
-  let _detTimer=null, _chipState='';
+  let _detIdle=null, _chipState='';
+  let _lastDetTS=0; // для троттлинга детектора
   let _fitOK=false, _levelOK=false;
   let _Lbox=null,_Rbox=null,_Tbox=null,_Bbox=null;
   let _hitCount=0,_missCount=0;
@@ -455,15 +456,32 @@
   }
 
   // ---------- PRESENCE DETECTOR (карта целиком внутри зоны) ----------
-  function startDetection(){ stopDetection(); _detTimer=setInterval(()=>{ if(_view==='camera') detectPresence(); }, 1000/CONFIG.DETECT_HZ); }
-  function stopDetection(){ if(_detTimer){ clearInterval(_detTimer); _detTimer=null; } }
+  function startDetection(){
+    stopDetection();
+    const ric = window.requestIdleCallback || function(cb, opts){ return setTimeout(cb, (opts && opts.timeout) || 200); };
+    const loop = (deadline)=>{
+      if(_view==='camera'){
+        const now = performance.now();
+        if(now - _lastDetTS >= (1000/CONFIG.DETECT_HZ)){
+          detectPresence();
+          _lastDetTS = now;
+        }
+        _detIdle = ric(loop, {timeout: 250});
+      }
+    };
+    _detIdle = ric(loop, {timeout: 250});
+  }
+  function stopDetection(){
+    const cic = window.cancelIdleCallback || clearTimeout;
+    if(_detIdle){ cic(_detIdle); _detIdle=null; }
+  }
 
   function detectPresence(){
     if(!video.videoWidth || !video.videoHeight) return;
 
     // даунскейл текущего кадра
     const wrap = document.getElementById('camWrap').getBoundingClientRect();
-    const sW = 240;
+    const sW = 160;
     const sH = Math.round(sW * (wrap.height / wrap.width));
     const c = document.createElement('canvas'); c.width=sW; c.height=sH;
     const ctx = c.getContext('2d', { willReadFrequently:true, desynchronized:true });
@@ -572,7 +590,7 @@
     console.assert(CONFIG.BUBBLE_R>0 && CONFIG.TARGET_R>0, 'radii positive');
   })();
   (function testInsideMath(){ const T=CONFIG.TARGET_R-CONFIG.BUBBLE_R; console.assert(T>0,'T>0'); console.assert(isInside(0,0),'center'); console.assert(isInside(T,0),'boundary'); console.assert(!isInside(T+0.01,0),'outside'); })();
-  (function testDetector(){ console.assert(CONFIG.DETECT_HZ>=3 && CONFIG.EDGE_MARGIN_PX>=2, 'detector sane'); })();
+  (function testDetectorSetup(){ console.assert(typeof startDetection==='function' && typeof stopDetection==='function', 'detector functions exist'); console.assert(CONFIG.DETECT_HZ>=3 && CONFIG.EDGE_MARGIN_PX>=2, 'detector sane'); })();
   (function testSanitize(){ const s = sanitizeComment(`<img src=x onerror=alert(1)> треска & рис javascript: data:`); console.assert(!/<|script|onerror|javascript:|data:/i.test(s), 'sanitize blocks dangerous patterns'); })();
   </script>
 </body>
