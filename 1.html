@@ -20,7 +20,6 @@
 
     /* CAMERA AREA */
     .cam-wrap{position:relative;border:1px solid var(--ring);border-radius:16px;overflow:hidden;background:#000;aspect-ratio:3/4;contain:layout paint;}
-    .cam-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;opacity:0;transition:opacity .2s ease;transform:translateZ(0);backface-visibility:hidden}
     .cam-photo{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block;background:#000}
 
     .cam-overlay{position:absolute;inset:0;pointer-events:none}
@@ -33,7 +32,21 @@
     .topbar{position:absolute;left:0;right:0;top:64px;display:flex;justify-content:center;gap:10px;z-index:9;pointer-events:none}
     .chip{pointer-events:auto;display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.25);background:rgba(0,0,0,.55);color:#fff}
 
-    /* bottom controls inside camera */
+    /* Уровень (прицел + точка) */
+    .center-level{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
+    .level-outer{position:relative;width:160px;height:160px;border-radius:50%}
+    .level-target{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);border-radius:50%;border:2px solid rgba(255,255,255,.75);background:rgba(0,0,0,.15)}
+    .level-target.ok{border-color:#34d399}
+    .level-bubble{
+      position:absolute;left:50%;top:50%;
+      transform: translate(-50%, -50%) translateZ(0);
+      border-radius:50%;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.35);
+      will-change:transform;
+      transition: background-color .12s;
+    }
+    .level-bubble.ok{background:#22c55e}
+
+    /* нижние кнопки */
     .controls{position:absolute;left:0;right:0;bottom:0;padding:12px;display:flex;gap:10px;align-items:center;justify-content:center;background:linear-gradient(to top, rgba(0,0,0,.55), rgba(0,0,0,0));color:#fff}
     .shutter{width:72px;height:72px;border-radius:999px;border:4px solid rgba(255,255,255,.9);background:#fff;cursor:pointer;box-shadow:0 2px 12px rgba(0,0,0,.4)}
     .shutter[disabled]{opacity:.45;cursor:not-allowed;border-color:rgba(255,255,255,.5)}
@@ -62,6 +75,12 @@
     .ind .bulb{width:12px;height:12px;border-radius:50%;background:var(--warn);box-shadow:0 0 0 2px rgba(0,0,0,.25) inset}
     .ind.ok .bulb{background:var(--ok)}
     .ind .label{font-size:12px;opacity:.95}
+
+    /* безопасное «невидимое» поле, НЕ display:none */
+    .visually-hidden-file{
+      position:fixed; left:-100vw; top:-100vh; width:0; height:0; opacity:0;
+      pointer-events:none; z-index:-1;
+    }
   </style>
 </head>
 <body>
@@ -69,13 +88,10 @@
     <div id="err" class="error hidden"></div>
 
     <section id="sec-main">
-      <!-- Камера (фото) и галерея -->
-      <input id="file-cam" type="file" accept="image/*" capture="environment" class="hidden" />
-      <input id="file-gallery" type="file" accept="image/*" class="hidden" />
+      <!-- Только галерея остаётся постоянной; камеру создаём динамически на клик -->
+      <input id="file-gallery" type="file" accept="image/*" class="visually-hidden-file" />
 
       <div class="cam-wrap" id="camWrap" aria-label="Камера и/или снимок">
-        <!-- Видеопоток больше не используется, держим для совместимости (скрыт) -->
-        <video id="video" class="cam-video hidden" playsinline muted></video>
         <img id="photo" class="cam-photo hidden" alt="Снимок" />
 
         <div id="overlay" class="cam-overlay">
@@ -84,10 +100,17 @@
             <div id="chipInfo" class="chip" role="status" aria-live="polite">Нажмите на кнопку, чтобы сделать фото</div>
           </div>
 
-          <!-- статическая подсказка зоны карты (визуальный ориентир) -->
+          <!-- Прицел и точка -->
+          <div class="center-level">
+            <div class="level-outer" id="levelOuter">
+              <div id="levelTarget" class="level-target"></div>
+              <div id="levelBubble" class="level-bubble"></div>
+            </div>
+          </div>
+
+          <!-- Визуальная зона карты (статичная) -->
           <div id="cardArea" class="card-area" aria-label="Область для карты (портрет)"></div>
 
-          <!-- индикаторы остаются, но логика «ровно/карта» отключена -->
           <div class="indicators">
             <div id="indLevel" class="ind"><span class="bulb"></span><span class="label">Ровно</span></div>
             <div id="indCard" class="ind"><span class="bulb"></span><span class="label">Карта</span></div>
@@ -118,17 +141,30 @@
   <script>
   // ===================== CONFIG / STATE =====================
   const CONFIG = {
-    maxSide: 4096, jpegQ: 0.95, webpQ: 0.95
+    // радиусы прицела
+    BUBBLE_R: 12, TARGET_R: 15, ENFORCE_GEOMETRY: true,
+    // таймаут ожидания возврата из нативной камеры (на случай отмены)
+    CAMERA_CANCEL_MS: 15000
   };
 
   let _lastBlob = null, _view='camera', _taking=false;
 
+  // RAW level inputs
+  let _rawNx=0, _rawNy=0, _rafId=null, _levelRadius=40;
+  let _levelOK=false, _lvlHits=0, _lvlMiss=0; const LVL_ON=2, LVL_OFF=3;
+
+  // iOS
+  const isIOS = /iP(hone|od|ad)/.test(navigator.userAgent);
+  let _sensorLastTS = 0, _sensorWatch = null;
+  const SENSOR_STALE_MS = 1500;
+
   // ===================== DOM =====================
   const $ = id => document.getElementById(id);
   const err=$('err');
-  const video=$('video'), photo=$('photo'), overlay=$('overlay'), controls=$('controls');
+  const photo=$('photo'), overlay=$('overlay'), controls=$('controls');
   const btnShot=$('btnShot'), chipInfo=$('chipInfo');
-  const fileCam=$('file-cam'), fileGallery=$('file-gallery');
+  const fileGallery=$('file-gallery');
+  const levelBubble=$('levelBubble'), levelTarget=$('levelTarget'), levelOuter=$('levelOuter');
   const indLevel=$('indLevel'), indCard=$('indCard');
   const meta=$('meta');
   const btnRetake=$('btnRetake'), btnGallery=$('btnGallery'), btnSend=$('btnSend');
@@ -151,98 +187,115 @@
   function updateButtons(){
     btnRetake.disabled = (_view === 'camera') || _taking;
     btnSend.disabled = !(_lastBlob || hasText()) || _taking;
-    // Всегда разрешаем съёмку: фотокамера вызывается нативно
-    btnShot.disabled = _taking;
+    btnShot.disabled = _taking; // съёмка всегда доступна
   }
   function syncIndicators(){
-    // Индикация «ровно/карта» больше не вычисляется из видео — ставим нейтральное состояние
-    indLevel.classList.toggle('ok', false);
-    indCard.classList.toggle('ok', false);
-    indLevel.setAttribute('aria-label', 'Ровно: недоступно в режиме фото');
-    indCard.setAttribute('aria-label', 'Карта: недоступно в режиме фото');
+    indLevel.classList.toggle('ok', _levelOK);
+    indCard.classList.toggle('ok', !!_lastBlob); // условно «ок», когда есть снимок
+    indLevel.setAttribute('aria-label', _levelOK ? 'Ровно: ок' : 'Ровно: нет');
+    indCard.setAttribute('aria-label', _lastBlob ? 'Карта: ок (снимок есть)' : 'Карта: нет (нет снимка)');
   }
 
   function showCameraUI(){
     _view='camera';
-    // Превью скрыто, ждём снимок от нативной камеры
-    video.classList.add('hidden');
-    overlay.classList.remove('hidden');
-    controls.classList.remove('hidden');
+    overlay.classList.remove('hidden'); controls.classList.remove('hidden');
     photo.classList.add('hidden');
     meta.textContent='';
     chipInfo.textContent='Нажмите на кнопку, чтобы сделать фото';
+    startLevelLoop(); startSensorsWatchdog();
     updateButtons(); syncIndicators();
   }
   function showPhotoUI(){
     _view='photo';
-    video.classList.add('hidden'); overlay.classList.add('hidden'); controls.classList.add('hidden');
+    overlay.classList.add('hidden'); controls.classList.add('hidden');
     photo.classList.remove('hidden');
-    updateButtons();
+    stopLevelLoop(); stopSensorsWatchdog();
+    updateButtons(); syncIndicators();
   }
 
   // ===================== AUTOSTART =====================
   window.addEventListener('DOMContentLoaded', () => {
-    adaptPerf();
-    startCameraFlow();
+    syncRadii(); computeLevelRadius();
+    startObservers();
+    showCameraUI();
+    attachIOSPermissionOneShot();
     try { window.Telegram?.WebApp?.ready?.(); } catch {}
   });
 
-  function adaptPerf(){ /* оставлено для совместимости и будущих оптимизаций */ }
-
   // ===================== PHOTO-ONLY FLOW =====================
   btnShot.addEventListener('click', onShutter);
-  btnRetake.addEventListener('click', ()=>{ if(btnRetake.disabled) return; startCameraFlow(true); });
+  btnRetake.addEventListener('click', ()=>{ if(btnRetake.disabled) return; onShutter(); });
   btnGallery.addEventListener('click', ()=>fileGallery?.click());
   fileGallery.addEventListener('change', onFilePicked);
-  fileCam.addEventListener('change', onFilePicked);
   commentEl.addEventListener('input', ()=>{
     const raw=commentEl.value, safe=sanitizeComment(raw);
     showCommentWarning(raw!==safe, raw!==safe ? 'Некоторые символы удалены для безопасности.' : '');
     updateButtons();
   });
 
-  async function startCameraFlow(userInitiated=false){
-    _lastBlob=null; _taking=false;
-    updateButtons(); setError('');
-    showCameraUI();
-
-    // Автозапуск камеры без жеста часто блокируется браузером.
-    // Поэтому открываем её только по действию пользователя (кнопка) или при пересъёмке.
-    if (userInitiated) {
-      await sleep(50);
-      try{ fileCam?.click(); }catch{}
-    }
-  }
-
-  // ---------- SHUTTER ----------
   async function onShutter(){
     if(_taking) return;
     _taking=true; updateButtons(); haptic();
     try{
-      // Открываем нативную камеру / файловый диалог
-      fileCam?.click();
+      const file = await openNativeCamera();
+      if(!file){
+        setError('Съёмка отменена или камера недоступна.', supportHint());
+        return;
+      }
+      await handlePickedFile(file);
     } finally {
-      // Разблокируем после того, как системный UI вернёт управление
-      setTimeout(()=>{ _taking=false; updateButtons(); }, 300);
+      _taking=false; updateButtons();
     }
   }
 
-  // ---------- ГАЛЕРЕЯ / КАМЕРА РЕЗУЛЬТАТ ----------
+  // создаём input на каждый запуск — так надёжнее на iOS/Android
+  function openNativeCamera(){
+    return new Promise(resolve=>{
+      const inp=document.createElement('input');
+      inp.type='file';
+      inp.accept='image/*';
+      inp.setAttribute('capture','environment'); // просим заднюю камеру
+      inp.className='visually-hidden-file';
+      document.body.appendChild(inp);
+
+      let settled=false;
+      const cleanup=()=>{ try{ document.body.removeChild(inp); }catch{} };
+
+      inp.addEventListener('change', ()=>{
+        if(settled) return;
+        settled=true;
+        const file=inp.files?.[0]||null;
+        cleanup();
+        resolve(file);
+      }, {once:true});
+
+      // таймаут на случай отмены диалога (некоторые браузеры не шлют change)
+      setTimeout(()=>{ if(!settled){ settled=true; cleanup(); resolve(null); } }, CONFIG.CAMERA_CANCEL_MS);
+
+      // сам клик должен быть строго в пользовательском жесте
+      inp.click();
+    });
+  }
+
   async function onFilePicked(ev){
     const file=ev.target?.files?.[0];
     if(!file) return;
+    await handlePickedFile(file);
+    ev.target.value='';
+  }
+
+  async function handlePickedFile(file){
     if(!file.type.startsWith('image/')){ setError('Нужен файл изображения.'); return; }
     _lastBlob=file;
 
-    // Покажем превью
     const url=URL.createObjectURL(file);
     photo.onload=()=>{ meta.textContent = `${photo.naturalWidth}×${photo.naturalHeight} • ${file.type||'image'}`; };
     photo.src=url;
 
-    showPhotoUI(); updateButtons(); ev.target.value='';
+    showPhotoUI();
   }
 
-  // SEND (пока заглушка)
+  // SEND (заглушка)
   async function onSend(){
     const safeText=sanitizeComment(commentEl.value);
     if(!_lastBlob && !safeText){ setError('Пусто. Добавьте фото или комментарий.'); return; }
@@ -251,8 +304,157 @@
   }
   btnSend.addEventListener('click', onSend);
 
-  // TEARDOWN (на будущее)
-  window.addEventListener('beforeunload', ()=>{ /* ничего не останавливаем: видеопоток не используется */ });
+  function supportHint(){
+    const https = !isSecureContext ? "\n• Нужен HTTPS (или localhost)." : "";
+    return `Попробуйте снова. Если не открывается — проверьте разрешения доступа к камере.${https}\n• На iOS иногда помогает перезапуск Safari/ТГ-Вебаппа.`;
+  }
+
+  // ===================== УРОВЕНЬ (датчики ориентации) =====================
+  function syncRadii(){
+    let bubble=Number(CONFIG.BUBBLE_R)||0, target=Number(CONFIG.TARGET_R)||0;
+    if (CONFIG.ENFORCE_GEOMETRY && target < bubble + 1) target = bubble + 1;
+    CONFIG.BUBBLE_R = bubble; CONFIG.TARGET_R = target;
+    const br=bubble*2, tr=target*2;
+    levelBubble.style.width = br+'px'; levelBubble.style.height = br+'px';
+    levelTarget.style.width = tr+'px'; levelTarget.style.height = tr+'px';
+  }
+  function computeLevelRadius(){
+    const rOuter = Math.min(levelOuter.clientWidth, levelOuter.clientHeight) * 0.5;
+    _levelRadius = Math.max(8, Math.floor(Math.min(rOuter - CONFIG.BUBBLE_R - 2, rOuter * 0.6)));
+  }
+  function startObservers(){
+    const ro = new ResizeObserver(()=>{ computeLevelRadius(); });
+    ro.observe(levelOuter);
+  }
+
+  function setLevelOK(next){
+    if(next){ _lvlHits++; _lvlMiss=0; } else { _lvlMiss++; _lvlHits=0; }
+    const prev=_levelOK;
+    const stable = prev ? (_lvlMiss>=LVL_OFF ? false : prev) : (_lvlHits>=LVL_ON ? true : prev);
+    if(stable!==_levelOK){
+      _levelOK=stable;
+      levelBubble.classList.toggle('ok', _levelOK);
+      levelTarget.classList.toggle('ok', _levelOK);
+      syncIndicators(); updateButtons();
+    }
+  }
+  function isInside(dx,dy){ return (Math.hypot(dx,dy) + CONFIG.BUBBLE_R) <= CONFIG.TARGET_R; }
+
+  function startLevelLoop(){
+    if(_rafId) return;
+    const step=()=>{
+      if(_view==='camera'){
+        const R=_levelRadius;
+        const dx=clamp(_rawNx,-1,1)*R;
+        const dy=clamp(_rawNy,-1,1)*R;
+        levelBubble.style.transform = `translate(-50%, -50%) translate(${dx}px, ${dy}px) translateZ(0)`;
+        setLevelOK(isInside(dx,dy));
+      }
+      _rafId=requestAnimationFrame(step);
+    };
+    _rafId=requestAnimationFrame(step);
+  }
+  function stopLevelLoop(){ if(_rafId){ cancelAnimationFrame(_rafId); _rafId=null; } }
+  function clamp(v,a,b){return Math.min(b,Math.max(a,v))}
+
+  // ---------- ориентация/датчики ----------
+  function getScreenAngle(){
+    let a = (screen.orientation?.angle ?? window.orientation ?? 0);
+    a = ((a % 360)+360)%360;
+    if (a >= 315 || a < 45) return 0;
+    if (a >= 45 && a < 135) return 90;
+    if (a >= 135 && a < 225) return 180;
+    return 270;
+  }
+  // более чувствительная шкала: 30° => полное смещение
+  function mapTilt(pitchDeg, rollDeg){
+    const a=getScreenAngle();
+    const s=30;
+    const pr=clamp(pitchDeg/s, -1, 1);
+    const rr=clamp(rollDeg /s, -1, 1);
+    let nx=0, ny=0;
+    switch(a){
+      case 0:   nx=rr;  ny=pr;  break;
+      case 90:  nx=-pr; ny=rr;  break;
+      case 180: nx=-rr; ny=-pr; break;
+      case 270: nx=pr;  ny=-rr; break;
+    }
+    return { nx, ny };
+  }
+
+  async function enableLevelSensors(firstTry=false){
+    try{
+      let ok=false;
+      if(typeof DeviceOrientationEvent!=='undefined' && typeof DeviceOrientationEvent.requestPermission==='function' && firstTry){
+        try{ const p=await DeviceOrientationEvent.requestPermission(); if(p==='granted'){ window.addEventListener('deviceorientation', onOrient, true); ok=true; } }catch{}
+      }
+      if(!ok && 'ondeviceorientation' in window){ window.addEventListener('deviceorientation', onOrient, true); ok=true; }
+      if(!ok && typeof DeviceMotionEvent!=='undefined' && typeof DeviceMotionEvent.requestPermission==='function' && firstTry){
+        try{ const p2=await DeviceMotionEvent.requestPermission(); if(p2==='granted'){ window.addEventListener('devicemotion', onMotion, true); ok=true; } }catch{}
+      }
+      if(!ok && 'ondevicemotion' in window){ window.addEventListener('devicemotion', onMotion, true); ok=true; }
+      return ok;
+    }catch{ return false; }
+  }
+
+  function attachIOSPermissionOneShot(){
+    if(!isIOS) return;
+    const handler = async () => {
+      await requestSensorPermission();
+      document.removeEventListener('pointerdown', handler, true);
+    };
+    document.addEventListener('pointerdown', handler, true);
+  }
+
+  async function requestSensorPermission(){
+    let granted=false;
+    try{
+      if(typeof DeviceOrientationEvent!=='undefined' && typeof DeviceOrientationEvent.requestPermission==='function'){
+        granted = (await DeviceOrientationEvent.requestPermission())==='granted';
+        if(granted) window.addEventListener('deviceorientation', onOrient, true);
+      }
+      if(!granted && typeof DeviceMotionEvent!=='undefined' && typeof DeviceMotionEvent.requestPermission==='function'){
+        granted = (await DeviceMotionEvent.requestPermission())==='granted';
+        if(granted) window.addEventListener('devicemotion', onMotion, true);
+      }
+      if(granted){ chipInfo.textContent='Выровняйте телефон, положите банковскую карту в серую зону'; }
+      else { chipInfo.textContent='Разрешите «Движение и ориентация» в Safari, затем коснитесь экрана'; }
+    }catch{ chipInfo.textContent='Не удалось включить датчики ориентации'; }
+  }
+
+  function onOrient(e){
+    if(_view!=='camera') return;
+    _sensorLastTS = performance.now();
+    const pitch=e.beta??0, roll=e.gamma??0;
+    const { nx, ny } = mapTilt(pitch, roll);
+    _rawNx=nx; _rawNy=ny;
+  }
+  function onMotion(e){
+    if(_view!=='camera') return;
+    _sensorLastTS = performance.now();
+    const a=e.accelerationIncludingGravity||{};
+    const x=a.x||0,y=a.y||0,z=a.z||0;
+    const pitch=(Math.atan2(-x,Math.sqrt(y*y+z*z))*180/Math.PI)||0;
+    const roll =(Math.atan2( y, z)*180/Math.PI)||0;
+    const { nx, ny } = mapTilt(pitch, roll);
+    _rawNx=nx; _rawNy=ny;
+  }
+
+  function startSensorsWatchdog(){
+    stopSensorsWatchdog();
+    if(!isIOS) return;
+    _sensorWatch = setInterval(()=>{
+      if(_view!=='camera') return;
+      const stale = (performance.now() - _sensorLastTS) > SENSOR_STALE_MS;
+      if(stale){
+        chipInfo.textContent='Коснитесь экрана, чтобы снова включить «Движение и ориентация»';
+        attachIOSPermissionOneShot();
+      }
+    }, 1000);
+  }
+  function stopSensorsWatchdog(){ if(_sensorWatch){ clearInterval(_sensorWatch); _sensorWatch=null; } }
+  window.addEventListener('pageshow', ()=>{ if(_view==='camera'){ _sensorLastTS=0; attachIOSPermissionOneShot(); }});
+  document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible' && _view==='camera'){ _sensorLastTS=0; attachIOSPermissionOneShot(); } });
 
   </script>
 </body>
