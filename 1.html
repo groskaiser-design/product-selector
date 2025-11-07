@@ -61,20 +61,22 @@
     .helper{color:var(--muted);font-size:12px}
     .error{background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;border-radius:12px;padding:12px;margin:12px 0}
 
-    /* --- Card presence area (soft, blurred) --- */
+    /* --- Card presence area (striped, outlined) --- */
     .card-area{
       position:absolute; right:12px; top:50%; transform:translateY(-50%);
-      width:115px; height:183px; /* целевой ~100x159 +15% запас */
+      width:115px; height:183px; /* ~100x159 +15% запас */
       border-radius:14px;
-      background:transparent; /* блюр под ней, не над */
-      backdrop-filter:blur(10px) saturate(110%);
-      -webkit-backdrop-filter:blur(10px) saturate(110%);
-      box-shadow:none;
-      transition:background-color .12s ease, box-shadow .12s ease;
+      border:2px solid rgba(255,255,255,.95); /* белый контур */
+      background:
+        repeating-linear-gradient(45deg,
+          rgba(255,255,255,.18) 0 10px,
+          rgba(255,255,255,0) 10px 20px);
+      /* никакого backdrop-filter, чтобы не закрывать карту */
+      box-shadow:0 0 0 1px rgba(0,0,0,.15) inset; /* тонкий внутренний контраст */
       pointer-events:none;
     }
-    .card-area.ok{ background:transparent; box-shadow:0 0 0 2px rgba(34,197,94,.55) inset }
-    .card-area.neutral{ background:transparent; box-shadow:none }
+    .card-area.ok{ border-color:#22c55e; box-shadow:0 0 0 2px rgba(34,197,94,.45) inset }
+    .card-area.neutral{ border-color:rgba(255,255,255,.95) }
   </style>
 </head>
 <body>
@@ -107,7 +109,7 @@
             </div>
           </div>
 
-          <!-- Card presence area (blurred, right) -->
+          <!-- Card presence area (striped) -->
           <div id="cardArea" class="card-area neutral" aria-label="Область для карты (портрет)"></div>
         </div>
 
@@ -152,19 +154,23 @@
     SMOOTH_ALPHA: 0.25,
 
     // -------- Card presence detector --------
-    DETECT_HZ: 4,
+    DETECT_HZ: 3, // ещё мягче, чтобы не мешать анимации
     EDGE_MARGIN_PX: 4,
     MIN_SIZE_PX: 24,
     HIT_ON: 3,
     HIT_OFF: 4,
-    BOX_ALPHA: 0.40
+    BOX_ALPHA: 0.35
   };
 
   const S = { stream:null, track:null, torchCap:false, _torchOn:false, levelOn:false };
-  let _fx = 0, _fy = 0, _initF = false;           // EMA
-  let _lastBlob = null;                            // текущий снимок
-  let _view = 'camera';                            // 'camera' | 'photo'
-  let _taking = false;                             // идёт съёмка (freeze/encode)
+  let _lastBlob = null;              // текущий снимок
+  let _view = 'camera';              // 'camera' | 'photo'
+  let _taking = false;               // идёт съёмка (freeze/encode)
+
+  // Данные уровня (RAF-петля вместо прямого рендера из событий)
+  let _rawNx = 0, _rawNy = 0;        // нормализованные входы -1..1 из датчиков
+  let _fx = 0, _fy = 0, _initF = false; // EMA фильтр
+  let _rafId = null;                 // RAF петля рендера пузырька
 
   // Детектор карты
   let _detIdle=null, _chipState='';
@@ -198,7 +204,6 @@
     s = s.replace(/<[^>]*>/g, '');
     s = s.replace(/[\u0000-\u001F\u007F-\u009F]/g, '');
     s = s.replace(/(javascript:|data:|vbscript:|<script|<\/script|on\w+\s*=)/gi, '');
-    // разрешаем только буквы/цифры/знаки препинания; безопасная версия с корректным экранированием ] и -
     s = s.replace(/[^\p{L}\p{N}\p{M}\s\.,!?:;"'()\-\u2013\u2014\[\]{}#@+/&%]/gu, '');
     s = s.replace(/\s+/g, ' ').trim();
     return s;
@@ -221,6 +226,7 @@
     photo.classList.add('hidden');
     meta.textContent = '';
     startDetection();
+    startLevelLoop();
     updateButtons();
   }
   function showPhotoUI(){
@@ -230,6 +236,7 @@
     controls.classList.add('hidden');
     photo.classList.remove('hidden');
     stopDetection();
+    stopLevelLoop();
     updateButtons();
   }
 
@@ -419,69 +426,37 @@
     S.levelOn=ok;
   }
 
-  function onOrient(e){ if(_view!=='camera') return; const pitch=e.beta??0, roll=e.gamma??0; paintLevel(pitch,roll); }
-  function onMotion(e){
-    if(_view!=='camera') return;
-    const a=e.accelerationIncludingGravity||{}; const x=a.x||0,y=a.y||0,z=a.z||0;
-    const pitch=(Math.atan2(-x,Math.sqrt(y*y+z*z))*180/Math.PI)||0;
-    const roll=(Math.atan2(y,z)*180/Math.PI)||0;
-    paintLevel(pitch,roll);
-  }
+  // События сенсоров только обновляют сырые значения; отрисовка — в RAF
+  function onOrient(e){ if(_view!=='camera') return; const pitch=e.beta??0, roll=e.gamma??0; const nx=clamp(roll/30,-1,1), ny=clamp(pitch/30,-1,1); _rawNx=nx; _rawNy=ny; }
+  function onMotion(e){ if(_view!=='camera') return; const a=e.accelerationIncludingGravity||{}; const x=a.x||0,y=a.y||0,z=a.z||0; const pitch=(Math.atan2(-x,Math.sqrt(y*y+z*z))*180/Math.PI)||0; const roll=(Math.atan2(y,z)*180/Math.PI)||0; const nx=clamp(roll/30,-1,1), ny=clamp(pitch/30,-1,1); _rawNx=nx; _rawNy=ny; }
 
-  function paintLevel(pitch, roll){
-    const R = 70;
-    const nx = clamp(roll/30,-1,1);
-    const ny = clamp(pitch/30,-1,1);
-
-    // EMA — плавная «точка» (как в базовом коде)
-    const alpha = CONFIG.SMOOTH_ALPHA;
-    if(!_initF){ _fx = nx; _fy = ny; _initF = true; }
-    else { _fx = _fx + alpha * (nx - _fx); _fy = _fy + alpha * (ny - _fy); }
-
-    const { sx, sy } = getAxisSigns();
-    const dx = sx * _fx * R * 0.45;
-    const dy = sy * _fy * R * 0.45;
-
-    levelBubble.style.transform=`translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
-
-    _levelOK = isInside(dx,dy);
-    levelBubble.classList.toggle('ok', _levelOK);
-    levelTarget.classList.toggle('ok', _levelOK);
-
-    if(_levelOK && _fitOK) setChip('Ровно • Карта в зоне — можно снимать', true);
-    else if(!_fitOK)       setChip('Карта вертикально в серой области справа', false);
-    else                   setChip('Выравнивайте… (кнопка заблокирована)', false);
-
-    updateButtons();
-  }
+  function startLevelLoop(){ if(_rafId) return; const step=()=>{ if(_view==='camera'){ const alpha = CONFIG.SMOOTH_ALPHA; if(!_initF){ _fx=_rawNx; _fy=_rawNy; _initF=true; } else { _fx = _fx + alpha*(_rawNx - _fx); _fy = _fy + alpha*(_rawNy - _fy); } const {sx,sy}=getAxisSigns(); const R=70; const dx = sx * _fx * R * 0.45; const dy = sy * _fy * R * 0.45; levelBubble.style.transform=`translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`; _levelOK = isInside(dx,dy); levelBubble.classList.toggle('ok', _levelOK); levelTarget.classList.toggle('ok', _levelOK); if(_levelOK && _fitOK) setChip('Ровно • Карта в зоне — можно снимать', true); else if(!_fitOK) setChip('Карта вертикально в полосатой области справа', false); else setChip('Выравнивайте… (кнопка заблокирована)', false); updateButtons(); } _rafId=requestAnimationFrame(step); }; _rafId=requestAnimationFrame(step); }
+  function stopLevelLoop(){ if(_rafId){ cancelAnimationFrame(_rafId); _rafId=null; } }
 
   // ---------- PRESENCE DETECTOR (карта целиком внутри зоны) ----------
   function startDetection(){
     stopDetection();
     const ric = window.requestIdleCallback || function(cb, opts){ return setTimeout(cb, (opts && opts.timeout) || 200); };
-    const loop = (deadline)=>{
+    const loop = ()=>{
       if(_view==='camera'){
         const now = performance.now();
         if(now - _lastDetTS >= (1000/CONFIG.DETECT_HZ)){
           detectPresence();
           _lastDetTS = now;
         }
-        _detIdle = ric(loop, {timeout: 250});
+        _detIdle = ric(loop, {timeout: 300});
       }
     };
-    _detIdle = ric(loop, {timeout: 250});
+    _detIdle = ric(loop, {timeout: 300});
   }
-  function stopDetection(){
-    const cic = window.cancelIdleCallback || clearTimeout;
-    if(_detIdle){ cic(_detIdle); _detIdle=null; }
-  }
+  function stopDetection(){ const cic = window.cancelIdleCallback || clearTimeout; if(_detIdle){ cic(_detIdle); _detIdle=null; } }
 
   function detectPresence(){
     if(!video.videoWidth || !video.videoHeight) return;
 
     // даунскейл текущего кадра
     const wrap = document.getElementById('camWrap').getBoundingClientRect();
-    const sW = 160;
+    const sW = 144; // ещё меньше — легче для CPU
     const sH = Math.round(sW * (wrap.height / wrap.width));
     const c = document.createElement('canvas'); c.width=sW; c.height=sH;
     const ctx = c.getContext('2d', { willReadFrequently:true, desynchronized:true });
@@ -492,7 +467,7 @@
     const sx = Math.floor((vW - sw)/2), sy = Math.floor((vH - sh)/2);
     ctx.drawImage(video, sx, sy, sw, sh, 0, 0, sW, sH);
 
-    // ROI серой области
+    // ROI зоны
     const slot = cardArea.getBoundingClientRect();
     const rx = Math.max(0, Math.round((slot.left - wrap.left) / wrap.width  * sW));
     const ry = Math.max(0, Math.round((slot.top  - wrap.top ) / wrap.height * sH));
@@ -524,10 +499,7 @@
 
     if(R<L || B<T){ applyPresence(false); return; }
 
-    let w = R-L+1, h = B-T+1;
-    if(w < CONFIG.MIN_SIZE_PX || h < CONFIG.MIN_SIZE_PX){ applyPresence(false); return; }
-
-    // EMA сглаживание границ
+    // фильтр границ
     if(_Lbox==null){ _Lbox=L; _Rbox=R; _Tbox=T; _Bbox=B; }
     else{
       const a = CONFIG.BOX_ALPHA;
@@ -537,7 +509,7 @@
       _Bbox = _Bbox + a*(B - _Bbox);
     }
 
-    // полностью внутри зоны, не касаясь краёв
+    // внутри зоны, не касаясь краёв (в координатах ROI)
     const m = CONFIG.EDGE_MARGIN_PX;
     const inside = (_Lbox > m) && (_Tbox > m) && (_Rbox < (rw - 1 - m)) && (_Bbox < (rh - 1 - m));
 
@@ -552,9 +524,6 @@
       _fitOK = ok;
       cardArea.classList.toggle('ok', ok);
       cardArea.classList.toggle('neutral', !ok);
-      if(_levelOK && _fitOK) setChip('Ровно • Карта в зоне — можно снимать', true);
-      else if(!_fitOK)       setChip('Карта вертикально в серой области справа', false);
-      else                   setChip('Выравнивайте… (кнопка заблокирована)', false);
       updateButtons();
     }
   }
@@ -565,10 +534,7 @@
     if(!_lastBlob && !safeText){
       setError('Пусто. Добавьте фото или комментарий.'); return;
     }
-    console.log('DEBUG: отправка отключена. Подготовлено к отправке:', {
-      hasImage: !!_lastBlob,
-      comment: safeText
-    });
+    console.log('DEBUG: отправка отключена. Подготовлено к отправке:', { hasImage: !!_lastBlob, comment: safeText });
     setError('Отправка пока отключена. Подключим бэкенд/бота позже.');
   }
   btnSend.addEventListener('click', onSend);
@@ -581,7 +547,7 @@
 
   // ===================== TEARDOWN =====================
   window.addEventListener('beforeunload', ()=>stopAll());
-  function stopAll(){ stopCamera(); stopDetection(); }
+  function stopAll(){ stopCamera(); stopDetection(); stopLevelLoop(); }
 
   // ===================== TESTS (console) =====================
   (function testRadii(){
@@ -591,6 +557,7 @@
   })();
   (function testInsideMath(){ const T=CONFIG.TARGET_R-CONFIG.BUBBLE_R; console.assert(T>0,'T>0'); console.assert(isInside(0,0),'center'); console.assert(isInside(T,0),'boundary'); console.assert(!isInside(T+0.01,0),'outside'); })();
   (function testDetectorSetup(){ console.assert(typeof startDetection==='function' && typeof stopDetection==='function', 'detector functions exist'); console.assert(CONFIG.DETECT_HZ>=3 && CONFIG.EDGE_MARGIN_PX>=2, 'detector sane'); })();
+  (function testRAF(){ console.assert(typeof startLevelLoop==='function' && typeof stopLevelLoop==='function', 'raf loop exists'); })();
   (function testSanitize(){ const s = sanitizeComment(`<img src=x onerror=alert(1)> треска & рис javascript: data:`); console.assert(!/<|script|onerror|javascript:|data:/i.test(s), 'sanitize blocks dangerous patterns'); })();
   </script>
 </body>
