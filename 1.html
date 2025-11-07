@@ -135,13 +135,13 @@
       <!-- Комментарий + кнопки -->
       <div class="field">
         <label for="comment" class="helper">Комментарий (необязательно, но он повысит точность)</label>
-        <textarea id="comment" class="textarea" maxlength="200" placeholder="Треска 150 гр и рис 200 гр"></textarea>
+        <textarea id="comment" class="textarea" maxlength="200" placeholder="Например: «Треска 150 гр и рис 200 гр»"></textarea>
         <div id="commentWarn" class="helper hidden"></div>
       </div>
 
       <div class="row" style="margin-top:10px">
         <button id="btnRetake" class="btn" disabled>Переснять</button>
-        <button id="btnGallery" class="btn">Галерея</button>
+        <button id="btnGallery" class="btn">Загрузить из галереи</button>
         <button id="btnSend" class="btn primary" disabled>Отправить</button>
       </div>
     </section>
@@ -166,20 +166,25 @@
     SMOOTH2_ALPHA2: 0.15,
     SMOOTH_DEADZONE: 0.02,
 
-    // -------- Card presence detector (усилен против ложных) --------
-    DETECT_HZ: 12,             // чаще опрос
-    EDGE_MARGIN_PX: 4,
-    MIN_SIZE_PX: 26,
-    HIT_ON: 3,                 // нужно 3 подряд попадания
-    HIT_OFF: 1,                // одно промахивание — гасим
-    BOX_ALPHA: 0.15,
-    HOLD_MAX_MS: 150,          // меньше залипание
+    // -------- Card presence detector v2 (процентильные пороги + проверки) --------
+    DETECT_HZ: 12,
+    EDGE_MARGIN_PX: 4,       // граница «не касаться» от краёв ROI
+    MIN_SIDE_FRAC: 0.35,     // доля от стороны ROI для min шир/выс карты
+    BOX_ALPHA: 0.18,         // сглаживание профилей
+    HOLD_MAX_MS: 180,
+    HIT_ON: 2,               // 2 попадания подряд, чтобы зажечь
+    HIT_OFF: 1,              // одно промахивание — погасить
 
-    EDGE_BAND_FRAC: 0.12,      // ширина полос на краях для энергии
-    EDGE_ENERGY_RATIO: 1.8,    // энергия краёв к среднему по профилю
-    BALANCE_TOL: 0.5,          // симметрия лево/право, верх/низ
-    AR_MIN: 1.35,              // портретная карта ≈1.59 h/w
-    AR_MAX: 1.85
+    PERC_COL: 0.86,          // порог по вертикальному профилю (percentile)
+    PERC_ROW: 0.86,          // порог по горизонтальному профилю
+
+    CORNER_BOX: 6,           // размер окна для «углов» в px (в ROI-скейле)
+    CORNER_PERC: 0.70,       // минимум: 70‑й процентиль градиента для каждого угла
+
+    AR_MIN: 1.45,            // карта вертикально ~1.586, оставим коридор
+    AR_MAX: 1.75,
+
+    DSCALE_W: 224            // ширина даунскейла для детектора
   };
 
   const S = { stream:null, track:null, torchCap:false, _torchOn:false, levelOn:false };
@@ -483,7 +488,7 @@
   }
   function stopLevelLoop(){ if(_rafId){ cancelAnimationFrame(_rafId); _rafId=null; } }
 
-  // ---------- PRESENCE DETECTOR (улучшенный: 4 края, соотношение сторон, симметрия) ----------
+  // ---------- PRESENCE DETECTOR v2 ----------
   function startDetection(){
     stopDetection();
     const ric = window.requestIdleCallback || function(cb, opts){ return setTimeout(cb, (opts && opts.timeout) || 120); };
@@ -501,12 +506,18 @@
   }
   function stopDetection(){ const cic = window.cancelIdleCallback || clearTimeout; if(_detIdle){ cic(_detIdle); _detIdle=null; } }
 
+  function percentile(arr, p){
+    const a = Float32Array.from(arr); const tmp = Array.from(a).sort((x,y)=>x-y);
+    const idx = Math.min(tmp.length-1, Math.max(0, Math.floor(p*tmp.length)));
+    return tmp[idx] || 0;
+  }
+
   function detectPresence(){
     if(!video.videoWidth || !video.videoHeight) return;
 
     // downscale полного кадра в канву (cover)
     const wrap = document.getElementById('camWrap').getBoundingClientRect();
-    const sW = 180; // чуть больше для точности краёв
+    const sW = CONFIG.DSCALE_W;
     const sH = Math.round(sW * (wrap.height / wrap.width));
     const c = document.createElement('canvas'); c.width=sW; c.height=sH;
     const ctx = c.getContext('2d', { willReadFrequently:true, desynchronized:true });
@@ -527,14 +538,13 @@
 
     const img = ctx.getImageData(rx, ry, rw, rh); const data = img.data;
 
-    // построим серую карту + лёгкий 3x3 бокс-блюр, затем градиенты
+    // grayscale + лёгкий 3x3 бокс-блюр
     const g = new Float32Array(rw*rh);
     for(let y=0;y<rh;y++){
       for(let x=0;x<rw;x++){
         const i=(y*rw+x)*4; g[y*rw+x] = data[i]*0.2126 + data[i+1]*0.7152 + data[i+2]*0.0722;
       }
     }
-    // 3x3 box blur
     const gb = new Float32Array(rw*rh);
     for(let y=0;y<rh;y++){
       for(let x=0;x<rw;x++){
@@ -543,8 +553,9 @@
       }
     }
 
-    const colV = new Float32Array(rw); // вертикальные края (|gx|)
-    const rowH = new Float32Array(rh); // горизонтальные края (|gy|)
+    // градиенты и проекции
+    const colV = new Float32Array(rw);
+    const rowH = new Float32Array(rh);
     for(let y=1;y<rh-1;y++){
       for(let x=1;x<rw-1;x++){
         const gx = Math.abs(gb[y*rw+(x+1)] - gb[y*rw+(x-1)]);
@@ -552,51 +563,67 @@
         colV[x]+=gx; rowH[y]+=gy;
       }
     }
+    // сгладим 1D профили, чтобы пики были стабильнее
+    const a = CONFIG.BOX_ALPHA;
+    for(let x=1;x<rw;x++){ colV[x] = colV[x-1] + a*(colV[x]-colV[x-1]); }
+    for(let y=1;y<rh;y++){ rowH[y] = rowH[y-1] + a*(rowH[y]-rowH[y-1]); }
 
-    // базовые метрики профилей
-    const mean = (arr)=>{ let s=0; for(let i=0;i<arr.length;i++) s+=arr[i]; return s/arr.length; };
-    const meanCol = mean(colV), meanRow = mean(rowH);
+    // пороги по процентилям
+    const tCol = percentile(colV, CONFIG.PERC_COL);
+    const tRow = percentile(rowH, CONFIG.PERC_ROW);
 
-    const bw = Math.max(2, Math.floor(rw * CONFIG.EDGE_BAND_FRAC));
-    const bh = Math.max(2, Math.floor(rh * CONFIG.EDGE_BAND_FRAC));
+    const m = CONFIG.EDGE_MARGIN_PX;
+    // ищем левый/правый/верх/низ — первые сильные пики, не у самых краёв
+    let L=m; while(L<rw-m && colV[L] < tCol) L++;
+    let R=rw-1-m; while(R>m && colV[R] < tCol) R--;
+    let T=m; while(T<rh-m && rowH[T] < tRow) T++;
+    let B=rh-1-m; while(B>m && rowH[B] < tRow) B--;
 
-    let eL=0,eR=0; for(let x=0;x<bw;x++) eL+=colV[x]; for(let x=rw-bw;x<rw;x++) eR+=colV[x];
-    let eT=0,eB=0; for(let y=0;y<bh;y++) eT+=rowH[y]; for(let y=rh-bh;y<rh;y++) eB+=rowH[y];
+    if(!(R>L && B>T)) { applyPresence(false); return; }
 
-    const edgeOK = (
-      eL > CONFIG.EDGE_ENERGY_RATIO * meanCol * bw &&
-      eR > CONFIG.EDGE_ENERGY_RATIO * meanCol * bw &&
-      eT > CONFIG.EDGE_ENERGY_RATIO * meanRow * bh &&
-      eB > CONFIG.EDGE_ENERGY_RATIO * meanRow * bh
-    );
-
-    // пиковые позиции в краевых полосах (для ширины/высоты и аспект-рейшио)
-    const argmax = (arr, start, end)=>{ let mi=start, mv=-1; for(let i=start;i<end;i++){ if(arr[i]>mv){ mv=arr[i]; mi=i; } } return mi; };
-    const Lp = argmax(colV, 0, bw);
-    const Rp = argmax(colV, rw-bw, rw);
-    const Tp = argmax(rowH, 0, bh);
-    const Bp = argmax(rowH, rh-bh, rh);
-    const width = (Rp - (rw-bw) + (bw - Lp)); // аппрокс: расстояние между «симметричными» пиками
-    const height= (Bp - (rh-bh) + (bh - Tp));
-
-    const sizeOK = (width >= CONFIG.MIN_SIZE_PX && height >= CONFIG.MIN_SIZE_PX);
-    const ar = height / Math.max(1, width);
+    const width = R - L; const height = B - T;
+    const sizeOK = (width >= rw*CONFIG.MIN_SIDE_FRAC && height >= rh*CONFIG.MIN_SIDE_FRAC);
+    const ar = height / Math.max(1,width);
     const arOK = (ar >= CONFIG.AR_MIN && ar <= CONFIG.AR_MAX);
+    const inside = (L>m && T>m && R<rw-1-m && B<rh-1-m);
 
-    const balanceOK = (
-      (eL/eR > CONFIG.BALANCE_TOL && eL/eR < 1/CONFIG.BALANCE_TOL) &&
-      (eT/eB > CONFIG.BALANCE_TOL && eT/eB < 1/CONFIG.BALANCE_TOL)
-    );
+    // corner check: энергия в 4-х маленьких окнах
+    const cornerEnergy = (cx,cy)=>{
+      let s=0,cnt=0; for(let y=Math.max(T,cy); y<Math.min(B,cy+CONFIG.CORNER_BOX); y++){
+        for(let x=Math.max(L,cx); x<Math.min(R,cx+CONFIG.CORNER_BOX); x++){
+          // локальная сумма градиента
+          const gx = Math.abs(gb[y*rw + Math.min(rw-1,x+1)] - gb[y*rw + Math.max(0,x-1)]);
+          const gy = Math.abs(gb[Math.min(rh-1,y+1)*rw + x] - gb[Math.max(0,y-1)*rw + x]);
+          s += gx + gy; cnt++;
+        }
+      } return s/Math.max(1,cnt);
+    };
 
-    const inside = edgeOK && sizeOK && arOK && balanceOK;
-    applyPresence(inside);
+    const eLT = cornerEnergy(L, T);
+    const eRT = cornerEnergy(Math.max(L, R-CONFIG.CORNER_BOX), T);
+    const eLB = cornerEnergy(L, Math.max(T, B-CONFIG.CORNER_BOX));
+    const eRB = cornerEnergy(Math.max(L, R-CONFIG.CORNER_BOX), Math.max(T, B-CONFIG.CORNER_BOX));
+
+    // базовый уровень для сравнения — 70-й процентиль по всему ROI
+    const allE = new Float32Array(rw*rh);
+    for(let y=1;y<rh-1;y++){
+      for(let x=1;x<rw-1;x++){
+        const gx = Math.abs(gb[y*rw+(x+1)] - gb[y*rw+(x-1)]);
+        const gy = Math.abs(gb[(y+1)*rw+x] - gb[(y-1)*rw+x]);
+        allE[y*rw+x] = gx+gy;
+      }
+    }
+    const eThr = percentile(allE, CONFIG.CORNER_PERC);
+    const cornersOK = (eLT>eThr && eRT>eThr && eLB>eThr && eRB>eThr);
+
+    const ok = inside && sizeOK && arOK && cornersOK;
+    applyPresence(ok);
   }
 
   function applyPresence(hit){
     const now = performance.now();
     if(hit){ _lastInsideTS = now; _hitCount++; _missCount=0; } else { _missCount++; _hitCount=0; }
 
-    // гистерезис + ограничение времени удержания
     let ok = (_hitCount >= CONFIG.HIT_ON) ? true : (_missCount >= CONFIG.HIT_OFF ? false : _fitOK);
     if(!hit && ok && (now - _lastInsideTS) > CONFIG.HOLD_MAX_MS){ ok = false; }
 
@@ -636,9 +663,9 @@
     console.assert(CONFIG.BUBBLE_R>0 && CONFIG.TARGET_R>0, 'radii positive');
   })();
   (function testInsideMath(){ const T=CONFIG.TARGET_R-CONFIG.BUBBLE_R; console.assert(T>0,'T>0'); console.assert(isInside(0,0),'center'); console.assert(isInside(T,0),'boundary'); console.assert(!isInside(T+0.01,0),'outside'); })();
-  (function testDetectorParams(){ console.assert(CONFIG.DETECT_HZ>=10 && CONFIG.DETECT_HZ<=20, 'detect hz ok'); console.assert(CONFIG.AR_MIN<1.6 && CONFIG.AR_MAX>1.6, 'aspect bounds include card'); })();
+  (function testDetectorParams(){ console.assert(CONFIG.DSCALE_W>=200 && CONFIG.DSCALE_W<=260, 'downscale width reasonable'); console.assert(CONFIG.AR_MIN<1.6 && CONFIG.AR_MAX>1.6, 'aspect corridor includes 1.586'); })();
   (function testIndicators(){ console.assert(document.getElementById('indLevel') && document.getElementById('indCard'), 'indicators exist'); })();
-  (function testSanitize(){ const s = sanitizeComment(`<img src=x onerror=alert(1)> треска & рис javascript: data:`); console.assert(!/<|script|onerror|javascript:|data:/i.test(s), 'sanitize blocks dangerous patterns'); })();
+  (function testSanitize(){ const s = sanitizeComment('<img src=x onerror=alert(1)> треска & рис javascript: data:'); console.assert(!/<|script|onerror|javascript:|data:/i.test(s), 'sanitize blocks dangerous patterns'); })();
   </script>
 </body>
 </html>
