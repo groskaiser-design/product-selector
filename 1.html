@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>FoodCam — акустический дальномер + визуальный фолбэк</title>
+  <title>FoodCam — акустический дальномер (без визуального фолбэка)</title>
   <meta name="theme-color" content="#0a7cff" />
   <style>
     :root{
@@ -61,15 +61,17 @@
     .level-bubble{position:absolute;left:50%;top:50%;width:22px;height:22px;transform:translate(-50%,-50%);border-radius:50%;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.35);transition:transform .08s linear,background-color .15s}
     .level-bubble.ok{background:#22c55e}
 
-    /* Scale Coach fallback */
-    .scale-wrap{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
-    .scale-ring{position:absolute;border-radius:50%;border:2px dashed rgba(255,255,255,.85)}
-    .scale-min,.scale-max{border-color:rgba(34,197,94,.9)}
-
     /* bottom controls */
     .controls{position:absolute;left:0;right:0;bottom:0;padding:12px;display:flex;gap:10px;align-items:center;justify-content:center;background:linear-gradient(to top, rgba(0,0,0,.55), rgba(0,0,0,0));color:#fff}
     .shutter{width:72px;height:72px;border-radius:999px;border:4px solid rgba(255,255,255,.9);background:#fff;cursor:pointer;box-shadow:0 2px 12px rgba(0,0,0,.4)}
     .shutter[disabled]{opacity:.45;cursor:not-allowed;border-color:rgba(255,255,255,.5)}
+
+    /* settings panel */
+    .panel{border:1px solid var(--ring);border-radius:16px;padding:12px;background:#fff;margin:12px 0}
+    .panel h3{margin:0 0 8px;font-size:16px}
+    .field{display:flex;align-items:center;gap:10px;margin:8px 0}
+    .field label{min-width:120px;color:#374151}
+    input[type="range"]{width:220px}
 
     /* preview */
     .card{border:1px solid var(--ring);border-radius:16px;background:#fff}
@@ -83,11 +85,26 @@
 <body>
   <main class="container">
     <header>
-      <h1>Камера с уровнем + акустический замер высоты (25–35 см) и визуальный фолбэк</h1>
-      <p class="muted">Держите телефон <b>строго горизонтально</b>. Мы делаем короткие тихие пинги, измеряем расстояние до стола и разрешаем снимок только в <b>25–35 см</b>. Если микрофон/динамик мешают — включится визуальный режим (тарелка ≈ 80% узкого края, ±5%). Аудио <b>обрабатывается локально</b>, ничего не записываем и не отправляем.</p>
+      <h1>Камера с уровнем + акустический замер высоты (25–35 см)</h1>
+      <p class="muted">Держите телефон <b>строго горизонтально</b>. Мы делаем короткие тихие пинги и измеряем расстояние до стола. Снимок разрешён только в <b>25–35 см</b>. Аудио обрабатывается <b>локально</b>, ничего не сохраняется и не отправляется.</p>
     </header>
 
     <div id="err" class="error hidden"></div>
+
+    <!-- SETTINGS (для отладки/подбора акустики) -->
+    <section class="panel" id="panel">
+      <h3>Акустика — настройки</h3>
+      <div class="field"><label>Громкость</label><input id="gain" type="range" min="0.02" max="0.12" step="0.005" value="0.06"><span class="badge" id="gainVal">0.06</span></div>
+      <div class="field"><label>Диапазон (кГц)</label>
+        <select id="band">
+          <option value="10000-12000">10–12</option>
+          <option value="12000-14000">12–14</option>
+          <option value="13000-16000" selected>13–16</option>
+        </select>
+      </div>
+      <div class="field"><label>Тестовый пинг</label><button id="btnPing" class="btn">Пинг сейчас</button><span class="badge" id="diag">r=—, шум=—</span></div>
+      <div class="field"><label>Советы</label><span class="badge">Уберите гарнитуру • Прибавьте громкость • Жёсткая поверхность стола</span></div>
+    </section>
 
     <!-- CAMERA -->
     <section id="sec-camera">
@@ -120,12 +137,6 @@
               <div id="levelBubble" class="level-bubble"></div>
             </div>
           </div>
-
-          <!-- Scale Coach fallback rings -->
-          <div class="scale-wrap">
-            <div id="scaleMin" class="scale-ring scale-min"></div>
-            <div id="scaleMax" class="scale-ring scale-max"></div>
-          </div>
         </div>
 
         <div class="controls">
@@ -143,7 +154,6 @@
           <button id="btnRetake" class="btn">Переснять</button>
           <button id="btnSave" class="btn primary">Скачать снимок</button>
         </div>
-        <div class="muted" style="margin-top:6px">Режим масштаба: <span id="scaleMode">—</span></div>
       </div>
     </section>
   </main>
@@ -154,15 +164,13 @@
     idealFacing: { facingMode: { ideal: 'environment' } },
     maxSide: 2000,
     bandMinCm: 25, bandMaxCm: 35,     // целевой коридор
-    diamRatio: 0.80, tol: 0.05,       // визуальный фолбэк
 
     pingHz: 3,                        // ~пингов в секунду (2–4)
     chirpMs: 160,                     // длительность чирпа
-    f0: 13000, f1: 16000,             // частоты чирпа (Гц)
+    f0: 13000, f1: 16000,             // частоты чирпа (Гц) — начальный диапазон
     gain: 0.06,                       // громкость (низкая)
     minLagCm: 8, maxLagCm: 80,        // поиск пики эха (см)
     goodSeq: 3,                       // сколько подряд попаданий нужно
-    failToFallbackMs: 3000,           // после скольки мс неудач включаем визуальный фолбэк
     corrThresh: 0.2                   // порог нормированной корреляции
   };
 
@@ -170,13 +178,15 @@
     // camera
     stream:null, track:null, torchCap:false, _torchOn:false,
     // ui
-    allowShot:false, okSeq:0, mode:'acoustic', // 'acoustic'|'scale'
+    allowShot:false, okSeq:0,
     // level
     levelOn:false,
     // audio
     actx:null, mic:null, proc:null, ring:new Float32Array(0), ringPos:0, ringSize:0,
     refChirp:null, refEnergy:0, fs:44100,
-    pingTimer:null, startFailTs:0,
+    pingTimer:null,
+    // diagnostics
+    rLast: null, noiseRMS: null,
   };
 
   // ===================== DOM =====================
@@ -187,7 +197,7 @@
   const chipDist=$('chipDist'), chipMic=$('chipMic');
   const secCam=$('sec-camera'), secPrev=$('sec-preview'), photo=$('photo'), meta=$('meta');
   const btnRetake=$('btnRetake'), btnSave=$('btnSave'), permHint=$('permHint');
-  const scaleMin=$('scaleMin'), scaleMax=$('scaleMax'), scaleMode=$('scaleMode');
+  const gain=$('gain'), gainVal=$('gainVal'), band=$('band'), btnPing=$('btnPing'), diag=$('diag');
 
   // ===================== UTILS =====================
   function setError(msg,hint){
@@ -200,14 +210,9 @@
   function canUseGUM(){ return !!(navigator.mediaDevices?.getUserMedia) && isSecureContext; }
   async function queryPerm(name){ try{ const p=await navigator.permissions?.query?.({name}); return p?.state??null }catch{return null} }
 
-  function setScaleRings(){
-    const r=camWrap.getBoundingClientRect(); const ms=Math.min(r.width,r.height);
-    const t=CONFIG.diamRatio*ms, a=t*(1-CONFIG.tol), b=t*(1+CONFIG.tol);
-    [ [scaleMin,a], [scaleMax,b] ].forEach(([el,d])=>{ el.style.width=d+'px'; el.style.height=d+'px'; });
-  }
-
   function cmFromLagSamples(N){ return (N / S.fs) * 34300 / 2; } // см
   function lagSamplesFromCm(cm){ return Math.round((cm*2/34300)*S.fs); }
+  function rms(buf){ let s=0; for(let i=0;i<buf.length;i++){ const v=buf[i]; s+=v*v; } return Math.sqrt(s/buf.length); }
 
   // ===================== CAMERA FLOW =====================
   btnOpen.addEventListener('click', openFlow);
@@ -217,13 +222,17 @@
   btnSave.addEventListener('click', ()=>{ const a=document.createElement('a'); a.href=photo.src; a.download='photo.jpg'; document.body.appendChild(a); a.click(); a.remove(); });
   btnRetake.addEventListener('click', ()=>{ secPrev.classList.add('hidden'); secCam.classList.remove('hidden'); openFlow(); });
 
+  gain.addEventListener('input', ()=>{ CONFIG.gain=parseFloat(gain.value); gainVal.textContent=CONFIG.gain.toFixed(3); });
+  band.addEventListener('change', ()=>{
+    const [f0,f1]=band.value.split('-').map(x=>parseInt(x,10)); CONFIG.f0=f0; CONFIG.f1=f1; buildChirp(); });
+  btnPing.addEventListener('click', async ()=>{ await singlePing(true); });
+
   async function openFlow(){
     setError(''); S.allowShot=false; btnShot.disabled=true; chipDist.className='chip'; chipDist.textContent='Готовимся к замеру…';
-    await enableLevelSensors(); setScaleRings();
+    await enableLevelSensors();
     const camOk = await openCameraGUM(); if(!camOk){ try{ fileSystem?.click(); }catch{} }
     const audOk = await initAudio();
-    if(audOk){ startAcousticLoop(); S.mode='acoustic'; scaleMode.textContent='Акустика (см/см)'; }
-    else { enterScaleFallback('Нет доступа к микрофону/аудио.'); }
+    if(audOk){ startAcousticLoop(); } else { setError('Нет доступа к микрофону/аудио.', envHint()); }
   }
 
   async function openCameraGUM(){
@@ -278,50 +287,41 @@
       const micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation:false, noiseSuppression:false, autoGainControl:false } });
       S.mic = S.actx.createMediaStreamSource(micStream);
 
-      // Processor (ScriptProcessor fallback)
-      const bufSize = 4096; S.proc = S.actx.createScriptProcessor ? S.actx.createScriptProcessor(bufSize, 1, 1) : null;
-      if(!S.proc){
-        // Minimal AudioWorklet fallback
-        const workletCode = `class RB extends AudioWorkletProcessor{constructor(){super();this.buf=[]}process(inputs,outputs){const ch=inputs[0][0];if(ch){this.port.postMessage(ch.slice())}return true}}`;
-        const blob = new Blob([`(${workletCode})()`], {type:'application/javascript'});
-        const url = URL.createObjectURL(blob);
-        try{ await S.actx.audioWorklet.addModule(url); }catch(e){ console.warn('AudioWorklet addModule failed',e); }
-        const node = new AudioWorkletNode(S.actx, 'RB'); // will fail if module not registered
-      }
-      if(S.proc){
-        S.ringSize = Math.max(S.fs*0.6|0, 44100); // 0.6s ring
-        S.ring = new Float32Array(S.ringSize); S.ringPos=0;
-        S.proc.onaudioprocess = (e)=>{
-          const inp = e.inputBuffer.getChannelData(0);
-          const N = inp.length; let p=S.ringPos;
-          for(let i=0;i<N;i++){ S.ring[p]=inp[i]; p++; if(p>=S.ringSize) p=0; }
-          S.ringPos=p;
-          // keep silent
-          const out=e.outputBuffer.getChannelData(0); for(let i=0;i<N;i++) out[i]=0;
-        };
-        S.mic.connect(S.proc); S.proc.connect(S.actx.destination);
-      } else {
-        setError('Аудио-процессор недоступен в этом окружении.', 'Попробуйте другой браузер/версию приложения.');
-        return false;
-      }
+      // Echo-cancel info
+      try{ const st=micStream.getAudioTracks?.()[0]?.getSettings?.()||{}; chipMic.textContent = `🎙️ Микрофон: локально • AEC: ${st.echoCancellation===true?'вкл':st.echoCancellation===false?'выкл':'неизв.'}`; }catch{}
 
-      // Prepare chirp
-      S.refChirp = makeChirp(S.fs, CONFIG.chirpMs/1000, CONFIG.f0, CONFIG.f1);
-      S.refEnergy = dot(S.refChirp, S.refChirp);
+      // Processor (ScriptProcessor)
+      const bufSize = 4096; S.proc = S.actx.createScriptProcessor(bufSize, 1, 1);
+      S.ringSize = Math.max(S.fs*0.6|0, 44100); // 0.6s ring
+      S.ring = new Float32Array(S.ringSize); S.ringPos=0;
+      S.proc.onaudioprocess = (e)=>{
+        const inp = e.inputBuffer.getChannelData(0);
+        S.noiseRMS = rms(inp);
+        let p=S.ringPos; const N=inp.length;
+        for(let i=0;i<N;i++){ S.ring[p]=inp[i]; if(++p>=S.ringSize) p=0; }
+        S.ringPos=p; // mute output
+        const out=e.outputBuffer.getChannelData(0); for(let i=0;i<N;i++) out[i]=0;
+      };
+      S.mic.connect(S.proc); S.proc.connect(S.actx.destination);
 
-      chipMic.textContent = '🎙️ Микрофон: локально';
+      buildChirp();
       return true;
     }catch(e){ console.warn('initAudio failed', e); return false; }
+  }
+
+  function buildChirp(){
+    S.refChirp = makeChirp(S.fs, CONFIG.chirpMs/1000, CONFIG.f0, CONFIG.f1);
+    S.refEnergy = dot(S.refChirp, S.refChirp);
   }
 
   function makeChirp(fs, dur, f0, f1){
     const N = Math.max(1, Math.round(fs*dur));
     const buf = new Float32Array(N);
     const w = (i)=> 0.5 - 0.5*Math.cos(2*Math.PI*i/(N-1)); // Hann
-    const K = (f1 - f0) / (2*dur); // for quad phase
+    const K = (f1 - f0) / (2*dur); // quad phase for linear chirp
     for(let n=0;n<N;n++){
       const t = n/fs;
-      const phase = 2*Math.PI*(f0*t + K*t*t); // linear chirp integral
+      const phase = 2*Math.PI*(f0*t + K*t*t);
       buf[n] = Math.sin(phase) * w(n);
     }
     return buf;
@@ -330,8 +330,7 @@
   function playChirp(){
     const src = S.actx.createBufferSource();
     const g = S.actx.createGain(); g.gain.value = CONFIG.gain;
-    const b = S.actx.createBuffer(1, S.refChirp.length, S.fs);
-    b.copyToChannel(S.refChirp, 0, 0);
+    const b = S.actx.createBuffer(1, S.refChirp.length, S.fs); b.copyToChannel(S.refChirp, 0, 0);
     src.buffer=b; src.connect(g); g.connect(S.actx.destination);
     src.start();
     return new Promise(res=>{ src.onended = res; });
@@ -342,123 +341,56 @@
     const out = new Float32Array(N);
     const start = (S.ringPos - N + S.ringSize) % S.ringSize;
     if(start + N <= S.ringSize){ out.set(S.ring.subarray(start, start+N)); }
-    else {
-      const first = S.ringSize - start; out.set(S.ring.subarray(start, S.ringSize), 0); out.set(S.ring.subarray(0, N-first), first);
-    }
+    else { const first = S.ringSize - start; out.set(S.ring.subarray(start, S.ringSize), 0); out.set(S.ring.subarray(0, N-first), first); }
     return out;
   }
 
   function correlate(ref, rec, minLag, maxLag){
-    // нормированная корреляция по лагам [minLag..maxLag]
     const refN = ref.length; const refE = S.refEnergy || dot(ref,ref);
-    let bestLag=-1, bestR=-1, bestRecE=1;
+    let bestLag=-1, bestR=-1;
     for(let lag=minLag; lag<=maxLag; lag++){
       if(lag+refN >= rec.length) break;
-      let a=0, b=0; // a = cross, b = rec energy
-      for(let i=0;i<refN;i++){
-        const v = rec[lag+i];
-        a += ref[i]*v; b += v*v;
-      }
+      let a=0, b=0; // a=cross, b=rec energy
+      for(let i=0;i<refN;i++){ const v = rec[lag+i]; a += ref[i]*v; b += v*v; }
       const r = a / Math.sqrt((refE+1e-9)*(b+1e-9));
-      if(r>bestR){ bestR=r; bestLag=lag; bestRecE=b; }
+      if(r>bestR){ bestR=r; bestLag=lag; }
     }
-    return {lag:bestLag, r:bestR, recE:bestRecE};
+    return {lag:bestLag, r:bestR};
   }
 
-  function dot(a,b){ let s=0; for(let i=0;i<a.length;i++) s+=a[i]*b[i]; return s; }
+  async function singlePing(showDiag){
+    await playChirp();
+    const takeMs = CONFIG.chirpMs + 160; // чуть дольше
+    const rec = ringSlice(Math.round(S.fs * takeMs/1000) + S.refChirp.length + 512);
+    const minLag = lagSamplesFromCm(CONFIG.minLagCm);
+    const maxLag = lagSamplesFromCm(CONFIG.maxLagCm);
+    const {lag, r} = correlate(S.refChirp, rec, minLag, maxLag);
+    S.rLast = r;
+    if(showDiag){ diag.textContent = `r=${r?.toFixed?.(2) ?? '—'}, шум=${(S.noiseRMS||0).toFixed(3)}`; }
+    return {lag, r};
+  }
 
   function startAcousticLoop(){
-    if(S.pingTimer) clearInterval(S.pingTimer); S.okSeq=0; S.startFailTs = performance.now();
-    chipDist.textContent = 'Замер расстояния…'; chipDist.className='chip';
-    const periodMs = Math.max(200, Math.round(1000/CONFIG.pingHz));
+    if(S.pingTimer) clearInterval(S.pingTimer); S.okSeq=0; chipDist.textContent = 'Замер расстояния…'; chipDist.className='chip';
+    const periodMs = Math.max(220, Math.round(1000/CONFIG.pingHz));
     S.pingTimer = setInterval(async ()=>{
-      if(S.mode!=='acoustic' || !S.actx) return;
-      // play chirp and collect ring
-      await playChirp();
-      // take ~ (chirp + 140ms) of ring to include echo
-      const takeMs = CONFIG.chirpMs + 140;
-      const rec = ringSlice(Math.round(S.fs * takeMs/1000) + S.refChirp.length + 512);
-
-      // search lags skipping near-zero (direct/leakage)
-      const minLag = lagSamplesFromCm(CONFIG.minLagCm);
-      const maxLag = lagSamplesFromCm(CONFIG.maxLagCm);
-      const {lag, r} = correlate(S.refChirp, rec, minLag, maxLag);
-
+      const {lag, r} = await singlePing(false);
       if(lag>0 && r>=CONFIG.corrThresh){
         const cm = Math.round(cmFromLagSamples(lag));
         const inBand = cm>=CONFIG.bandMinCm && cm<=CONFIG.bandMaxCm;
         chipDist.textContent = `Расстояние: ${cm} см ${inBand ? '— ОК' : `(нужно ${CONFIG.bandMinCm}–${CONFIG.bandMaxCm} см)`}`;
         chipDist.className = 'chip ' + (inBand ? 'ok' : 'warn');
-
         if(inBand){ S.okSeq++; if(S.okSeq>=CONFIG.goodSeq){ S.allowShot=true; btnShot.disabled=false; pauseAcoustic(); } }
         else { S.allowShot=false; btnShot.disabled=true; S.okSeq=0; }
       } else {
-        // fail
         S.allowShot=false; btnShot.disabled=true; S.okSeq=0;
-        chipDist.textContent = 'Не слышу эхо… пробуем ещё'; chipDist.className='chip bad';
-        if(performance.now() - S.startFailTs > CONFIG.failToFallbackMs){
-          enterScaleFallback('Эхо не детектируется — включили визуальный режим.');
-        }
+        chipDist.textContent = `Эхо слабое (r=${(r||0).toFixed(2)}) — подстройте громкость/диапазон`;
+        chipDist.className='chip bad';
       }
     }, periodMs);
   }
 
   function pauseAcoustic(){ if(S.pingTimer){ clearInterval(S.pingTimer); S.pingTimer=null; chipDist.textContent+=' • Замер удержан'; } }
-
-  function enterScaleFallback(reason){
-    S.mode='scale';
-    if(S.pingTimer){ clearInterval(S.pingTimer); S.pingTimer=null; }
-    chipDist.textContent = 'Визуальный режим: совместите 80% ±5%'; chipDist.className='chip warn';
-    scaleMode.textContent = 'Визуальный фолбэк';
-    startScaleDetect();
-    if(reason) setError('', reason);
-  }
-
-  // ===================== SCALE COACH (fallback gating) =====================
-  function startScaleDetect(){
-    if(S._scaleTimer) clearInterval(S._scaleTimer);
-    S._scaleTimer = setInterval(async ()=>{
-      if(!video.videoWidth || !video.videoHeight) return;
-      const res = await detectCircleFromVideo(video, 256);
-      if(!res || res.conf<0.18){ setScaleGate(false, 'Не видим тарелку'); return; }
-      const minSide = Math.min(res.w, res.h);
-      const diamRatioNow = (2*res.r) / minSide;
-      const ok = Math.abs(diamRatioNow - CONFIG.diamRatio) <= CONFIG.tol;
-      setScaleGate(ok, ok ? 'OK по масштабу' : (diamRatioNow<CONFIG.diamRatio ? 'Дальше от стола' : 'Ближе к столу'));
-    }, 350);
-  }
-  function stopScaleDetect(){ if(S._scaleTimer){ clearInterval(S._scaleTimer); S._scaleTimer=null; } }
-  function setScaleGate(ok, msg){
-    if(S.mode!=='scale') return;
-    S.allowShot = !!ok; btnShot.disabled = !ok;
-    chipDist.textContent = ok ? 'Масштаб: ОК — 80% ±5%' : `Масштаб: ${msg}`;
-    chipDist.className = 'chip ' + (ok?'ok':'warn');
-  }
-
-  async function detectCircleFromVideo(video, outW){
-    const vw=video.videoWidth, vh=video.videoHeight; if(!vw||!vh) return null;
-    const scale=outW/vw; const ow=Math.max(64,Math.round(vw*scale)), oh=Math.max(64,Math.round(vh*scale));
-    const c=document.createElement('canvas'); c.width=ow; c.height=oh; const ctx=c.getContext('2d');
-    ctx.drawImage(video,0,0,ow,oh);
-    const img = ctx.getImageData(0,0,ow,oh); const data=img.data;
-    const gray=new Uint8ClampedArray(ow*oh);
-    for(let i=0,j=0;i<data.length;i+=4,j++){ gray[j]=(data[i]*0.299 + data[i+1]*0.587 + data[i+2]*0.114)|0; }
-    const mag=new Float32Array(ow*oh);
-    const idx=(x,y)=>y*ow+x;
-    for(let y=1;y<oh-1;y++){
-      for(let x=1;x<ow-1;x++){
-        const gxm = -gray[idx(x-1,y-1)] -2*gray[idx(x-1,y)] -gray[idx(x-1,y+1)] + gray[idx(x+1,y-1)] +2*gray[idx(x+1,y)] + gray[idx(x+1,y+1)];
-        const gym = -gray[idx(x-1,y-1)] -2*gray[idx(x,y-1)] -gray[idx(x+1,y-1)] + gray[idx(x-1,y+1)] +2*gray[idx(x,y+1)] + gray[idx(x+1,y+1)];
-        mag[idx(x,y)] = Math.abs(gxm)+Math.abs(gym);
-      }
-    }
-    let maxM=1; for(let i=0;i<mag.length;i++) if(mag[i]>maxM) maxM=mag[i];
-    const cx=ow/2, cy=oh/2, minSide=Math.min(ow,oh);
-    const rMin=Math.max(12,Math.round(minSide*0.18)), rMax=Math.round(minSide*0.48);
-    const step=2, samples=48; let best={r:0,score:-1}; const twoPi=Math.PI*2;
-    for(let r=rMin;r<=rMax;r+=step){ let s=0; for(let k=0;k<samples;k++){ const a=twoPi*k/samples; const x=(cx+r*Math.cos(a))|0, y=(cy+r*Math.sin(a))|0; s+=mag[idx(x,y)]; } const sc = s/(samples*maxM+1e-6); if(sc>best.score) best={r,score:sc}; }
-    return {r:best.r, conf:best.score, w:ow, h:oh};
-  }
 
   // ===================== LEVEL SENSORS =====================
   async function enableLevelSensors(){
@@ -487,14 +419,15 @@
 
   // ===================== ENV HINT =====================
   function envHint(){
-    const https = !isSecureContext ? '\n• Нужен HTTPS (или localhost).' : '';
-    return 'Камера/микрофон требуют разрешений.'+https+'\n• Включите громкость, отключите гарнитуру, положите тарелку на жёсткую поверхность.';
+    const https = !isSecureContext ? '
+• Нужен HTTPS (или localhost).' : '';
+    return 'Камера/микрофон требуют разрешений.'+https+'
+• Включите громкость, отключите гарнитуру, положите тарелку на жёсткую поверхность.';
   }
 
   // ===================== TEARDOWN =====================
   window.addEventListener('beforeunload', ()=>stopAll());
   function stopAll(){
-    stopScaleDetect();
     if(S.pingTimer){ clearInterval(S.pingTimer); S.pingTimer=null; }
     try{ S.proc?.disconnect(); S.mic?.disconnect(); }catch{}
     try{ S.actx?.close?.(); }catch{}
@@ -505,9 +438,8 @@
   (function testLag(){
     // 30 см → round-trip 60 см → τ≈0.00175 s → ~77 сэмплов @44.1k
     const fs=44100, z=30, N=lagSamplesFromCm(z); console.log('[test lag 30cm]', N); console.log('[cm from N]', Math.round(cmFromLagSamples(N)));
+    console.assert(Math.abs(Math.round(cmFromLagSamples(N)) - z) <= 1, 'invertible cm<->samples');
   })();
-
-  window.addEventListener('resize', setScaleRings);
   </script>
 </body>
 </html>
