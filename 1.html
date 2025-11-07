@@ -54,13 +54,14 @@
     .shutter{width:72px;height:72px;border-radius:999px;border:4px solid rgba(255,255,255,.9);background:#fff;cursor:pointer;box-shadow:0 2px 12px rgba(0,0,0,.4)}
     .shutter[disabled]{opacity:.45;cursor:not-allowed;border-color:rgba(255,255,255,.5)}
 
-    /* Card presence AREA (portrait, no border) */
+    /* Card presence AREA (portrait, soft, no strict border) */
     .card-area{
       position:absolute; right:12px; top:50%; transform:translateY(-50%);
-      width:115px; height:183px; /* 100x159 target +15% запас */
+      width:115px; height:183px; /* целевое ~100x159 +15% запас */
       border-radius:12px;
-      background:rgba(255,255,255,.10); /* neutral grayish overlay */
-      box-shadow:0 0 0 1px rgba(255,255,255,.15) inset; /* тонкая внутр. окантовка без рамки */
+      background:rgba(255,255,255,.10);
+      box-shadow:0 0 0 1px rgba(255,255,255,.15) inset;
+      transition:background-color .12s ease, box-shadow .12s ease;
     }
     .card-area.ok{ background:rgba(34,197,94,.22); box-shadow:0 0 0 1px rgba(34,197,94,.45) inset }
     .card-area.neutral{ background:rgba(255,255,255,.10); box-shadow:0 0 0 1px rgba(255,255,255,.15) inset }
@@ -92,7 +93,7 @@
         <div id="overlay" class="cam-overlay">
           <div class="grid"></div>
           <div class="topbar">
-            <div id="chipInfo" class="chip" role="status" aria-live="polite">Карта вертикально в серой области</div>
+            <div id="chipInfo" class="chip" role="status" aria-live="polite">Положите карту вертикально в зону справа</div>
           </div>
           <button id="btnTorch" class="btn-torch hidden" aria-label="Фонарик">⚡️</button>
 
@@ -103,7 +104,7 @@
             </div>
           </div>
 
-          <!-- presence area (no border) -->
+          <!-- presence area -->
           <div id="cardArea" class="card-area neutral" aria-label="Область для карты (портрет)"></div>
         </div>
 
@@ -145,30 +146,23 @@
     FORWARD_MOVES_UP: false,
     SMOOTH_ALPHA: 0.25,
 
-    // Card presence detection (portrait)
-    CARD_AR: 85.60/53.98,    // ≈1.586
-    TARGET_SHORT_PX: 100,    // «целевой» короткий размер карты (px)
-    AREA_MARGIN: 0.15,       // +15% запас к зоне
-    DETECT_HZ: 5,            // 5 Гц
-    AR_TOL: 0.12,            // допуск по аспекту карты ±12%
-    FILL_MIN: 0.6,           // карта должна занимать >=60% зоны по каждой стороне
-    HIT_N: 2                 // гистерезис: 2 подряд попадания/промаха
+    // Presence (no strict size match)
+    DETECT_HZ: 4,            // реже = стабильнее
+    EDGE_MARGIN_PX: 4,       // карта «не должна касаться» краёв зоны
+    MIN_SIZE_PX: 24,         // минимальная ширина/высота найденного прямоугольника
+    HIT_ON: 3,               // 3 подряд попадания — включить
+    HIT_OFF: 4,              // 4 подряд промаха — выключить
+    BOX_ALPHA: 0.4           // EMA сглаживание границ прямоугольника
   };
-
-  // derived sizes
-  CONFIG.TARGET_LONG_PX = Math.round(CONFIG.TARGET_SHORT_PX * CONFIG.CARD_AR);   // 159
-  CONFIG.AREA_W = Math.round(CONFIG.TARGET_SHORT_PX * (1+CONFIG.AREA_MARGIN));   // 115
-  CONFIG.AREA_H = Math.round(CONFIG.TARGET_LONG_PX   * (1+CONFIG.AREA_MARGIN));  // 183
-  CONFIG.AREA_MIN_W = Math.round(CONFIG.AREA_W * CONFIG.FILL_MIN);               // 69
-  CONFIG.AREA_MIN_H = Math.round(CONFIG.AREA_H * CONFIG.FILL_MIN);               // 110
 
   const S = { stream:null, track:null, torchCap:false, _torchOn:false, levelOn:false };
   let _fx=0,_fy=0,_initF=false; // EMA for level
   let _levelOK=false, _fitOK=false;
   let _lastBlob=null, _view='camera', _taking=false;
   let _detTimer=null, _chipState='';
-  // stability for detector
-  let _wEMA=null,_hEMA=null; const SIZE_ALPHA=0.35;
+
+  // сглаженные границы найденного прямоугольника
+  let _Lbox=null,_Rbox=null,_Tbox=null,_Bbox=null;
   let _hitCount=0,_missCount=0;
 
   // ===================== DOM =====================
@@ -235,9 +229,6 @@
 
   // ===================== AUTOSTART =====================
   window.addEventListener('DOMContentLoaded', () => {
-    // apply computed area size
-    cardArea.style.width  = CONFIG.AREA_W + 'px';
-    cardArea.style.height = CONFIG.AREA_H + 'px';
     startCameraFlow();
     try { window.Telegram?.WebApp?.ready?.(); } catch {}
   });
@@ -267,7 +258,8 @@
   }
 
   async function startCameraFlow(){
-    _lastBlob=null; _taking=false; _fitOK=false; _levelOK=false; _wEMA=null; _hEMA=null; _hitCount=0; _missCount=0; _chipState='';
+    _lastBlob=null; _taking=false; _fitOK=false; _levelOK=false; _chipState='';
+    _Lbox=_Rbox=_Tbox=_Bbox=null; _hitCount=0; _missCount=0;
     updateButtons();
     setError(''); syncRadii();
     showCameraUI();
@@ -441,22 +433,21 @@
     levelBubble.classList.toggle('ok', _levelOK);
     levelTarget.classList.toggle('ok', _levelOK);
 
-    // текст только при смене
-    if(_levelOK && _fitOK) setChip('Ровно • Карта в области — можно снимать', true);
-    else if(!_fitOK)       setChip('Карта вертикально в серой области', false);
+    if(_levelOK && _fitOK) setChip('Ровно • Карта в зоне — можно снимать', true);
+    else if(!_fitOK)       setChip('Карта вертикально в зоне справа', false);
     else                   setChip('Выравнивайте… (кнопка заблокирована)', false);
 
     updateButtons();
   }
 
-  // ---------- PRESENCE DETECTOR (area only, no size match) ----------
+  // ---------- PRESENCE DETECTOR (inside area, no size rule) ----------
   function startDetection(){ stopDetection(); _detTimer=setInterval(()=>{ if(_view==='camera') detectPresence(); }, 1000/CONFIG.DETECT_HZ); }
   function stopDetection(){ if(_detTimer){ clearInterval(_detTimer); _detTimer=null; } }
 
   function detectPresence(){
     if(!video.videoWidth || !video.videoHeight) return;
 
-    // downscale sample of the full camera view (cover to area size mapping)
+    // downscale sample (cover)
     const wrap = camWrap.getBoundingClientRect();
     const sW = 240;
     const sH = Math.round(sW * (wrap.height / wrap.width));
@@ -464,12 +455,12 @@
     const ctx = c.getContext('2d', { willReadFrequently:true, desynchronized:true });
 
     const vW = video.videoWidth, vH = video.videoHeight;
-    const scale = Math.max(sW/vW, sH/vH); // cover
+    const scale = Math.max(sW/vW, sH/vH);
     const sw = Math.round(sW/scale), sh = Math.round(sH/scale);
     const sx = Math.floor((vW - sw)/2), sy = Math.floor((vH - sh)/2);
     ctx.drawImage(video, sx, sy, sw, sh, 0, 0, sW, sH);
 
-    // ROI from cardArea to sample coords
+    // ROI coords
     const slot = cardArea.getBoundingClientRect();
     const rx = Math.max(0, Math.round((slot.left - wrap.left) / wrap.width  * sW));
     const ry = Math.max(0, Math.round((slot.top  - wrap.top ) / wrap.height * sH));
@@ -479,7 +470,7 @@
 
     const data = ctx.getImageData(rx, ry, rw, rh).data;
 
-    // simple projections (gradient)
+    // projections of gradients
     const col = new Float32Array(rw), row = new Float32Array(rh);
     const grayAt = (x,y)=>{ const i=(y*rw+x)*4; const r=data[i],g=data[i+1],b=data[i+2]; return r*0.2126+g*0.7152+b*0.0722; };
 
@@ -491,46 +482,52 @@
       }
     }
 
+    // thresholds
     const maxCol = Math.max(...col), maxRow = Math.max(...row);
-    const tCol = maxCol * 0.6, tRow = maxRow * 0.6;
+    const tCol = maxCol * 0.55, tRow = maxRow * 0.55;
 
     let L=0; while(L<rw && col[L] < tCol) L++;
     let R=rw-1; while(R>=0 && col[R] < tCol) R--;
     let T=0; while(T<rh && row[T] < tRow) T++;
     let B=rh-1; while(B>=0 && row[B] < tRow) B--;
 
-    let w = Math.max(0, R-L+1);
-    let h = Math.max(0, B-T+1);
-    if(w<=0 || h<=0){ applyPresence(false); return; }
+    if(R<L || B<T){ applyPresence(false); return; } // nothing
+    let w = R-L+1, h = B-T+1;
 
-    // EMA stabilize measured size
-    if(_wEMA==null){ _wEMA=w; _hEMA=h; } else {
-      _wEMA = _wEMA + SIZE_ALPHA*(w-_wEMA);
-      _hEMA = _hEMA + SIZE_ALPHA*(h-_hEMA);
+    // минимальный разумный размер (чтоб шум не считался картой)
+    if(w < CONFIG.MIN_SIZE_PX || h < CONFIG.MIN_SIZE_PX){ applyPresence(false); return; }
+
+    // сгладим коробку
+    if(_Lbox==null){ _Lbox=L; _Rbox=R; _Tbox=T; _Bbox=B; }
+    else{
+      const a = CONFIG.BOX_ALPHA;
+      _Lbox = _Lbox + a*(L - _Lbox);
+      _Rbox = _Rbox + a*(R - _Rbox);
+      _Tbox = _Tbox + a*(T - _Tbox);
+      _Bbox = _Bbox + a*(B - _Bbox);
     }
 
-    // presence criteria:
-    // 1) aspect ratio near ID-1 (portrait)
-    const ar = _hEMA>0 ? (_wEMA/_hEMA) : 0;
-    const arOk = Math.abs(ar - (1/CONFIG.CARD_AR)) <= (CONFIG.AR_TOL * (1/CONFIG.CARD_AR)); // сравниваем w/h с 1/AR
+    // правило: прямоугольник ДОЛЖЕН быть целиком внутри зоны с отступом EDGE_MARGIN_PX
+    const m = CONFIG.EDGE_MARGIN_PX;
+    const inside =
+      (_Lbox > m) &&
+      (_Tbox > m) &&
+      (_Rbox < (rw - 1 - m)) &&
+      (_Bbox < (rh - 1 - m));
 
-    // 2) size big enough inside the area (>=60% of area)
-    const wOk = _wEMA >= (rw * CONFIG.FILL_MIN);
-    const hOk = _hEMA >= (rh * CONFIG.FILL_MIN);
-
-    applyPresence(arOk && wOk && hOk);
+    applyPresence(inside);
   }
 
   function applyPresence(hit){
     if(hit){ _hitCount++; _missCount=0; } else { _missCount++; _hitCount=0; }
-    const ok = (_hitCount >= CONFIG.HIT_N) ? true : (_missCount >= CONFIG.HIT_N ? false : _fitOK);
+    const ok = (_hitCount >= CONFIG.HIT_ON) ? true : (_missCount >= CONFIG.HIT_OFF ? false : _fitOK);
 
     if(ok!==_fitOK){
       _fitOK = ok;
       cardArea.classList.toggle('ok', ok);
       cardArea.classList.toggle('neutral', !ok);
-      if(_levelOK && _fitOK) setChip('Ровно • Карта в области — можно снимать', true);
-      else if(!_fitOK)       setChip('Карта вертикально в серой области', false);
+      if(_levelOK && _fitOK) setChip('Ровно • Карта в зоне — можно снимать', true);
+      else if(!_fitOK)       setChip('Карта вертикально в зоне справа', false);
       else                   setChip('Выравнивайте… (кнопка заблокирована)', false);
       updateButtons();
     }
@@ -556,8 +553,8 @@
   function stopAll(){ stopCamera(); stopDetection(); }
 
   // ===================== TESTS (console) =====================
-  (function testDerived(){
-    console.assert(CONFIG.AREA_W===115 && CONFIG.AREA_H===183, 'Area 115×183 (100×159 +15%)');
+  (function testCfg(){
+    console.assert(CONFIG.DETECT_HZ===4 && CONFIG.EDGE_MARGIN_PX>=2, 'detector params ok');
   })();
   </script>
 </body>
