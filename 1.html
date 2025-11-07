@@ -23,7 +23,8 @@
 
     /* CAMERA */
     .cam-wrap{position:relative;border:1px solid var(--ring);border-radius:16px;overflow:hidden;background:#000;aspect-ratio:3/4}
-    .cam-video{width:100%;height:100%;object-fit:cover;display:block}
+    /* Видеокадр появляется с плавным фейдом, чтобы не было "рывка" */
+    .cam-video{width:100%;height:100%;object-fit:cover;display:block;opacity:0;transition:opacity .2s ease}
     .cam-overlay{position:absolute;inset:0;pointer-events:none}
 
     /* grid */
@@ -127,18 +128,15 @@
   <script>
   // ===================== CONFIG / STATE =====================
   const CONFIG = {
-    // Камера
-    idealFacing: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+    // Камера: запрашиваем портретное соотношение сразу, чтобы избежать смены матрицы
+    idealFacing: { facingMode: { ideal: 'environment' }, aspectRatio: { ideal: 3/4 }, height: { ideal: 1920 }, width: { ideal: 1440 } },
     maxSide: 4096,
     jpegQ: 0.95,
     webpQ: 0.95,
 
     // === РАЗМЕРЫ МИШЕНИ (меняй тут!) ===
-    // Радиус точки (px):
-    BUBBLE_R: 12,
-    // Радиус мишени (px):
-    TARGET_R: 15,
-    // Авто-правка: если включено — гарантирует, что TARGET_R ≥ BUBBLE_R+1
+    BUBBLE_R: 12,   // радиус точки, px
+    TARGET_R: 16,   // радиус мишени, px
     ENFORCE_GEOMETRY: true,
   };
 
@@ -154,6 +152,7 @@
   const btnRetake=$('btnRetake'), btnSave=$('btnSave'), permHint=$('permHint');
 
   // ===================== UTILS =====================
+  const sleep = (ms)=>new Promise(r=>setTimeout(r,ms));
   function setError(msg,hint){ if(!msg){ err.classList.add('hidden'); err.innerHTML=''; return; } const extra = hint?`<div class="meta" style="white-space:pre-line;margin-top:6px">${hint}</div>`:''; err.innerHTML = msg + extra; err.classList.remove('hidden'); }
   function clamp(v,a,b){return Math.min(b,Math.max(a,v))}
   function haptic(){ try{ window.Telegram?.WebApp?.HapticFeedback?.impactOccurred?.('light'); }catch{} }
@@ -172,7 +171,6 @@
     let bubble = Number(CONFIG.BUBBLE_R)||0;
     let target = Number(CONFIG.TARGET_R)||0;
     if (CONFIG.ENFORCE_GEOMETRY && target < bubble + 1) target = bubble + 1;
-    // применяем
     CONFIG.BUBBLE_R = bubble; CONFIG.TARGET_R = target;
     const br = bubble * 2, tr = target * 2;
     levelBubble.style.width = br + 'px'; levelBubble.style.height = br + 'px';
@@ -187,12 +185,21 @@
     try{
       const s = await navigator.mediaDevices.getUserMedia({video: CONFIG.idealFacing, audio:false});
       await bindStream(s);
-      await upgradeResolution();
+      await upgradeResolution();       // применим максимальные капабилити ДО показа
+      await stabilizeVideo(300, 1200); // ждём стабилизацию размеров (без рывка)
+      video.style.opacity = '1';        // теперь плавно покажем
       const caps=S.track?.getCapabilities?.()||{}; btnTorch.classList.toggle('hidden', !caps.torch); S.torchCap=!!caps.torch; return true;
     }catch(e){ console.warn(e); setError('Не удалось открыть камеру.', envHint()); return false; }
   }
 
-  async function bindStream(stream){ stopCamera(); S.stream=stream; S.track=stream.getVideoTracks()[0]; video.srcObject=stream; try{ await video.play(); }catch{}; secCam.classList.remove('hidden'); secPrev.classList.add('hidden'); }
+  async function bindStream(stream){
+    stopCamera();
+    S.stream=stream; S.track=stream.getVideoTracks()[0];
+    video.style.opacity='0';            // скрыт до стабилизации
+    video.srcObject=stream;
+    try{ await video.play(); }catch{}
+    secCam.classList.remove('hidden'); secPrev.classList.add('hidden');
+  }
 
   async function upgradeResolution(){
     try{
@@ -200,10 +207,24 @@
       const wants = {};
       if(caps.width && caps.width.max) wants.width = caps.width.max;
       if(caps.height && caps.height.max) wants.height = caps.height.max;
+      if(caps.aspectRatio && caps.aspectRatio.max && caps.aspectRatio.min){
+        // Стремимся к 3/4, но внутри допустимого диапазона
+        const ar = 3/4;
+        wants.aspectRatio = Math.min(caps.aspectRatio.max, Math.max(caps.aspectRatio.min, ar));
+      }
       if(Object.keys(wants).length){ try{ await S.track.applyConstraints(wants); }catch(e){ console.warn('applyConstraints(max) failed', e); }
       }
-      const st = S.track.getSettings?.() || {}; console.log('Video settings:', st);
     }catch(e){ console.warn('upgradeResolution failed', e); }
+  }
+
+  async function stabilizeVideo(stableWindowMs=250, timeoutMs=1500){
+    let prevW=0, prevH=0, stable=0, t=0;
+    while(t < timeoutMs){
+      const w=video.videoWidth, h=video.videoHeight;
+      if(w>0 && h>0 && w===prevW && h===prevH){ stable += 50; if(stable >= stableWindowMs) break; }
+      else { stable = 0; prevW=w; prevH=h; }
+      await sleep(50); t += 50;
+    }
   }
 
   function stopCamera(){ try{ video.pause(); video.srcObject=null }catch{}; try{ S.track?.stop() }catch{}; try{ S.stream?.getTracks()?.forEach(t=>t.stop()) }catch{}; S.stream=null; S.track=null; }
@@ -239,10 +260,7 @@
   }
 
   // ===================== LEVEL SENSORS =====================
-  function isInside(dx,dy){
-    // полностью внутри: расстояние центра + радиус точки ≤ радиус мишени
-    return (Math.hypot(dx,dy) + CONFIG.BUBBLE_R) <= CONFIG.TARGET_R;
-  }
+  function isInside(dx,dy){ return (Math.hypot(dx,dy) + CONFIG.BUBBLE_R) <= CONFIG.TARGET_R; }
 
   async function enableLevelSensors(){ if(S.levelOn) return; let ok=false; try{ if(typeof DeviceOrientationEvent!=='undefined' && typeof DeviceOrientationEvent.requestPermission==='function'){ try{ const p=await DeviceOrientationEvent.requestPermission(); if(p==='granted'){ window.addEventListener('deviceorientation',onOrient,true); ok=true; } }catch{} } if(!ok && 'ondeviceorientation' in window){ window.addEventListener('deviceorientation',onOrient,true); ok=true; } if(!ok){ if(typeof DeviceMotionEvent!=='undefined' && typeof DeviceMotionEvent.requestPermission==='function'){ try{ const p2=await DeviceMotionEvent.requestPermission(); if(p2==='granted'){ window.addEventListener('devicemotion',onMotion,true); ok=true; } }catch{} } else if('ondevicemotion' in window){ window.addEventListener('devicemotion',onMotion,true); ok=true; } } }catch{} S.levelOn=ok; permHint.classList.toggle('hidden', ok); }
   function onOrient(e){ const pitch=e.beta??0, roll=e.gamma??0; paintLevel(pitch,roll) }
@@ -265,7 +283,8 @@
   // ===================== ENV HINT =====================
   function envHint(){
     const https = !isSecureContext ? "• Нужен HTTPS (или localhost)." : "";
-    return `Камера требует разрешений.${https}\n• Если камера не открывается — проверьте права и попробуйте системную кнопку «Открыть во внешнем браузере».`;
+    return `Камера требует разрешений.${https}
+• Если камера не открывается — проверьте права и попробуйте системную кнопку «Открыть во внешнем браузере».`;
   }
 
   // ===================== TEARDOWN =====================
