@@ -33,7 +33,7 @@
       linear-gradient(90deg,#fff 1px,transparent 1px) calc(33.333% - .5px) 0/33.333% 100% repeat-x,
       linear-gradient(90deg,#fff 1px,transparent 1px) calc(66.666% - .5px) 0/33.333% 100% repeat-x}
 
-    /* top info bar — опустили ниже фонаря */
+    /* top info bar — ниже фонаря */
     .topbar{position:absolute;left:0;right:0;top:64px;display:flex;justify-content:center;gap:10px;z-index:9;pointer-events:none}
     .chip{pointer-events:auto;display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.25);background:rgba(0,0,0,.55);color:#fff}
     .chip.ok{background:rgba(22,163,74,.9)} .chip.warn{background:rgba(245,158,11,.95)}
@@ -42,9 +42,9 @@
     .btn-torch{position:absolute;left:12px;top:12px;z-index:10;pointer-events:auto;padding:6px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.3);color:#fff;background:rgba(255,255,255,.1)}
     .btn-torch.hidden{display:none}
 
-    /* Level (ONLY ONE TARGET CIRCLE) */
+    /* Level (one target + dot) */
     .center-level{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
-    .level-outer{position:relative;width:140px;height:140px;border-radius:50%;}
+    .level-outer{position:relative;width:160px;height:160px;border-radius:50%}
     .level-target{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);border-radius:50%;border:2px solid rgba(255,255,255,.75);background:rgba(0,0,0,.15);backdrop-filter:blur(3px)}
     .level-target.ok{border-color:#34d399}
     .level-bubble{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);border-radius:50%;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.35);transition:transform .08s linear,background-color .15s}
@@ -127,15 +127,19 @@
   <script>
   // ===================== CONFIG / STATE =====================
   const CONFIG = {
-    // Камера: стремимся к высокой матрице
+    // Камера
     idealFacing: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
-    maxSide: 4096,          // ↑ ещё выше, чтобы не душить качество
+    maxSide: 4096,
     jpegQ: 0.95,
     webpQ: 0.95,
-    // Геометрия точки/круга (зададим размером точки, круг = +5%)
-    BUBBLE_R: 12,           // px (зелёная точка)
-    TARGET_FACTOR: 1.05,    // круг на 5% больше точки
-    TARGET_R: null,         // вычислим при запуске
+
+    // === РАЗМЕРЫ МИШЕНИ (меняй тут!) ===
+    // Радиус точки (px):
+    BUBBLE_R: 12,
+    // Радиус мишени (px):
+    TARGET_R: 14,
+    // Авто-правка: если включено — гарантирует, что TARGET_R ≥ BUBBLE_R+1
+    ENFORCE_GEOMETRY: true,
   };
 
   const S = { stream:null, track:null, torchCap:false, _torchOn:false, levelOn:false };
@@ -165,10 +169,14 @@
   btnRetake.addEventListener('click', ()=>{ secPrev.classList.add('hidden'); secCam.classList.remove('hidden'); openFlow(); });
 
   function syncRadii(){
-    CONFIG.TARGET_R = Math.round(CONFIG.BUBBLE_R * CONFIG.TARGET_FACTOR);
-    const br = CONFIG.BUBBLE_R*2; const tr = CONFIG.TARGET_R*2;
-    levelBubble.style.width = br+'px'; levelBubble.style.height = br+'px';
-    levelTarget.style.width = tr+'px'; levelTarget.style.height = tr+'px';
+    let bubble = Number(CONFIG.BUBBLE_R)||15;
+    let target = Number(CONFIG.TARGET_R)||20;
+    if (CONFIG.ENFORCE_GEOMETRY && target < bubble + 1) target = bubble + 1;
+    // применяем
+    CONFIG.BUBBLE_R = bubble; CONFIG.TARGET_R = target;
+    const br = bubble * 2, tr = target * 2;
+    levelBubble.style.width = br + 'px'; levelBubble.style.height = br + 'px';
+    levelTarget.style.width = tr + 'px'; levelTarget.style.height = tr + 'px';
   }
 
   async function openFlow(){ setError(''); syncRadii(); await enableLevelSensors(); const camOk = await openCameraGUM(); if(!camOk){ try{ fileSystem?.click(); }catch{} } }
@@ -177,10 +185,9 @@
     if(!canUseGUM()){ setError('Камера недоступна.', envHint()); return false; }
     const perm = await queryPerm('camera'); if(perm==='denied'){ setError('Доступ к камере запрещён.', envHint()); return false; }
     try{
-      // Пытаемся сразу запросить приличную матрицу
       const s = await navigator.mediaDevices.getUserMedia({video: CONFIG.idealFacing, audio:false});
       await bindStream(s);
-      await upgradeResolution(); // попытка дожать до max caps
+      await upgradeResolution();
       const caps=S.track?.getCapabilities?.()||{}; btnTorch.classList.toggle('hidden', !caps.torch); S.torchCap=!!caps.torch; return true;
     }catch(e){ console.warn(e); setError('Не удалось открыть камеру.', envHint()); return false; }
   }
@@ -206,19 +213,15 @@
 
   async function takeShot(){
     if(!video.videoWidth || !video.videoHeight) return;
-    // 1) Пытаемся взять полный кадр через ImageCapture (часто даёт максимальное разрешение)
     if('ImageCapture' in window && S.track){
       try{
         const ic = new ImageCapture(S.track);
         const blob = await ic.takePhoto();
         const url = URL.createObjectURL(blob);
         photo.onload = ()=>{ meta.textContent = `${photo.naturalWidth}×${photo.naturalHeight} • ${blob.type||'image'}`; };
-        photo.src = url;
-        secCam.classList.add('hidden'); secPrev.classList.remove('hidden');
-        return;
+        photo.src = url; secCam.classList.add('hidden'); secPrev.classList.remove('hidden'); return;
       }catch(e){ console.warn('ImageCapture failed, fallback to canvas', e); }
     }
-    // 2) Фолбэк: снимаем кадр из <video>, сохранив высокую сторону и качество
     const srcW=video.videoWidth, srcH=video.videoHeight;
     const scale = Math.min(1,  CONFIG.maxSide/Math.max(srcW,srcH));
     const w=Math.max(1,Math.round(srcW*scale)), h=Math.max(1,Math.round(srcH*scale));
@@ -236,7 +239,10 @@
   }
 
   // ===================== LEVEL SENSORS =====================
-  function isInside(dx,dy){ return Math.hypot(dx,dy) <= (CONFIG.TARGET_R - CONFIG.BUBBLE_R); }
+  function isInside(dx,dy){
+    // полностью внутри: расстояние центра + радиус точки ≤ радиус мишени
+    return (Math.hypot(dx,dy) + CONFIG.BUBBLE_R) <= CONFIG.TARGET_R;
+  }
 
   async function enableLevelSensors(){ if(S.levelOn) return; let ok=false; try{ if(typeof DeviceOrientationEvent!=='undefined' && typeof DeviceOrientationEvent.requestPermission==='function'){ try{ const p=await DeviceOrientationEvent.requestPermission(); if(p==='granted'){ window.addEventListener('deviceorientation',onOrient,true); ok=true; } }catch{} } if(!ok && 'ondeviceorientation' in window){ window.addEventListener('deviceorientation',onOrient,true); ok=true; } if(!ok){ if(typeof DeviceMotionEvent!=='undefined' && typeof DeviceMotionEvent.requestPermission==='function'){ try{ const p2=await DeviceMotionEvent.requestPermission(); if(p2==='granted'){ window.addEventListener('devicemotion',onMotion,true); ok=true; } }catch{} } else if('ondevicemotion' in window){ window.addEventListener('devicemotion',onMotion,true); ok=true; } } }catch{} S.levelOn=ok; permHint.classList.toggle('hidden', ok); }
   function onOrient(e){ const pitch=e.beta??0, roll=e.gamma??0; paintLevel(pitch,roll) }
@@ -258,7 +264,7 @@
 
   // ===================== ENV HINT =====================
   function envHint(){
-    const https = !isSecureContext ? "\n• Нужен HTTPS (или localhost)." : "";
+    const https = !isSecureContext ? "• Нужен HTTPS (или localhost)." : "";
     return `Камера требует разрешений.${https}\n• Если камера не открывается — проверьте права и попробуйте системную кнопку «Открыть во внешнем браузере».`;
   }
 
@@ -269,10 +275,10 @@
   // ===================== TESTS (console) =====================
   (function testRadii(){
     syncRadii();
-    console.assert(CONFIG.TARGET_R === Math.round(CONFIG.BUBBLE_R*CONFIG.TARGET_FACTOR), 'target = bubble*1.1 (rounded)');
-    console.assert(CONFIG.TARGET_R > CONFIG.BUBBLE_R, 'target bigger than bubble');
+    console.assert(CONFIG.TARGET_R > CONFIG.BUBBLE_R || !CONFIG.ENFORCE_GEOMETRY, 'target > bubble (when enforced)');
+    console.assert(CONFIG.BUBBLE_R>0 && CONFIG.TARGET_R>0, 'radii positive');
   })();
-  (function testInsideMath(){ const TR=CONFIG.TARGET_R, BR=CONFIG.BUBBLE_R; const T=TR-BR; console.assert(T>0,'T>0'); console.assert(isInside(0,0),'center'); console.assert(isInside(T,0),'boundary'); console.assert(!isInside(T+0.01,0),'outside'); })();
+  (function testInsideMath(){ const T=CONFIG.TARGET_R-CONFIG.BUBBLE_R; console.assert(T>0,'T>0'); console.assert(isInside(0,0),'center'); console.assert(isInside(T,0),'boundary'); console.assert(!isInside(T+0.01,0),'outside'); })();
   (function testEnvHint(){ const h=envHint(); console.assert(typeof h==='string' && h.includes('Камера требует разрешений.'), 'envHint string content'); })();
   </script>
 </body>
