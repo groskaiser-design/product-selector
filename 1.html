@@ -31,6 +31,15 @@
       linear-gradient(90deg,#fff 1px,transparent 1px) calc(33.333% - .5px) 0/33.333% 100% repeat-x,
       linear-gradient(90deg,#fff 1px,transparent 1px) calc(66.666% - .5px) 0/33.333% 100% repeat-x}
 
+    /* top info bar — ниже фонаря */
+    .topbar{position:absolute;left:0;right:0;top:64px;display:flex;justify-content:center;gap:10px;z-index:9;pointer-events:none}
+    .chip{pointer-events:auto;display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.25);background:rgba(0,0,0,.55);color:#fff}
+    .chip.ok{background:rgba(22,163,74,.9)} .chip.warn{background:rgba(245,158,11,.95)}
+
+    /* Torch */
+    .btn-torch{position:absolute;left:12px;top:12px;z-index:10;pointer-events:auto;padding:6px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.3);color:#fff;background:rgba(255,255,255,.1)}
+    .btn-torch.hidden{display:none}
+
     /* Level (one target + dot) */
     .center-level{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
     .level-outer{position:relative;width:160px;height:160px;border-radius:50%}
@@ -72,6 +81,16 @@
 
         <div class="cam-overlay">
           <div class="grid"></div>
+
+          <!-- top info -->
+          <div class="topbar">
+            <div id="chipInfo" class="chip" role="status" aria-live="polite">Наведите сверху • выравнивайте…</div>
+          </div>
+
+          <!-- torch -->
+          <button id="btnTorch" class="btn-torch hidden" aria-label="Фонарик">⚡️</button>
+
+          <!-- level -->
           <div class="center-level">
             <div class="level-outer">
               <div id="levelTarget" class="level-target"></div>
@@ -126,14 +145,15 @@
     SMOOTH_ALPHA: 0.25
   };
 
-  const S = { stream:null, track:null, levelOn:false };
+  const S = { stream:null, track:null, torchCap:false, _torchOn:false, levelOn:false };
   let _fx = 0, _fy = 0, _initF = false; // EMA
   let _lastBlob = null; // текущий снимок как Blob
 
   // ===================== DOM =====================
   const $ = id => document.getElementById(id);
   const err=$('err'), video=$('video');
-  const btnShot=$('btnShot');
+  const btnShot=$('btnShot'), btnTorch=$('btnTorch');
+  const chipInfo=$('chipInfo');
   const fileCam=$('file-cam'), fileGallery=$('file-gallery');
   const levelBubble=$('levelBubble'), levelTarget=$('levelTarget');
   const secCam=$('sec-camera'), secPrev=$('sec-preview'), photo=$('photo'), meta=$('meta');
@@ -144,6 +164,7 @@
   const sleep = (ms)=>new Promise(r=>setTimeout(r,ms));
   function setError(msg,hint){ if(!msg){ err.classList.add('hidden'); err.innerHTML=''; return; } const extra = hint?`<div class="meta" style="white-space:pre-line;margin-top:6px">${hint}</div>`:''; err.innerHTML = msg + extra; err.classList.remove('hidden'); }
   function clamp(v,a,b){return Math.min(b,Math.max(a,v))}
+  function haptic(){ try{ window.Telegram?.WebApp?.HapticFeedback?.impactOccurred?.('light'); }catch{} }
   function canUseGUM(){ return !!(navigator.mediaDevices?.getUserMedia) && isSecureContext; }
   async function queryPerm(name){ try{ const p=await navigator.permissions?.query?.({name}); return p?.state??null }catch{return null} }
 
@@ -165,12 +186,12 @@
   // ===================== AUTOSTART CAMERA =====================
   window.addEventListener('DOMContentLoaded', () => {
     openFlow();
-    // Telegram Mini App hint: можно дернуть ready()
     try { window.Telegram?.WebApp?.ready?.(); } catch {}
   });
 
   // ===================== CAMERA FLOW =====================
   btnShot.addEventListener('click', onShutter);
+  btnTorch.addEventListener('click', toggleTorch);
   btnRetake.addEventListener('click', ()=>{ secPrev.classList.add('hidden'); secCam.classList.remove('hidden'); openFlow(); });
   btnGallery.addEventListener('click', ()=>fileGallery?.click());
   fileGallery.addEventListener('change', onFilePicked);
@@ -195,7 +216,7 @@
     setError(''); syncRadii();
     await enableLevelSensors();
     const camOk = await openCameraGUM();
-    if(!camOk){ try{ fileCam?.click(); }catch{} } // fallback на системную камеру
+    if(!camOk){ try{ fileCam?.click(); }catch{} } // fallback
   }
 
   async function openCameraGUM(){
@@ -207,6 +228,9 @@
       await upgradeResolution();
       await stabilizeVideo(300, 1200);
       video.style.opacity = '1';
+      const caps=S.track?.getCapabilities?.()||{};
+      S.torchCap = !!caps.torch;
+      btnTorch.classList.toggle('hidden', !S.torchCap);
       return true;
     }catch(e){ console.warn(e); setError('Не удалось открыть камеру.', envHint()); return false; }
   }
@@ -245,6 +269,7 @@
   }
 
   function stopCamera(){ try{ video.pause(); video.srcObject=null }catch{}; try{ S.track?.stop() }catch{}; try{ S.stream?.getTracks()?.forEach(t=>t.stop()) }catch{}; S.stream=null; S.track=null; }
+  async function toggleTorch(){ if(!S.track || !S.torchCap) return; try{ S._torchOn=!S._torchOn; await S.track.applyConstraints({advanced:[{torch:S._torchOn}]}); haptic(); }catch{ btnTorch.classList.add('hidden'); } }
 
   async function onShutter(){ if(btnShot.disabled) return; await takeShot(); }
 
@@ -353,6 +378,10 @@
     const okFully = isInside(dx,dy);
     levelBubble.classList.toggle('ok', okFully);
     levelTarget.classList.toggle('ok', okFully);
+
+    chipInfo.textContent = okFully ? 'Ровно — можно снимать' : 'Выравнивайте… (кнопка заблокирована)';
+    chipInfo.className = 'chip ' + (okFully ? 'ok' : 'warn');
+
     btnShot.disabled = !okFully;
   }
 
