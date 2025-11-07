@@ -1,419 +1,454 @@
 <!doctype html>
 <html lang="ru">
   <head>
+    <!-- ===================== BLOCK: head / meta ===================== -->
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-    <title>FoodCam — итоговый прототип (системная камера + галерея)</title>
+    <title>FoodCam — одна камера с уровнем (live)</title>
     <meta name="theme-color" content="#0a7cff" />
     <style>
+      /* ===================== BLOCK: styles ===================== */
       :root{
-        --bg:#ffffff; --text:#111827; --muted:#6b7280; --primary:#2563eb; --ring:#e5e7eb;
+        --bg:#ffffff; --text:#111827; --muted:#6b7280; --ring:#e5e7eb; --primary:#2563eb;
         --ok:#16a34a; --warn:#f59e0b; --danger:#ef4444;
       }
-      *{box-sizing:border-box} html,body{height:100%}
-      body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;-webkit-font-smoothing:antialiased}
-      .container{max-width:720px;margin:0 auto;padding:20px}
+      *{box-sizing:border-box}
+      html,body{height:100%}
+      body{
+        margin:0;background:var(--bg);color:var(--text);
+        font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;
+        -webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent;
+      }
+      .container{max-width:720px;margin:0 auto;padding:16px}
       h1{font-size:22px;margin:0 0 6px}
       .muted{color:var(--muted);font-size:14px;margin:0 0 16px}
-      .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-      .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:12px 16px;border-radius:16px;border:1px solid transparent;background:#fff;color:#111827;font-weight:600;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,.05);transition:.15s transform}
+      .hidden{display:none!important}
+
+      /* Buttons */
+      .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:12px 16px;
+           border-radius:14px;border:1px solid var(--ring);background:#fff;font-weight:600;cursor:pointer}
+      .btn.primary{background:var(--primary);color:#fff;border-color:transparent}
+      .btn.ghost{background:transparent}
       .btn:active{transform:scale(.98)}
-      .btn.primary{background:var(--primary);color:#fff}
-      .btn.outline{background:#fff;border-color:var(--ring)}
-      .btn.ghost{background:transparent;border-color:var(--ring)}
-      .hidden{display:none !important}
+      .row{display:flex;gap:10px;flex-wrap:wrap}
+
+      /* ===================== BLOCK: camera (frame) ===================== */
+      .cam-wrap{
+        position:relative;border:1px solid var(--ring);border-radius:16px;overflow:hidden;background:#000;
+        aspect-ratio:3/4; /* мобильный портрет */
+      }
+      .cam-video{width:100%;height:100%;object-fit:cover;display:block}
+      .cam-overlay{
+        position:absolute;inset:0;pointer-events:none;
+      }
+      /* Рамка/сетка 3×3 */
+      .grid{
+        position:absolute;inset:0;opacity:.25;mix-blend-mode:screen;
+        background:
+          linear-gradient(#fff 1px, transparent 1px) 0 calc(33.333% - .5px)/100% 33.333% repeat-y,
+          linear-gradient(#fff 1px, transparent 1px) 0 calc(66.666% - .5px)/100% 33.333% repeat-y,
+          linear-gradient(90deg, #fff 1px, transparent 1px) calc(33.333% - .5px) 0/33.333% 100% repeat-x,
+          linear-gradient(90deg, #fff 1px, transparent 1px) calc(66.666% - .5px) 0/33.333% 100% repeat-x;
+      }
+      /* ===================== BLOCK: level (overlay) ===================== */
+      .level{
+        position:absolute;left:12px;top:12px;width:120px;height:120px;border-radius:16px;
+        background:rgba(17,24,39,.35);backdrop-filter:blur(3px);border:1px solid rgba(255,255,255,.25);
+        display:grid;place-items:center;pointer-events:none;color:#fff;
+      }
+      .level-ring{
+        position:relative;width:84px;height:84px;border-radius:999px;border:2px solid rgba(255,255,255,.45);
+        box-shadow:inset 0 0 0 2px rgba(255,255,255,.15);
+      }
+      .level-bubble{
+        position:absolute;left:50%;top:50%;width:22px;height:22px;border-radius:999px;
+        transform:translate(-50%,-50%);background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.35);
+        transition:transform 80ms linear;
+      }
+      .level-text{margin-top:8px;text-align:center;font-size:12px;color:#e5e7eb}
+      .level-dot{display:inline-block;width:8px;height:8px;border-radius:999px;background:#d1d5db;margin-right:6px}
+      .level-dot.ok{background:var(--ok)} .level-dot.warn{background:var(--warn)} .level-dot.bad{background:#d1d5db}
+      .mono{font-variant-numeric:tabular-nums;font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
+
+      /* ===================== BLOCK: camera-controls ===================== */
+      .controls{
+        position:absolute;left:0;right:0;bottom:0;padding:10px;display:flex;gap:10px;align-items:center;justify-content:space-between;
+        background:linear-gradient(to top, rgba(0,0,0,.55), rgba(0,0,0,0));
+        color:#fff
+      }
+      .ctrl-left,.ctrl-right{display:flex;gap:8px;align-items:center}
+      .shutter{
+        width:68px;height:68px;border-radius:999px;border:4px solid rgba(255,255,255,.9);background:#fff;cursor:pointer;
+        box-shadow:0 2px 12px rgba(0,0,0,.4)
+      }
+      .chip{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2)}
+      .range{appearance:none;width:140px;height:4px;border-radius:99px;background:rgba(255,255,255,.25);outline:none}
+      .range::-webkit-slider-thumb{appearance:none;width:18px;height:18px;border-radius:50%;background:#fff;border:2px solid rgba(0,0,0,.15)}
+      .badge{font-size:12px;color:#cbd5e1}
+
+      /* ===================== BLOCK: preview ===================== */
       .card{border:1px solid var(--ring);border-radius:16px;background:#fff}
-      .pad{padding:16px}
-      .info{background:#f9fafb;color:var(--muted);border-radius:16px;padding:12px}
-      .error{background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;border-radius:12px;padding:12px;margin:12px 0}
-      .success{background:#ecfdf5;color:#065f46;border:1px solid #a7f3d0;border-radius:12px;padding:12px;display:flex;gap:12px;align-items:center}
+      .pad{padding:14px}
+      .preview-img{width:100%;max-height:70vh;object-fit:contain;border-radius:12px}
       .meta{color:var(--muted);font-size:12px;margin-top:6px}
-      .preview-img{max-height:360px;width:100%;object-fit:contain;display:block;border-radius:16px}
-      textarea{width:100%;min-height:112px;padding:12px;border-radius:16px;border:1px solid var(--ring);resize:none;font-size:14px}
-      .right{display:flex;justify-content:flex-end}
-      .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-      .progress{height:12px;background:#f3f4f6;border-radius:999px;overflow:hidden}
-      .bar{height:100%;background:var(--primary);width:0%}
-      footer{margin-top:24px;text-align:center;color:var(--muted);font-size:12px}
-      .icon{width:20px;height:20px;display:inline-block;vertical-align:middle}
-      .mono{font-variant-numeric:tabular-nums;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}
-      /* Мини-уровнемер (опционально) */
-      .level-pill{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:999px;border:1px solid var(--ring);background:#fff;font-size:12px;color:var(--muted)}
-      .dot{width:10px;height:10px;border-radius:999px;background:#d1d5db}
-      .dot.ok{background:var(--ok)} .dot.warn{background:var(--warn)}
+      .error{background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;border-radius:12px;padding:12px;margin:12px 0}
     </style>
   </head>
   <body>
     <main class="container">
       <header>
-        <h1>Сделайте фото системной камерой или выберите из галереи</h1>
-        <p class="muted">Используем <b>только системную камеру</b> (rear), без живого превью. Комментарий — по желанию.</p>
+        <h1>Одна камера с уровнем (live)</h1>
+        <p class="muted">Нажмите «Открыть камеру», держите телефон <b>параллельно поверхности</b>, ориентируйтесь по уровню. Потом сделайте снимок.</p>
       </header>
 
-      <div id="error" class="error hidden"></div>
+      <div id="err" class="error hidden"></div>
 
-      <!-- IDLE -->
-      <section id="sec-idle">
-        <div class="row">
-          <button id="btn-system" class="btn primary" aria-label="Открыть системную камеру (rear)">
-            <span class="icon" aria-hidden="true">📷</span> Системная камера
-          </button>
-          <button id="btn-gallery" class="btn outline" aria-label="Выбрать фото из галереи">
-            <span class="icon" aria-hidden="true">🖼️</span> Галерея
-          </button>
+      <!-- ===================== BLOCK: camera ===================== -->
+      <section id="sec-camera">
+        <div class="row" style="margin-bottom:10px">
+          <button id="btnOpen" class="btn primary">Открыть камеру</button>
+          <button id="btnStop" class="btn">Закрыть</button>
+          <span id="permHint" class="badge">iOS: разрешите «Ориентацию и движение»</span>
         </div>
 
-        <div class="info" style="margin-top:12px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
-          <span><span class="icon" aria-hidden="true">💡</span> На десктопе «Системная камера» откроет выбор файла.</span>
-          <span class="level-pill">
-            <span id="dot" class="dot" aria-hidden="true"></span>
-            <span id="lvlText">Уровнемер выкл.</span>
-            <button id="btn-level" class="btn ghost" style="padding:6px 8px;font-size:12px">Включить</button>
-          </span>
-        </div>
+        <div class="cam-wrap" id="camWrap" aria-label="Живое превью камеры">
+          <video id="video" class="cam-video" playsinline muted></video>
 
-        <!-- Hidden inputs -->
-        <input id="file-gallery" type="file" accept="image/*" class="hidden" />
-        <input id="file-system" type="file" accept="image/*" capture="environment" class="hidden" />
-      </section>
+          <!-- ===================== BLOCK: level (overlay) ===================== -->
+          <div class="cam-overlay">
+            <div class="grid"></div>
 
-      <!-- PREPARING -->
-      <section id="sec-preparing" class="hidden">
-        <div class="card pad" style="text-align:center">
-          <div style="font-weight:600;margin-bottom:6px">Подготавливаем фото…</div>
-          <div class="muted">Сжимаем изображение и нормализуем ориентацию</div>
-        </div>
-      </section>
+            <aside class="level" id="levelBox" aria-label="Уровень наклона">
+              <div class="level-ring">
+                <div id="bubble" class="level-bubble"></div>
+              </div>
+              <div class="level-text">
+                <span id="dot" class="level-dot bad"></span>
+                <span class="mono" id="tiltTxt">—.–°</span>
+              </div>
+            </aside>
+          </div>
 
-      <!-- PREVIEW -->
-      <section id="sec-preview" class="hidden">
-        <div class="card">
-          <img id="img-preview" alt="Предпросмотр фото" class="preview-img" />
-        </div>
-        <div id="meta" class="meta"></div>
-
-        <div style="margin-top:12px">
-          <label for="comment" style="font-weight:600;font-size:14px;display:block;margin-bottom:6px">Комментарий (необязательно)</label>
-          <textarea id="comment" placeholder="Например: треска 200 г и рис 150 г"></textarea>
-          <div class="right"><span id="counter" class="meta">0/800</span></div>
-        </div>
-
-        <div class="grid2" style="margin-top:12px">
-          <button id="btn-replace" class="btn outline">Заменить фото</button>
-          <button id="btn-send" class="btn primary" disabled><span class="icon" aria-hidden="true">✅</span> Отправить</button>
-        </div>
-
-        <div class="info" style="margin-top:12px">
-          Фото можно заменить. Комментарий — опционален. EXIF-данные удаляются при сжатии.
-        </div>
-      </section>
-
-      <!-- SENDING -->
-      <section id="sec-sending" class="hidden">
-        <div class="card pad">
-          <div style="font-weight:600;margin-bottom:6px">Отправляем фото ассистенту…</div>
-          <div class="progress"><div id="bar" class="bar"></div></div>
-          <div class="meta" style="margin-top:6px">Это имитация загрузки для прототипа.</div>
-          <div style="margin-top:12px"><button id="btn-cancel" class="btn ghost">Отмена</button></div>
-        </div>
-      </section>
-
-      <!-- SUCCESS -->
-      <section id="sec-success" class="hidden">
-        <div class="success">
-          <span class="icon" aria-hidden="true">✅</span>
-          <div>
-            <div style="font-weight:600">Фото отправлено (заглушка)</div>
-            <div class="meta">Ничего не уходит на сервер — это демонстрация потока.</div>
+          <!-- ===================== BLOCK: camera-controls ===================== -->
+          <div class="controls">
+            <div class="ctrl-left">
+              <button id="btnTorch" class="chip hidden">🔦 Фонарь</button>
+              <div id="zoomWrap" class="chip hidden">
+                🔍
+                <input id="zoom" class="range" type="range" min="1" max="1" step="0.01" value="1" />
+              </div>
+            </div>
+            <button id="btnShot" class="shutter" aria-label="Сделать снимок"></button>
+            <div class="ctrl-right">
+              <span id="hint" class="badge">Наведите сверху</span>
+            </div>
           </div>
         </div>
-        <div class="grid2" style="margin-top:12px">
-          <button id="btn-download" class="btn outline">Скачать payload.json</button>
-          <button id="btn-new" class="btn primary">Сделать новое фото</button>
-        </div>
       </section>
 
-      <footer>Мы не сохраняем оригиналы фото без вашего согласия. Это <b>итоговый однофайловый</b> прототип.</footer>
+      <!-- ===================== BLOCK: preview ===================== -->
+      <section id="sec-preview" class="hidden" style="margin-top:12px">
+        <div class="card pad">
+          <img id="photo" class="preview-img" alt="Снимок" />
+          <div id="meta" class="meta"></div>
+          <div class="row" style="margin-top:10px">
+            <button id="btnRetake" class="btn">Переснять</button>
+            <button id="btnSave" class="btn primary">Скачать снимок</button>
+          </div>
+        </div>
+      </section>
     </main>
 
     <script>
-      // ====== Телеграм-вебвью (необязательно) ======
-      const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
-      try { tg?.expand?.(); tg?.ready?.(); } catch(e){}
+      // ===================== BLOCK: config/state =====================
+      const CONFIG = {
+        idealFacing: { facingMode: { ideal: "environment" } },
+        maxSide: 2000,                 // ресайз по большей стороне
+        levelThreshold: 5,             // ° зелёная зона
+        stableMs: 0,                   // автоспуск не используем (0 = выкл)
+      };
 
-      // ====== DOM ======
+      const S = {
+        stream: null,
+        track: null,
+        zoomCap: null,
+        torchCap: false,
+        levelOn: false,
+        lastTilt: 999,
+        stableStart: 0,
+      };
+
+      // ===================== BLOCK: dom refs =====================
       const $ = (id) => document.getElementById(id);
-      const secIdle = $('sec-idle'), secPrep = $('sec-preparing'), secPrev = $('sec-preview'),
-            secSend = $('sec-sending'), secOk = $('sec-success'), errBox = $('error');
+      const err = $('err');
+      const video = $('video');
+      const btnOpen = $('btnOpen');
+      const btnStop = $('btnStop');
+      const btnTorch = $('btnTorch');
+      const zoomWrap = $('zoomWrap');
+      const zoom = $('zoom');
+      const btnShot = $('btnShot');
+      const hint = $('hint');
+      const permHint = $('permHint');
 
-      const btnSystem = $('btn-system'), btnGallery = $('btn-gallery'),
-            inSystem = $('file-system'), inGallery = $('file-gallery');
+      const bubble = $('bubble');
+      const tiltTxt = $('tiltTxt');
+      const dot = $('dot');
 
-      const imgPrev = $('img-preview'), metaBox = $('meta'), ta = $('comment'),
-            counter = $('counter'), btnReplace = $('btn-replace'), btnSend = $('btn-send'),
-            btnCancel = $('btn-cancel'), bar = $('bar'), btnDownload = $('btn-download'), btnNew = $('btn-new');
+      const secCam = $('sec-camera');
+      const secPrev = $('sec-preview');
+      const photo = $('photo');
+      const meta = $('meta');
+      const btnRetake = $('btnRetake');
+      const btnSave = $('btnSave');
 
-      // Уровнемер
-      const btnLevel = $('btn-level'), dot = $('dot'), lvlText = $('lvlText');
-
-      // ====== State ======
-      let phase = 'idle';           // idle | preparing | preview | sending | success
-      let entryMethod = null;       // 'system' | 'gallery'
-      let previewURL = null;        // ObjectURL
-      let previewBlob = null;       // Blob
-      let previewMeta = null;       // {width,height,type,size}
-      const CHAR_LIMIT = 800;
-
-      function setPhase(next){
-        phase = next;
-        secIdle.classList.toggle('hidden', next!=='idle');
-        secPrep.classList.toggle('hidden', next!=='preparing');
-        secPrev.classList.toggle('hidden', next!=='preview');
-        secSend.classList.toggle('hidden', next!=='sending');
-        secOk.classList.toggle('hidden', next!=='success');
-      }
+      // ===================== BLOCK: utils =====================
       function setError(msg){
-        if(!msg){ errBox.classList.add('hidden'); errBox.textContent=''; return; }
-        errBox.textContent = msg;
-        errBox.classList.remove('hidden');
+        if(!msg){ err.classList.add('hidden'); err.textContent=''; return; }
+        err.textContent = msg; err.classList.remove('hidden');
       }
-      function haptic(type){ try { tg?.HapticFeedback?.impactOccurred?.(type || 'light'); } catch(e){} }
-      function log(ev, payload){ try { console.log('[telemetry]', ev, payload||{}); } catch(e){} }
+      function clamp(v, a, b){ return Math.min(b, Math.max(a, v)); }
+      function haptic(){ try{ window.Telegram?.WebApp?.HapticFeedback?.impactOccurred?.("light"); }catch(e){} }
 
-      // toBlob polyfill (старые WebKit)
-      if(!HTMLCanvasElement.prototype.toBlob){
-        HTMLCanvasElement.prototype.toBlob = function(cb, type, quality){
-          const dataURL = this.toDataURL(type, quality).split(',')[1];
-          const bin = atob(dataURL); const len = bin.length; const arr = new Uint8Array(len);
-          for(let i=0;i<len;i++) arr[i] = bin.charCodeAt(i);
-          cb(new Blob([arr], {type: type || 'image/png'}));
+      function showPreview(dataUrl, w, h){
+        photo.src = dataUrl;
+        meta.textContent = `${w}×${h}`;
+        secCam.classList.add('hidden');
+        secPrev.classList.remove('hidden');
+      }
+
+      function backToCamera(){
+        secPrev.classList.add('hidden');
+        secCam.classList.remove('hidden');
+      }
+
+      // ===================== BLOCK: camera open/close =====================
+      async function openCamera(){
+        setError('');
+        try{
+          // 1) Права на датчики (iOS требует явного запроса из жеста)
+          await enableLevelSensors();
+
+          // 2) Открываем камеру по facingMode
+          const s = await navigator.mediaDevices.getUserMedia({ video: CONFIG.idealFacing, audio: false });
+          await bindStream(s);
+
+          // 3) Попробуем найти реальную заднюю по label и переключиться
+          const rearId = await findRearDeviceId();
+          if(rearId){
+            // если текущий track не rear — пересоздаём стрим
+            if (!/back|rear|environment/i.test(S.track?.label || '')) {
+              try{
+                const s2 = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: rearId } }, audio:false });
+                await bindStream(s2);
+              }catch(e){}
+            }
+          }
+        }catch(e){
+          console.error(e);
+          setError('Не удалось открыть камеру. Проверьте разрешения и HTTPS.');
         }
       }
 
-      // ====== Entry buttons ======
-      btnSystem.addEventListener('click', () => { setError(null); entryMethod='system'; inSystem.click(); });
-      btnGallery.addEventListener('click', () => { setError(null); entryMethod='gallery'; inGallery.click(); });
+      async function bindStream(stream){
+        // Остановим прошлый
+        stopCamera();
 
-      inSystem.addEventListener('change', (e)=> handlePickedFile(e.target.files && e.target.files[0]));
-      inGallery.addEventListener('change', (e)=> handlePickedFile(e.target.files && e.target.files[0]));
+        S.stream = stream;
+        S.track = stream.getVideoTracks()[0];
 
-      btnReplace.addEventListener('click', () => {
-        if(entryMethod==='system') inSystem.click(); else inGallery.click();
-      });
+        // Возможности
+        const caps = S.track.getCapabilities?.() || {};
+        // Torch
+        S.torchCap = !!caps.torch;
+        btnTorch.classList.toggle('hidden', !S.torchCap);
+        // Zoom
+        if (typeof caps.zoom === 'number' || (caps.zoom && (caps.zoom.min||caps.zoom.max))) {
+          S.zoomCap = {
+            min: caps.zoom.min ?? 1,
+            max: caps.zoom.max ?? Math.max(1, caps.zoom),
+            step: caps.zoom.step ?? 0.01
+          };
+          zoom.min = S.zoomCap.min; zoom.max = S.zoomCap.max; zoom.step = S.zoomCap.step; zoom.value = caps.zoom.min ?? 1;
+          zoomWrap.classList.remove('hidden');
+        } else {
+          S.zoomCap = null;
+          zoomWrap.classList.add('hidden');
+        }
 
-      ta.addEventListener('input', () => {
-        if(ta.value.length > CHAR_LIMIT) ta.value = ta.value.slice(0, CHAR_LIMIT);
-        counter.textContent = ta.value.length + '/' + CHAR_LIMIT;
-      });
+        video.srcObject = stream;
+        await video.play();
+      }
 
-      btnSend.addEventListener('click', startStubUpload);
-      btnCancel?.addEventListener('click', () => { setPhase('preview'); bar.style.width='0%'; });
-      btnDownload?.addEventListener('click', downloadPayload);
-      btnNew?.addEventListener('click', resetAll);
+      function stopCamera(){
+        try{
+          video.pause();
+          if (S.track) { try{ S.track.stop(); }catch(e){} }
+          if (S.stream) {
+            S.stream.getTracks().forEach(t=>{ try{ t.stop(); }catch(e){} });
+          }
+        }catch(e){}
+        S.stream = null; S.track = null;
+      }
 
-      window.addEventListener('beforeunload', () => { if(previewURL){ try{ URL.revokeObjectURL(previewURL); }catch(e){} } });
+      async function findRearDeviceId(){
+        try{
+          const list = await navigator.mediaDevices.enumerateDevices();
+          const videoInputs = list.filter(d=>d.kind==='videoinput');
+          const rear = videoInputs.find(d=>/back|rear|environment/i.test(d.label));
+          return rear?.deviceId || null;
+        }catch(e){ return null; }
+      }
 
-      // ====== Pipeline ======
-      async function handlePickedFile(file){
-        if(!file) return;
-        setError(null);
-        setPhase('preparing');
+      // ===================== BLOCK: camera actions (torch/zoom/shot) =====================
+      async function toggleTorch(){
+        if(!S.track || !S.torchCap) return;
+        try{
+          const cur = S._torchOn = !S._torchOn;
+          await S.track.applyConstraints({ advanced: [{ torch: cur }] });
+          btnTorch.textContent = cur ? '🔦 Фонарь (вкл.)' : '🔦 Фонарь';
+        }catch(e){
+          btnTorch.classList.add('hidden');
+        }
+      }
+
+      async function applyZoom(val){
+        if(!S.track || !S.zoomCap) return;
+        try{
+          await S.track.applyConstraints({ advanced: [{ zoom: parseFloat(val) }] });
+        }catch(e){}
+      }
+
+      async function takeShot(){
+        if(!video.videoWidth || !video.videoHeight) return;
+        haptic();
+
+        // Рисуем кадр на canvas, ресайз до maxSide
+        const srcW = video.videoWidth, srcH = video.videoHeight;
+        const scale = Math.min(1, CONFIG.maxSide / Math.max(srcW, srcH));
+        const w = Math.max(1, Math.round(srcW * scale));
+        const h = Math.max(1, Math.round(srcH * scale));
+
+        const c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        const ctx = c.getContext('2d');
+        ctx.drawImage(video, 0, 0, w, h);
+
+        // webp → jpeg fallback
+        let dataUrl = c.toDataURL('image/webp', 0.85);
+        if (!/^data:image\/webp/.test(dataUrl)) {
+          dataUrl = c.toDataURL('image/jpeg', 0.85);
+        }
+        showPreview(dataUrl, w, h);
+      }
+
+      // ===================== BLOCK: level sensors =====================
+      async function enableLevelSensors(){
+        // Уже включали
+        if (S.levelOn) return;
+        let granted = false;
 
         try{
-          const loaded = await loadBitmap(file);
-
-          const maxSide = 2000;
-          const srcW = loaded.width, srcH = loaded.height;
-          const scale = Math.min(1, maxSide / Math.max(srcW, srcH));
-          const cw = Math.max(1, Math.round(srcW * scale));
-          const ch = Math.max(1, Math.round(srcH * scale));
-
-          const canvas = document.createElement('canvas');
-          canvas.width = cw; canvas.height = ch;
-          const ctx = canvas.getContext('2d');
-
-          if(loaded.bitmap){
-            ctx.drawImage(loaded.bitmap, 0, 0, cw, ch);
-            try{ loaded.bitmap.close && loaded.bitmap.close(); }catch(e){}
-          }else{
-            ctx.drawImage(loaded.img, 0, 0, cw, ch);
-            try{ URL.revokeObjectURL(loaded.url); }catch(e){}
-          }
-
-          const out = await compressFromCanvas(canvas);
-
-          if(previewURL){ try{ URL.revokeObjectURL(previewURL); }catch(e){} }
-          previewURL = out.url;
-          previewBlob = out.blob;
-          previewMeta = { width: out.width, height: out.height, type: out.blob.type, size: out.blob.size };
-
-          imgPrev.src = previewURL;
-          metaBox.textContent = `${previewMeta.width}×${previewMeta.height} • ${Math.round(previewMeta.size/1024)} KB • ${previewMeta.type}`;
-          btnSend.disabled = !previewBlob;
-
-          setPhase('preview');
-          log(entryMethod==='system' ? 'shot_taken_system' : 'image_selected_gallery', previewMeta);
-        }catch(err){
-          console.error(err);
-          setError('Не удалось обработать файл. Убедитесь, что это изображение (JPEG/PNG/HEIC/WEBP).');
-          setPhase('idle');
-        }
-      }
-
-      async function loadBitmap(file){
-        if('createImageBitmap' in window){
-          try{
-            const bitmap = await createImageBitmap(file, { imageOrientation:'from-image' });
-            return { bitmap, width: bitmap.width, height: bitmap.height };
-          }catch(e1){
-            try{
-              const bitmap = await createImageBitmap(file);
-              return { bitmap, width: bitmap.width, height: bitmap.height };
-            }catch(e2){}
-          }
-        }
-        const url = URL.createObjectURL(file);
-        const img = await new Promise((resolve, reject)=>{
-          const el = new Image();
-          el.onload = ()=> resolve(el);
-          el.onerror = (er)=> reject(er);
-          el.src = url;
-        });
-        return { img, url, width: img.naturalWidth || img.width, height: img.naturalHeight || img.height };
-      }
-
-      async function compressFromCanvas(canvas){
-        const maxSide = 2000;
-        const w = canvas.width, h = canvas.height;
-        const scale = Math.min(1, maxSide / Math.max(w,h));
-        let work = canvas;
-        if(scale < 1){
-          const cw = Math.max(1, Math.round(w * scale)), ch = Math.max(1, Math.round(h * scale));
-          const tmp = document.createElement('canvas'); tmp.width=cw; tmp.height=ch;
-          tmp.getContext('2d').drawImage(canvas, 0, 0, cw, ch);
-          work = tmp;
-        }
-        let blob = await new Promise(res=> work.toBlob(res, 'image/webp', .85));
-        if(!blob || blob.type !== 'image/webp'){
-          blob = await new Promise(res=> work.toBlob(res, 'image/jpeg', .85));
-        }
-        const url = URL.createObjectURL(blob);
-        return { blob, url, width: work.width, height: work.height };
-      }
-
-      // ====== Upload stub ======
-      function startStubUpload(){
-        setPhase('sending'); bar.style.width='0%'; haptic('light');
-        log('send_clicked',{ hasPhoto: !!previewBlob, commentLen: (ta.value||'').length });
-        const started = Date.now();
-        const timer = setInterval(()=>{
-          const cur = parseFloat(bar.style.width) || 0;
-          const next = Math.min(100, cur + Math.random()*18 + 4);
-          bar.style.width = next + '%';
-          if(next >= 100){
-            clearInterval(timer);
-            haptic('light');
-            setPhase('success');
-            log('upload_success', { ms: Date.now()-started });
-          }
-        }, 180);
-      }
-
-      function downloadPayload(){
-        const rid = (crypto && crypto.randomUUID) ? crypto.randomUUID() : ('rid-' + Date.now() + '-' + Math.random().toString(16).slice(2));
-        const payload = {
-          ok: true,
-          request_id: rid,
-          comment: ta.value || '',
-          image: previewMeta,
-          image_object_url: previewURL, // только для демонстрации
-          ts: new Date().toISOString()
-        };
-        const blob = new Blob([JSON.stringify(payload, null, 2)], { type:'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a'); a.href = url; a.download = 'payload_stub.json';
-        document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
-      }
-
-      function resetAll(){
-        setError(null);
-        try{ if(previewURL) URL.revokeObjectURL(previewURL); }catch(e){}
-        previewURL = null; previewBlob = null; previewMeta = null;
-        ta.value = ''; counter.textContent = '0/800'; bar.style.width='0%';
-        btnSend.disabled = true; entryMethod = null;
-        setPhase('idle');
-      }
-
-      // ====== Мини-уровнемер (опционально) ======
-      let sensorsOn = false, lastUpdate = 0;
-      btnLevel.addEventListener('click', toggleLevel);
-
-      async function toggleLevel(){
-        if(sensorsOn){ stopLevel(); return; }
-        const ok = await startLevel();
-        if(!ok){ alert('Датчики недоступны или запрещены браузером/WebView.'); }
-      }
-      function stopLevel(){
-        window.removeEventListener('deviceorientation', onOrientation, true);
-        window.removeEventListener('devicemotion', onMotion, true);
-        sensorsOn = false;
-        dot.className = 'dot';
-        lvlText.textContent = 'Уровнемер выкл.';
-        btnLevel.textContent = 'Включить';
-      }
-      async function startLevel(){
-        try{
-          // iOS-permission
-          if (typeof DeviceOrientationEvent !== "undefined" && typeof DeviceOrientationEvent.requestPermission === "function") {
+          // iOS 13+ пермишен
+          if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
             const p = await DeviceOrientationEvent.requestPermission();
-            if (p === "granted") {
+            if (p === 'granted') {
               window.addEventListener('deviceorientation', onOrientation, true);
-              sensorsOn = true; lvlText.textContent = 'Уровнемер вкл.'; btnLevel.textContent = 'Выключить'; return true;
+              granted = true;
             }
           }
-          if ("ondeviceorientation" in window) {
+          // Android/другие
+          if (!granted && 'ondeviceorientation' in window) {
             window.addEventListener('deviceorientation', onOrientation, true);
-            sensorsOn = true; lvlText.textContent = 'Уровнемер вкл.'; btnLevel.textContent = 'Выключить'; return true;
+            granted = true;
           }
-          if (typeof DeviceMotionEvent !== "undefined" && typeof DeviceMotionEvent.requestPermission === "function") {
-            const p2 = await DeviceMotionEvent.requestPermission();
-            if (p2 === "granted") {
+          // Fallback через devicemotion (менее точно)
+          if (!granted) {
+            if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+              const p2 = await DeviceMotionEvent.requestPermission();
+              if (p2 === 'granted') {
+                window.addEventListener('devicemotion', onMotion, true);
+                granted = true;
+              }
+            } else if ('ondevicemotion' in window) {
               window.addEventListener('devicemotion', onMotion, true);
-              sensorsOn = true; lvlText.textContent = 'Уровнемер вкл.'; btnLevel.textContent = 'Выключить'; return true;
+              granted = true;
             }
           }
-          if ("ondevicemotion" in window) {
-            window.addEventListener('devicemotion', onMotion, true);
-            sensorsOn = true; lvlText.textContent = 'Уровнемер вкл.'; btnLevel.textContent = 'Выключить'; return true;
-          }
-          return false;
-        } catch(e){ return false; }
-      }
-      function onOrientation(e){
-        const pitch = (e.beta  ?? 0); // -180..180
-        const roll  = (e.gamma ?? 0); // -90..90
-        const tilt  = Math.sqrt(pitch*pitch + roll*roll);
-        paintDot(tilt);
-      }
-      function onMotion(evt){
-        const a = evt.accelerationIncludingGravity || {};
-        const x = a.x || 0, y = a.y || 0, z = a.z || 0;
-        const g = Math.hypot(x,y,z) || 9.81;
-        const tilt = Math.acos(Math.min(1, Math.abs(z)/g)) * 180/Math.PI; // 0° — плоско
-        paintDot(tilt);
-      }
-      function paintDot(tilt){
-        const now = performance.now();
-        if(now - lastUpdate < 100) return; // ~10fps достаточно
-        lastUpdate = now;
-        if(tilt <= 5){ dot.className='dot ok'; lvlText.textContent='Ровно'; haptic('light'); }
-        else if(tilt <= 10){ dot.className='dot warn'; lvlText.textContent=tilt.toFixed(0)+'°'; }
-        else { dot.className='dot'; lvlText.textContent=tilt.toFixed(0)+'°'; }
+        }catch(e){}
+
+        S.levelOn = granted;
+        permHint.classList.toggle('hidden', granted);
       }
 
-      // ====== Init ======
-      setPhase('idle');
-      counter.textContent = '0/800';
+      function onOrientation(e){
+        const pitch = e.beta ?? 0;  // -180..180 (вперёд/назад)
+        const roll  = e.gamma ?? 0; // -90..90  (влево/вправо)
+        const tilt  = Math.sqrt(pitch*pitch + roll*roll);
+        paintLevel(pitch, roll, tilt);
+      }
+      function onMotion(e){
+        const a = e.accelerationIncludingGravity || {};
+        const x = a.x||0, y=a.y||0, z=a.z||0;
+        const g = Math.hypot(x,y,z)||9.81;
+        const tilt = Math.acos(Math.min(1, Math.abs(z)/g))*180/Math.PI;
+        // Грубая оценка направления:
+        const pitch = (Math.atan2(-x, Math.sqrt(y*y+z*z))*180/Math.PI)||0;
+        const roll  = (Math.atan2(y, z)*180/Math.PI)||0;
+        paintLevel(pitch, roll, tilt);
+      }
+
+      function paintLevel(pitch, roll, tilt){
+        // Смещение пузырька в пределах кольца (радиус ~ 30px)
+        const R = 30;
+        const nx = clamp(roll/30, -1, 1);
+        const ny = clamp(pitch/30, -1, 1);
+        bubble.style.transform = `translate(calc(-50% + ${nx*R}px), calc(-50% + ${-ny*R}px))`;
+
+        tiltTxt.textContent = `${tilt.toFixed(1)}°`;
+
+        dot.classList.remove('ok','warn','bad');
+        if (tilt <= CONFIG.levelThreshold) { dot.classList.add('ok'); hint.textContent = 'Ровно'; }
+        else if (tilt <= CONFIG.levelThreshold*2) { dot.classList.add('warn'); hint.textContent = 'Выравнивайте…'; }
+        else { dot.classList.add('bad'); hint.textContent = 'Наведите сверху'; }
+
+        // Автоспуск (если включён)
+        const t = performance.now();
+        if (CONFIG.stableMs > 0) {
+          if (tilt <= CONFIG.levelThreshold) {
+            if (S.stableStart === 0) S.stableStart = t;
+            if (t - S.stableStart >= CONFIG.stableMs) {
+              S.stableStart = 0;
+              takeShot();
+            }
+          } else {
+            S.stableStart = 0;
+          }
+        }
+      }
+
+      // ===================== BLOCK: wiring =====================
+      btnOpen.addEventListener('click', openCamera);
+      btnStop.addEventListener('click', () => { stopCamera(); });
+      btnTorch.addEventListener('click', toggleTorch);
+      zoom.addEventListener('input', (e)=> applyZoom(e.target.value));
+      btnShot.addEventListener('click', takeShot);
+
+      btnRetake.addEventListener('click', () => { backToCamera(); });
+      btnSave.addEventListener('click', () => {
+        // Скачиваем изображение из <img src=dataURL>
+        const url = photo.src;
+        const a = document.createElement('a');
+        a.href = url; a.download = 'photo.jpg';
+        document.body.appendChild(a); a.click(); a.remove();
+      });
+
+      window.addEventListener('pagehide', stopCamera);
+      window.addEventListener('beforeunload', stopCamera);
+
+      // ===================== NOTE =====================
+      // Работает на HTTPS или localhost. В Telegram WebView поведение зависит от платформы.
+      // Если камера не открывается: проверьте разрешения на камеру/движение-ориентацию (iOS: Настройки > Safari/Telegram > Motion & Orientation).
     </script>
   </body>
 </html>
