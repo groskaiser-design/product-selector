@@ -47,8 +47,8 @@
     .level-target.ok{border-color:#34d399}
     .level-bubble{
       position:absolute;left:50%;top:50%;
-      /* двигаем ТОЛЬКО через CSS-переменные; без transition на transform */
-      transform: translate(calc(-50% + var(--dx,0px)), calc(-50% + var(--dy,0px))) translateZ(0);
+      /* держим базовое центрирование, а реальный сдвиг задаём из JS (см. startLevelLoop) */
+      transform: translate(-50%, -50%) translateZ(0);
       border-radius:50%;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.35);
       will-change:transform;
       transition: background-color .12s; /* только цвет */
@@ -498,8 +498,21 @@
   }
 
   // сенсоры → сырые значения; отрисовка — в RAF
-  function onOrient(e){ if(_view!=='camera') return; const pitch=e.beta??0, roll=e.gamma??0; const nx=clamp(roll/30,-1,1), ny=clamp(pitch/30,-1,1); _rawNx=nx; _rawNy=ny; }
-  function onMotion(e){ if(_view!=='camera') return; const a=e.accelerationIncludingGravity||{}; const x=a.x||0,y=a.y||0,z=a.z||0; const pitch=(Math.atan2(-x,Math.sqrt(y*y+z*z))*180/Math.PI)||0; const roll=(Math.atan2(y,z)*180/Math.PI)||0; const nx=clamp(roll/30,-1,1), ny=clamp(pitch/30,-1,1); _rawNx=nx; _rawNy=ny; }
+  function onOrient(e){
+    if(_view!=='camera') return;
+    const pitch=e.beta??0, roll=e.gamma??0;
+    const nx=clamp(roll/30,-1,1), ny=clamp(pitch/30,-1,1);
+    _rawNx=nx; _rawNy=ny;
+  }
+  function onMotion(e){
+    if(_view!=='camera') return;
+    const a=e.accelerationIncludingGravity||{};
+    const x=a.x||0,y=a.y||0,z=a.z||0;
+    const pitch=(Math.atan2(-x,Math.sqrt(y*y+z*z))*180/Math.PI)||0;
+    const roll =(Math.atan2( y, z)*180/Math.PI)||0;
+    const nx=clamp(roll/30,-1,1), ny=clamp(pitch/30,-1,1);
+    _rawNx=nx; _rawNy=ny;
+  }
 
   function setLevelOK(next){
     if(next){ _lvlHits++; _lvlMiss=0; } else { _lvlMiss++; _lvlHits=0; }
@@ -519,7 +532,10 @@
     const step=()=>{
       if(_view==='camera'){
         const nearCenter = (Math.abs(_fx2) < CONFIG.ZERO_THRESH && Math.abs(_fy2) < CONFIG.ZERO_THRESH);
-        if(nearCenter){ _bx = _bx + CONFIG.BASELINE_TRIM_ALPHA*(_rawNx - _bx); _by = _by + CONFIG.BASELINE_TRIM_ALPHA*(_rawNy - _by); }
+        if(nearCenter){
+          _bx = _bx + CONFIG.BASELINE_TRIM_ALPHA*(_rawNx - _bx);
+          _by = _by + CONFIG.BASELINE_TRIM_ALPHA*(_rawNy - _by);
+        }
 
         const rx = _rawNx - _bx; const ry = _rawNy - _by;
         const a1 = CONFIG.SMOOTH2_ALPHA1, a2 = CONFIG.SMOOTH2_ALPHA2, dz = CONFIG.SMOOTH_DEADZONE;
@@ -533,12 +549,16 @@
           if(Math.abs(ny2 - _fy2) < dz) ny2 = _fy2;
           _fx2 = nx2; _fy2 = ny2;
         }
+
         const {sx,sy}=_axis; const R=70*0.45;
         const dx = sx * _fx2 * R; const dy = sy * _fy2 * R;
 
-        // мгновенный RAF-сдвиг через CSS переменные (без transition)
-        levelBubble.style.setProperty('--dx', `${dx}px`);
-        levelBubble.style.setProperty('--dy', `${dy}px`);
+        // Прямое задание transform (без CSS-переменных) — надёжнее в WebView/Safari
+        if (Number.isFinite(dx) && Number.isFinite(dy)) {
+          // left/top стоят на 50%, чтобы центр был в середине.
+          // translate(-BUBBLE_R, -BUBBLE_R) эквивалентен прежнему translate(-50%, -50%).
+          levelBubble.style.transform = `translate(${dx - CONFIG.BUBBLE_R}px, ${dy - CONFIG.BUBBLE_R}px) translateZ(0)`;
+        }
 
         setLevelOK(isInside(dx,dy));
       }
