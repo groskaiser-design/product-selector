@@ -45,9 +45,11 @@
     .level-target.ok{border-color:#34d399}
     .level-bubble{
       position:absolute;left:50%;top:50%;
+      /* никаких плавностей на движении */
       transform: translate(-50%, -50%) translateZ(0);
       border-radius:50%;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.35);
       will-change:transform;
+      /* оставляем только плавное изменение цвета */
       transition: background-color .12s;
     }
     .level-bubble.ok{background:#22c55e}
@@ -145,10 +147,8 @@
     idealFacing: { facingMode: { ideal: 'environment' }, aspectRatio: { ideal: 3/4 }, height: { ideal: 1920 }, width: { ideal: 1440 } },
     maxSide: 4096, jpegQ: 0.95, webpQ: 0.95,
 
-    // level
+    // level geometry
     BUBBLE_R: 12, TARGET_R: 15, ENFORCE_GEOMETRY: true,
-    SMOOTH2_ALPHA1: 0.22, SMOOTH2_ALPHA2: 0.15, SMOOTH_DEADZONE: 0.02,
-    BASELINE_TRIM_ALPHA: 0.004, ZERO_THRESH: 0.06,
 
     // presence
     DETECT_HZ: 12, EDGE_MARGIN_PX: 3, MIN_SIDE_FRAC: 0.25, BOX_ALPHA: 0.18,
@@ -160,15 +160,16 @@
   const S = { stream:null, track:null, torchCap:false, _torchOn:false, levelOn:false };
   let _lastBlob = null, _view='camera', _taking=false;
 
-  // Level vars
-  let _rawNx=0,_rawNy=0, _fx1=0,_fy1=0, _fx2=0,_fy2=0, _bx=0,_by=0, _initF=false, _rafId=null;
-  let _levelRadius = 40;
+  // RAW level inputs (без сглаживания)
+  let _rawNx=0, _rawNy=0, _rafId=null, _levelRadius=40;
+
+  // Hysteresis only for color/ok-state
   let _levelOK=false, _lvlHits=0, _lvlMiss=0; const LVL_ON=2, LVL_OFF=3;
 
   // Presence
   let _detIdle=null, _lastDetTS=0, _fitOK=false, _hitCount=0,_missCount=0,_lastInsideTS=0;
 
-  // iOS sensors
+  // iOS
   const isIOS = /iP(hone|od|ad)/.test(navigator.userAgent);
   let _sensorLastTS = 0, _sensorWatch = null;
   const SENSOR_STALE_MS = 1500;
@@ -275,19 +276,18 @@
   async function startCameraFlow(){
     _lastBlob=null; _taking=false;
     _fitOK=false; _levelOK=false; _lvlHits=0; _lvlMiss=0; _hitCount=0; _missCount=0; _lastInsideTS=0;
-    _bx=0; _by=0; _initF=false; _sensorLastTS=0;
+    _sensorLastTS=0;
     updateButtons(); setError(''); syncRadii();
     recomputeRects(); computeLevelRadius(); startObservers();
     showCameraUI();
 
-    // iOS: автоматически запросим доступ на первом касании
+    // iOS: запросим доступ к сенсорам на первом касании
     attachIOSPermissionOneShot();
 
-    await enableLevelSensors(true); // первая попытка
+    await enableLevelSensors(true);
     const camOk = await openCameraGUM();
     if(!camOk){ try{ fileCam?.click(); }catch{} }
 
-    // если спустя 900мс нет событий — подскажем про жест
     if(isIOS) setTimeout(()=>{ if(_sensorLastTS===0) chipInfo.textContent='Коснитесь экрана, чтобы включить «Движение и ориентация»'; }, 900);
   }
 
@@ -421,9 +421,10 @@
     if (a >= 135 && a < 225) return 180;
     return 270;
   }
+  // более чувствительная шкала: 30° => полное смещение
   function mapTilt(pitchDeg, rollDeg){
     const a=getScreenAngle();
-    const s=45; // 45° -> 1.0
+    const s=30;
     const pr=clamp(pitchDeg/s, -1, 1);
     const rr=clamp(rollDeg /s, -1, 1);
     let nx=0, ny=0;
@@ -454,7 +455,6 @@
     return ok;
   }
 
-  // Автозапрос на первом касании (только iOS). Добавляем одноразовый слушатель.
   function attachIOSPermissionOneShot(){
     if(!isIOS) return;
     const handler = async () => {
@@ -475,12 +475,8 @@
         granted = (await DeviceMotionEvent.requestPermission())==='granted';
         if(granted) window.addEventListener('devicemotion', onMotion, true);
       }
-      if(granted){
-        S.levelOn=true;
-        chipInfo.textContent='Выровняйте телефон, положите банковскую карту в серую зону';
-      } else {
-        chipInfo.textContent='Разрешите «Движение и ориентация» в Safari, затем коснитесь экрана';
-      }
+      if(granted){ S.levelOn=true; chipInfo.textContent='Выровняйте телефон, положите банковскую карту в серую зону'; }
+      else { chipInfo.textContent='Разрешите «Движение и ориентация» в Safari, затем коснитесь экрана'; }
     }catch{ chipInfo.textContent='Не удалось включить датчики ориентации'; }
   }
 
@@ -518,7 +514,7 @@
   window.addEventListener('pageshow', ()=>{ if(_view==='camera'){ _sensorLastTS=0; attachIOSPermissionOneShot(); }});
   document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible' && _view==='camera'){ _sensorLastTS=0; attachIOSPermissionOneShot(); } });
 
-  // ---------- LEVEL LOOP ----------
+  // ---------- LEVEL LOOP (RAW) ----------
   function setLevelOK(next){
     if(next){ _lvlHits++; _lvlMiss=0; } else { _lvlMiss++; _lvlHits=0; }
     const prev=_levelOK;
@@ -536,28 +532,10 @@
     if(_rafId) return;
     const step=()=>{
       if(_view==='camera'){
-        const nearCenter=(Math.abs(_fx2)<CONFIG.ZERO_THRESH && Math.abs(_fy2)<CONFIG.ZERO_THRESH);
-        if(nearCenter){
-          _bx = _bx + CONFIG.BASELINE_TRIM_ALPHA*(_rawNx - _bx);
-          _by = _by + CONFIG.BASELINE_TRIM_ALPHA*(_rawNy - _by);
-        }
-
-        const rx=_rawNx-_bx, ry=_rawNy-_by;
-        const a1=CONFIG.SMOOTH2_ALPHA1, a2=CONFIG.SMOOTH2_ALPHA2, dz=CONFIG.SMOOTH_DEADZONE;
-        if(!_initF){ _fx1=rx; _fy1=ry; _fx2=rx; _fy2=ry; _initF=true; }
-        else{
-          _fx1 = _fx1 + a1*(rx - _fx1);
-          _fy1 = _fy1 + a1*(ry - _fy1);
-          let nx2 = _fx2 + a2*(_fx1 - _fx2);
-          let ny2 = _fy2 + a2*(_fy1 - _fy2);
-          if(Math.abs(nx2 - _fx2) < dz) nx2 = _fx2;
-          if(Math.abs(ny2 - _fy2) < dz) ny2 = _fy2;
-          _fx2 = nx2; _fy2 = ny2;
-        }
-
+        // прямое, сверхчувствительное движение
         const R=_levelRadius;
-        const dx=clamp(_fx2,-1,1)*R;
-        const dy=clamp(_fy2,-1,1)*R;
+        const dx=clamp(_rawNx,-1,1)*R;
+        const dy=clamp(_rawNy,-1,1)*R;
 
         levelBubble.style.transform = `translate(-50%, -50%) translate(${dx}px, ${dy}px) translateZ(0)`;
         setLevelOK(isInside(dx,dy));
