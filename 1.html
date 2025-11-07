@@ -138,6 +138,8 @@
     BUBBLE_R: 12,   // радиус точки, px
     TARGET_R: 16,   // радиус мишени, px
     ENFORCE_GEOMETRY: true,
+    // Как вести точку при наклоне вперёд: true = к верху экрана, false = к низу
+    FORWARD_MOVES_UP: false,
   };
 
   const S = { stream:null, track:null, torchCap:false, _torchOn:false, levelOn:false };
@@ -259,16 +261,55 @@
     photo.src=url; meta.textContent = `${w}×${h}`; secCam.classList.add('hidden'); secPrev.classList.remove('hidden');
   }
 
-  // ===================== LEVEL SENSORS =====================
+  // ===================== LEVEL SENSORS (axes & helpers) =====================
+  function getScreenAngle(){
+    let a = (screen.orientation?.angle ?? window.orientation ?? 0);
+    a = a % 360; if(a < 0) a += 360; return a;
+  }
+  function getAxisSigns(){
+    const angle = getScreenAngle();
+    const flip180 = (angle === 180) ? -1 : 1; // переворот телефона вверх ногами
+    const sx = flip180; // влево/вправо инвертируется при 180°
+    const userY = CONFIG.FORWARD_MOVES_UP ? -1 : 1; // вперёд вверх или вниз
+    const sy = flip180 * userY; // учтём 180°
+    return { sx, sy };
+  }
   function isInside(dx,dy){ return (Math.hypot(dx,dy) + CONFIG.BUBBLE_R) <= CONFIG.TARGET_R; }
 
-  async function enableLevelSensors(){ if(S.levelOn) return; let ok=false; try{ if(typeof DeviceOrientationEvent!=='undefined' && typeof DeviceOrientationEvent.requestPermission==='function'){ try{ const p=await DeviceOrientationEvent.requestPermission(); if(p==='granted'){ window.addEventListener('deviceorientation',onOrient,true); ok=true; } }catch{} } if(!ok && 'ondeviceorientation' in window){ window.addEventListener('deviceorientation',onOrient,true); ok=true; } if(!ok){ if(typeof DeviceMotionEvent!=='undefined' && typeof DeviceMotionEvent.requestPermission==='function'){ try{ const p2=await DeviceMotionEvent.requestPermission(); if(p2==='granted'){ window.addEventListener('devicemotion',onMotion,true); ok=true; } }catch{} } else if('ondevicemotion' in window){ window.addEventListener('devicemotion',onMotion,true); ok=true; } } }catch{} S.levelOn=ok; permHint.classList.toggle('hidden', ok); }
-  function onOrient(e){ const pitch=e.beta??0, roll=e.gamma??0; paintLevel(pitch,roll) }
-  function onMotion(e){ const a=e.accelerationIncludingGravity||{}; const x=a.x||0,y=a.y||0,z=a.z||0; const pitch=(Math.atan2(-x,Math.sqrt(y*y+z*z))*180/Math.PI)||0; const roll=(Math.atan2(y,z)*180/Math.PI)||0; paintLevel(pitch,roll); }
+  async function enableLevelSensors(){
+    if(S.levelOn) return; let ok=false;
+    try{
+      if(typeof DeviceOrientationEvent!== 'undefined' && typeof DeviceOrientationEvent.requestPermission==='function'){
+        try{ const p=await DeviceOrientationEvent.requestPermission(); if(p==='granted'){ window.addEventListener('deviceorientation',onOrient,true); ok=true; } }catch{}
+      }
+      if(!ok && 'ondeviceorientation' in window){ window.addEventListener('deviceorientation',onOrient,true); ok=true; }
+      if(!ok){
+        if(typeof DeviceMotionEvent!=='undefined' && typeof DeviceMotionEvent.requestPermission==='function'){
+          try{ const p2=await DeviceMotionEvent.requestPermission(); if(p2==='granted'){ window.addEventListener('devicemotion',onMotion,true); ok=true; } }catch{}
+        } else if('ondevicemotion' in window){ window.addEventListener('devicemotion',onMotion,true); ok=true; }
+      }
+    }catch{}
+    S.levelOn=ok; permHint.classList.toggle('hidden', ok);
+  }
+
+  function onOrient(e){ const pitch=e.beta??0, roll=e.gamma??0; paintLevel(pitch,roll); }
+  function onMotion(e){
+    const a=e.accelerationIncludingGravity||{}; const x=a.x||0,y=a.y||0,z=a.z||0;
+    const pitch=(Math.atan2(-x,Math.sqrt(y*y+z*z))*180/Math.PI)||0; // вперёд/назад
+    const roll=(Math.atan2(y,z)*180/Math.PI)||0;                    // влево/вправо
+    paintLevel(pitch,roll);
+  }
+
   function paintLevel(pitch, roll){
     const R=70; // рабочая зона движения
     const nx=clamp(roll/30,-1,1), ny=clamp(pitch/30,-1,1);
-    const dx=nx*R*0.45, dy=-ny*R*0.45;
+
+    // Знаки осей с учётом разворота экрана и предпочтения пользователя
+    const { sx, sy } = getAxisSigns();
+
+    const dx = sx * nx * R * 0.45;
+    const dy = sy * ny * R * 0.45;
+
     levelBubble.style.transform=`translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
 
     const okFully = isInside(dx,dy);
@@ -282,9 +323,8 @@
 
   // ===================== ENV HINT =====================
   function envHint(){
-    const https = !isSecureContext ? "• Нужен HTTPS (или localhost)." : "";
-    return `Камера требует разрешений.${https}
-• Если камера не открывается — проверьте права и попробуйте системную кнопку «Открыть во внешнем браузере».`;
+    const https = !isSecureContext ? "\n• Нужен HTTPS (или localhost)." : "";
+    return `Камера требует разрешений.${https}\n• Если камера не открывается — проверьте права и попробуйте системную кнопку «Открыть во внешнем браузере».`;
   }
 
   // ===================== TEARDOWN =====================
