@@ -151,15 +151,19 @@
     FORWARD_MOVES_UP: false,
 
     // EMA для точки уровня
-    SMOOTH_ALPHA: 0.25,
+    SMOOTH_ALPHA: 0.25,            // legacy (оставляем, вдруг пригодится)
+    SMOOTH2_ALPHA1: 0.22,          // первая ступень EMA
+    SMOOTH2_ALPHA2: 0.15,          // вторая ступень EMA
+    SMOOTH_DEADZONE: 0.02,         // 2% нормализованной шкалы — микродедзона против дрожи
 
     // -------- Card presence detector --------
-    DETECT_HZ: 3, // ещё мягче, чтобы не мешать анимации
+    DETECT_HZ: 10,                 // быстрее отклик
     EDGE_MARGIN_PX: 4,
     MIN_SIZE_PX: 24,
-    HIT_ON: 3,
-    HIT_OFF: 4,
-    BOX_ALPHA: 0.35
+    HIT_ON: 2,
+    HIT_OFF: 2,
+    BOX_ALPHA: 0.20,               // меньше инерция границ
+    HOLD_MAX_MS: 250               // максимум удержания "зелёного" без новых попаданий
   };
 
   const S = { stream:null, track:null, torchCap:false, _torchOn:false, levelOn:false };
@@ -167,17 +171,20 @@
   let _view = 'camera';              // 'camera' | 'photo'
   let _taking = false;               // идёт съёмка (freeze/encode)
 
-  // Данные уровня (RAF-петля вместо прямого рендера из событий)
-  let _rawNx = 0, _rawNy = 0;        // нормализованные входы -1..1 из датчиков
-  let _fx = 0, _fy = 0, _initF = false; // EMA фильтр
+  // Данные уровня (двухступенчатый EMA + дедзона, отрисовка в RAF)
+  let _rawNx = 0, _rawNy = 0;        // входы -1..1
+  let _fx1 = 0, _fy1 = 0;            // EMA1
+  let _fx2 = 0, _fy2 = 0;            // EMA2 (используем его)
+  let _initF = false;
   let _rafId = null;                 // RAF петля рендера пузырька
 
   // Детектор карты
   let _detIdle=null, _chipState='';
-  let _lastDetTS=0; // для троттлинга детектора
+  let _lastDetTS=0;                  // троттлинг детектора
   let _fitOK=false, _levelOK=false;
   let _Lbox=null,_Rbox=null,_Tbox=null,_Bbox=null;
   let _hitCount=0,_missCount=0;
+  let _lastInsideTS=0;               // для HOLD_MAX_MS
 
   // ===================== DOM =====================
   const $ = id => document.getElementById(id);
@@ -280,7 +287,7 @@
   async function startCameraFlow(){
     _lastBlob = null; _taking = false;
     _fitOK=false; _levelOK=false; _chipState='';
-    _Lbox=_Rbox=_Tbox=_Bbox=null; _hitCount=0; _missCount=0;
+    _Lbox=_Rbox=_Tbox=_Bbox=null; _hitCount=0; _missCount=0; _lastInsideTS=0;
     updateButtons();
     setError(''); syncRadii();
     showCameraUI();
@@ -430,13 +437,41 @@
   function onOrient(e){ if(_view!=='camera') return; const pitch=e.beta??0, roll=e.gamma??0; const nx=clamp(roll/30,-1,1), ny=clamp(pitch/30,-1,1); _rawNx=nx; _rawNy=ny; }
   function onMotion(e){ if(_view!=='camera') return; const a=e.accelerationIncludingGravity||{}; const x=a.x||0,y=a.y||0,z=a.z||0; const pitch=(Math.atan2(-x,Math.sqrt(y*y+z*z))*180/Math.PI)||0; const roll=(Math.atan2(y,z)*180/Math.PI)||0; const nx=clamp(roll/30,-1,1), ny=clamp(pitch/30,-1,1); _rawNx=nx; _rawNy=ny; }
 
-  function startLevelLoop(){ if(_rafId) return; const step=()=>{ if(_view==='camera'){ const alpha = CONFIG.SMOOTH_ALPHA; if(!_initF){ _fx=_rawNx; _fy=_rawNy; _initF=true; } else { _fx = _fx + alpha*(_rawNx - _fx); _fy = _fy + alpha*(_rawNy - _fy); } const {sx,sy}=getAxisSigns(); const R=70; const dx = sx * _fx * R * 0.45; const dy = sy * _fy * R * 0.45; levelBubble.style.transform=`translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`; _levelOK = isInside(dx,dy); levelBubble.classList.toggle('ok', _levelOK); levelTarget.classList.toggle('ok', _levelOK); if(_levelOK && _fitOK) setChip('Ровно • Карта в зоне — можно снимать', true); else if(!_fitOK) setChip('Карта вертикально в полосатой области справа', false); else setChip('Выравнивайте… (кнопка заблокирована)', false); updateButtons(); } _rafId=requestAnimationFrame(step); }; _rafId=requestAnimationFrame(step); }
+  function startLevelLoop(){
+    if(_rafId) return;
+    const step=()=>{
+      if(_view==='camera'){
+        const a1 = CONFIG.SMOOTH2_ALPHA1, a2 = CONFIG.SMOOTH2_ALPHA2, dz = CONFIG.SMOOTH_DEADZONE;
+        if(!_initF){ _fx1=_rawNx; _fy1=_rawNy; _fx2=_rawNx; _fy2=_rawNy; _initF=true; }
+        else {
+          _fx1 = _fx1 + a1*(_rawNx - _fx1);
+          _fy1 = _fy1 + a1*(_rawNy - _fy1);
+          let nx2 = _fx2 + a2*(_fx1 - _fx2);
+          let ny2 = _fy2 + a2*(_fy1 - _fy2);
+          if(Math.abs(nx2 - _fx2) < dz) nx2 = _fx2;
+          if(Math.abs(ny2 - _fy2) < dz) ny2 = _fy2;
+          _fx2 = nx2; _fy2 = ny2;
+        }
+        const {sx,sy}=getAxisSigns(); const R=70;
+        const dx = sx * _fx2 * R * 0.45; const dy = sy * _fy2 * R * 0.45;
+        levelBubble.style.transform=`translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+        _levelOK = isInside(dx,dy);
+        levelBubble.classList.toggle('ok', _levelOK); levelTarget.classList.toggle('ok', _levelOK);
+        if(_levelOK && _fitOK) setChip('Ровно • Карта в зоне — можно снимать', true);
+        else if(!_fitOK) setChip('Карта вертикально в полосатой области справа', false);
+        else setChip('Выравнивайте… (кнопка заблокирована)', false);
+        updateButtons();
+      }
+      _rafId=requestAnimationFrame(step);
+    };
+    _rafId=requestAnimationFrame(step);
+  }
   function stopLevelLoop(){ if(_rafId){ cancelAnimationFrame(_rafId); _rafId=null; } }
 
   // ---------- PRESENCE DETECTOR (карта целиком внутри зоны) ----------
   function startDetection(){
     stopDetection();
-    const ric = window.requestIdleCallback || function(cb, opts){ return setTimeout(cb, (opts && opts.timeout) || 200); };
+    const ric = window.requestIdleCallback || function(cb, opts){ return setTimeout(cb, (opts && opts.timeout) || 120); };
     const loop = ()=>{
       if(_view==='camera'){
         const now = performance.now();
@@ -444,10 +479,10 @@
           detectPresence();
           _lastDetTS = now;
         }
-        _detIdle = ric(loop, {timeout: 300});
+        _detIdle = ric(loop, {timeout: 120});
       }
     };
-    _detIdle = ric(loop, {timeout: 300});
+    _detIdle = ric(loop, {timeout: 120});
   }
   function stopDetection(){ const cic = window.cancelIdleCallback || clearTimeout; if(_detIdle){ cic(_detIdle); _detIdle=null; } }
 
@@ -456,7 +491,7 @@
 
     // даунскейл текущего кадра
     const wrap = document.getElementById('camWrap').getBoundingClientRect();
-    const sW = 144; // ещё меньше — легче для CPU
+    const sW = 144; // компактно и быстро
     const sH = Math.round(sW * (wrap.height / wrap.width));
     const c = document.createElement('canvas'); c.width=sW; c.height=sH;
     const ctx = c.getContext('2d', { willReadFrequently:true, desynchronized:true });
@@ -517,8 +552,12 @@
   }
 
   function applyPresence(hit){
-    if(hit){ _hitCount++; _missCount=0; } else { _missCount++; _hitCount=0; }
-    const ok = (_hitCount >= CONFIG.HIT_ON) ? true : (_missCount >= CONFIG.HIT_OFF ? false : _fitOK);
+    const now = performance.now();
+    if(hit){ _lastInsideTS = now; _hitCount++; _missCount=0; } else { _missCount++; _hitCount=0; }
+
+    // быстрая, но стабильная гистерезис-логика + ограничение по времени удержания
+    let ok = (_hitCount >= CONFIG.HIT_ON) ? true : (_missCount >= CONFIG.HIT_OFF ? false : _fitOK);
+    if(!hit && ok && (now - _lastInsideTS) > CONFIG.HOLD_MAX_MS){ ok = false; }
 
     if(ok!==_fitOK){
       _fitOK = ok;
@@ -556,7 +595,7 @@
     console.assert(CONFIG.BUBBLE_R>0 && CONFIG.TARGET_R>0, 'radii positive');
   })();
   (function testInsideMath(){ const T=CONFIG.TARGET_R-CONFIG.BUBBLE_R; console.assert(T>0,'T>0'); console.assert(isInside(0,0),'center'); console.assert(isInside(T,0),'boundary'); console.assert(!isInside(T+0.01,0),'outside'); })();
-  (function testDetectorSetup(){ console.assert(typeof startDetection==='function' && typeof stopDetection==='function', 'detector functions exist'); console.assert(CONFIG.DETECT_HZ>=3 && CONFIG.EDGE_MARGIN_PX>=2, 'detector sane'); })();
+  (function testDetectorSetup(){ console.assert(typeof startDetection==='function' && typeof stopDetection==='function', 'detector functions exist'); console.assert(CONFIG.DETECT_HZ>=8 && CONFIG.HOLD_MAX_MS<=300, 'detector fast response'); })();
   (function testRAF(){ console.assert(typeof startLevelLoop==='function' && typeof stopLevelLoop==='function', 'raf loop exists'); })();
   (function testSanitize(){ const s = sanitizeComment(`<img src=x onerror=alert(1)> треска & рис javascript: data:`); console.assert(!/<|script|onerror|javascript:|data:/i.test(s), 'sanitize blocks dangerous patterns'); })();
   </script>
