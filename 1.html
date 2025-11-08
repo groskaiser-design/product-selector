@@ -489,16 +489,16 @@
   // ==================== CONFIG ====================
   const CONFIG = {
     // Preview optimization - higher quality for modern devices
-    previewScale: PLATFORM.isIOS ? 1.0 : 1.0, // Full resolution on iPhone 16
+    previewScale: PLATFORM.isIOS ? 1.0 : 1.0,
     previewFPS: PLATFORM.isIOS ? 20 : 30,
     
-    // Camera - PORTRAIT orientation (width < height)
-    preferImageCapture: !PLATFORM.isIOS, // iOS ImageCapture often buggy
+    // Camera - FORCE PORTRAIT
+    preferImageCapture: !PLATFORM.isIOS,
     videoConstraints: {
-      facingMode: 'environment',
-      aspectRatio: { ideal: 0.75 }, // 3:4 portrait (width:height)
-      width: { ideal: 1440 },
-      height: { ideal: 1920 }
+      facingMode: { exact: 'environment' },
+      width: { min: 720, ideal: 1080, max: 1920 },
+      height: { min: 1280, ideal: 1920, max: 2560 },
+      aspectRatio: { exact: 0.75 } // FORCE 3:4 portrait
     },
     
     // Photo capture - high quality
@@ -721,52 +721,48 @@
   }
   
   async function openCamera() {
-    // Method 1: Try specific back camera with high resolution - PORTRAIT
-    const deviceId = await findBackCamera();
-    
+    // SIMPLE AND DIRECT: Request environment camera with PORTRAIT constraints
     try {
-      const constraints = deviceId
-        ? {
-            video: {
-              deviceId: { exact: deviceId },
-              width: { ideal: 1440, min: 1080 },
-              height: { ideal: 1920, min: 1440 },
-              aspectRatio: { ideal: 0.75 }, // 3:4 portrait
-              frameRate: { ideal: 30 }
-            },
-            audio: false
-          }
-        : {
-            video: {
-              ...CONFIG.videoConstraints,
-              width: { ideal: 1440, min: 1080 },
-              height: { ideal: 1920, min: 1440 },
-              frameRate: { ideal: 30 }
-            },
-            audio: false
-          };
-      
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { exact: 'environment' },
+          width: { min: 720, ideal: 1080, max: 1920 },
+          height: { min: 1280, ideal: 1920, max: 2560 },
+          aspectRatio: { exact: 0.75 }
+        },
+        audio: false
+      });
       bindStream(stream);
       return true;
     } catch (err) {
-      console.warn('Camera open failed:', err);
+      console.warn('Exact portrait failed, trying ideal:', err);
       
-      // Method 2: Simple fallback - PORTRAIT
+      // Fallback: less strict
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { 
+          video: {
             facingMode: 'environment',
-            width: { ideal: 1440 },
-            height: { ideal: 1920 },
-            aspectRatio: { ideal: 0.75 }
+            width: { ideal: 1080 },
+            height: { ideal: 1920 }
           },
           audio: false
         });
         bindStream(stream);
         return true;
-      } catch {
-        return false;
+      } catch (err2) {
+        console.warn('Ideal failed, trying basic:', err2);
+        
+        // Last resort
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: 'environment' },
+            audio: false
+          });
+          bindStream(stream);
+          return true;
+        } catch {
+          return false;
+        }
       }
     }
   }
