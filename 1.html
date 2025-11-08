@@ -138,7 +138,8 @@
     maxPhotoSide: 8192, jpegQuality: 0.95,
     bubbleRadius: 10, targetRadius: 15, levelRadius: 50,
     needsPermissionRequest: PLATFORM.isIOS, sensorStaleMs: 4000,
-    orientationStaleMs: 400, tiltSmoothing: 0.15
+    orientationStaleMs: 400, tiltSmoothing: 0.15,
+    allowTakePhoto: false
   };
 
   // ==================== STATE ====================
@@ -255,7 +256,7 @@
     DOM.btnTorch.classList.toggle('hidden',!STATE.hasTorch);
 
     // If ImageCapture is available, keep reference for takePhoto/grabFrame
-    if(CONFIG.preferImageCapture && typeof ImageCapture!=='undefined'){
+    if(typeof ImageCapture!=='undefined'){
       try{ STATE.imageCapture=new ImageCapture(STATE.track); }catch{}
     }
   }
@@ -274,8 +275,32 @@
   function computeCoverCropByAspect(vw,vh,canvasAspect){ let sx,sy,sw,sh; const videoAspect=vw/vh; if(videoAspect>canvasAspect){ sh=vh; sw=Math.round(sh*canvasAspect); sx=Math.floor((vw-sw)/2); sy=0; } else { sw=vw; sh=Math.round(sw/canvasAspect); sx=0; sy=Math.floor((vh-sh)/2); } return {sx,sy,sw,sh}; }
   async function captureWysiwygFromVideo(){
     const video=DOM.video; const vw=video.videoWidth, vh=video.videoHeight; if(!vw||!vh) throw new Error('Video not ready');
-    // Prefer real photo if available
-    if(STATE.imageCapture?.takePhoto){
+    // 1) Best WYSIWYG: grabFrame from the same preview pipeline (no lens warp surprises)
+    if(STATE.imageCapture?.grabFrame){
+      try{
+        const bmp = await STATE.imageCapture.grabFrame();
+        const aspect = DOM.camWrap.clientWidth/DOM.camWrap.clientHeight;
+        const {sx,sy,sw,sh}=computeCoverCropByAspect(bmp.width,bmp.height,aspect);
+        const scale=Math.min(1,CONFIG.maxPhotoSide/Math.max(sw,sh));
+        const outW=Math.max(1,Math.round(sw*scale)), outH=Math.max(1,Math.round(sh*scale));
+        const c=document.createElement('canvas'); c.width=outW; c.height=outH;
+        c.getContext('2d').drawImage(bmp,sx,sy,sw,sh,0,0,outW,outH);
+        bmp.close?.();
+        return canvasToBlob(c);
+      }catch(e){ console.warn('grabFrame failed, fallback to <video>', e); }
+    }
+    // 2) Fallback: draw from <video> element with same crop
+    {
+      const aspect = DOM.camWrap.clientWidth/DOM.camWrap.clientHeight;
+      const {sx,sy,sw,sh}=computeCoverCropByAspect(vw,vh,aspect);
+      const scale=Math.min(1,CONFIG.maxPhotoSide/Math.max(sw,sh));
+      const outW=Math.max(1,Math.round(sw*scale)), outH=Math.max(1,Math.round(sh*scale));
+      const c=document.createElement('canvas'); c.width=outW; c.height=outH;
+      c.getContext('2d').drawImage(video,sx,sy,sw,sh,0,0,outW,outH);
+      return canvasToBlob(c);
+    }
+    // 3) Optional last resort: still photo (disabled by default due to lens warp mismatch)
+    if(CONFIG.allowTakePhoto && STATE.imageCapture?.takePhoto){
       try{
         const raw=await STATE.imageCapture.takePhoto();
         const bmp=await createImageBitmap(raw);
@@ -287,17 +312,10 @@
         c.getContext('2d').drawImage(bmp,sx,sy,sw,sh,0,0,outW,outH);
         bmp.close?.();
         return canvasToBlob(c);
-      }catch(e){ console.warn('ImageCapture.takePhoto failed, fallback to video frame',e); }
+      }catch(e){ console.warn('takePhoto failed as last resort', e); }
     }
-    // Fallback: draw from video element with same crop as viewport
-    const aspect = DOM.camWrap.clientWidth/DOM.camWrap.clientHeight;
-    const {sx,sy,sw,sh}=computeCoverCropByAspect(vw,vh,aspect);
-    const scale=Math.min(1,CONFIG.maxPhotoSide/Math.max(sw,sh));
-    const outW=Math.max(1,Math.round(sw*scale)), outH=Math.max(1,Math.round(sh*scale));
-    const c=document.createElement('canvas'); c.width=outW; c.height=outH;
-    c.getContext('2d').drawImage(video,sx,sy,sw,sh,0,0,outW,outH);
-    return canvasToBlob(c);
   }
+  
   async function onShutter(){ if(DOM.btnShot.disabled||STATE.capturing) return; STATE.capturing=true; updateButtons(); haptic(); try{ const blob=await captureWysiwygFromVideo(); STATE.lastBlob=blob; const url=URL.createObjectURL(blob); DOM.photo.onload=()=>{ URL.revokeObjectURL(url); }; DOM.photo.src=url; showPhotoUI(); }catch(err){ console.error('Capture failed:',err); setError('Не удалось сделать снимок. Попробуйте ещё раз.'); } finally { STATE.capturing=false; updateButtons(); } }
 
   // ==================== TORCH ====================
@@ -395,6 +413,7 @@
       t('computeCoverCropByAspect wide→crop sides', ()=>{ const {sx,sy,sw,sh}=computeCoverCropByAspect(4000,2000,3/4); if(sh!==2000) throw new Error('sh'); if(sw!==1500) throw new Error('sw'); if(sx!==1250||sy!==0) throw new Error('sx/sy'); });
       t('computeCoverCropByAspect tall→crop top/bottom', ()=>{ const {sx,sy,sw,sh}=computeCoverCropByAspect(2000,4000,3/4); if(sw!==2000) throw new Error('sw'); const exp=Math.round(2000/(3/4)); if(Math.abs(sh-exp)>1) throw new Error('sh approx'); if(sx!==0) throw new Error('sx'); });
       t('capture fn present', ()=>{ if(typeof captureWysiwygFromVideo!=='function') throw new Error('no capture fn'); });
+      t('allowTakePhoto default false', ()=>{ if(CONFIG.allowTakePhoto!==false) throw new Error('allowTakePhoto not false'); });
       t('mapTilt bounds', ()=>{ const r0=mapTilt(0,0); if(Math.hypot(r0.nx,r0.ny)>1e-6) throw new Error('center not zero'); const r1=mapTilt(30,30); if(r1.nx<-1||r1.nx>1||r1.ny<-1||r1.ny>1) throw new Error('clamp failed'); });
       t('updateLevel uses smoothed tilt', ()=>{ CONFIG.levelRadius=50; STATE.smoothNx=1; STATE.smoothNy=0; STATE.rawNx=0; STATE.rawNy=0; updateLevel(); if(!DOM.levelBubble.style.transform.includes('50px')) throw new Error('not using smooth values'); });
       t('devicemotion ignored when orientation fresh', ()=>{ const prevNx=STATE.smoothNx, prevNy=STATE.smoothNy; STATE.lastOrientationEvent=performance.now(); const e={accelerationIncludingGravity:{x:100,y:100,z:100}}; onDeviceMotion(e); if(STATE.smoothNx!==prevNx||STATE.smoothNy!==prevNy) throw new Error('motion not ignored'); });
