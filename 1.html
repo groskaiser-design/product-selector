@@ -10,6 +10,8 @@
     *{box-sizing:border-box} html,body{height:100%}
     body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,sans-serif;-webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent;touch-action:pan-y pan-x}
     video,canvas,img{touch-action:none;user-select:none;-webkit-user-select:none}
+    /* Keep camera video producing frames even when hidden (Android WebView quirk) */
+    #video.hidden{display:block!important;width:1px;height:1px;position:absolute;left:-9999px;top:-9999px;opacity:0}
     .container{max-width:760px;margin:0 auto;padding:16px}
     .hidden{display:none!important} .row{display:flex;gap:10px;flex-wrap:wrap}
     .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:12px 16px;border-radius:14px;border:1px solid var(--ring);background:#fff;font-weight:600;cursor:pointer;font-size:16px}
@@ -24,7 +26,7 @@
     .btn-torch{position:absolute;left:12px;top:12px;z-index:10;pointer-events:auto;padding:8px 12px;border-radius:999px;border:1px solid rgba(255,255,255,.3);color:#fff;background:rgba(0,0,0,.5);backdrop-filter:blur(4px);font-size:20px;cursor:pointer}
     .center-level{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
     .level-outer{position:relative;width:140px;height:140px;border-radius:50%}
-    .level-target{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);border-radius:50%;border:2px solid rgba(255,255,255,.6);background:rgba(0,0,0,.1);width:25px;height:25px}
+    .level-target{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);border-radius:50%;border:2px solid rgba(255,255,255,.6);background:rgba(0,0,0,.1);width:23px;height:23px}
     .level-target.ok{border-color:#34d399;background:rgba(34,197,94,.15)}
     .level-bubble{position:absolute;left:50%;top:50%;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.4)}
     .level-bubble.ok{background:#22c55e}
@@ -110,7 +112,8 @@
     previewScale: 1, previewFPS: 30, preferImageCapture: !PLATFORM.isIOS,
     maxPhotoSide: 8192, jpegQuality: 0.95,
     bubbleRadius: 10, targetRadius: 15, levelRadius: 50,
-    needsPermissionRequest: PLATFORM.isIOS, sensorStaleMs: 4000
+    needsPermissionRequest: PLATFORM.isIOS, sensorStaleMs: 4000,
+    tiltSmoothing: 0.15, orientationStaleMs: 400
   };
 
   // ==================== STATE ====================
@@ -123,7 +126,7 @@
     previewRunning:false, previewRaf:null, lastPreviewTime:0,
     wakeLock:null, screenAngle:0,
     lastCropRect:null,
-    sensorPermission:'unknown',
+    sensorPermission:'unknown', smoothNx:0, smoothNy:0, lastOrientationEvent:0,
     levelRaf:null
   };
 
@@ -135,11 +138,12 @@
     levelBubble: $('levelBubble'), levelTarget: $('levelTarget'), levelOuter: $('levelOuter'), indLevel: $('indLevel'),  btnRetake: $('btnRetake'), btnGallery: $('btnGallery'), btnSend: $('btnSend'), comment: $('comment'), commentWarn: $('commentWarn'), camWrap: $('camWrap')
   };
 
-  const previewCtx = DOM.preview.getContext('2d', { alpha:false, desynchronized:true });
+  const previewCtx = DOM.preview.getContext('2d', { alpha:false, desynchronized:true, willReadFrequently:true });
 
   // ==================== UTIL ====================
   const sleep = ms => new Promise(r => setTimeout(r, ms));
-  function haptic(){ try{ window.Telegram?.WebApp?.HapticFeedback?.impactOccurred?.('light'); }catch{} }
+  function haptic(){ try{ window.Telegram?.WebApp?.HapticFeedback?.impactOccurred?.('light'); }catch{}
+  }
   function setError(msg){ if(!msg){ DOM.err.classList.add('hidden'); DOM.err.textContent=''; return;} DOM.err.textContent=msg; DOM.err.classList.remove('hidden'); }
   function sanitizeComment(input){ return String(input||'').slice(0,200).replace(/<[^>]*>/g,'').replace(/[\u0000-\u001F\u007F-\u009F]/g,'').replace(/(javascript:|data:|vbscript:|<script|on\w+=)/gi,'').replace(/[^\w\s\.,!?:;"'()\-\[\]{}#@+/&%А-Яа-яЁё]/g,'').replace(/\s+/g,' ').trim(); }
   function hasContent(){ return STATE.lastBlob || sanitizeComment(DOM.comment.value).length>0; }
@@ -179,30 +183,134 @@
   async function ensureWakeLock(enable){ if(!('wakeLock'in navigator))return; try{ if(enable && !STATE.wakeLock){ STATE.wakeLock = await navigator.wakeLock.request('screen'); STATE.wakeLock.addEventListener('release',()=>{STATE.wakeLock=null}); } else if(!enable && STATE.wakeLock){ await STATE.wakeLock.release(); STATE.wakeLock=null; } }catch{ STATE.wakeLock=null; } }
 
   // ==================== CAMERA ====================
-  async function openCamera(){ try{ const stream=await navigator.mediaDevices.getUserMedia({ video:{ facingMode:{ideal:'environment'}, aspectRatio:{ideal:3/4}, height:{ideal:1920}, width:{ideal:1440} }, audio:false }); bindStream(stream); return true; } catch(err){ console.warn('Portrait camera failed:',err); try{ const stream=await navigator.mediaDevices.getUserMedia({ video:{facingMode:'environment'}, audio:false }); bindStream(stream); return true; } catch{ return false; } } }
-  function bindStream(stream){ stopCamera(); STATE.stream=stream; STATE.track=stream.getVideoTracks()[0]; STATE.videoElement=DOM.video; DOM.video.srcObject=stream; DOM.video.play().catch(()=>{}); const trackSettings=STATE.track.getSettings?.()||{}; const trackLabel=STATE.track.label||'unknown'; console.log('📹 Camera:',trackLabel,trackSettings); const checkResolution=()=>{ 
+  async function openCamera(){
+    try{
+      const stream=await navigator.mediaDevices.getUserMedia({ video:{ facingMode:{ideal:'environment'}, aspectRatio:{ideal:3/4}, height:{ideal:1920}, width:{ideal:1440} }, audio:false });
+      bindStream(stream);
+      return true;
+    } catch(err){
+      console.warn('Portrait camera failed:',err);
+      try{
+        const stream=await navigator.mediaDevices.getUserMedia({ video:{facingMode:'environment'}, audio:false });
+        bindStream(stream);
+        return true;
+      } catch{
+        return false;
+      }
+    }
+  }
+  function bindStream(stream){
+    stopCamera();
+    STATE.stream=stream;
+    STATE.track=stream.getVideoTracks()[0];
+    STATE.videoElement=DOM.video;
+    DOM.video.srcObject=stream;
+    DOM.video.play().catch(()=>{});
+    const trackSettings=STATE.track.getSettings?.()||{};
+    const trackLabel=STATE.track.label||'unknown';
+    console.log('📹 Camera:',trackLabel,trackSettings);
+    const checkResolution=()=>{
       if(DOM.video.videoWidth>0){
         const vw=DOM.video.videoWidth, vh=DOM.video.videoHeight;
         const isPortrait = vh>vw;
         const cameraName = trackLabel.includes('back')?'задняя': trackLabel.includes('ultra')?'ultra-wide': trackLabel.includes('tele')?'tele':'камера';
-        // Не трогаем chipInfo во время съёмки — оставляем подсказки видимыми
+        // keep UI hint text intact; log only
         console.log(`📹 ${vw}×${vh} ${isPortrait?'portrait':'landscape'} • ${cameraName}`);
       } else {
         setTimeout(checkResolution,100);
       }
     };
-    setTimeout(checkResolution,200); const caps=STATE.track.getCapabilities?.()||{}; STATE.hasTorch=!!caps.torch && !PLATFORM.isIOS; DOM.btnTorch.classList.toggle('hidden',!STATE.hasTorch); if(CONFIG.preferImageCapture&&typeof ImageCapture!=='undefined'){ try{ STATE.imageCapture=new ImageCapture(STATE.track); }catch{} } }
-  function stopCamera(){ try{ DOM.video.pause(); DOM.video.srcObject=null; }catch{} try{ STATE.track?.stop(); }catch{} try{ STATE.stream?.getTracks().forEach(t=>t.stop()); }catch{} STATE.stream=null; STATE.track=null; STATE.imageCapture=null; STATE.torchOn=false; }
+    setTimeout(checkResolution,200);
+    const caps=STATE.track.getCapabilities?.()||{};
+    STATE.hasTorch=!!caps.torch && !PLATFORM.isIOS;
+    DOM.btnTorch.classList.toggle('hidden',!STATE.hasTorch);
+    if(CONFIG.preferImageCapture&&typeof ImageCapture!=='undefined'){
+      try{ STATE.imageCapture=new ImageCapture(STATE.track); }catch{}
+    }
+  }
+  function stopCamera(){
+    try{ DOM.video.pause(); DOM.video.srcObject=null; }catch{}
+    try{ STATE.track?.stop(); }catch{}
+    try{ STATE.stream?.getTracks().forEach(t=>t.stop()); }catch{}
+    STATE.stream=null; STATE.track=null; STATE.imageCapture=null; STATE.torchOn=false;
+  }
 
   // ==================== PREVIEW ====================
-  async function drawPreviewFrame(){ const video=DOM.video, canvas=DOM.preview; if(!video.videoWidth||!video.videoHeight) return; const {width:cssW,height:cssH}=DOM.camWrap.getBoundingClientRect(); const dpr=Math.min(2,window.devicePixelRatio||1); const scale=CONFIG.previewScale*dpr; const tw=Math.max(1,Math.round(cssW*scale)); const th=Math.max(1,Math.round(cssH*scale)); if(canvas.width!==tw||canvas.height!==th){ canvas.width=tw; canvas.height=th; } previewCtx.imageSmoothingEnabled=true; previewCtx.imageSmoothingQuality='high'; const vw=video.videoWidth, vh=video.videoHeight; const videoAspect=vw/vh; const canvasAspect=tw/th; let sx,sy,sw,sh; if(videoAspect>canvasAspect){ sh=vh; sw=Math.round(sh*canvasAspect); sx=Math.floor((vw-sw)/2); sy=0; } else { sw=vw; sh=Math.round(sw/canvasAspect); sx=0; sy=Math.floor((vh-sh)/2); } STATE.lastCropRect={sx,sy,sw,sh,videoWidth:vw,videoHeight:vh,canvasAspect}; previewCtx.drawImage(video,sx,sy,sw,sh,0,0,tw,th); }
-  function startPreviewLoop(){ if(STATE.previewRunning) return; STATE.previewRunning=true; DOM.preview.style.opacity='0'; const fps=CONFIG.previewFPS, frameTime=1000/fps; const tick=async()=>{ if(!STATE.previewRunning||STATE.currentView!=='camera')return; const now=performance.now(); if(now-STATE.lastPreviewTime>=frameTime){ STATE.lastPreviewTime=now; try{ await drawPreviewFrame(); if(DOM.preview.style.opacity==='0'&&DOM.preview.width>0){ DOM.preview.style.opacity='1'; } }catch(err){ console.warn('Preview frame error:',err); } } STATE.previewRaf=requestAnimationFrame(tick); }; STATE.previewRaf=requestAnimationFrame(tick); }
+  async function drawPreviewFrame(){
+    const video=DOM.video, canvas=DOM.preview;
+    if(!video.videoWidth||!video.videoHeight) return;
+    const {width:cssW,height:cssH}=DOM.camWrap.getBoundingClientRect();
+    const dpr=Math.min(2,window.devicePixelRatio||1);
+    const scale=CONFIG.previewScale*dpr;
+    const tw=Math.max(1,Math.round(cssW*scale));
+    const th=Math.max(1,Math.round(cssH*scale));
+    if(canvas.width!==tw||canvas.height!==th){ canvas.width=tw; canvas.height=th; }
+    previewCtx.imageSmoothingEnabled=true;
+    previewCtx.imageSmoothingQuality='high';
+    const vw=video.videoWidth, vh=video.videoHeight;
+    const videoAspect=vw/vh;
+    const canvasAspect=tw/th;
+    let sx,sy,sw,sh;
+    if(videoAspect>canvasAspect){
+      sh=vh; sw=Math.round(sh*canvasAspect); sx=Math.floor((vw-sw)/2); sy=0;
+    } else {
+      sw=vw; sh=Math.round(sw/canvasAspect); sx=0; sy=Math.floor((vh-sh)/2);
+    }
+    STATE.lastCropRect={sx,sy,sw,sh,videoWidth:vw,videoHeight:vh,canvasAspect};
+    previewCtx.drawImage(video,sx,sy,sw,sh,0,0,tw,th);
+  }
+  function startPreviewLoop(){
+    if(STATE.previewRunning) return;
+    STATE.previewRunning=true;
+    DOM.preview.style.opacity='0';
+    const fps=CONFIG.previewFPS, frameTime=1000/fps;
+    const tick=async()=>{
+      if(!STATE.previewRunning||STATE.currentView!=='camera')return;
+      const now=performance.now();
+      if(now-STATE.lastPreviewTime>=frameTime){
+        STATE.lastPreviewTime=now;
+        try{
+          await drawPreviewFrame();
+          if(DOM.preview.style.opacity==='0'&&DOM.preview.width>0){ DOM.preview.style.opacity='1'; }
+        }catch(err){ console.warn('Preview frame error:',err); }
+      }
+      STATE.previewRaf=requestAnimationFrame(tick);
+    };
+    STATE.previewRaf=requestAnimationFrame(tick);
+  }
   function stopPreviewLoop(){ STATE.previewRunning=false; if(STATE.previewRaf){ cancelAnimationFrame(STATE.previewRaf); STATE.previewRaf=null; } }
 
   // ==================== CAPTURE (WYSIWYG) ====================
   function canvasToBlob(canvas,quality=CONFIG.jpegQuality){ return new Promise(r=>{ canvas.toBlob(b=>r(b),'image/jpeg',quality); }); }
   function computeCoverCropByAspect(vw,vh,canvasAspect){ let sx,sy,sw,sh; const videoAspect=vw/vh; if(videoAspect>canvasAspect){ sh=vh; sw=Math.round(sh*canvasAspect); sx=Math.floor((vw-sw)/2); sy=0; } else { sw=vw; sh=Math.round(sw/canvasAspect); sx=0; sy=Math.floor((vh-sh)/2); } return {sx,sy,sw,sh}; }
-  async function captureWysiwygFromVideo(){ const video=DOM.video; const vw=video.videoWidth, vh=video.videoHeight; if(!vw||!vh) throw new Error('Video not ready'); if(STATE.imageCapture?.takePhoto){ try{ const raw=await STATE.imageCapture.takePhoto(); const bmp=await createImageBitmap(raw); const aspect=STATE.lastCropRect?.canvasAspect || (DOM.preview.width&&DOM.preview.height ? (DOM.preview.width/DOM.preview.height) : (DOM.camWrap.clientWidth/DOM.camWrap.clientHeight)); const {sx,sy,sw,sh}=computeCoverCropByAspect(bmp.width,bmp.height,aspect); const scale=Math.min(1,CONFIG.maxPhotoSide/Math.max(sw,sh)); const outW=Math.max(1,Math.round(sw*scale)), outH=Math.max(1,Math.round(sh*scale)); const c=document.createElement('canvas'); c.width=outW; c.height=outH; c.getContext('2d').drawImage(bmp,sx,sy,sw,sh,0,0,outW,outH); bmp.close?.(); return canvasToBlob(c); }catch(e){ console.warn('ImageCapture failed, fallback video frame',e); } } let crop=STATE.lastCropRect; if(!crop||crop.videoWidth!==vw||crop.videoHeight!==vh){ const aspect=DOM.preview.width&&DOM.preview.height ? (DOM.preview.width/DOM.preview.height) : (DOM.camWrap.clientWidth/DOM.camWrap.clientHeight); crop=computeCoverCropByAspect(vw,vh,aspect); } const {sx,sy,sw,sh}=crop; const scale=Math.min(1,CONFIG.maxPhotoSide/Math.max(sw,sh)); const outW=Math.max(1,Math.round(sw*scale)), outH=Math.max(1,Math.round(sh*scale)); const c=document.createElement('canvas'); c.width=outW; c.height=outH; c.getContext('2d').drawImage(video,sx,sy,sw,sh,0,0,outW,outH); return canvasToBlob(c); }
+  async function captureWysiwygFromVideo(){
+    const video=DOM.video; const vw=video.videoWidth, vh=video.videoHeight; if(!vw||!vh) throw new Error('Video not ready');
+    if(STATE.imageCapture?.takePhoto){
+      try{
+        const raw=await STATE.imageCapture.takePhoto();
+        const bmp=await createImageBitmap(raw);
+        const aspect=STATE.lastCropRect?.canvasAspect || (DOM.preview.width&&DOM.preview.height ? (DOM.preview.width/DOM.preview.height) : (DOM.camWrap.clientWidth/DOM.camWrap.clientHeight));
+        const {sx,sy,sw,sh}=computeCoverCropByAspect(bmp.width,bmp.height,aspect);
+        const scale=Math.min(1,CONFIG.maxPhotoSide/Math.max(sw,sh));
+        const outW=Math.max(1,Math.round(sw*scale)), outH=Math.max(1,Math.round(sh*scale));
+        const c=document.createElement('canvas'); c.width=outW; c.height=outH;
+        c.getContext('2d').drawImage(bmp,sx,sy,sw,sh,0,0,outW,outH);
+        bmp.close?.();
+        return canvasToBlob(c);
+      }catch(e){ console.warn('ImageCapture failed, fallback video frame',e); }
+    }
+    let crop=STATE.lastCropRect;
+    if(!crop||crop.videoWidth!==vw||crop.videoHeight!==vh){
+      const aspect=DOM.preview.width&&DOM.preview.height ? (DOM.preview.width/DOM.preview.height) : (DOM.camWrap.clientWidth/DOM.camWrap.clientHeight);
+      crop=computeCoverCropByAspect(vw,vh,aspect);
+    }
+    const {sx,sy,sw,sh}=crop;
+    const scale=Math.min(1,CONFIG.maxPhotoSide/Math.max(sw,sh));
+    const outW=Math.max(1,Math.round(sw*scale)), outH=Math.max(1,Math.round(sh*scale));
+    const c=document.createElement('canvas'); c.width=outW; c.height=outH;
+    c.getContext('2d').drawImage(video,sx,sy,sw,sh,0,0,outW,outH);
+    return canvasToBlob(c);
+  }
   async function onShutter(){ if(DOM.btnShot.disabled||STATE.capturing) return; STATE.capturing=true; updateButtons(); haptic(); try{ const blob=await captureWysiwygFromVideo(); STATE.lastBlob=blob; const url=URL.createObjectURL(blob); DOM.photo.onload=()=>{ URL.revokeObjectURL(url); }; DOM.photo.src=url; showPhotoUI(); }catch(err){ console.error('Capture failed:',err); setError('Не удалось сделать снимок. Попробуйте ещё раз.'); } finally { STATE.capturing=false; updateButtons(); } }
 
   // ==================== TORCH ====================
@@ -211,10 +319,36 @@
   // ==================== SENSORS ====================
   function refreshScreenAngle(){ const angle=screen.orientation?.angle??window.orientation??0; STATE.screenAngle=((angle%360)+360)%360; }
   function mapTilt(pitchDeg,rollDeg){ const maxTilt=30; const pr=Math.max(-1,Math.min(1,pitchDeg/maxTilt)); const rr=Math.max(-1,Math.min(1,rollDeg/maxTilt)); let nx=0,ny=0; switch(STATE.screenAngle){ case 0:nx=rr;ny=pr;break; case 90:nx=-pr;ny=rr;break; case 180:nx=-rr;ny=-pr;break; case 270:nx=pr;ny=-rr;break; } return {nx,ny}; }
-  function onDeviceOrientation(e){ if(STATE.currentView!=='camera')return; STATE.lastSensorTime=performance.now(); const pitch=e.beta??0, roll=e.gamma??0; const {nx,ny}=mapTilt(pitch,roll); STATE.rawNx=nx; STATE.rawNy=ny; }
-  function onDeviceMotion(e){ if(STATE.currentView!=='camera')return; STATE.lastSensorTime=performance.now(); const a=e.accelerationIncludingGravity||{}; const x=a.x||0,y=a.y||0,z=a.z||0; const pitch=(Math.atan2(-x,Math.sqrt(y*y+z*z))*180/Math.PI)||0; const roll=(Math.atan2(y,z)*180/Math.PI)||0; const {nx,ny}=mapTilt(pitch,roll); STATE.rawNx=nx; STATE.rawNy=ny; }
+  function onDeviceOrientation(e){
+    if(STATE.currentView!=='camera') return;
+    const now = performance.now();
+    STATE.lastSensorTime = now;
+    const pitch = e.beta ?? 0, roll = e.gamma ?? 0;
+    const { nx, ny } = mapTilt(pitch, roll);
+    const a = CONFIG.tiltSmoothing;
+    STATE.smoothNx = STATE.smoothNx + a * (nx - STATE.smoothNx);
+    STATE.smoothNy = STATE.smoothNy + a * (ny - STATE.smoothNy);
+    STATE.rawNx = nx; STATE.rawNy = ny;
+    STATE.lastOrientationEvent = now;
+  }
+  function onDeviceMotion(e){
+    if(STATE.currentView!=='camera') return;
+    const now = performance.now();
+    STATE.lastSensorTime = now;
+    // Prefer orientation events on Android; use motion only if orientation is stale
+    if (now - (STATE.lastOrientationEvent||0) <= CONFIG.orientationStaleMs) return;
+    const accel = e.accelerationIncludingGravity || {};
+    const x = accel.x || 0, y = accel.y || 0, z = accel.z || 0;
+    const pitch = (Math.atan2(-x, Math.sqrt(y*y + z*z)) * 180 / Math.PI) || 0;
+    const roll  = (Math.atan2(y, z) * 180 / Math.PI) || 0;
+    const { nx, ny } = mapTilt(pitch, roll);
+    const a = CONFIG.tiltSmoothing;
+    STATE.smoothNx = STATE.smoothNx + a * (nx - STATE.smoothNx);
+    STATE.smoothNy = STATE.smoothNy + a * (ny - STATE.smoothNy);
+    STATE.rawNx = nx; STATE.rawNy = ny;
+  }
   function attachSensorListeners(){ try{ window.addEventListener('deviceorientation',onDeviceOrientation,{capture:true,passive:true}); }catch{ window.addEventListener('deviceorientation',onDeviceOrientation,true); } try{ window.addEventListener('devicemotion',onDeviceMotion,{capture:true,passive:true}); }catch{ window.addEventListener('devicemotion',onDeviceMotion,true); } }
-  function removeSensorListeners(){ window.removeEventListener('deviceorientation',onDeviceOrientation,true); window.removeEventListener('deviceorientation',onDeviceOrientation,{capture:true}); window.removeEventListener('devicemotion',onDeviceMotion,true); window.removeEventListener('devicemotion',onDeviceMotion,{capture:true}); }
+  function removeSensorListeners(){ window.removeEventListener('deviceorientation',onDeviceOrientation,true); window.removeEventListener('deviceorientation',onDeviceOrientation,{ capture:true }); window.removeEventListener('devicemotion',onDeviceMotion,true); window.removeEventListener('devicemotion',onDeviceMotion,{ capture:true }); }
   async function requestSensorPermission(){ let granted=false; try{ if(typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission==='function'){ try{ const r=await DeviceOrientationEvent.requestPermission(); granted=(r==='granted'); }catch{} } if(!granted&&typeof DeviceMotionEvent!=='undefined'&&typeof DeviceMotionEvent.requestPermission==='function'){ try{ const r=await DeviceMotionEvent.requestPermission(); granted=(r==='granted'); }catch{} } }catch{} attachSensorListeners(); if(granted||!CONFIG.needsPermissionRequest){ STATE.sensorsEnabled=true; STATE.lastSensorTime=performance.now(); DOM.btnPermission.classList.add('hidden'); DOM.chipInfo.textContent='Держите телефон ровно'; try{ localStorage.setItem(PERM_KEY,'granted'); }catch{} STATE.sensorPermission='granted'; } else { DOM.btnPermission.classList.remove('hidden'); try{ localStorage.setItem(PERM_KEY,'denied'); }catch{} STATE.sensorPermission='denied'; showSensorHelp(); } return granted; }
   function showSensorHelp(){ DOM.chipInfo.textContent='iOS: Настройки → Safari → Движение и Ориентация'; DOM.btnPermission.classList.remove('hidden'); }
   function setupAutoSensorPermission(){ if(!PLATFORM.isIOS) return; try{ STATE.sensorPermission=localStorage.getItem(PERM_KEY)||'unknown'; }catch{ STATE.sensorPermission='unknown'; } const onFirstGesture=()=>{ if(STATE.sensorPermission!=='granted'){ requestSensorPermission(); } document.removeEventListener('pointerdown',onFirstGesture,true); document.removeEventListener('touchstart',onFirstGesture,true); document.removeEventListener('click',onFirstGesture,true); document.removeEventListener('keydown',onFirstGesture,true); }; document.addEventListener('pointerdown',onFirstGesture,true); document.addEventListener('touchstart',onFirstGesture,true); document.addEventListener('click',onFirstGesture,true); document.addEventListener('keydown',onFirstGesture,true); }
@@ -233,7 +367,7 @@
     CONFIG.levelRadius = Math.max(10, Math.floor(rOuter * 0.7));
   }
   function computeLevelRadiusDeferred(){ requestAnimationFrame(()=>requestAnimationFrame(computeLevelRadius)); }
-  function updateLevel(){ const R=CONFIG.levelRadius; const dx=STATE.rawNx*R, dy=STATE.rawNy*R; DOM.levelBubble.style.transform=`translate(-50%, -50%) translate(${dx}px, ${dy}px)`; const distance=Math.hypot(dx,dy); const wasOK=STATE.levelOK; STATE.levelOK=(distance+CONFIG.bubbleRadius)<=CONFIG.targetRadius; if(STATE.levelOK!==wasOK){ DOM.levelBubble.classList.toggle('ok',STATE.levelOK); DOM.levelTarget.classList.toggle('ok',STATE.levelOK); syncLevelIndicator(); updateButtons(); } }
+  function updateLevel(){ const R=CONFIG.levelRadius; const dx=STATE.smoothNx*R, dy=STATE.smoothNy*R; DOM.levelBubble.style.transform=`translate(-50%, -50%) translate(${dx}px, ${dy}px)`; const distance=Math.hypot(dx,dy); const wasOK=STATE.levelOK; STATE.levelOK=(distance+CONFIG.bubbleRadius)<=CONFIG.targetRadius; if(STATE.levelOK!==wasOK){ DOM.levelBubble.classList.toggle('ok',STATE.levelOK); DOM.levelTarget.classList.toggle('ok',STATE.levelOK); syncLevelIndicator(); updateButtons(); } }
   function startLevelLoop(){ if(STATE.levelRaf)return; const tick=()=>{ if(STATE.currentView==='camera'){ updateLevel(); } STATE.levelRaf=requestAnimationFrame(tick); }; STATE.levelRaf=requestAnimationFrame(tick); }
   function stopLevelLoop(){ if(STATE.levelRaf){ cancelAnimationFrame(STATE.levelRaf); STATE.levelRaf=null; } }
 
@@ -248,7 +382,7 @@
     stopPreviewLoop();
     stopLevelLoop();
     stopSensorWatchdog();
-    STATE.lastBlob=null; STATE.capturing=false; STATE.levelOK=false; STATE.rawNx=0; STATE.rawNy=0; STATE.lastSensorTime=0;
+    STATE.lastBlob=null; STATE.capturing=false; STATE.levelOK=false; STATE.rawNx=0; STATE.rawNy=0; STATE.smoothNx=0; STATE.smoothNy=0; STATE.lastOrientationEvent=0; STATE.lastSensorTime=0;
     updateButtons(); setError('');
     refreshScreenAngle();
     if(!navigator.mediaDevices?.getUserMedia){ setError('Камера недоступна в этом браузере'); return; }
@@ -301,6 +435,10 @@
       t('computeCoverCropByAspect tall→crop top/bottom', ()=>{ const {sx,sy,sw,sh}=computeCoverCropByAspect(2000,4000,3/4); if(sw!==2000) throw new Error('sw'); const exp=Math.round(2000/(3/4)); if(Math.abs(sh-exp)>1) throw new Error('sh approx'); if(sx!==0) throw new Error('sx'); });
       t('capture function present', ()=>{ if(typeof captureWysiwygFromVideo!=='function') throw new Error('no capture fn'); });
       t('mapTilt bounds', ()=>{ const r0=mapTilt(0,0); if(Math.hypot(r0.nx,r0.ny)>1e-6) throw new Error('center not zero'); const r1=mapTilt(30,30); if(r1.nx<-1||r1.nx>1||r1.ny<-1||r1.ny>1) throw new Error('clamp failed'); });
+      // New: updateLevel uses smoothed values (not raw)
+      t('updateLevel uses smoothed tilt', ()=>{ CONFIG.levelRadius=50; STATE.smoothNx=1; STATE.smoothNy=0; STATE.rawNx=0; STATE.rawNy=0; updateLevel(); if(!DOM.levelBubble.style.transform.includes('50px')) throw new Error('not using smooth values'); });
+      // New: devicemotion ignored when orientation fresh
+      t('devicemotion ignored when orientation fresh', ()=>{ const prevNx=STATE.smoothNx, prevNy=STATE.smoothNy; STATE.lastOrientationEvent=performance.now(); const e={accelerationIncludingGravity:{x:100,y:100,z:100}}; onDeviceMotion(e); if(STATE.smoothNx!==prevNx||STATE.smoothNy!==prevNy) throw new Error('motion not ignored'); });
       const failed = tests.some(x=>!x.ok);
       if(!failed) console.log('✅ All self-tests passed');
     })();
