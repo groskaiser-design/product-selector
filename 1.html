@@ -68,7 +68,7 @@
     .error{background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;border-radius:12px;padding:12px;margin:12px 0;font-size:14px}
 
     /* iOS permission chip */
-    $1
+    .btn-permission{position:absolute;right:12px;top:12px;z-index:10;pointer-events:auto;padding:8px 12px;border-radius:999px;border:1px solid rgba(255,255,255,.3);color:#fff;background:rgba(245,158,11,.8);backdrop-filter:blur(4px);font-size:18px;cursor:pointer;animation:pulse 2s infinite}
     /* Manual sensor reset button */
     .btn-level-reset{position:absolute;right:12px;top:56px;z-index:10;pointer-events:auto;padding:8px 12px;border-radius:999px;border:1px solid rgba(255,255,255,.3);color:#fff;background:rgba(37,99,235,.75);backdrop-filter:blur(4px);font-size:16px;cursor:pointer}
     @keyframes pulse{0%,100%{opacity:1}50%{opacity:.7}}
@@ -91,8 +91,8 @@
           <div class="grid" aria-hidden="true"></div>
           <div class="topbar"><div id="chipInfo" class="chip" role="status" aria-live="polite">Открываю камеру…</div></div>
           <button id="btnTorch" class="btn-torch hidden" aria-label="Фонарик" aria-pressed="false">💡</button>
-          $1
-          <button id=\"btnLevelReset\" class=\"btn-level-reset\" aria-label=\"Перезапустить уровень\">⟲</button>
+          <button id="btnPermission" class="btn-permission hidden" aria-label="Разрешить датчики">⚠️</button>
+          <button id="btnLevelReset" class="btn-level-reset" aria-label="Перезапустить уровень">⟲</button>
           <div class="center-level" aria-hidden="true">
             <div class="level-outer" id="levelOuter">
               <div id="levelTarget" class="level-target"></div>
@@ -166,6 +166,7 @@
     levelBubble: $('levelBubble'), levelTarget: $('levelTarget'), levelOuter: $('levelOuter'), indLevel: $('indLevel'),  btnRetake: $('btnRetake'), btnGallery: $('btnGallery'), btnSend: $('btnSend'), comment: $('comment'), commentWarn: $('commentWarn'), camWrap: $('camWrap')
   };
 
+  // Preview context kept for compatibility (not used when drawing from <video>)
   const previewCtx = DOM.preview.getContext('2d', { alpha:false, desynchronized:true });
 
   // ==================== UTIL ====================
@@ -244,7 +245,7 @@
     v.addEventListener('canplay', ()=>{ DOM.chipInfo.textContent='Наводите камеру'; }, {once:true});
     v.addEventListener('playing', onPlay, {once:true});
 
-    // Watchdog: if не завёлся, пробуем play() ещё раз
+    // Watchdog: пробуем play() ещё раз, если не завёлся
     let tries = 0;
     const wd = setInterval(()=>{
       if(STATE.currentView!=='camera') { clearInterval(wd); return; }
@@ -258,7 +259,7 @@
     STATE.hasTorch=!!caps.torch && !PLATFORM.isIOS;
     DOM.btnTorch.classList.toggle('hidden',!STATE.hasTorch);
 
-    // If ImageCapture is available, keep reference for takePhoto/grabFrame
+    // ImageCapture reference (for grabFrame/takePhoto)
     if(typeof ImageCapture!=='undefined'){
       try{ STATE.imageCapture=new ImageCapture(STATE.track); }catch{}
     }
@@ -278,7 +279,7 @@
   function computeCoverCropByAspect(vw,vh,canvasAspect){ let sx,sy,sw,sh; const videoAspect=vw/vh; if(videoAspect>canvasAspect){ sh=vh; sw=Math.round(sh*canvasAspect); sx=Math.floor((vw-sw)/2); sy=0; } else { sw=vw; sh=Math.round(sw/canvasAspect); sx=0; sy=Math.floor((vh-sh)/2); } return {sx,sy,sw,sh}; }
   async function captureWysiwygFromVideo(){
     const video=DOM.video; const vw=video.videoWidth, vh=video.videoHeight; if(!vw||!vh) throw new Error('Video not ready');
-    // 1) Best WYSIWYG: grabFrame from the same preview pipeline (no lens warp surprises)
+    // 1) Best WYSIWYG: grabFrame from the same preview pipeline
     if(STATE.imageCapture?.grabFrame){
       try{
         const bmp = await STATE.imageCapture.grabFrame();
@@ -302,7 +303,7 @@
       c.getContext('2d').drawImage(video,sx,sy,sw,sh,0,0,outW,outH);
       return canvasToBlob(c);
     }
-    // 3) Optional last resort: still photo (disabled by default due to lens warp mismatch)
+    // 3) Optional last resort: still photo (disabled by default)
     if(CONFIG.allowTakePhoto && STATE.imageCapture?.takePhoto){
       try{
         const raw=await STATE.imageCapture.takePhoto();
@@ -340,7 +341,6 @@
   // Force reset level sensors (iOS-friendly: requires a user gesture)
   async function forceResetLevel(){
     try{ haptic(); }catch{}
-    // UI hint
     DOM.chipInfo.textContent='Перезапускаю уровень…';
     // Zero out state
     STATE.rawNx=0; STATE.rawNy=0; STATE.smoothNx=0; STATE.smoothNy=0; STATE.levelOK=false;
@@ -352,7 +352,6 @@
     STATE.lastSensorTime=0; STATE.lastOrientationEvent=0;
 
     if(PLATFORM.isIOS){
-      // On iOS we must (re)request permission under a gesture
       const granted = await requestSensorPermission();
       if(!granted){ showSensorHelp(); }
     } else {
@@ -433,10 +432,10 @@
     // Telegram WebApp integration
     try{ window.Telegram?.WebApp?.ready?.(); window.Telegram?.WebApp?.expand?.(); }catch{}
 
-    // ============= SELF-TESTS =============
+    // ============= SELF-TESTS (non-fatal) =============
     (function runSelfTests(){
       const tests = [];
-      function t(name, fn){ try{ fn(); console.log('✅', name); tests.push({name, ok:true}); } catch(e){ console.error('❌', name, e); tests.push({name, ok:false, err:e}); } }
+      function t(name, fn){ try{ fn(); console.log('✅', name); tests.push({name, ok:true}); } catch(e){ console.warn('❌', name, e); tests.push({name, ok:false, err:e}); } }
       t('DOM essentials', ()=>{ if(!DOM.video||!DOM.btnShot||!DOM.levelBubble) throw new Error('Missing nodes'); });
       t('Video visible for preview', ()=>{ if(DOM.video.classList.contains('hidden')) throw new Error('<video> is hidden'); });
       t('Canvas not blocking view', ()=>{ if(getComputedStyle(DOM.preview).display !== 'none') throw new Error('canvas should be display:none'); });
@@ -444,13 +443,17 @@
       t('computeCoverCropByAspect wide→crop sides', ()=>{ const {sx,sy,sw,sh}=computeCoverCropByAspect(4000,2000,3/4); if(sh!==2000) throw new Error('sh'); if(sw!==1500) throw new Error('sw'); if(sx!==1250||sy!==0) throw new Error('sx/sy'); });
       t('computeCoverCropByAspect tall→crop top/bottom', ()=>{ const {sx,sy,sw,sh}=computeCoverCropByAspect(2000,4000,3/4); if(sw!==2000) throw new Error('sw'); const exp=Math.round(2000/(3/4)); if(Math.abs(sh-exp)>1) throw new Error('sh approx'); if(sx!==0) throw new Error('sx'); });
       t('capture fn present', ()=>{ if(typeof captureWysiwygFromVideo!=='function') throw new Error('no capture fn'); });
-      t('forceResetLevel exists', ()=>{ if(typeof forceResetLevel!=='function') throw new Error('no forceResetLevel'); }); });
+      t('forceResetLevel exists', ()=>{ if(typeof forceResetLevel!=='function') throw new Error('no forceResetLevel'); });
+      t('btnPermission exists', ()=>{ if(!DOM.btnPermission) throw new Error('no btnPermission'); });
+      t('no placeholder tokens', ()=>{ if(document.documentElement.innerHTML.includes('$1')) throw new Error('placeholder $1 leaked'); });
       t('allowTakePhoto default false', ()=>{ if(CONFIG.allowTakePhoto!==false) throw new Error('allowTakePhoto not false'); });
       t('mapTilt bounds', ()=>{ const r0=mapTilt(0,0); if(Math.hypot(r0.nx,r0.ny)>1e-6) throw new Error('center not zero'); const r1=mapTilt(30,30); if(r1.nx<-1||r1.nx>1||r1.ny<-1||r1.ny>1) throw new Error('clamp failed'); });
       t('updateLevel uses smoothed tilt', ()=>{ CONFIG.levelRadius=50; STATE.smoothNx=1; STATE.smoothNy=0; STATE.rawNx=0; STATE.rawNy=0; updateLevel(); if(!DOM.levelBubble.style.transform.includes('50px')) throw new Error('not using smooth values'); });
       t('devicemotion ignored when orientation fresh', ()=>{ const prevNx=STATE.smoothNx, prevNy=STATE.smoothNy; STATE.lastOrientationEvent=performance.now(); const e={accelerationIncludingGravity:{x:100,y:100,z:100}}; onDeviceMotion(e); if(STATE.smoothNx!==prevNx||STATE.smoothNy!==prevNy) throw new Error('motion not ignored'); });
+      t('forceResetLevel zeroes state (sync part)', ()=>{ STATE.smoothNx=0.9; STATE.smoothNy=-0.7; forceResetLevel(); if(STATE.smoothNx!==0||STATE.smoothNy!==0) throw new Error('reset not zero'); });
+      // Final report only (no throw)
       const failed = tests.some(x=>!x.ok);
-      if(!failed) console.log('✅ All self-tests passed');
+      if(!failed) console.log('✅ All self-tests passed'); else console.warn('⚠️ Some self-tests failed', tests.filter(x=>!x.ok));
     })();
   });
   </script>
