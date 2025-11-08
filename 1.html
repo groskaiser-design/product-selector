@@ -11,7 +11,7 @@
     body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,sans-serif;-webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent;touch-action:pan-y pan-x}
     video,canvas,img{touch-action:none;user-select:none;-webkit-user-select:none}
     /* Keep camera video producing frames even when hidden (Android WebView quirk) */
-    #video.hidden{display:block!important;width:1px;height:1px;position:absolute;left:-9999px;top:-9999px;opacity:0}
+    #video.hidden{display:block!important;width:100%;height:100%;position:absolute;inset:0;opacity:0;pointer-events:none}
     .container{max-width:760px;margin:0 auto;padding:16px}
     .hidden{display:none!important} .row{display:flex;gap:10px;flex-wrap:wrap}
     .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:12px 16px;border-radius:14px;border:1px solid var(--ring);background:#fff;font-weight:600;cursor:pointer;font-size:16px}
@@ -26,7 +26,7 @@
     .btn-torch{position:absolute;left:12px;top:12px;z-index:10;pointer-events:auto;padding:8px 12px;border-radius:999px;border:1px solid rgba(255,255,255,.3);color:#fff;background:rgba(0,0,0,.5);backdrop-filter:blur(4px);font-size:20px;cursor:pointer}
     .center-level{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
     .level-outer{position:relative;width:140px;height:140px;border-radius:50%}
-    .level-target{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);border-radius:50%;border:2px solid rgba(255,255,255,.6);background:rgba(0,0,0,.1);width:23px;height:23px}
+    .level-target{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);border-radius:50%;border:2px solid rgba(255,255,255,.6);background:rgba(0,0,0,.1);width:30px;height:30px}
     .level-target.ok{border-color:#34d399;background:rgba(34,197,94,.15)}
     .level-bubble{position:absolute;left:50%;top:50%;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.4)}
     .level-bubble.ok{background:#22c55e}
@@ -127,7 +127,7 @@
     wakeLock:null, screenAngle:0,
     lastCropRect:null,
     sensorPermission:'unknown', smoothNx:0, smoothNy:0, lastOrientationEvent:0,
-    levelRaf:null
+    levelRaf:null, lastGrabTime:0
   };
 
   // ==================== DOM ====================
@@ -238,7 +238,6 @@
   // ==================== PREVIEW ====================
   async function drawPreviewFrame(){
     const video=DOM.video, canvas=DOM.preview;
-    if(!video.videoWidth||!video.videoHeight) return;
     const {width:cssW,height:cssH}=DOM.camWrap.getBoundingClientRect();
     const dpr=Math.min(2,window.devicePixelRatio||1);
     const scale=CONFIG.previewScale*dpr;
@@ -247,17 +246,47 @@
     if(canvas.width!==tw||canvas.height!==th){ canvas.width=tw; canvas.height=th; }
     previewCtx.imageSmoothingEnabled=true;
     previewCtx.imageSmoothingQuality='high';
-    const vw=video.videoWidth, vh=video.videoHeight;
-    const videoAspect=vw/vh;
-    const canvasAspect=tw/th;
-    let sx,sy,sw,sh;
-    if(videoAspect>canvasAspect){
-      sh=vh; sw=Math.round(sh*canvasAspect); sx=Math.floor((vw-sw)/2); sy=0;
-    } else {
-      sw=vw; sh=Math.round(sw/canvasAspect); sx=0; sy=Math.floor((vh-sh)/2);
+
+    // Path A: draw from <video> when it reports dimensions
+    if(video.videoWidth && video.videoHeight){
+      const vw=video.videoWidth, vh=video.videoHeight;
+      const videoAspect=vw/vh;
+      const canvasAspect=tw/th;
+      let sx,sy,sw,sh;
+      if(videoAspect>canvasAspect){
+        sh=vh; sw=Math.round(sh*canvasAspect); sx=Math.floor((vw-sw)/2); sy=0;
+      } else {
+        sw=vw; sh=Math.round(sw/canvasAspect); sx=0; sy=Math.floor((vh-sh)/2);
+      }
+      STATE.lastCropRect={sx,sy,sw,sh,videoWidth:vw,videoHeight:vh,canvasAspect};
+      previewCtx.drawImage(video,sx,sy,sw,sh,0,0,tw,th);
+      return;
     }
-    STATE.lastCropRect={sx,sy,sw,sh,videoWidth:vw,videoHeight:vh,canvasAspect};
-    previewCtx.drawImage(video,sx,sy,sw,sh,0,0,tw,th);
+
+    // Path B: some Android WebViews keep videoWidth=0 when video is visually hidden.
+    // If ImageCapture.grabFrame is available, use it to fetch a preview frame.
+    if(STATE.imageCapture?.grabFrame && performance.now() - (STATE.lastGrabTime||0) > 120){
+      try{
+        const bmp = await STATE.imageCapture.grabFrame();
+        STATE.lastGrabTime = performance.now();
+        const vw=bmp.width, vh=bmp.height;
+        const canvasAspect=tw/th;
+        const videoAspect=vw/vh;
+        let sx,sy,sw,sh;
+        if(videoAspect>canvasAspect){
+          sh=vh; sw=Math.round(sh*canvasAspect); sx=Math.floor((vw-sw)/2); sy=0;
+        } else {
+          sw=vw; sh=Math.round(sw/canvasAspect); sx=0; sy=Math.floor((vh-sh)/2);
+        }
+        STATE.lastCropRect={sx,sy,sw,sh,videoWidth:vw,videoHeight:vh,canvasAspect};
+        previewCtx.drawImage(bmp,sx,sy,sw,sh,0,0,tw,th);
+        bmp.close?.();
+        return;
+      }catch(e){ /* ignore and try next tick */ }
+    }
+
+    // Not ready yet — skip this frame
+    return;
   }
   function startPreviewLoop(){
     if(STATE.previewRunning) return;
@@ -439,6 +468,8 @@
       t('updateLevel uses smoothed tilt', ()=>{ CONFIG.levelRadius=50; STATE.smoothNx=1; STATE.smoothNy=0; STATE.rawNx=0; STATE.rawNy=0; updateLevel(); if(!DOM.levelBubble.style.transform.includes('50px')) throw new Error('not using smooth values'); });
       // New: devicemotion ignored when orientation fresh
       t('devicemotion ignored when orientation fresh', ()=>{ const prevNx=STATE.smoothNx, prevNy=STATE.smoothNy; STATE.lastOrientationEvent=performance.now(); const e={accelerationIncludingGravity:{x:100,y:100,z:100}}; onDeviceMotion(e); if(STATE.smoothNx!==prevNx||STATE.smoothNy!==prevNy) throw new Error('motion not ignored'); });
+      // New: drawPreviewFrame is callable
+      t('drawPreviewFrame exists', ()=>{ if(typeof drawPreviewFrame!== 'function') throw new Error('no preview'); });
       const failed = tests.some(x=>!x.ok);
       if(!failed) console.log('✅ All self-tests passed');
     })();
