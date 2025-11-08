@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>FoodCam — камера</title>
+  <title>FoodCam — фото-режим</title>
   <meta name="theme-color" content="#0a7cff" />
   <style>
     :root{ --bg:#ffffff; --text:#111827; --muted:#6b7280; --ring:#e5e7eb; --primary:#2563eb; --ok:#16a34a; --warn:#f59e0b; --danger:#ef4444; }
@@ -20,6 +20,7 @@
 
     /* CAMERA AREA */
     .cam-wrap{position:relative;border:1px solid var(--ring);border-radius:16px;overflow:hidden;background:#000;aspect-ratio:3/4;contain:layout paint;}
+    /* превью теперь canvas, но класс оставляем общий */
     .cam-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;opacity:0;transition:opacity .2s ease;transform:translateZ(0);backface-visibility:hidden}
     .cam-photo{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block;background:#000}
 
@@ -91,21 +92,25 @@
     <div id="err" class="error hidden"></div>
 
     <section id="sec-main">
+      <!-- Фолбэки -->
       <input id="file-cam" type="file" accept="image/*" capture="environment" class="hidden" />
       <input id="file-gallery" type="file" accept="image/*" class="hidden" />
 
       <div class="cam-wrap" id="camWrap" aria-label="Камера и/или снимок">
-        <video id="video" class="cam-video" playsinline muted></video>
+        <!-- Скрытый <video> оставлен лишь как технический фолбэк (не показывается) -->
+        <video id="video" class="hidden" playsinline muted></video>
+        <!-- Превью внутри окна теперь на canvas -->
+        <canvas id="pv" class="cam-video" aria-label="Превью" role="img"></canvas>
         <img id="photo" class="cam-photo hidden" alt="Снимок" />
 
         <div id="overlay" class="cam-overlay">
-          <div class="grid"></div>
+          <div class="grid" aria-hidden="true"></div>
           <div class="topbar">
             <div id="chipInfo" class="chip" role="status" aria-live="polite">Выровняйте телефон, положите банковскую карту в серую зону</div>
           </div>
-          <button id="btnTorch" class="btn-torch hidden" aria-label="Фонарик">⚡️</button>
+          <button id="btnTorch" class="btn-torch hidden" aria-label="Фонарик" aria-pressed="false">⚡️</button>
 
-          <div class="center-level">
+          <div class="center-level" aria-hidden="true">
             <div class="level-outer" id="levelOuter">
               <div id="levelTarget" class="level-target"></div>
               <div id="levelBubble" class="level-bubble"></div>
@@ -158,6 +163,7 @@
   };
 
   const S = { stream:null, track:null, torchCap:false, _torchOn:false, levelOn:false };
+  let ic = null; // ImageCapture
   let _lastBlob = null, _view='camera', _taking=false;
 
   // RAW level inputs (без сглаживания)
@@ -170,20 +176,22 @@
   let _detIdle=null, _lastDetTS=0, _fitOK=false, _hitCount=0,_missCount=0,_lastInsideTS=0;
 
   // iOS
-  const isIOS = /iP(hone|od|ad)/.test(navigator.userAgent);
-  let _sensorLastTS = 0, _sensorWatch = null;
-  const SENSOR_STALE_MS = 1500;
+  const isIOS = /iP(hone|od|ad)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && 'ontouchend' in document);
+  let _sensorLastTS = 0, _sensorWatch = null; const SENSOR_STALE_MS = 1500;
 
   // ===================== DOM =====================
   const $ = id => document.getElementById(id);
   const err=$('err');
-  const video=$('video'), photo=$('photo'), overlay=$('overlay'), controls=$('controls');
+  const video=$('video'); // скрытый, только для фолбэка
+  const pv=$('pv'), pvCtx=pv.getContext('2d', { alpha:false, desynchronized:true, willReadFrequently:true });
+  const overlay=$('overlay'), controls=$('controls');
   const btnShot=$('btnShot'), btnTorch=$('btnTorch'), chipInfo=$('chipInfo');
   const fileCam=$('file-cam'), fileGallery=$('file-gallery');
   const levelBubble=$('levelBubble'), levelTarget=$('levelTarget'), levelOuter=$('levelOuter');
   const cardArea=$('cardArea'); const camWrap=$('camWrap');
   const indLevel=$('indLevel'), indCard=$('indCard');
   const meta=$('meta');
+  const photo=$('photo');
   const btnRetake=$('btnRetake'), btnGallery=$('btnGallery'), btnSend=$('btnSend');
   const commentEl=$('comment'), commentWarn=$('commentWarn');
 
@@ -195,13 +203,19 @@
   function canUseGUM(){ return !!(navigator.mediaDevices?.getUserMedia) && isSecureContext; }
   async function queryPerm(name){ try{ const p=await navigator.permissions?.query?.({name}); return p?.state??null }catch{return null} }
 
+  // WebP support check (для предпросмотра)
+  function canCanvasWebP(){ try{ const c=document.createElement('canvas'); return c.toDataURL('image/webp').startsWith('data:image/webp'); }catch{return false} }
+
+  // sanitize comment (+fallback для старых движков без \p{})
+  let supportsUnicodeProps=false; try{ new RegExp('\\\p{L}','u'); supportsUnicodeProps=true; }catch{}
   function sanitizeComment(input){
-    let s = String(input||'').slice(0, 200);
-    s = s.replace(/<[^>]*>/g, '').replace(/[\u0000-\u001F\u007F-\u009F]/g, '');
-    s = s.replace(/(javascript:|data:|vbscript:|<script|<\/script|on\w+\s*=)/gi, '');
-    s = s.replace(/[^\p{L}\p{N}\p{M}\s\.,!?:;"'()\-\u2013\u2014\[\]{}#@+/&%]/gu, '');
-    s = s.replace(/\s+/g, ' ').trim();
-    return s;
+    let s = String(input||'').slice(0, 200)
+      .replace(/<[^>]*>/g, '')
+      .replace(/[\u0000-\u001F\u007F-\u009F]/g, '')
+      .replace(/(javascript:|data:|vbscript:|<script|<\/script|on\w+\s*=)/gi, '');
+    if(supportsUnicodeProps){ s = s.replace(/[^\p{L}\p{N}\p{M}\s\.,!?:;"'()\-\u2013\u2014\[\]{}#@+/&%]/gu, ''); }
+    else { s = s.replace(/[^A-Za-z0-9А-Яа-яЁё\s\.,!?:;"'()\-\u2013\u2014\[\]{}#@+/&%]/g, ''); }
+    return s.replace(/\s+/g, ' ').trim();
   }
   function hasText(){ return sanitizeComment(commentEl.value).length > 0; }
   function showCommentWarning(show, text){ commentWarn.textContent = text || ''; commentWarn.classList.toggle('hidden', !show); }
@@ -219,18 +233,23 @@
 
   function showCameraUI(){
     _view='camera';
-    video.classList.remove('hidden'); overlay.classList.remove('hidden'); controls.classList.remove('hidden');
+    pv.classList.remove('hidden'); overlay.classList.remove('hidden'); controls.classList.remove('hidden');
     photo.classList.add('hidden');
     meta.textContent='';
     chipInfo.textContent='Выровняйте телефон, положите банковскую карту в серую зону';
-    startDetection(); startLevelLoop(); startSensorsWatchdog();
+    startPreviewLoop(); startDetection(); startLevelLoop(); startSensorsWatchdog();
+    enableLevelSensors(false);
     updateButtons(); syncIndicators();
   }
   function showPhotoUI(){
     _view='photo';
-    video.classList.add('hidden'); overlay.classList.add('hidden'); controls.classList.add('hidden');
+    pv.classList.add('hidden'); overlay.classList.add('hidden'); controls.classList.add('hidden');
     photo.classList.remove('hidden');
-    stopDetection(); stopLevelLoop(); stopSensorsWatchdog();
+    stopPreviewLoop();
+    stopDetection();
+    stopLevelLoop();
+    stopSensorsWatchdog();
+    removeSensorListeners();
     updateButtons();
   }
 
@@ -241,8 +260,7 @@
     try { window.Telegram?.WebApp?.ready?.(); } catch {}
   });
 
-  // ===================== CAMERA FLOW =====================
-  btnShot.addEventListener('click', onShutter);
+  // ===================== CAMERA (PHOTO MODE) =====================
   btnTorch.addEventListener('click', toggleTorch);
   btnRetake.addEventListener('click', ()=>{ if(btnRetake.disabled) return; startCameraFlow(true); });
   btnGallery.addEventListener('click', ()=>fileGallery?.click());
@@ -274,21 +292,36 @@
   }
 
   async function startCameraFlow(){
+    stopPreviewLoop();
     _lastBlob=null; _taking=false;
     _fitOK=false; _levelOK=false; _lvlHits=0; _lvlMiss=0; _hitCount=0; _missCount=0; _lastInsideTS=0;
     _sensorLastTS=0;
     updateButtons(); setError(''); syncRadii();
     recomputeRects(); computeLevelRadius(); startObservers();
-    showCameraUI();
 
-    // iOS: запросим доступ к сенсорам на первом касании
+    // iOS: запрос по первому касанию
     attachIOSPermissionOneShot();
 
-    await enableLevelSensors(true);
-    const camOk = await openCameraGUM();
-    if(!camOk){ try{ fileCam?.click(); }catch{} }
+    const ok = await openCameraGUM();
+    if(!ok){ // фолбэк: системный пикер
+      try{ fileCam?.click(); }catch{}
+      return;
+    }
 
-    if(isIOS) setTimeout(()=>{ if(_sensorLastTS===0) chipInfo.textContent='Коснитесь экрана, чтобы включить «Движение и ориентация»'; }, 900);
+    // Инициализируем ImageCapture если доступен
+    ic = (typeof ImageCapture !== 'undefined' && S.track) ? new ImageCapture(S.track) : null;
+
+    // Подготовить превью (canvas) и UI
+    pv.style.opacity='0';
+    showCameraUI();
+  }
+
+    // Инициализируем ImageCapture если доступен
+    ic = (typeof ImageCapture !== 'undefined' && S.track) ? new ImageCapture(S.track) : null;
+
+    // Подготовить превью (canvas) и UI
+    pv.style.opacity='0';
+    showCameraUI();
   }
 
   // ======== Camera selection: lock back camera ========
@@ -320,12 +353,10 @@
     const perm = await queryPerm('camera'); if(perm==='denied'){ setError('Доступ к камере запрещён.', envHint()); return false; }
     try{
       const s = await openLockedBackCamera();
-      await bindStream(s);
-      await stabilizeVideo(300, 1200);
-      video.style.opacity='1';
+      bindStream(s);
+      // torch & zoom capabilities
       const caps=S.track?.getCapabilities?.()||{};
-      S.torchCap=!!caps.torch;
-      btnTorch.classList.toggle('hidden', !S.torchCap);
+      S.torchCap=!!caps.torch; btnTorch.classList.toggle('hidden', !S.torchCap);
       if('zoom' in caps){
         try{ await S.track.applyConstraints({ advanced:[{ zoom: Math.min(Math.max(1, caps.zoom?.min||1), caps.zoom?.max||1) }] }); }catch{}
       }
@@ -333,61 +364,111 @@
     }catch(e){ console.warn(e); setError('Не удалось открыть камеру.', envHint()); return false; }
   }
 
-  async function bindStream(stream){
+  function bindStream(stream){
     stopCamera();
     S.stream=stream; S.track=stream.getVideoTracks()[0];
-    video.style.opacity='0';
-    video.srcObject=stream;
-    try{ await video.play(); }catch{}
+    // для фолбэка на <video> держим его скрытым, но запущенным
+    try{ video.srcObject=stream; video.play?.(); }catch{}
   }
 
-  async function stabilizeVideo(stableWindowMs=250, timeoutMs=1500){
-    let prevW=0, prevH=0, stable=0, t=0;
-    while(t<timeoutMs){
-      const w=video.videoWidth, h=video.videoHeight;
-      if(w>0 && h>0 && w===prevW && h===prevH){ stable+=50; if(stable>=stableWindowMs) break; }
-      else { stable=0; prevW=w; prevH=h; }
-      await sleep(50); t+=50;
+  function stopCamera(){
+    try{ video.pause?.(); video.srcObject=null }catch{}
+    try{ S.track?.stop?.() }catch{}
+    try{ S.stream?.getTracks?.()?.forEach(t=>t.stop()) }catch{}
+    S.stream=null; S.track=null; S._torchOn=false; ic=null;
+  }
+
+  // ---------- PREVIEW LOOP (canvas + grabFrame) ----------
+  let _pvRun=false, _haveFirstFrame=false, _lastPvTS=0;
+  const PREVIEW_HZ = 20;
+
+  async function drawFrameToCanvas(){
+    // Целевой размер = размер видимого контейнера (в CSS пикселях) * DPR (ограничим до 2x)
+    const { width: cssW, height: cssH } = camWrap.getBoundingClientRect();
+    const scale = Math.max(1, Math.min(window.devicePixelRatio || 1, 2));
+    const tw = Math.max(1, Math.round(cssW * scale));
+    const th = Math.max(1, Math.round(cssH * scale));
+    if(pv.width!==tw || pv.height!==th){ pv.width=tw; pv.height=th; }
+
+    if(ic && ic.grabFrame){
+      const bmp = await ic.grabFrame();
+      const r = Math.max(tw/bmp.width, th/bmp.height);
+      const dw = Math.round(bmp.width*r), dh = Math.round(bmp.height*r);
+      const dx = Math.floor((tw - dw)/2), dy = Math.floor((th - dh)/2);
+      pvCtx.drawImage(bmp, dx, dy, dw, dh); bmp.close?.();
+    }else if(video?.videoWidth>0){
+      const r = Math.max(tw/video.videoWidth, th/video.videoHeight);
+      const dw = Math.round(video.videoWidth*r), dh = Math.round(video.videoHeight*r);
+      const dx = Math.floor((tw - dw)/2), dy = Math.floor((th - dh)/2);
+      pvCtx.drawImage(video, dx, dy, dw, dh);
+    }
+  }else if(video?.videoWidth>0){
+      if(pv.width!==video.videoWidth||pv.height!==video.videoHeight){ pv.width=video.videoWidth; pv.height=video.videoHeight; }
+      pvCtx.drawImage(video, 0, 0);
+    }else{
+      // нечего рисовать
     }
   }
 
-  function stopCamera(){ try{ video.pause(); video.srcObject=null }catch{}; try{ S.track?.stop() }catch{}; try{ S.stream?.getTracks()?.forEach(t=>t.stop()) }catch{}; S.stream=null; S.track=null; S._torchOn=false; }
+  function startPreviewLoop(){
+    if(_pvRun) return; _pvRun=true; _haveFirstFrame=false; pv.style.opacity='0';
+    const tick = async ()=>{
+      if(!_pvRun || _view!=='camera') return;
+      try{
+        const now=performance.now();
+        if(now - _lastPvTS >= (1000/ PREVIEW_HZ)){
+          _lastPvTS = now;
+          await drawFrameToCanvas();
+          if(!_haveFirstFrame && pv.width>0 && pv.height>0){ _haveFirstFrame=true; pv.style.opacity='1'; }
+        }
+        // троттлинг детекции
+        if(now - _lastDetTS >= (1000/CONFIG.DETECT_HZ)){ detectPresenceFromCanvas(pv); _lastDetTS=now; }
+      }catch(e){}
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }catch(e){ /* проглотим редкие ошибки grabFrame */ }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }
+  function stopPreviewLoop(){ _pvRun=false; }
 
   // ---------- SHUTTER ----------
+  btnShot.addEventListener('click', onShutter);
   async function onShutter(){
     if(btnShot.disabled || _taking) return;
     _taking=true; updateButtons(); haptic();
 
-    const snapCanvas=snapshotNow();
     try{
-      const previewURL=snapCanvas.toDataURL('image/webp', CONFIG.webpQ);
-      photo.src=previewURL;
-      meta.textContent=`${snapCanvas.width}×${snapCanvas.height}`;
+      let blob=null;
+      if(ic?.takePhoto){
+        // Можно передать настройки, если поддерживаются: { imageWidth, imageHeight, fillLightMode }
+        blob = await ic.takePhoto().catch(()=>null);
+      }
+      if(!blob){ // фолбэк: снимок из canvas превью
+        blob = await canvasToBlob(pv);
+      }
+
+      _lastBlob = blob;
+      const url = URL.createObjectURL(blob);
+      photo.onload = ()=>{ meta.textContent=`${photo.naturalWidth}×${photo.naturalHeight}`; URL.revokeObjectURL(url); };
+      photo.src = url;
       showPhotoUI();
-    }catch{}
-    try{
-      const blob=await canvasToBlob(snapCanvas);
-      _lastBlob=blob;
+    }catch(e){
+      console.warn(e); setError('Не удалось сделать снимок.');
     }finally{
-      stopCamera(); _taking=false; updateButtons();
+      _taking=false; updateButtons();
     }
   }
 
-  function snapshotNow(){
-    const srcW=video.videoWidth, srcH=video.videoHeight;
-    const scale=Math.min(1, CONFIG.maxSide/Math.max(srcW,srcH));
-    const w=Math.max(1,Math.round(srcW*scale)), h=Math.max(1,Math.round(srcH*scale));
-    const c=document.createElement('canvas'); c.width=w; c.height=h;
-    const ctx=c.getContext('2d',{ alpha:false, desynchronized:true, willReadFrequently:true });
-    try{ ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality='high'; }catch{}
-    ctx.drawImage(video,0,0,w,h);
-    return c;
-  }
   function canvasToBlob(c){
     return new Promise(resolve=>{
-      c.toBlob(b=>{ if(b) return resolve(b);
-        c.toBlob(bb=> resolve(bb), 'image/jpeg', CONFIG.jpegQ);
-      }, 'image/webp', CONFIG.webpQ);
+      if(canCanvasWebP()){
+        c.toBlob(b=>{ if(b) return resolve(b); c.toBlob(bb=>resolve(bb), 'image/jpeg', CONFIG.jpegQ); }, 'image/webp', CONFIG.webpQ);
+      }else{
+        c.toBlob(b=> resolve(b), 'image/jpeg', CONFIG.jpegQ);
+      }
     });
   }
 
@@ -398,35 +479,38 @@
     if(!file.type.startsWith('image/')){ setError('Нужен файл изображения.'); return; }
     _lastBlob=file;
     const url=URL.createObjectURL(file);
-    photo.onload=()=>{ meta.textContent = `${photo.naturalWidth}×${photo.naturalHeight} • ${file.type||'image'}`; };
+    photo.onload=()=>{ meta.textContent = `${photo.naturalWidth}×${photo.naturalHeight} • ${file.type||'image'}`; URL.revokeObjectURL(url); };
     photo.src=url;
-    stopCamera(); showPhotoUI(); updateButtons(); ev.target.value='';
+    showPhotoUI(); updateButtons(); ev.target.value='';
   }
 
   // ---------- Torch ----------
   let _torchBusy=false;
   async function toggleTorch(){
-    if(!S.track || !S.torchCap || _torchBusy) return; _torchBusy=true;
-    try{ S._torchOn=!S._torchOn; await S.track.applyConstraints({advanced:[{torch:S._torchOn}]}); haptic(); }
-    catch{ btnTorch.classList.add('hidden'); }
+    if(!S.track || _torchBusy) return; _torchBusy=true;
+    try{
+      const caps=S.track.getCapabilities?.()||{}; if(!caps.torch) throw new Error('no-torch');
+      S._torchOn=!S._torchOn; await S.track.applyConstraints({advanced:[{torch:S._torchOn}]});
+      btnTorch.classList.toggle('hidden', false);
+      btnTorch.setAttribute('aria-pressed', String(S._torchOn));
+      haptic();
+    }catch{ S._torchOn=false; S.torchCap=false; btnTorch.classList.add('hidden'); }
     finally{ setTimeout(()=>{ _torchBusy=false; }, 200); }
   }
 
   // ---------- ORIENTATION ----------
-  function getScreenAngle(){
+  let _screenAngle=0;
+  function refreshScreenAngle(){
     let a = (screen.orientation?.angle ?? window.orientation ?? 0);
-    a = ((a % 360)+360)%360;
-    if (a >= 315 || a < 45) return 0;
-    if (a >= 45 && a < 135) return 90;
-    if (a >= 135 && a < 225) return 180;
-    return 270;
+    a = ((a % 360)+360)%360; _screenAngle = a;
   }
+  screen.orientation?.addEventListener?.('change', refreshScreenAngle);
+  refreshScreenAngle();
+  function getScreenAngle(){ return _screenAngle; }
+
   // более чувствительная шкала: 30° => полное смещение
   function mapTilt(pitchDeg, rollDeg){
-    const a=getScreenAngle();
-    const s=30;
-    const pr=clamp(pitchDeg/s, -1, 1);
-    const rr=clamp(rollDeg /s, -1, 1);
+    const a=getScreenAngle(); const s=30; const pr=clamp(pitchDeg/s, -1, 1); const rr=clamp(rollDeg /s, -1, 1);
     let nx=0, ny=0;
     switch(a){
       case 0:   nx=rr;  ny=pr;  break;
@@ -455,6 +539,12 @@
     return ok;
   }
 
+  function removeSensorListeners(){
+    window.removeEventListener('deviceorientation', onOrient, true);
+    window.removeEventListener('devicemotion', onMotion, true);
+    S.levelOn=false;
+  }
+
   function attachIOSPermissionOneShot(){
     if(!isIOS) return;
     const handler = async () => {
@@ -480,39 +570,13 @@
     }catch{ chipInfo.textContent='Не удалось включить датчики ориентации'; }
   }
 
-  function onOrient(e){
-    if(_view!=='camera') return;
-    _sensorLastTS = performance.now();
-    const pitch=e.beta??0, roll=e.gamma??0;
-    const { nx, ny } = mapTilt(pitch, roll);
-    _rawNx=nx; _rawNy=ny;
-  }
-  function onMotion(e){
-    if(_view!=='camera') return;
-    _sensorLastTS = performance.now();
-    const a=e.accelerationIncludingGravity||{};
-    const x=a.x||0,y=a.y||0,z=a.z||0;
-    const pitch=(Math.atan2(-x,Math.sqrt(y*y+z*z))*180/Math.PI)||0;
-    const roll =(Math.atan2( y, z)*180/Math.PI)||0;
-    const { nx, ny } = mapTilt(pitch, roll);
-    _rawNx=nx; _rawNy=ny;
-  }
+  function onOrient(e){ if(_view!=='camera') return; _sensorLastTS = performance.now(); const pitch=e.beta??0, roll=e.gamma??0; const { nx, ny } = mapTilt(pitch, roll); _rawNx=nx; _rawNy=ny; }
+  function onMotion(e){ if(_view!=='camera') return; _sensorLastTS = performance.now(); const a=e.accelerationIncludingGravity||{}; const x=a.x||0,y=a.y||0,z=a.z||0; const pitch=(Math.atan2(-x,Math.sqrt(y*y+z*z))*180/Math.PI)||0; const roll =(Math.atan2( y, z)*180/Math.PI)||0; const { nx, ny } = mapTilt(pitch, roll); _rawNx=nx; _rawNy=ny; }
 
-  function startSensorsWatchdog(){
-    stopSensorsWatchdog();
-    if(!isIOS) return;
-    _sensorWatch = setInterval(()=>{
-      if(_view!=='camera') return;
-      const stale = (performance.now() - _sensorLastTS) > SENSOR_STALE_MS;
-      if(stale){
-        chipInfo.textContent='Коснитесь экрана, чтобы снова включить «Движение и ориентация»';
-        attachIOSPermissionOneShot();
-      }
-    }, 1000);
-  }
+  function startSensorsWatchdog(){ stopSensorsWatchdog(); if(!isIOS) return; _sensorWatch = setInterval(()=>{ if(_view!=='camera') return; const stale = (performance.now() - _sensorLastTS) > SENSOR_STALE_MS; if(stale){ chipInfo.textContent='Коснитесь экрана, чтобы снова включить «Движение и ориентация»'; attachIOSPermissionOneShot(); } }, 1000); }
   function stopSensorsWatchdog(){ if(_sensorWatch){ clearInterval(_sensorWatch); _sensorWatch=null; } }
   window.addEventListener('pageshow', ()=>{ if(_view==='camera'){ _sensorLastTS=0; attachIOSPermissionOneShot(); }});
-  document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible' && _view==='camera'){ _sensorLastTS=0; attachIOSPermissionOneShot(); } });
+  document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible' && _view==='camera'){ _sensorLastTS=0; attachIOSPermissionOneShot(); }} );
 
   // ---------- LEVEL LOOP (RAW) ----------
   function setLevelOK(next){
@@ -528,35 +592,15 @@
   }
   function isInside(dx,dy){ return (Math.hypot(dx,dy) + CONFIG.BUBBLE_R) <= CONFIG.TARGET_R; }
 
-  function startLevelLoop(){
-    if(_rafId) return;
-    const step=()=>{
-      if(_view==='camera'){
-        // прямое, сверхчувствительное движение
-        const R=_levelRadius;
-        const dx=clamp(_rawNx,-1,1)*R;
-        const dy=clamp(_rawNy,-1,1)*R;
-
-        levelBubble.style.transform = `translate(-50%, -50%) translate(${dx}px, ${dy}px) translateZ(0)`;
-        setLevelOK(isInside(dx,dy));
-      }
-      _rafId=requestAnimationFrame(step);
-    };
-    _rafId=requestAnimationFrame(step);
-  }
+  function startLevelLoop(){ if(_rafId) return; const step=()=>{ if(_view==='camera'){ const R=_levelRadius; const dx=clamp(_rawNx,-1,1)*R; const dy=clamp(_rawNy,-1,1)*R; levelBubble.style.transform = `translate(-50%, -50%) translate(${dx}px, ${dy}px) translateZ(0)`; setLevelOK(isInside(dx,dy)); } _rafId=requestAnimationFrame(step); }; _rafId=requestAnimationFrame(step); }
   function stopLevelLoop(){ if(_rafId){ cancelAnimationFrame(_rafId); _rafId=null; } }
 
-  // ---------- PRESENCE DETECTOR ----------
+  // ---------- PRESENCE DETECTOR (чтение из canvas превью) ----------
   const DET = { c: document.createElement('canvas'), ctx:null, sW:0, sH:0, wrapRect:null, slotRect:null, g:null, gb:null, colV:null, rowH:null, allE:null };
   DET.ctx = DET.c.getContext('2d', { willReadFrequently:true, desynchronized:true });
 
   let _roStarted=false;
-  function startObservers(){
-    if(_roStarted) return;
-    const ro = new ResizeObserver(()=>{ recomputeRects(); computeLevelRadius(); });
-    ro.observe(camWrap); ro.observe(cardArea); ro.observe(levelOuter);
-    _roStarted=true;
-  }
+  function startObservers(){ if(_roStarted) return; const ro = new ResizeObserver(()=>{ recomputeRects(); computeLevelRadius(); }); ro.observe(camWrap); ro.observe(cardArea); ro.observe(levelOuter); _roStarted=true; }
 
   function recomputeRects(){
     DET.wrapRect = camWrap.getBoundingClientRect();
@@ -569,31 +613,17 @@
   window.addEventListener('resize', ()=>{ recomputeRects(); computeLevelRadius(); });
   document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible'){ recomputeRects(); computeLevelRadius(); } });
 
-  function startDetection(){
-    stopDetection();
-    const ric = window.requestIdleCallback || function(cb, opts){ return setTimeout(cb, (opts && opts.timeout) || 120); };
-    const loop=()=>{
-      if(_view==='camera'){
-        const now=performance.now();
-        if(now - _lastDetTS >= (1000/CONFIG.DETECT_HZ)){ detectPresence(); _lastDetTS=now; }
-        _detIdle = ric(loop, {timeout:120});
-      }
-    };
-    _detIdle = ric(loop, {timeout:120});
-  }
-  function stopDetection(){ const cic = window.cancelIdleCallback || clearTimeout; if(_detIdle){ cic(_detIdle); _detIdle=null; } }
-
   function meanStd(arr){ let m=0,m2=0,n=arr.length; for(let i=0;i<n;i++){ const v=arr[i]; m+=v; m2+=v*v; } m/=n; const std=Math.sqrt(Math.max(0,m2/n - m*m)); return [m,std]; }
 
-  function detectPresence(){
-    if(!video.videoWidth || !video.videoHeight || !DET.wrapRect || !DET.slotRect) return;
+  function detectPresenceFromCanvas(srcCanvas){
+    if(!srcCanvas.width || !srcCanvas.height || !DET.wrapRect || !DET.slotRect) return;
 
     const sW=DET.sW, sH=DET.sH, ctx=DET.ctx;
-    const vW=video.videoWidth, vH=video.videoHeight;
+    const vW=srcCanvas.width, vH=srcCanvas.height;
     const scale=Math.max(sW/vW, sH/vH);
     const sw=Math.round(sW/scale), sh=Math.round(sH/scale);
     const sx=Math.floor((vW - sw)/2), sy=Math.floor((vH - sh)/2);
-    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, sW, sH);
+    ctx.drawImage(srcCanvas, sx, sy, sw, sh, 0, 0, sW, sH);
 
     const wrap=DET.wrapRect, slot=DET.slotRect;
     const rx=Math.max(0, Math.round((slot.left - wrap.left) / wrap.width  * sW));
@@ -697,7 +727,7 @@
     }
   }
 
-  // SEND (пока заглушка)
+  // SEND (заглушка)
   async function onSend(){
     const safeText=sanitizeComment(commentEl.value);
     if(!_lastBlob && !safeText){ setError('Пусто. Добавьте фото или комментарий.'); return; }
@@ -713,7 +743,11 @@
 
   // TEARDOWN
   window.addEventListener('beforeunload', ()=>stopAll());
-  function stopAll(){ stopCamera(); stopDetection(); stopLevelLoop(); stopSensorsWatchdog(); }
+  function stopAll(){ stopPreviewLoop(); stopCamera(); stopDetection(); stopLevelLoop(); stopSensorsWatchdog(); removeSensorListeners(); }
+
+  // DETECTION LOOP CONTROLS (совместимость с прежней схемой)
+  function startDetection(){ stopDetection(); /* сам вызов детектора происходит в preview-loop с троттлингом */ }
+  function stopDetection(){ const cic = window.cancelIdleCallback || clearTimeout; if(_detIdle){ cic(_detIdle); _detIdle=null; } }
 
   // TESTS
   (function testRadii(){
@@ -722,6 +756,9 @@
     console.assert(CONFIG.BUBBLE_R>0 && CONFIG.TARGET_R>0, 'radii positive');
   })();
   (function testInsideMath(){ const T=CONFIG.TARGET_R-CONFIG.BUBBLE_R; console.assert(T>0,'T>0'); console.assert(isInside(0,0),'center'); console.assert(isInside(T,0),'boundary'); console.assert(!isInside(T+0.01,0),'outside'); })();
+
+  // Начинаем сенсоры сразу (iOS — по касанию)
+  enableLevelSensors(true);
   </script>
 </body>
 </html>
