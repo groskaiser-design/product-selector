@@ -174,7 +174,18 @@
 
   // iOS
   const isIOS = /iP(hone|od|ad)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && 'ontouchend' in document);
-  let _sensorLastTS = 0, _sensorWatch = null; const SENSOR_STALE_MS = 1500;
+  let _sensorLastTS = 0, _sensorWatch = null; const SENSOR_STALE_MS = 4000; // было 1500 — слишком агрессивно
+
+  // Wake Lock
+  let _wakeLock = null;
+  async function ensureWakeLock(on){
+    try{
+      if('wakeLock' in navigator && navigator.wakeLock?.request){
+        if(on && !_wakeLock){ _wakeLock = await navigator.wakeLock.request('screen'); _wakeLock.addEventListener?.('release', ()=>{ _wakeLock=null; }); }
+        if(!on && _wakeLock){ await _wakeLock.release(); _wakeLock=null; }
+      }
+    }catch(e){ _wakeLock=null; }
+  }
 
   // ===================== DOM =====================
   const $ = id => document.getElementById(id);
@@ -236,6 +247,7 @@
     chipInfo.textContent='Выровняйте телефон, положите банковскую карту в серую зону';
     startPreviewLoop(); startDetection(); startLevelLoop(); startSensorsWatchdog();
     enableLevelSensors(false);
+    ensureWakeLock(true);
     updateButtons(); syncIndicators();
   }
   function showPhotoUI(){
@@ -247,6 +259,7 @@
     stopLevelLoop();
     stopSensorsWatchdog();
     removeSensorListeners();
+    ensureWakeLock(false);
     updateButtons();
   }
 
@@ -436,7 +449,6 @@
       _taking=false; updateButtons();
     }
   }
-  btnShot.addEventListener('click', onShutter);
 
   function canvasToBlob(c){
     return new Promise(resolve=>{
@@ -497,19 +509,26 @@
     return { nx, ny };
   }
 
-  // ---------- SENSORS ----------
+  // ---------- SENSORS (robust pipeline) ----------
+  function addSensorListeners(){
+    try{ window.addEventListener('deviceorientation', onOrient, { capture:true, passive:true }); }
+    catch{ window.addEventListener('deviceorientation', onOrient, true); }
+    try{ window.addEventListener('devicemotion', onMotion, { capture:true, passive:true }); }
+    catch{ window.addEventListener('devicemotion', onMotion, true); }
+  }
+
   async function enableLevelSensors(firstTry=false){
     if(S.levelOn) return true;
     let ok=false;
     try{
       if(typeof DeviceOrientationEvent!=='undefined' && typeof DeviceOrientationEvent.requestPermission==='function' && firstTry){
-        try{ const p=await DeviceOrientationEvent.requestPermission(); if(p==='granted'){ window.addEventListener('deviceorientation', onOrient, true); ok=true; } }catch{}
+        try{ const p=await DeviceOrientationEvent.requestPermission(); if(p==='granted'){ addSensorListeners(); ok=true; } }catch{}
       }
-      if(!ok && 'ondeviceorientation' in window){ window.addEventListener('deviceorientation', onOrient, true); ok=true; }
+      if(!ok && 'ondeviceorientation' in window){ addSensorListeners(); ok=true; }
       if(!ok && typeof DeviceMotionEvent!=='undefined' && typeof DeviceMotionEvent.requestPermission==='function' && firstTry){
-        try{ const p2=await DeviceMotionEvent.requestPermission(); if(p2==='granted'){ window.addEventListener('devicemotion', onMotion, true); ok=true; } }catch{}
+        try{ const p2=await DeviceMotionEvent.requestPermission(); if(p2==='granted'){ addSensorListeners(); ok=true; } }catch{}
       }
-      if(!ok && 'ondevicemotion' in window){ window.addEventListener('devicemotion', onMotion, true); ok=true; }
+      if(!ok && 'ondevicemotion' in window){ addSensorListeners(); ok=true; }
     }catch{}
     S.levelOn=ok;
     return ok;
@@ -517,8 +536,17 @@
 
   function removeSensorListeners(){
     window.removeEventListener('deviceorientation', onOrient, true);
+    window.removeEventListener('deviceorientation', onOrient, { capture:true });
     window.removeEventListener('devicemotion', onMotion, true);
+    window.removeEventListener('devicemotion', onMotion, { capture:true });
     S.levelOn=false;
+  }
+
+  function rebindSensors(){
+    removeSensorListeners();
+    addSensorListeners();
+    S.levelOn=true;
+    _sensorLastTS = performance.now();
   }
 
   function attachIOSPermissionOneShot(){
@@ -526,8 +554,12 @@
     const handler = async () => {
       await requestSensorPermission();
       document.removeEventListener('pointerdown', handler, true);
+      document.removeEventListener('touchstart', handler, true);
+      document.removeEventListener('click', handler, true);
     };
     document.addEventListener('pointerdown', handler, true);
+    document.addEventListener('touchstart', handler, true);
+    document.addEventListener('click', handler, true);
   }
 
   async function requestSensorPermission(){
@@ -535,13 +567,11 @@
     try{
       if(typeof DeviceOrientationEvent!=='undefined' && typeof DeviceOrientationEvent.requestPermission==='function'){
         granted = (await DeviceOrientationEvent.requestPermission())==='granted';
-        if(granted) window.addEventListener('deviceorientation', onOrient, true);
       }
       if(!granted && typeof DeviceMotionEvent!=='undefined' && typeof DeviceMotionEvent.requestPermission==='function'){
         granted = (await DeviceMotionEvent.requestPermission())==='granted';
-        if(granted) window.addEventListener('devicemotion', onMotion, true);
       }
-      if(granted){ S.levelOn=true; chipInfo.textContent='Выровняйте телефон, положите банковскую карту в серую зону'; }
+      if(granted){ addSensorListeners(); S.levelOn=true; chipInfo.textContent='Выровняйте телефон, положите банковскую карту в серую зону'; }
       else { chipInfo.textContent='Разрешите «Движение и ориентация» в Safari, затем коснитесь экрана'; }
     }catch{ chipInfo.textContent='Не удалось включить датчики ориентации'; }
   }
@@ -549,10 +579,10 @@
   function onOrient(e){ if(_view!=='camera') return; _sensorLastTS = performance.now(); const pitch=e.beta??0, roll=e.gamma??0; const { nx, ny } = mapTilt(pitch, roll); _rawNx=nx; _rawNy=ny; }
   function onMotion(e){ if(_view!=='camera') return; _sensorLastTS = performance.now(); const a=e.accelerationIncludingGravity||{}; const x=a.x||0,y=a.y||0,z=a.z||0; const pitch=(Math.atan2(-x,Math.sqrt(y*y+z*z))*180/Math.PI)||0; const roll =(Math.atan2( y, z)*180/Math.PI)||0; const { nx, ny } = mapTilt(pitch, roll); _rawNx=nx; _rawNy=ny; }
 
-  function startSensorsWatchdog(){ stopSensorsWatchdog(); if(!isIOS) return; _sensorWatch = setInterval(()=>{ if(_view!=='camera') return; const stale = (performance.now() - _sensorLastTS) > SENSOR_STALE_MS; if(stale){ chipInfo.textContent='Коснитесь экрана, чтобы снова включить «Движение и ориентация»'; attachIOSPermissionOneShot(); } }, 1000); }
+  function startSensorsWatchdog(){ stopSensorsWatchdog(); if(!isIOS) return; _sensorWatch = setInterval(()=>{ if(_view!=='camera') return; const stale = (performance.now() - _sensorLastTS) > SENSOR_STALE_MS; if(stale){ rebindSensors(); setTimeout(()=>{ if((performance.now()-_sensorLastTS) > 1500){ chipInfo.textContent='Коснитесь экрана, чтобы снова включить «Движение и ориентация»'; attachIOSPermissionOneShot(); } }, 0); } }, 1000); }
   function stopSensorsWatchdog(){ if(_sensorWatch){ clearInterval(_sensorWatch); _sensorWatch=null; } }
   window.addEventListener('pageshow', ()=>{ if(_view==='camera'){ _sensorLastTS=0; attachIOSPermissionOneShot(); }});
-  document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible' && _view==='camera'){ _sensorLastTS=0; attachIOSPermissionOneShot(); }} );
+  document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible' && _view==='camera'){ _sensorLastTS=0; attachIOSPermissionOneShot(); ensureWakeLock(true); } else { ensureWakeLock(false); } });
 
   // ---------- LEVEL LOOP (RAW) ----------
   function setLevelOK(next){
@@ -681,7 +711,7 @@
     const eLT=cornerEnergy(L,T);
     const eRT=cornerEnergy(Math.max(L, R-CONFIG.CORNER_BOX), T);
     const eLB=cornerEnergy(L, Math.max(T, B-CONFIG.CORNER_BOX));
-    const eRB=cornerEnergy(Math.max(L, R-CONFIG.CORNER_BOX), Math.max(T, B-CONFIG.CORNER_BOX));
+    const eRB=cornerEnergy(Math.max(L, R-CONFIG.CORNER_BOX), Math.max(T, B-CONFIG.CОРНЕР_BOX));
 
     const [me,se]=meanStd(allE);
     const eThr=me + 1.0*se;
@@ -719,9 +749,9 @@
 
   // TEARDOWN
   window.addEventListener('beforeunload', ()=>stopAll());
-  function stopAll(){ stopPreviewLoop(); stopCamera(); stopDetection(); stopLevelLoop(); stopSensorsWatchdog(); removeSensorListeners(); }
+  function stopAll(){ stopPreviewLoop(); stopCamera(); stopDetection(); stopLevelLoop(); stopSensorsWatchdog(); removeSensorListeners(); ensureWakeLock(false); }
 
-  // DETECTION LOOP CONTROLS (совместимость с прежней схемой)
+  // DETECTION LOOP CONTROLS
   function startDetection(){ stopDetection(); /* детектор вызывается в preview-loop с троттлингом */ }
   function stopDetection(){ const cic = window.cancelIdleCallback || clearTimeout; if(_detIdle){ cic(_detIdle); _detIdle=null; } }
 
@@ -738,8 +768,6 @@
     console.assert(typeof onShutter==='function','onShutter exists');
     console.assert(typeof detectPresenceFromCanvas==='function','detectPresenceFromCanvas exists');
     console.assert(typeof pvCtx==='object' && pvCtx,'pv context ok');
-    console.assert(PREVIEW_HZ>0,'PREVIEW_HZ > 0');
-    console.assert(CONFIG.DSCALE_W>0,'DSCALE_W > 0');
     console.assert(typeof canCanvasWebP()==='boolean','canCanvasWebP returns boolean');
     console.assert(typeof sanitizeComment('x')==='string','sanitizeComment returns string');
   })();
