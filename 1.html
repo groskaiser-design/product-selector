@@ -385,7 +385,7 @@
     <div id="err" class="error hidden"></div>
 
     <section id="sec-main">
-      <!-- Fallback file inputs -->
+      <!-- Fallback / iOS native camera -->
       <input id="file-cam" type="file" accept="image/*" capture="environment" class="hidden" />
       <input id="file-gallery" type="file" accept="image/*" class="hidden" />
 
@@ -488,7 +488,7 @@
   
   // ==================== CONFIG ====================
   const CONFIG = {
-    // Camera constraints - exact copy from working original
+    // Camera constraints
     idealFacing: { 
       facingMode: { ideal: 'environment' }, 
       aspectRatio: { ideal: 3/4 },
@@ -497,18 +497,19 @@
     },
     
     // Preview
-    previewScale: PLATFORM.isIOS ? 1.0 : 1.0,
-    previewFPS: PLATFORM.isIOS ? 20 : 30,
+    previewScale: 1.0,
+    previewFPS: 30,
+    // Важно: на iOS не будем использовать ImageCapture, только input capture
     preferImageCapture: !PLATFORM.isIOS,
     
     // Photo capture - high quality
-    maxPhotoSide: 8192, // Support high-res cameras
+    maxPhotoSide: 8192,
     jpegQuality: 0.95,
     
     // Level geometry
     bubbleRadius: 10,
     targetRadius: 15,
-    levelRadius: 50, // Will be computed dynamically
+    levelRadius: 50,
     
     // Sensors
     needsPermissionRequest: PLATFORM.isIOS,
@@ -684,44 +685,19 @@
   }
   
   // ==================== CAMERA ====================
-  async function getCameraPermission() {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { facingMode: 'environment' }, 
-        audio: false 
-      });
-      stream.getTracks().forEach(t => t.stop());
-      return true;
-    } catch {
-      return false;
-    }
-  }
-  
   async function findBackCamera() {
     try {
       const devices = await navigator.mediaDevices.enumerateDevices();
       const videoDevices = devices.filter(d => d.kind === 'videoinput');
-      
-      // Priority: back/rear camera, avoid ultra/tele/macro
       const prefer = /back|rear|задн|тыл/i;
       const avoid = /ultra|tele|macro|front|user|сверх/i;
-      
-      let best = videoDevices.find(d => 
-        prefer.test(d.label) && !avoid.test(d.label)
-      );
-      
-      if (!best) {
-        best = videoDevices.find(d => prefer.test(d.label));
-      }
-      
+      let best = videoDevices.find(d => prefer.test(d.label) && !avoid.test(d.label));
+      if (!best) best = videoDevices.find(d => prefer.test(d.label));
       return best?.deviceId || null;
-    } catch {
-      return null;
-    }
+    } catch { return null; }
   }
   
   async function openCamera() {
-    // Request portrait camera exactly like original working code
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
@@ -736,8 +712,6 @@
       return true;
     } catch (err) {
       console.warn('Portrait camera failed:', err);
-      
-      // Fallback
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: 'environment' },
@@ -753,27 +727,22 @@
   
   function bindStream(stream) {
     stopCamera();
-    
     STATE.stream = stream;
     STATE.track = stream.getVideoTracks()[0];
     STATE.videoElement = DOM.video;
-    
     DOM.video.srcObject = stream;
     DOM.video.play().catch(() => {});
-    
-    // Debug: show actual camera info
     const trackSettings = STATE.track.getSettings?.() || {};
     const trackLabel = STATE.track.label || 'unknown';
     console.log('📹 Camera:', trackLabel, trackSettings);
-    
     const checkResolution = () => {
       if (DOM.video.videoWidth > 0) {
         const vw = DOM.video.videoWidth;
         const vh = DOM.video.videoHeight;
         const isPortrait = vh > vw;
         const cameraName = trackLabel.includes('back') ? 'задняя' : 
-                          trackLabel.includes('ultra') ? 'ultra-wide' :
-                          trackLabel.includes('tele') ? 'tele' : 'камера';
+                           trackLabel.includes('ultra') ? 'ultra-wide' :
+                           trackLabel.includes('tele') ? 'tele' : 'камера';
         DOM.chipInfo.textContent = `${vw}×${vh} ${isPortrait ? '📱' : '🖼️'} • ${cameraName}`;
         console.log(`✅ Video ready: ${vw}×${vh} (${isPortrait ? 'portrait' : 'landscape'})`);
       } else {
@@ -781,221 +750,147 @@
       }
     };
     setTimeout(checkResolution, 200);
-    
-    // Check torch capability
     const caps = STATE.track.getCapabilities?.() || {};
-    STATE.hasTorch = !!caps.torch && !PLATFORM.isIOS; // Hide on iOS (unreliable)
+    STATE.hasTorch = !!caps.torch && !PLATFORM.isIOS;
     DOM.btnTorch.classList.toggle('hidden', !STATE.hasTorch);
-    
-    // NO ZOOM - use camera as-is
-    
-    // Create ImageCapture if supported
     if (CONFIG.preferImageCapture && typeof ImageCapture !== 'undefined') {
-      try {
-        STATE.imageCapture = new ImageCapture(STATE.track);
-      } catch {}
+      try { STATE.imageCapture = new ImageCapture(STATE.track); } catch {}
     }
   }
   
   function stopCamera() {
-    try {
-      DOM.video.pause();
-      DOM.video.srcObject = null;
-    } catch {}
-    
-    try {
-      STATE.track?.stop();
-    } catch {}
-    
-    try {
-      STATE.stream?.getTracks().forEach(t => t.stop());
-    } catch {}
-    
-    STATE.stream = null;
-    STATE.track = null;
-    STATE.imageCapture = null;
-    STATE.torchOn = false;
+    try { DOM.video.pause(); DOM.video.srcObject = null; } catch {}
+    try { STATE.track?.stop(); } catch {}
+    try { STATE.stream?.getTracks().forEach(t => t.stop()); } catch {}
+    STATE.stream = null; STATE.track = null; STATE.imageCapture = null; STATE.torchOn = false;
   }
   
   // ==================== PREVIEW LOOP ====================
   async function drawPreviewFrame() {
     const video = DOM.video;
     const canvas = DOM.preview;
-    
     if (!video.videoWidth || !video.videoHeight) return;
-    
-    // Calculate scaled dimensions
     const { width: cssW, height: cssH } = DOM.camWrap.getBoundingClientRect();
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     const scale = CONFIG.previewScale * dpr;
     const tw = Math.max(1, Math.round(cssW * scale));
     const th = Math.max(1, Math.round(cssH * scale));
-    
-    if (canvas.width !== tw || canvas.height !== th) {
-      canvas.width = tw;
-      canvas.height = th;
-    }
-    
-    // High quality rendering
+    if (canvas.width !== tw || canvas.height !== th) { canvas.width = tw; canvas.height = th; }
     previewCtx.imageSmoothingEnabled = true;
     previewCtx.imageSmoothingQuality = 'high';
-    
-    // Draw video scaled to cover canvas
+
+    // Cover: подрезаем аккуратно под 3:4 контейнер
     const videoAspect = video.videoWidth / video.videoHeight;
     const canvasAspect = tw / th;
-    
     let sx, sy, sw, sh;
     if (videoAspect > canvasAspect) {
-      // Video wider - crop sides
-      sh = video.videoHeight;
-      sw = sh * canvasAspect;
-      sx = (video.videoWidth - sw) / 2;
-      sy = 0;
+      sh = video.videoHeight; sw = sh * canvasAspect; sx = (video.videoWidth - sw) / 2; sy = 0;
     } else {
-      // Video taller - crop top/bottom
-      sw = video.videoWidth;
-      sh = sw / canvasAspect;
-      sx = 0;
-      sy = (video.videoHeight - sh) / 2;
+      sw = video.videoWidth; sh = sw / canvasAspect; sx = 0; sy = (video.videoHeight - sh) / 2;
     }
-    
     previewCtx.drawImage(video, sx, sy, sw, sh, 0, 0, tw, th);
   }
   
   function startPreviewLoop() {
     if (STATE.previewRunning) return;
-    
-    STATE.previewRunning = true;
-    DOM.preview.style.opacity = '0';
-    
-    const fps = CONFIG.previewFPS;
-    const frameTime = 1000 / fps;
-    
+    STATE.previewRunning = true; DOM.preview.style.opacity = '0';
+    const fps = CONFIG.previewFPS; const frameTime = 1000 / fps;
     const tick = async () => {
       if (!STATE.previewRunning || STATE.currentView !== 'camera') return;
-      
       const now = performance.now();
       if (now - STATE.lastPreviewTime >= frameTime) {
         STATE.lastPreviewTime = now;
-        
         try {
           await drawPreviewFrame();
-          
-          // Show preview after first successful frame
           if (DOM.preview.style.opacity === '0' && DOM.preview.width > 0) {
             DOM.preview.style.opacity = '1';
           }
-        } catch (err) {
-          console.warn('Preview frame error:', err);
-        }
+        } catch (err) { console.warn('Preview frame error:', err); }
       }
-      
       STATE.previewRaf = requestAnimationFrame(tick);
     };
-    
     STATE.previewRaf = requestAnimationFrame(tick);
   }
   
   function stopPreviewLoop() {
     STATE.previewRunning = false;
-    if (STATE.previewRaf) {
-      cancelAnimationFrame(STATE.previewRaf);
-      STATE.previewRaf = null;
-    }
+    if (STATE.previewRaf) { cancelAnimationFrame(STATE.previewRaf); STATE.previewRaf = null; }
   }
   
   // ==================== PHOTO CAPTURE ====================
   function canvasToBlob(canvas, quality = CONFIG.jpegQuality) {
     return new Promise(resolve => {
-      canvas.toBlob(
-        blob => resolve(blob),
-        'image/jpeg',
-        quality
-      );
+      canvas.toBlob(blob => resolve(blob), 'image/jpeg', quality);
     });
   }
   
   async function captureHighResPhoto() {
     const video = DOM.video;
-    
-    // Method 1: ImageCapture (Android)
+
+    // 1) Android/desktop: ImageCapture, просим портретные габариты (без поворотов)
     if (STATE.imageCapture?.takePhoto) {
       try {
-        const blob = await STATE.imageCapture.takePhoto();
+        const blob = await STATE.imageCapture.takePhoto({ imageWidth: 1440, imageHeight: 1920 });
         if (blob) return blob;
-      } catch (err) {
-        console.warn('ImageCapture.takePhoto failed:', err);
-      }
+      } catch (err) { console.warn('ImageCapture.takePhoto failed:', err); }
     }
-    
-    // Method 2: Canvas from video (iOS, fallback)
-    const vw = video.videoWidth;
-    const vh = video.videoHeight;
-    
-    if (!vw || !vh) {
-      throw new Error('Video not ready');
-    }
-    
-    // Scale down if too large (keep original aspect ratio)
+
+    // 2) Fallback через canvas (без вращений)
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw || !vh) throw new Error('Video not ready');
     const maxSide = CONFIG.maxPhotoSide;
     const scale = Math.min(1, maxSide / Math.max(vw, vh));
     const w = Math.round(vw * scale);
     const h = Math.round(vh * scale);
-    
     const canvas = document.createElement('canvas');
-    canvas.width = w;
-    canvas.height = h;
-    
+    canvas.width = w; canvas.height = h;
     const ctx = canvas.getContext('2d');
     ctx.drawImage(video, 0, 0, w, h);
-    
     return canvasToBlob(canvas);
   }
   
   async function onShutter() {
     if (DOM.btnShot.disabled || STATE.capturing) return;
-    
-    STATE.capturing = true;
-    updateButtons();
-    haptic();
-    
+    STATE.capturing = true; updateButtons(); haptic();
+
+    // iOS: снимаем ТОЛЬКО нативной камерой через input capture → портрет и макс. качество
+    if (PLATFORM.isIOS) {
+      try { DOM.fileCam.setAttribute('capture', 'environment'); } catch {}
+      DOM.fileCam.click();
+      STATE.capturing = false; updateButtons();
+      return;
+    }
+
+    // Android/desktop: пробуем ImageCapture (портретные размеры), иначе fallback
     try {
       const blob = await captureHighResPhoto();
       STATE.lastBlob = blob;
-      
       const url = URL.createObjectURL(blob);
       DOM.photo.onload = () => {
         DOM.meta.textContent = `${DOM.photo.naturalWidth}×${DOM.photo.naturalHeight}`;
         URL.revokeObjectURL(url);
       };
       DOM.photo.src = url;
-      
       showPhotoUI();
     } catch (err) {
       console.error('Capture failed:', err);
       setError('Не удалось сделать снимок. Попробуйте ещё раз.');
     } finally {
-      STATE.capturing = false;
-      updateButtons();
+      STATE.capturing = false; updateButtons();
     }
   }
   
   // ==================== TORCH ====================
   async function toggleTorch() {
     if (!STATE.track || !STATE.hasTorch) return;
-    
     try {
       STATE.torchOn = !STATE.torchOn;
-      await STATE.track.applyConstraints({
-        advanced: [{ torch: STATE.torchOn }]
-      });
+      await STATE.track.applyConstraints({ advanced: [{ torch: STATE.torchOn }] });
       DOM.btnTorch.setAttribute('aria-pressed', String(STATE.torchOn));
       haptic();
     } catch (err) {
       console.warn('Torch toggle failed:', err);
-      STATE.torchOn = false;
-      STATE.hasTorch = false;
-      DOM.btnTorch.classList.add('hidden');
+      STATE.torchOn = false; STATE.hasTorch = false; DOM.btnTorch.classList.add('hidden');
     }
   }
   
@@ -1009,68 +904,39 @@
     const maxTilt = 30; // degrees
     const pr = Math.max(-1, Math.min(1, pitchDeg / maxTilt));
     const rr = Math.max(-1, Math.min(1, rollDeg / maxTilt));
-    
     let nx = 0, ny = 0;
-    
     switch (STATE.screenAngle) {
       case 0:   nx = rr;  ny = pr;  break;
       case 90:  nx = -pr; ny = rr;  break;
       case 180: nx = -rr; ny = -pr; break;
       case 270: nx = pr;  ny = -rr; break;
     }
-    
     return { nx, ny };
   }
   
   function onDeviceOrientation(event) {
     if (STATE.currentView !== 'camera') return;
-    
     STATE.lastSensorTime = performance.now();
-    
     const pitch = event.beta ?? 0;
     const roll = event.gamma ?? 0;
-    
     const { nx, ny } = mapTilt(pitch, roll);
-    STATE.rawNx = nx;
-    STATE.rawNy = ny;
+    STATE.rawNx = nx; STATE.rawNy = ny;
   }
   
   function onDeviceMotion(event) {
     if (STATE.currentView !== 'camera') return;
-    
     STATE.lastSensorTime = performance.now();
-    
     const accel = event.accelerationIncludingGravity || {};
-    const x = accel.x || 0;
-    const y = accel.y || 0;
-    const z = accel.z || 0;
-    
+    const x = accel.x || 0; const y = accel.y || 0; const z = accel.z || 0;
     const pitch = (Math.atan2(-x, Math.sqrt(y*y + z*z)) * 180 / Math.PI) || 0;
     const roll = (Math.atan2(y, z) * 180 / Math.PI) || 0;
-    
     const { nx, ny } = mapTilt(pitch, roll);
-    STATE.rawNx = nx;
-    STATE.rawNy = ny;
+    STATE.rawNx = nx; STATE.rawNy = ny;
   }
   
   function attachSensorListeners() {
-    try {
-      window.addEventListener('deviceorientation', onDeviceOrientation, { 
-        capture: true, 
-        passive: true 
-      });
-    } catch {
-      window.addEventListener('deviceorientation', onDeviceOrientation, true);
-    }
-    
-    try {
-      window.addEventListener('devicemotion', onDeviceMotion, { 
-        capture: true, 
-        passive: true 
-      });
-    } catch {
-      window.addEventListener('devicemotion', onDeviceMotion, true);
-    }
+    try { window.addEventListener('deviceorientation', onDeviceOrientation, { capture: true, passive: true }); } catch { window.addEventListener('deviceorientation', onDeviceOrientation, true); }
+    try { window.addEventListener('devicemotion', onDeviceMotion, { capture: true, passive: true }); } catch { window.addEventListener('devicemotion', onDeviceMotion, true); }
   }
   
   function removeSensorListeners() {
@@ -1082,41 +948,20 @@
   
   async function requestSensorPermission() {
     let granted = false;
-    
     try {
-      // iOS: Request permission
-      if (typeof DeviceOrientationEvent !== 'undefined' && 
-          typeof DeviceOrientationEvent.requestPermission === 'function') {
-        try {
-          const result = await DeviceOrientationEvent.requestPermission();
-          granted = result === 'granted';
-        } catch {}
+      if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        try { const result = await DeviceOrientationEvent.requestPermission(); granted = result === 'granted'; } catch {}
       }
-      
-      if (!granted && 
-          typeof DeviceMotionEvent !== 'undefined' && 
-          typeof DeviceMotionEvent.requestPermission === 'function') {
-        try {
-          const result = await DeviceMotionEvent.requestPermission();
-          granted = result === 'granted';
-        } catch {}
+      if (!granted && typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+        try { const result = await DeviceMotionEvent.requestPermission(); granted = result === 'granted'; } catch {}
       }
-      
-      // Attach listeners regardless (Android works without permission)
       attachSensorListeners();
-      
       if (granted || !CONFIG.needsPermissionRequest) {
-        STATE.sensorsEnabled = true;
-        STATE.lastSensorTime = performance.now();
-        DOM.btnPermission.classList.add('hidden');
-        DOM.chipInfo.textContent = 'Держите телефон ровно';
+        STATE.sensorsEnabled = true; STATE.lastSensorTime = performance.now(); DOM.btnPermission.classList.add('hidden'); DOM.chipInfo.textContent = 'Держите телефон ровно';
       } else if (CONFIG.needsPermissionRequest) {
         showSensorHelp();
       }
-    } catch (err) {
-      console.warn('Sensor permission failed:', err);
-      showSensorHelp();
-    }
+    } catch (err) { console.warn('Sensor permission failed:', err); showSensorHelp(); }
   }
   
   function showSensorHelp() {
@@ -1126,189 +971,76 @@
   
   async function enableSensors() {
     if (STATE.sensorsEnabled) return true;
-    
     if (CONFIG.needsPermissionRequest) {
-      // iOS: need user gesture + permission
       DOM.btnPermission.classList.remove('hidden');
       return false;
     } else {
-      // Android: just attach
-      attachSensorListeners();
-      STATE.sensorsEnabled = true;
-      STATE.lastSensorTime = performance.now();
-      return true;
+      attachSensorListeners(); STATE.sensorsEnabled = true; STATE.lastSensorTime = performance.now(); return true;
     }
   }
   
-  function rebindSensors() {
-    removeSensorListeners();
-    attachSensorListeners();
-    STATE.lastSensorTime = performance.now();
-  }
+  function rebindSensors() { removeSensorListeners(); attachSensorListeners(); STATE.lastSensorTime = performance.now(); }
   
   function startSensorWatchdog() {
-    stopSensorWatchdog();
-    
-    if (!PLATFORM.isIOS) return; // Only needed on iOS
-    
+    stopSensorWatchdog(); if (!PLATFORM.isIOS) return;
     STATE.sensorWatchdog = setInterval(() => {
       if (STATE.currentView !== 'camera') return;
-      
       const stale = (performance.now() - STATE.lastSensorTime) > CONFIG.sensorStaleMs;
-      
-      if (stale && STATE.sensorsEnabled) {
-        // Sensors went stale, rebind
-        rebindSensors();
-      }
+      if (stale && STATE.sensorsEnabled) { rebindSensors(); }
     }, 1000);
   }
   
-  function stopSensorWatchdog() {
-    if (STATE.sensorWatchdog) {
-      clearInterval(STATE.sensorWatchdog);
-      STATE.sensorWatchdog = null;
-    }
-  }
+  function stopSensorWatchdog() { if (STATE.sensorWatchdog) { clearInterval(STATE.sensorWatchdog); STATE.sensorWatchdog = null; } }
   
   // ==================== LEVEL LOOP ====================
   function computeLevelRadius() {
-    const outer = DOM.levelOuter;
-    const rOuter = Math.min(outer.clientWidth, outer.clientHeight) * 0.5;
-    CONFIG.levelRadius = Math.max(10, Math.floor(rOuter * 0.7));
+    const outer = DOM.levelOuter; const rOuter = Math.min(outer.clientWidth, outer.clientHeight) * 0.5; CONFIG.levelRadius = Math.max(10, Math.floor(rOuter * 0.7));
   }
   
   function updateLevel() {
-    const R = CONFIG.levelRadius;
-    const dx = STATE.rawNx * R;
-    const dy = STATE.rawNy * R;
-    
-    // Update bubble position (no transition, direct)
-    DOM.levelBubble.style.transform = 
-      `translate(-50%, -50%) translate(${dx}px, ${dy}px)`;
-    
-    // Check if level is OK
-    const distance = Math.hypot(dx, dy);
-    const wasOK = STATE.levelOK;
-    STATE.levelOK = (distance + CONFIG.bubbleRadius) <= CONFIG.targetRadius;
-    
-    if (STATE.levelOK !== wasOK) {
-      DOM.levelBubble.classList.toggle('ok', STATE.levelOK);
-      DOM.levelTarget.classList.toggle('ok', STATE.levelOK);
-      syncLevelIndicator();
-      updateButtons();
-    }
+    const R = CONFIG.levelRadius; const dx = STATE.rawNx * R; const dy = STATE.rawNy * R;
+    DOM.levelBubble.style.transform = `translate(-50%, -50%) translate(${dx}px, ${dy}px)`;
+    const distance = Math.hypot(dx, dy); const wasOK = STATE.levelOK; STATE.levelOK = (distance + CONFIG.bubbleRadius) <= CONFIG.targetRadius;
+    if (STATE.levelOK !== wasOK) { DOM.levelBubble.classList.toggle('ok', STATE.levelOK); DOM.levelTarget.classList.toggle('ok', STATE.levelOK); syncLevelIndicator(); updateButtons(); }
   }
   
   function startLevelLoop() {
     if (STATE.levelRaf) return;
-    
-    const tick = () => {
-      if (STATE.currentView === 'camera') {
-        updateLevel();
-      }
-      STATE.levelRaf = requestAnimationFrame(tick);
-    };
-    
+    const tick = () => { if (STATE.currentView === 'camera') { updateLevel(); } STATE.levelRaf = requestAnimationFrame(tick); };
     STATE.levelRaf = requestAnimationFrame(tick);
   }
   
-  function stopLevelLoop() {
-    if (STATE.levelRaf) {
-      cancelAnimationFrame(STATE.levelRaf);
-      STATE.levelRaf = null;
-    }
-  }
+  function stopLevelLoop() { if (STATE.levelRaf) { cancelAnimationFrame(STATE.levelRaf); STATE.levelRaf = null; } }
   
-  // ==================== GALLERY ====================
+  // ==================== GALLERY / FILE PICK ====================
   async function onFilePicked(event) {
-    const file = event.target?.files?.[0];
-    if (!file) return;
-    
-    if (!file.type.startsWith('image/')) {
-      setError('Выберите изображение');
-      return;
-    }
-    
+    const file = event.target?.files?.[0]; if (!file) return;
+    if (!file.type.startsWith('image/')) { setError('Выберите изображение'); return; }
     STATE.lastBlob = file;
-    
     const url = URL.createObjectURL(file);
-    DOM.photo.onload = () => {
-      DOM.meta.textContent = `${DOM.photo.naturalWidth}×${DOM.photo.naturalHeight} • ${file.type}`;
-      URL.revokeObjectURL(url);
-    };
+    DOM.photo.onload = () => { DOM.meta.textContent = `${DOM.photo.naturalWidth}×${DOM.photo.naturalHeight} • ${file.type}`; URL.revokeObjectURL(url); };
     DOM.photo.src = url;
-    
-    showPhotoUI();
-    updateButtons();
-    
-    event.target.value = '';
+    showPhotoUI(); updateButtons(); event.target.value = '';
   }
   
   // ==================== SEND ====================
   async function onSend() {
     const comment = sanitizeComment(DOM.comment.value);
-    
-    if (!STATE.lastBlob && !comment) {
-      setError('Добавьте фото или комментарий');
-      return;
-    }
-    
-    // TODO: Implement backend integration
-    console.log('Send:', {
-      hasImage: !!STATE.lastBlob,
-      comment,
-      imageSize: STATE.lastBlob?.size
-    });
-    
-    // Mock success
+    if (!STATE.lastBlob && !comment) { setError('Добавьте фото или комментарий'); return; }
+    console.log('Send:', { hasImage: !!STATE.lastBlob, comment, imageSize: STATE.lastBlob?.size });
     setError('✅ Отправлено (demo mode)');
-    
-    // Reset after send
-    setTimeout(() => {
-      startCameraFlow();
-      DOM.comment.value = '';
-      setError('');
-    }, 1500);
+    setTimeout(() => { startCameraFlow(); DOM.comment.value = ''; setError(''); }, 1500);
   }
   
   // ==================== STARTUP ====================
   async function startCameraFlow() {
-    stopPreviewLoop();
-    stopLevelLoop();
-    stopSensorWatchdog();
-    
-    STATE.lastBlob = null;
-    STATE.capturing = false;
-    STATE.levelOK = false;
-    STATE.rawNx = 0;
-    STATE.rawNy = 0;
-    STATE.lastSensorTime = 0;
-    
-    updateButtons();
-    setError('');
-    computeLevelRadius();
-    refreshScreenAngle();
-    
-    // Check camera access
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setError('Камера недоступна в этом браузере');
-      DOM.fileCam?.click();
-      return;
-    }
-    
-    // Try to open camera
+    stopPreviewLoop(); stopLevelLoop(); stopSensorWatchdog();
+    STATE.lastBlob = null; STATE.capturing = false; STATE.levelOK = false; STATE.rawNx = 0; STATE.rawNy = 0; STATE.lastSensorTime = 0;
+    updateButtons(); setError(''); computeLevelRadius(); refreshScreenAngle();
+    if (!navigator.mediaDevices?.getUserMedia) { setError('Камера недоступна в этом браузере'); DOM.fileCam?.click(); return; }
     const opened = await openCamera();
-    
-    if (!opened) {
-      setError('Не удалось открыть камеру. Используйте галерею.');
-      DOM.fileCam?.click();
-      return;
-    }
-    
-    // Enable sensors
+    if (!opened) { setError('Не удалось открыть камеру. Используйте галерею.'); DOM.fileCam?.click(); return; }
     await enableSensors();
-    
-    // Show camera UI
     showCameraUI();
   }
   
@@ -1316,106 +1048,31 @@
   DOM.btnShot.addEventListener('click', onShutter);
   DOM.btnTorch.addEventListener('click', toggleTorch);
   DOM.btnPermission.addEventListener('click', requestSensorPermission);
-  
-  DOM.btnRetake.addEventListener('click', () => {
-    if (!DOM.btnRetake.disabled) {
-      startCameraFlow();
-    }
-  });
-  
-  DOM.btnGallery.addEventListener('click', () => {
-    DOM.fileGallery?.click();
-  });
-  
+  DOM.btnRetake.addEventListener('click', () => { if (!DOM.btnRetake.disabled) { startCameraFlow(); } });
+  DOM.btnGallery.addEventListener('click', () => { DOM.fileGallery?.click(); });
   DOM.fileGallery.addEventListener('change', onFilePicked);
   DOM.fileCam.addEventListener('change', onFilePicked);
-  
   DOM.btnSend.addEventListener('click', onSend);
-  
-  DOM.comment.addEventListener('input', () => {
-    const raw = DOM.comment.value;
-    const safe = sanitizeComment(raw);
-    
-    if (raw !== safe) {
-      DOM.commentWarn.textContent = 'Некоторые символы удалены';
-      DOM.commentWarn.classList.remove('hidden');
-    } else {
-      DOM.commentWarn.classList.add('hidden');
-    }
-    
-    updateButtons();
-  });
+  DOM.comment.addEventListener('input', () => { const raw = DOM.comment.value; const safe = sanitizeComment(raw); if (raw !== safe) { DOM.commentWarn.textContent = 'Некоторые символы удалены'; DOM.commentWarn.classList.remove('hidden'); } else { DOM.commentWarn.classList.add('hidden'); } updateButtons(); });
   
   // ==================== LIFECYCLE ====================
   screen.orientation?.addEventListener?.('change', refreshScreenAngle);
-  
-  window.addEventListener('resize', () => {
-    computeLevelRadius();
-  });
-  
-  window.addEventListener('pageshow', () => {
-    if (STATE.currentView === 'camera') {
-      STATE.lastSensorTime = 0;
-      if (PLATFORM.isIOS) {
-        DOM.btnPermission.classList.remove('hidden');
-      }
-    }
-  });
-  
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') {
-      if (STATE.currentView === 'camera') {
-        STATE.lastSensorTime = 0;
-        ensureWakeLock(true);
-      }
-    } else {
-      ensureWakeLock(false);
-    }
-  });
-  
-  window.addEventListener('beforeunload', () => {
-    stopPreviewLoop();
-    stopLevelLoop();
-    stopSensorWatchdog();
-    stopCamera();
-    removeSensorListeners();
-    ensureWakeLock(false);
-  });
+  window.addEventListener('resize', () => { computeLevelRadius(); });
+  window.addEventListener('pageshow', () => { if (STATE.currentView === 'camera') { STATE.lastSensorTime = 0; if (PLATFORM.isIOS) { DOM.btnPermission.classList.remove('hidden'); } } });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { if (STATE.currentView === 'camera') { STATE.lastSensorTime = 0; ensureWakeLock(true); } } else { ensureWakeLock(false); } });
+  window.addEventListener('beforeunload', () => { stopPreviewLoop(); stopLevelLoop(); stopSensorWatchdog(); stopCamera(); removeSensorListeners(); ensureWakeLock(false); });
   
   // ==================== INIT ====================
   window.addEventListener('DOMContentLoaded', () => {
     startCameraFlow();
-    
     // Prevent pinch zoom on camera area
     let lastTouchDistance = 0;
-    DOM.camWrap.addEventListener('touchstart', (e) => {
-      if (e.touches.length > 1) {
-        e.preventDefault(); // Prevent zoom gesture
-        lastTouchDistance = 0;
-      }
-    }, { passive: false });
-    
-    DOM.camWrap.addEventListener('touchmove', (e) => {
-      if (e.touches.length > 1) {
-        e.preventDefault(); // Prevent zoom gesture
-      }
-    }, { passive: false });
-    
+    DOM.camWrap.addEventListener('touchstart', (e) => { if (e.touches.length > 1) { e.preventDefault(); lastTouchDistance = 0; } }, { passive: false });
+    DOM.camWrap.addEventListener('touchmove', (e) => { if (e.touches.length > 1) { e.preventDefault(); } }, { passive: false });
     // Prevent double-tap zoom
-    let lastTap = 0;
-    DOM.camWrap.addEventListener('touchend', (e) => {
-      const now = Date.now();
-      if (now - lastTap < 300) {
-        e.preventDefault();
-      }
-      lastTap = now;
-    });
-    
+    let lastTap = 0; DOM.camWrap.addEventListener('touchend', (e) => { const now = Date.now(); if (now - lastTap < 300) { e.preventDefault(); } lastTap = now; });
     // Telegram WebApp integration
-    try {
-      window.Telegram?.WebApp?.ready?.();
-      window.Telegram?.WebApp?.expand?.();
-    } catch {}
+    try { window.Telegram?.WebApp?.ready?.(); window.Telegram?.WebApp?.expand?.(); } catch {}
   });
   </script>
 </body>
