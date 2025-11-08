@@ -24,7 +24,7 @@
     .btn-torch{position:absolute;left:12px;top:12px;z-index:10;pointer-events:auto;padding:8px 12px;border-radius:999px;border:1px solid rgba(255,255,255,.3);color:#fff;background:rgba(0,0,0,.5);backdrop-filter:blur(4px);font-size:20px;cursor:pointer}
     .center-level{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
     .level-outer{position:relative;width:140px;height:140px;border-radius:50%}
-    .level-target{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);border-radius:50%;border:2px solid rgba(255,255,255,.6);background:rgba(0,0,0,.1);width:30px;height:30px}
+    .level-target{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);border-radius:50%;border:2px solid rgba(255,255,255,.6);background:rgba(0,0,0,.1);width:25px;height:25px}
     .level-target.ok{border-color:#34d399;background:rgba(34,197,94,.15)}
     .level-bubble{position:absolute;left:50%;top:50%;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.4)}
     .level-bubble.ok{background:#22c55e}
@@ -77,8 +77,6 @@
           <button id="btnShot" class="shutter" aria-label="Сделать снимок" disabled></button>
         </div>
       </div>
-
-      <div id="meta" class="meta"></div>
 
       <div class="field">
         <label for="comment" class="helper">Комментарий (необязательно, но повысит точность)</label>
@@ -134,7 +132,7 @@
   const DOM = {
     err: $('err'), video: $('video'), preview: $('preview'), photo: $('photo'), overlay: $('overlay'), controls: $('controls'),
     btnShot: $('btnShot'), btnTorch: $('btnTorch'), btnPermission: $('btnPermission'), chipInfo: $('chipInfo'), fileCam: $('file-cam'), fileGallery: $('file-gallery'),
-    levelBubble: $('levelBubble'), levelTarget: $('levelTarget'), levelOuter: $('levelOuter'), indLevel: $('indLevel'), meta: $('meta'), btnRetake: $('btnRetake'), btnGallery: $('btnGallery'), btnSend: $('btnSend'), comment: $('comment'), commentWarn: $('commentWarn'), camWrap: $('camWrap')
+    levelBubble: $('levelBubble'), levelTarget: $('levelTarget'), levelOuter: $('levelOuter'), indLevel: $('indLevel'),  btnRetake: $('btnRetake'), btnGallery: $('btnGallery'), btnSend: $('btnSend'), comment: $('comment'), commentWarn: $('commentWarn'), camWrap: $('camWrap')
   };
 
   const previewCtx = DOM.preview.getContext('2d', { alpha:false, desynchronized:true });
@@ -155,7 +153,6 @@
     DOM.overlay.classList.remove('hidden');
     DOM.controls.classList.remove('hidden');
     DOM.photo.classList.add('hidden');
-    DOM.meta.textContent='';
     DOM.chipInfo.textContent='Держите телефон ровно';
     computeLevelRadiusDeferred();
     startPreviewLoop();
@@ -195,7 +192,7 @@
   function canvasToBlob(canvas,quality=CONFIG.jpegQuality){ return new Promise(r=>{ canvas.toBlob(b=>r(b),'image/jpeg',quality); }); }
   function computeCoverCropByAspect(vw,vh,canvasAspect){ let sx,sy,sw,sh; const videoAspect=vw/vh; if(videoAspect>canvasAspect){ sh=vh; sw=Math.round(sh*canvasAspect); sx=Math.floor((vw-sw)/2); sy=0; } else { sw=vw; sh=Math.round(sw/canvasAspect); sx=0; sy=Math.floor((vh-sh)/2); } return {sx,sy,sw,sh}; }
   async function captureWysiwygFromVideo(){ const video=DOM.video; const vw=video.videoWidth, vh=video.videoHeight; if(!vw||!vh) throw new Error('Video not ready'); if(STATE.imageCapture?.takePhoto){ try{ const raw=await STATE.imageCapture.takePhoto(); const bmp=await createImageBitmap(raw); const aspect=STATE.lastCropRect?.canvasAspect || (DOM.preview.width&&DOM.preview.height ? (DOM.preview.width/DOM.preview.height) : (DOM.camWrap.clientWidth/DOM.camWrap.clientHeight)); const {sx,sy,sw,sh}=computeCoverCropByAspect(bmp.width,bmp.height,aspect); const scale=Math.min(1,CONFIG.maxPhotoSide/Math.max(sw,sh)); const outW=Math.max(1,Math.round(sw*scale)), outH=Math.max(1,Math.round(sh*scale)); const c=document.createElement('canvas'); c.width=outW; c.height=outH; c.getContext('2d').drawImage(bmp,sx,sy,sw,sh,0,0,outW,outH); bmp.close?.(); return canvasToBlob(c); }catch(e){ console.warn('ImageCapture failed, fallback video frame',e); } } let crop=STATE.lastCropRect; if(!crop||crop.videoWidth!==vw||crop.videoHeight!==vh){ const aspect=DOM.preview.width&&DOM.preview.height ? (DOM.preview.width/DOM.preview.height) : (DOM.camWrap.clientWidth/DOM.camWrap.clientHeight); crop=computeCoverCropByAspect(vw,vh,aspect); } const {sx,sy,sw,sh}=crop; const scale=Math.min(1,CONFIG.maxPhotoSide/Math.max(sw,sh)); const outW=Math.max(1,Math.round(sw*scale)), outH=Math.max(1,Math.round(sh*scale)); const c=document.createElement('canvas'); c.width=outW; c.height=outH; c.getContext('2d').drawImage(video,sx,sy,sw,sh,0,0,outW,outH); return canvasToBlob(c); }
-  async function onShutter(){ if(DOM.btnShot.disabled||STATE.capturing) return; STATE.capturing=true; updateButtons(); haptic(); try{ const blob=await captureWysiwygFromVideo(); STATE.lastBlob=blob; const url=URL.createObjectURL(blob); DOM.photo.onload=()=>{ DOM.meta.textContent=`${DOM.photo.naturalWidth}×${DOM.photo.naturalHeight}`; URL.revokeObjectURL(url); }; DOM.photo.src=url; showPhotoUI(); }catch(err){ console.error('Capture failed:',err); setError('Не удалось сделать снимок. Попробуйте ещё раз.'); } finally { STATE.capturing=false; updateButtons(); } }
+  async function onShutter(){ if(DOM.btnShot.disabled||STATE.capturing) return; STATE.capturing=true; updateButtons(); haptic(); try{ const blob=await captureWysiwygFromVideo(); STATE.lastBlob=blob; const url=URL.createObjectURL(blob); DOM.photo.onload=()=>{ URL.revokeObjectURL(url); }; DOM.photo.src=url; showPhotoUI(); }catch(err){ console.error('Capture failed:',err); setError('Не удалось сделать снимок. Попробуйте ещё раз.'); } finally { STATE.capturing=false; updateButtons(); } }
 
   // ==================== TORCH ====================
   async function toggleTorch(){ if(!STATE.track||!STATE.hasTorch) return; try{ STATE.torchOn=!STATE.torchOn; await STATE.track.applyConstraints({advanced:[{torch:STATE.torchOn}]}); DOM.btnTorch.setAttribute('aria-pressed',String(STATE.torchOn)); haptic(); }catch(err){ console.warn('Torch toggle failed:',err); STATE.torchOn=false; STATE.hasTorch=false; DOM.btnTorch.classList.add('hidden'); } }
@@ -230,7 +227,7 @@
   function stopLevelLoop(){ if(STATE.levelRaf){ cancelAnimationFrame(STATE.levelRaf); STATE.levelRaf=null; } }
 
   // ==================== FILE PICK ====================
-  async function onFilePicked(e){ const file=e.target?.files?.[0]; if(!file) return; if(!file.type.startsWith('image/')){ setError('Выберите изображение'); return; } STATE.lastBlob=file; const url=URL.createObjectURL(file); DOM.photo.onload=()=>{ DOM.meta.textContent=`${DOM.photo.naturalWidth}×${DOM.photo.naturalHeight} • ${file.type}`; URL.revokeObjectURL(url); }; DOM.photo.src=url; showPhotoUI(); updateButtons(); e.target.value=''; }
+  async function onFilePicked(e){ const file=e.target?.files?.[0]; if(!file) return; if(!file.type.startsWith('image/')){ setError('Выберите изображение'); return; } STATE.lastBlob=file; const url=URL.createObjectURL(file); DOM.photo.onload=()=>{ URL.revokeObjectURL(url); }; DOM.photo.src=url; showPhotoUI(); updateButtons(); e.target.value=''; }
 
   // ==================== SEND ====================
   async function onSend(){ const comment=sanitizeComment(DOM.comment.value); if(!STATE.lastBlob && !comment){ setError('Добавьте фото или комментарий'); return; } console.log('Send:',{hasImage:!!STATE.lastBlob, comment, imageSize:STATE.lastBlob?.size}); setError('✅ Отправлено (demo mode)'); setTimeout(()=>{ startCameraFlow(); DOM.comment.value=''; setError(''); },1500); }
