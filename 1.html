@@ -85,6 +85,9 @@
 
     /* кнопка перезапроса датчиков справа сверху */
     .btn-sensors{position:absolute;right:12px;top:12px;z-index:10;pointer-events:auto;padding:6px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.3);color:#fff;background:rgba(255,255,255,.1)}
+
+    /* холст для аннотаций (контур карты на фото) */
+    .anno{position:absolute;inset:0;pointer-events:none;z-index:12}
   </style>
 </head>
 <body>
@@ -102,6 +105,7 @@
         <!-- Превью внутри окна теперь на canvas -->
         <canvas id="pv" class="cam-video" aria-label="Превью" role="img"></canvas>
         <img id="photo" class="cam-photo hidden" alt="Снимок" />
+        <canvas id="anno" class="anno hidden"></canvas>
 
         <div id="overlay" class="cam-overlay">
           <div class="grid" aria-hidden="true"></div>
@@ -163,6 +167,8 @@
     DSCALE_W: 224
   };
 
+  const CARD_MM = { W:85.60, H:53.98, AR:85.60/53.98 };
+
   const S = { stream:null, track:null, torchCap:false, _torchOn:false, levelOn:false };
   let ic = null; // ImageCapture
   let _lastBlob = null, _view='camera', _taking=false;
@@ -207,6 +213,40 @@
   const photo=$('photo');
   const btnRetake=$('btnRetake'), btnGallery=$('btnGallery'), btnSend=$('btnSend');
   const commentEl=$('comment'), commentWarn=$('commentWarn');
+  const anno=$('anno'), annoCtx=anno.getContext('2d', { alpha:true });
+
+  // OpenCV.js dynamic loader
+  let _cvReady=false, _cvLoading=null;
+  function loadOpenCV(){
+    if(_cvReady) return Promise.resolve(true);
+    if(_cvLoading) return _cvLoading;
+    _cvLoading = new Promise((resolve)=>{
+      const s=document.createElement('script');
+      // официальная сборка
+      s.src='https://docs.opencv.org/4.x/opencv.js';
+      s.async=true;
+      let resolved=false;
+      function done(ok){ if(resolved) return; resolved=true; resolve(!!ok); }
+      s.onload=()=>{
+        try{
+          if(window.cv){
+            if(typeof cv['onRuntimeInitialized']==='function'){
+              cv['onRuntimeInitialized']=()=>{ _cvReady=true; done(true); };
+            } else {
+              // иногда Mat уже доступен
+              const check=()=>{ if(window.cv && cv.Mat) { _cvReady=true; done(true); } else { setTimeout(check,30); } };
+              check();
+            }
+          } else { done(false); }
+        }catch{ done(false); }
+      };
+      s.onerror=()=>done(false);
+      document.head.appendChild(s);
+      // таймаут на всякий случай
+      setTimeout(()=>done(_cvReady), 8000);
+    });
+    return _cvLoading;
+  }
 
   // ===================== UTILS =====================
   const sleep = (ms)=>new Promise(r=>setTimeout(r,ms));
@@ -219,8 +259,8 @@
   // WebP support check (для предпросмотра)
   function canCanvasWebP(){ try{ const c=document.createElement('canvas'); return c.toDataURL('image/webp').startsWith('data:image/webp'); }catch{return false} }
 
-  // sanitize comment (+fallback для старых движков без \\p{})
-  let supportsUnicodeProps=false; try{ new RegExp('\\\p{L}','u'); supportsUnicodeProps=true; }catch{}
+  // sanitize comment (+fallback для старых движков без \p{})
+  let supportsUnicodeProps=false; try{ new RegExp('\\p{L}','u'); supportsUnicodeProps=true; }catch(e){}
   function sanitizeComment(input){
     let s = String(input||'').slice(0, 200)
       .replace(/<[^>]*>/g, '')
@@ -247,7 +287,7 @@
   function showCameraUI(){
     _view='camera';
     pv.classList.remove('hidden'); overlay.classList.remove('hidden'); controls.classList.remove('hidden');
-    photo.classList.add('hidden');
+    photo.classList.add('hidden'); anno.classList.add('hidden');
     meta.textContent='';
     chipInfo.textContent='Выровняйте телефон, положите банковскую карту в серую зону';
     startPreviewLoop(); startDetection(); startLevelLoop(); startSensorsWatchdog();
@@ -258,7 +298,7 @@
   function showPhotoUI(){
     _view='photo';
     pv.classList.add('hidden'); overlay.classList.add('hidden'); controls.classList.add('hidden');
-    photo.classList.remove('hidden');
+    photo.classList.remove('hidden'); // anno покажем после детекции
     stopPreviewLoop();
     stopDetection();
     stopLevelLoop();
@@ -272,6 +312,7 @@
   window.addEventListener('DOMContentLoaded', () => {
     adaptPerf();
     startCameraFlow();
+    loadOpenCV(); // заранее подгружаем
     try { window.Telegram?.WebApp?.ready?.(); } catch {}
   });
 
@@ -449,7 +490,12 @@
 
       _lastBlob = blob;
       const url = URL.createObjectURL(blob);
-      photo.onload = ()=>{ meta.textContent=`${photo.naturalWidth}×${photo.naturalHeight}`; URL.revokeObjectURL(url); };
+      photo.onload = async ()=>{
+        meta.textContent=`${photo.naturalWidth}×${photo.naturalHeight}`;
+        URL.revokeObjectURL(url);
+        // запускаем детекцию карты на снимке
+        await runCardDetectionOnBlob(blob, photo.naturalWidth, photo.naturalHeight);
+      };
       photo.src = url;
       showPhotoUI();
     }catch(e){
@@ -476,7 +522,7 @@
     if(!file.type.startsWith('image/')){ setError('Нужен файл изображения.'); return; }
     _lastBlob=file;
     const url=URL.createObjectURL(file);
-    photo.onload=()=>{ meta.textContent = `${photo.naturalWidth}×${photo.naturalHeight} • ${file.type||'image'}`; URL.revokeObjectURL(url); };
+    photo.onload=async()=>{ meta.textContent = `${photo.naturalWidth}×${photo.naturalHeight} • ${file.type||'image'}`; URL.revokeObjectURL(url); await runCardDetectionOnBlob(file, photo.naturalWidth, photo.naturalHeight); };
     photo.src=url;
     showPhotoUI(); updateButtons(); ev.target.value='';
   }
@@ -670,8 +716,8 @@
     DET.c.width = DET.sW; DET.c.height = DET.sH;
     DET.g = DET.gb = DET.colV = DET.rowH = DET.allE = null;
   }
-  window.addEventListener('resize', ()=>{ recomputeRects(); computeLevelRadius(); });
-  document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible'){ recomputeRects(); computeLevelRadius(); } });
+  window.addEventListener('resize', ()=>{ recomputeRects(); computeLevelRadius(); resizeAnno(); });
+  document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible'){ recomputeRects(); computeLevelRadius(); resizeAnno(); } });
 
   function meanStd(arr){ let m=0,m2=0,n=arr.length; for(let i=0;i<n;i++){ const v=arr[i]; m+=v; m2+=v*v; } m/=n; const std=Math.sqrt(Math.max(0,m2/n - m*m)); return [m,std]; }
 
@@ -763,7 +809,7 @@
       } return s/Math.max(1,cnt);
     };
     const eLT=cornerEnergy(L,T);
-    const eRT=cornerEnergy(Math.max(L, R-CONFIG.CORNER_BOX), T);
+    const eRT=cornerEnergy(Math.max(L, R+ -CONFIG.CORNER_BOX), T);
     const eLB=cornerEnergy(L, Math.max(T, B-CONFIG.CORNER_BOX));
     const eRB=cornerEnergy(Math.max(L, R-CONFIG.CORNER_BOX), Math.max(T, B-CONFIG.CORNER_BOX));
 
@@ -787,11 +833,147 @@
     }
   }
 
+  // ---------- Card detection on SHOT (OpenCV.js) ----------
+  function resizeAnno(){ const { width:w, height:h } = camWrap.getBoundingClientRect(); const dpr=Math.min(2, window.devicePixelRatio||1); anno.width = Math.max(1, Math.round(w*dpr)); anno.height=Math.max(1, Math.round(h*dpr)); anno.style.width=w+'px'; anno.style.height=h+'px'; }
+  function clearAnno(){ annoCtx.clearRect(0,0,anno.width,anno.height); }
+  function containRect(imgW,imgH, boxW, boxH){ const r=Math.min(boxW/imgW, boxH/imgH); const dw=imgW*r, dh=imgH*r; const dx=(boxW-dw)/2, dy=(boxH-dh)/2; return {dx,dy,dw,dh,r}; }
+  function drawQuadOnAnno(quad, imgW, imgH){
+    resizeAnno(); clearAnno(); anno.classList.remove('hidden');
+    const box = camWrap.getBoundingClientRect();
+    const fit = containRect(imgW, imgH, box.width, box.height);
+    const dpr = Math.min(2, window.devicePixelRatio||1);
+    annoCtx.lineWidth = 3*dpr; annoCtx.strokeStyle = '#22c55e'; annoCtx.fillStyle = 'rgba(34,197,94,.15)';
+    annoCtx.beginPath();
+    for(let i=0;i<4;i++){
+      const p=quad[i];
+      const x = (fit.dx + p.x*fit.r)*dpr;
+      const y = (fit.dy + p.y*fit.r)*dpr;
+      if(i===0) annoCtx.moveTo(x,y); else annoCtx.lineTo(x,y);
+    }
+    annoCtx.closePath(); annoCtx.stroke(); annoCtx.fill();
+  }
+
+  async function runCardDetectionOnBlob(blob, natW, natH){
+    const okCV = await loadOpenCV();
+    if(!okCV){ meta.textContent += ' • детектор: fallback'; return; }
+
+    // создаём bitmap и канвас для анализа (уменьшаем до ~1600 px по длинной стороне)
+    const bmp = await createImageBitmap(blob);
+    const maxSide = 1600; const scale = Math.min(1, maxSide/Math.max(bmp.width,bmp.height));
+    const aw = Math.max(1, Math.round(bmp.width*scale));
+    const ah = Math.max(1, Math.round(bmp.height*scale));
+    const ac = document.createElement('canvas'); ac.width=aw; ac.height=ah; const actx=ac.getContext('2d'); actx.drawImage(bmp,0,0,aw,ah); bmp.close?.();
+
+    // OpenCV pipeline
+    let src=null, gray=null, blur=null, edges=null, cnts=new cv.MatVector(), hier=new cv.Mat();
+    try{
+      src=cv.imread(ac);
+      gray=new cv.Mat(); cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+      // CLAHE если доступен
+      try{ const clahe = new cv.CLAHE(2.0, new cv.Size(8,8)); const tmp=new cv.Mat(); clahe.apply(gray, tmp); gray.delete(); gray=tmp; clahe.delete(); }catch{}
+      blur=new cv.Mat(); cv.GaussianBlur(gray, blur, new cv.Size(5,5), 0, 0, cv.BORDER_DEFAULT);
+      edges=new cv.Mat(); cv.Canny(blur, edges, 50, 150);
+      cv.findContours(edges, cnts, hier, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+      let best=null; let bestScore=-1;
+      for(let i=0;i<cnts.size();i++){
+        const c=cnts.get(i);
+        const peri = cv.arcLength(c, true);
+        const approx = new cv.Mat();
+        cv.approxPolyDP(c, approx, 0.02*peri, true);
+        if(approx.rows===4 && cv.isContourConvex(approx)){
+          // собрать точки
+          const pts=[]; for(let j=0;j<4;j++){ const p=approx.intPtr(j); pts.push({x:p[0], y:p[1]}); }
+          const ord = orderQuad(pts);
+          const w = dist(ord[0], ord[1]);
+          const h = dist(ord[1], ord[2]);
+          const ar = Math.max(w,h)/Math.max(1, Math.min(w,h));
+          // близость к AR карты (допуск 15%)
+          const arScore = 1 - Math.min(1, Math.abs(ar - CARD_MM.AR)/CARD_MM.AR);
+          // прямоугольность: косинусы углов
+          const angScore = rectness(ord);
+          // размер (по площади контура)
+          const area = cv.contourArea(c);
+          const sizeScore = Math.min(1, area/(aw*ah*0.05));
+          const score = arScore*0.5 + angScore*0.4 + sizeScore*0.1;
+          if(score>bestScore){ bestScore=score; best={ quad:ord, w,h, area, score }; }
+        }
+        approx.delete();
+      }
+
+      if(!best){ meta.textContent += ' • карта: не найдена'; anno.classList.add('hidden'); return; }
+
+      // mm/px по двум осям + усреднённый
+      const mmPerPxW = CARD_MM.W / best.w / scale; // учитываем масштаб к исходнику
+      const mmPerPxH = CARD_MM.H / best.h / scale;
+      const mmPerPx = (mmPerPxW + mmPerPxH)/2;
+
+      // гомография в прямоугольник карты (для бэкенда)
+      const srcPts = cv.matFromArray(4,1,cv.CV_32FC2, [
+        best.quad[0].x, best.quad[0].y,
+        best.quad[1].x, best.quad[1].y,
+        best.quad[2].x, best.quad[2].y,
+        best.quad[3].x, best.quad[3].y,
+      ]);
+      const dstPts = cv.matFromArray(4,1,cv.CV_32FC2, [
+        0,0, CARD_MM.W,0, CARD_MM.W,CARD_MM.H, 0,CARD_MM.H
+      ]);
+      const H = cv.getPerspectiveTransform(srcPts, dstPts);
+      srcPts.delete(); dstPts.delete();
+
+      // отрисовка контура на фото
+      // масштабируем точки к исходному изображению
+      const quadOrig = best.quad.map(p=>({ x: p.x/scale, y: p.y/scale }));
+      drawQuadOnAnno(quadOrig, natW, natH);
+
+      // метаданные
+      indCard.classList.add('ok');
+      meta.textContent += ` • карта: ок • ${mmPerPx.toFixed(2)} мм/px`;
+
+      // сохраним H и scale для бэкенда (пример)
+      window.__foodcamCard = {
+        mmPerPx, mmPerPxW, mmPerPxH,
+        quad: quadOrig,
+        H: Array.from(H.data64F || H.data32F || []),
+        H_type: H.type(),
+        card_mm: CARD_MM,
+        img: { w:natW, h:natH }
+      };
+      H.delete();
+    }catch(e){
+      console.warn('detectCard error', e); meta.textContent += ' • карта: ошибка детекции'; anno.classList.add('hidden');
+    }finally{
+      try{ src?.delete(); gray?.delete(); blur?.delete(); edges?.delete(); cnts?.delete(); hier?.delete(); }catch{}
+    }
+  }
+
+  function dist(a,b){ const dx=a.x-b.x, dy=a.y-b.y; return Math.hypot(dx,dy); }
+  function rectness(pts){ // 0..1 (1 = идеальный прямоугольник)
+    const a=angleCos(pts[0],pts[1],pts[2]);
+    const b=angleCos(pts[1],pts[2],pts[3]);
+    const c=angleCos(pts[2],pts[3],pts[0]);
+    const d=angleCos(pts[3],pts[0],pts[1]);
+    const coses=[a,b,c,d].map(v=>Math.abs(v));
+    const mean=coses.reduce((s,v)=>s+v,0)/4; return 1-Math.min(1, mean); // чем меньше |cos|, тем ближе к 90°
+  }
+  function angleCos(p0,p1,p2){ const ux=p0.x-p1.x, uy=p0.y-p1.y, vx=p2.x-p1.x, vy=p2.y-p1.y; const dot=ux*vx+uy*vy; const nu=Math.hypot(ux,uy), nv=Math.hypot(vx,vy); if(nu*nv===0) return 1; return dot/(nu*nv); }
+  function orderQuad(pts){
+    // сортируем по центру и углу, затем приводим к [TL, TR, BR, BL]
+    const cx = pts.reduce((s,p)=>s+p.x,0)/4; const cy = pts.reduce((s,p)=>s+p.y,0)/4;
+    const arr = pts.map(p=>({p, a:Math.atan2(p.y-cy, p.x-cx)})).sort((u,v)=>u.a-v.a);
+    // сейчас порядок примерно [лево-низ, право-низ, право-верх, лево-верх] или другой сдвиг
+    // найдём точку с минимальным x+y — это TL
+    let idx=0, best=Infinity; for(let i=0;i<4;i++){ const s=arr[i].p.x+arr[i].p.y; if(s<best){ best=s; idx=i; } }
+    const cyc=[arr[idx].p, arr[(idx+1)%4].p, arr[(idx+2)%4].p, arr[(idx+3)%4].p];
+    // убедимся, что второй — правый верх (бОльшая x при похожем y). Если высота > ширина, это не критично.
+    return cyc;
+  }
+
   // SEND (заглушка)
   async function onSend(){
     const safeText=sanitizeComment(commentEl.value);
     if(!_lastBlob && !safeText){ setError('Пусто. Добавьте фото или комментарий.'); return; }
-    console.log('DEBUG: отправка отключена.', { hasImage: !!_lastBlob, comment: safeText });
+    console.log('DEBUG: отправка отключена.', { hasImage: !!_lastBlob, comment: safeText, card: window.__foodcamCard });
     setError('Отправка пока отключена. Подключим бэкенд/бота позже.');
   }
   btnSend.addEventListener('click', onSend);
@@ -824,6 +1006,13 @@
     console.assert(typeof pvCtx==='object' && pvCtx,'pv context ok');
     console.assert(typeof canCanvasWebP()==='boolean','canCanvasWebP returns boolean');
     console.assert(typeof sanitizeComment('x')==='string','sanitizeComment returns string');
+  })();
+  (function testOrderQuad(){
+    const q=[{x:10,y:10},{x:110,y:12},{x:108,y:72},{x:12,y:70}];
+    const o=orderQuad(q); console.assert(o.length===4,'order length');
+    const w=dist(o[0],o[1]); const h=dist(o[1],o[2]); const ar=Math.max(w,h)/Math.min(w,h);
+    console.assert(Math.abs(ar-CARD_MM.AR)<0.5,'AR roughly ok');
+    console.assert(Math.abs(rectness(o)-1)<0.2,'rectness high-ish');
   })();
 
   // Начинаем сенсоры сразу (iOS — по касанию)
