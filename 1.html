@@ -10,8 +10,7 @@
     *{box-sizing:border-box} html,body{height:100%}
     body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,sans-serif;-webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent;touch-action:pan-y pan-x}
     video,canvas,img{touch-action:none;user-select:none;-webkit-user-select:none}
-    /* Keep camera video producing frames even when hidden (Android WebView quirk) */
-    #video.hidden{display:block!important;width:100%;height:100%;position:absolute;inset:0;opacity:0;pointer-events:none}
+    .cam-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
     .container{max-width:760px;margin:0 auto;padding:16px}
     .hidden{display:none!important} .row{display:flex;gap:10px;flex-wrap:wrap}
     .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:12px 16px;border-radius:14px;border:1px solid var(--ring);background:#fff;font-weight:600;cursor:pointer;font-size:16px}
@@ -56,7 +55,7 @@
       <input id="file-gallery" type="file" accept="image/*" class="hidden" />
 
       <div class="cam-wrap" id="camWrap" aria-label="Камера">
-        <video id="video" class="hidden" playsinline muted autoplay></video>
+        <video id="video" class="cam-video hidden" playsinline muted autoplay><\/video>
         <canvas id="preview" class="cam-preview" aria-label="Превью камеры" role="img"></canvas>
         <img id="photo" class="cam-photo hidden" alt="Снимок" />
 
@@ -112,7 +111,7 @@
     previewScale: 1, previewFPS: 30, preferImageCapture: !PLATFORM.isIOS,
     maxPhotoSide: 8192, jpegQuality: 0.95,
     bubbleRadius: 10, targetRadius: 15, levelRadius: 50,
-    needsPermissionRequest: PLATFORM.isIOS, sensorStaleMs: 4000,
+    needsPermissionRequest: PLATFORM.isIOS, sensorStaleMs: 4000,\n    previewSwitchMs: 1200,
     tiltSmoothing: 0.15, orientationStaleMs: 400
   };
 
@@ -127,7 +126,7 @@
     wakeLock:null, screenAngle:0,
     lastCropRect:null,
     sensorPermission:'unknown', smoothNx:0, smoothNy:0, lastOrientationEvent:0,
-    levelRaf:null, lastGrabTime:0
+    levelRaf:null, lastGrabTime:0, previewMode:'canvas'
   };
 
   // ==================== DOM ====================
@@ -151,27 +150,8 @@
   // ==================== UI ====================
   function updateButtons(){ DOM.btnRetake.disabled = STATE.currentView==='camera'||STATE.capturing; DOM.btnSend.disabled = !hasContent()||STATE.capturing; DOM.btnShot.disabled = !STATE.levelOK||STATE.capturing; }
   function syncLevelIndicator(){ DOM.indLevel.classList.toggle('ok',STATE.levelOK); DOM.indLevel.setAttribute('aria-label', STATE.levelOK?'Уровень: OK':'Уровень: наклон'); }
-  function showCameraUI(){
-    STATE.currentView='camera';
-    DOM.preview.classList.remove('hidden');
-    DOM.overlay.classList.remove('hidden');
-    DOM.controls.classList.remove('hidden');
-    DOM.photo.classList.add('hidden');
-    DOM.chipInfo.textContent='Держите телефон ровно';
-    computeLevelRadiusDeferred();
-    startPreviewLoop();
-    startLevelLoop();
-    startSensorWatchdog();
-    ensureWakeLock(true);
-    updateButtons();
-    syncLevelIndicator();
-  }
-  function showPhotoUI(){
-    STATE.currentView='photo';
-    DOM.preview.classList.add('hidden');
-    DOM.overlay.classList.add('hidden');
-    DOM.controls.classList.add('hidden');
-    DOM.photo.classList.remove('hidden');
+  function showCameraUI(){\n    STATE.currentView='camera';\n    DOM.preview.classList.remove('hidden');\n    DOM.overlay.classList.remove('hidden');\n    DOM.controls.classList.remove('hidden');\n    DOM.photo.classList.add('hidden');\n    DOM.chipInfo.textContent='Держите телефон ровно';\n    computeLevelRadiusDeferred();\n    // start with canvas preview\n    useCanvasPreview();\n    startLevelLoop();\n    startSensorWatchdog();\n    ensureWakeLock(true);\n\n    // Android fallback: if canvas stays black, switch to live <video> preview\n    if(PLATFORM.isAndroid){\n      setTimeout(()=>{\n        if(STATE.currentView==='camera' && DOM.preview.style.opacity==='0'){\n          console.log('Fallback: switching to live <video> preview');\n          useVideoPreview();\n        }\n      }, CONFIG.previewSwitchMs);\n    }\n\n    updateButtons();\n    syncLevelIndicator();\n  }
+  function showPhotoUI(){\n    STATE.currentView='photo';\n    DOM.preview.classList.add('hidden');\n    DOM.video.classList.add('hidden');\n    DOM.overlay.classList.add('hidden');\n    DOM.controls.classList.add('hidden');\n    DOM.photo.classList.remove('hidden');
     stopPreviewLoop();
     stopLevelLoop();
     stopSensorWatchdog();
@@ -307,9 +287,7 @@
     };
     STATE.previewRaf=requestAnimationFrame(tick);
   }
-  function stopPreviewLoop(){ STATE.previewRunning=false; if(STATE.previewRaf){ cancelAnimationFrame(STATE.previewRaf); STATE.previewRaf=null; } }
-
-  // ==================== CAPTURE (WYSIWYG) ====================
+  function stopPreviewLoop(){ STATE.previewRunning=false; if(STATE.previewRaf){ cancelAnimationFrame(STATE.previewRaf); STATE.previewRaf=null; } }\n\n  // ======= PREVIEW BACKENDS (canvas/video fallback) =======\n  function useVideoPreview(){\n    if(STATE.previewMode==='video') return;\n    stopPreviewLoop();\n    STATE.previewMode='video';\n    DOM.preview.classList.add('hidden');\n    DOM.video.classList.remove('hidden');\n    try{ DOM.video.play(); }catch{}\n  }\n  function useCanvasPreview(){\n    if(STATE.previewMode==='canvas') return;\n    STATE.previewMode='canvas';\n    DOM.video.classList.add('hidden');\n    DOM.preview.classList.remove('hidden');\n    startPreviewLoop();\n  }\n\n  // ==================== CAPTURE (WYSIWYG) ==================== (WYSIWYG) ====================
   function canvasToBlob(canvas,quality=CONFIG.jpegQuality){ return new Promise(r=>{ canvas.toBlob(b=>r(b),'image/jpeg',quality); }); }
   function computeCoverCropByAspect(vw,vh,canvasAspect){ let sx,sy,sw,sh; const videoAspect=vw/vh; if(videoAspect>canvasAspect){ sh=vh; sw=Math.round(sh*canvasAspect); sx=Math.floor((vw-sw)/2); sy=0; } else { sw=vw; sh=Math.round(sw/canvasAspect); sx=0; sy=Math.floor((vh-sh)/2); } return {sx,sy,sw,sh}; }
   async function captureWysiwygFromVideo(){
