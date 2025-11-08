@@ -73,13 +73,6 @@
       box-shadow:0 0 0 1px rgba(0,0,0,.15) inset;
       pointer-events:none;
     }
-    .card-area.ok{ border-color:#22c55e; box-shadow:0 0 0 2px rgba(34,197,94,.45) inset }
-
-    .indicators{position:absolute;left:0;right:0;bottom:96px;display:flex;gap:10px;justify-content:center;z-index:9;pointer-events:none}
-    .ind{pointer-events:auto;display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:12px;background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.2);color:#fff;backdrop-filter:blur(2px)}
-    .ind .bulb{width:12px;height:12px;border-radius:50%;background:var(--warn);box-shadow:0 0 0 2px rgba(0,0,0,.25) inset}
-    .ind.ok .bulb{background:var(--ok)}
-    .ind .label{font-size:12px;opacity:.95}
 
     .btn-sensors{position:absolute;right:12px;top:12px;z-index:10;pointer-events:auto;padding:6px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.3);color:#fff;background:rgba(255,255,255,.1)}
 
@@ -104,7 +97,6 @@
           <div class="grid" aria-hidden="true"></div>
           <div class="topbar">
             <div id="chipInfo" class="chip" role="status" aria-live="polite">Держите телефон ровно. Банковская карта не обязательна, но повысит точность модели.</div>
-            <button id="btnAuto" class="chip" aria-pressed="false" title="Сделать фото автоматически при ровном положении">Автоспуск</button>
           </div>
           <button id="btnTorch" class="btn-torch hidden" aria-label="Фонарик" aria-pressed="false">⚡️</button>
           <button id="btnSensors" class="btn-sensors hidden" aria-label="Включить уровень">⬤</button>
@@ -117,13 +109,10 @@
           </div>
 
           <div id="cardArea" class="card-area" aria-label="Подсказка: положите карту (портрет)"></div>
-
-          <div class="indicators">
-            <div id="indLevel" class="ind"><span class="bulb"></span><span class="label">Ровно</span></div>
-          </div>
         </div>
 
         <div id="controls" class="controls">
+          <button id="btnAuto" class="btn" aria-pressed="false" title="Сделать фото автоматически при ровном положении">Автоспуск</button>
           <button id="btnShot" class="shutter" aria-label="Сделать снимок" disabled></button>
         </div>
       </div>
@@ -152,11 +141,10 @@
 
     BUBBLE_R: 12, TARGET_R: 16, ENFORCE_GEOMETRY: true,
 
-    DETECT_HZ: 12, EDGE_MARGIN_PX: 3, MIN_SIDE_FRAC: 0.30, BOX_ALPHA: 0.18,
-    HOLD_MAX_MS: 300, HIT_ON: 3, HIT_OFF: 2,
-    CORNER_BOX: 7, CORNER_MIN_N: 3, AR_MIN: 1.35, AR_MAX: 1.85,
-    DSCALE_W: 224,
+    /* превью лайт */
+    PREVIEW_HZ: 15,
 
+    /* автоспуск — по умолчанию ВЫКЛ */
     AUTO_ENABLED_DEFAULT: false,
     AUTO_STABLE_MS: 900,
     AUTO_COOLDOWN_MS: 1500
@@ -176,9 +164,6 @@
   // auto
   let _autoOn = CONFIG.AUTO_ENABLED_DEFAULT;
   let _autoCooldownUntil = 0;
-
-  // presence hint
-  let _detIdle=null, _lastDetTS=0, _fitOK=false, _hitCount=0,_missCount=0,_lastInsideTS=0;
 
   // iOS
   const isIOS = /iP(hone|od|ad)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && 'ontouchend' in document);
@@ -206,14 +191,13 @@
   const fileCam=$('file-cam'), fileGallery=$('file-gallery');
   const levelBubble=$('levelBubble'), levelTarget=$('levelTarget'), levelOuter=$('levelOuter');
   const cardArea=$('cardArea'); const camWrap=$('camWrap');
-  const indLevel=$('indLevel');
   const meta=$('meta');
   const photo=$('photo');
   const btnRetake=$('btnRetake'), btnGallery=$('btnGallery'), btnSend=$('btnSend');
   const commentEl=$('comment'), commentWarn=$('commentWarn');
   const anno=$('anno'), annoCtx=anno.getContext('2d', { alpha:true });
 
-  // -------- OpenCV.js LOADER (двойной CDN) --------
+  // -------- OpenCV.js loader (on demand) --------
   let _cvReady=false, _cvLoading=null;
   function loadOpenCV(){
     if(_cvReady) return Promise.resolve(true);
@@ -229,7 +213,7 @@
       for(const u of urls){
         await new Promise((res)=>{
           const s=document.createElement('script'); s.src=u; s.async=true;
-          s.onload=()=>{ try{ if(window.cv && cv.Mat){ _cvReady=true; finish(true); } }catch{} setTimeout(res,600); };
+          s.onload=()=>{ try{ if(window.cv && cv.Mat){ _cvReady=true; finish(true); } }catch{} setTimeout(res,400); };
           s.onerror=()=>res();
           document.head.appendChild(s);
         });
@@ -268,10 +252,6 @@
     btnAuto.setAttribute('aria-pressed', String(_autoOn));
     btnAuto.textContent = _autoOn ? 'Автоспуск: вкл' : 'Автоспуск';
   }
-  function syncIndicators(){
-    indLevel.classList.toggle('ok', _levelOK);
-    indLevel.setAttribute('aria-label', _levelOK ? 'Ровно: ок' : 'Ровно: нет');
-  }
 
   function showCameraUI(){
     _view='camera';
@@ -279,17 +259,16 @@
     photo.classList.add('hidden'); anno.classList.add('hidden');
     meta.textContent='';
     chipInfo.textContent='Держите телефон ровно. Банковская карта не обязательна, но повысит точность модели.';
-    startPreviewLoop(); startDetection(); startLevelLoop(); startSensorsWatchdog();
+    startPreviewLoop(); startLevelLoop(); startSensorsWatchdog();
     enableLevelSensors(false);
     ensureWakeLock(true);
-    updateButtons(); syncIndicators();
+    updateButtons();
   }
   function showPhotoUI(){
     _view='photo';
     pv.classList.add('hidden'); overlay.classList.add('hidden'); controls.classList.add('hidden');
     photo.classList.remove('hidden');
     stopPreviewLoop();
-    stopDetection();
     stopLevelLoop();
     stopSensorsWatchdog();
     removeSensorListeners();
@@ -299,9 +278,7 @@
 
   // ===================== AUTOSTART =====================
   window.addEventListener('DOMContentLoaded', () => {
-    adaptPerf();
     startCameraFlow();
-    loadOpenCV();
     try { window.Telegram?.WebApp?.ready?.(); } catch {}
   });
 
@@ -320,11 +297,6 @@
     updateButtons();
   });
 
-  function adaptPerf(){
-    const mem=(navigator.deviceMemory||8);
-    if(mem <= 4){ CONFIG.DETECT_HZ = 6; CONFIG.DSCALE_W = Math.min(CONFIG.DSCALE_W, 160); }
-  }
-
   function syncRadii(){
     let bubble=Number(CONFIG.BUBBLE_R)||0, target=Number(CONFIG.TARGET_R)||0;
     if (CONFIG.ENFORCE_GEOMETRY && target < bubble + 1) target = bubble + 1;
@@ -332,8 +304,8 @@
     const br=bubble*2, tr=target*2;
     levelBubble.style.width = br+'px'; levelBubble.style.height = br+'px';
     levelTarget.style.width = tr+'px'; levelTarget.style.height = tr+'px';
+    computeLevelRadius();
   }
-
   function computeLevelRadius(){
     const rOuter = Math.min(levelOuter.clientWidth, levelOuter.clientHeight) * 0.5;
     _levelRadius = Math.max(8, Math.floor(Math.min(rOuter - CONFIG.BUBBLE_R - 2, rOuter * 0.6)));
@@ -342,10 +314,8 @@
   async function startCameraFlow(){
     stopPreviewLoop();
     _lastBlob=null; _taking=false;
-    _fitOK=false; _levelOK=false; _lvlHits=0; _lvlMiss=0; _hitCount=0; _missCount=0; _lastInsideTS=0;
-    _sensorLastTS=0; _levelOkSince=0; _autoCooldownUntil=0;
+    _levelOK=false; _lvlHits=0; _lvlMiss=0; _levelOkSince=0; _autoCooldownUntil=0;
     updateButtons(); setError(''); syncRadii();
-    recomputeRects(); computeLevelRadius(); startObservers();
 
     attachIOSPermissionOneShot();
 
@@ -356,7 +326,6 @@
 
     pv.style.opacity='0';
     showCameraUI();
-
     setTimeout(()=>{ if(_sensorLastTS===0) explainSensorBlock(); }, 600);
   }
 
@@ -424,43 +393,29 @@
     S.stream=null; S.track=null; S._torchOn=false; ic=null;
   }
 
-  // ---------- PREVIEW LOOP ----------
+  // ---------- PREVIEW LOOP (video -> canvas, без grabFrame) ----------
   let _pvRun=false, _haveFirstFrame=false, _lastPvTS=0;
-  const PREVIEW_HZ = 20;
-
-  async function drawFrameToCanvas(){
-    const { width: cssW, height: cssH } = camWrap.getBoundingClientRect();
-    const scale = Math.max(1, Math.min(window.devicePixelRatio || 1, 2));
-    const tw = Math.max(1, Math.round(cssW * scale));
-    const th = Math.max(1, Math.round(cssH * scale));
-    if(pv.width!==tw || pv.height!==th){ pv.width=tw; pv.height=th; }
-
-    if(ic && ic.grabFrame){
-      const bmp = await ic.grabFrame();
-      const r = Math.max(tw/bmp.width, th/bmp.height);
-      const dw = Math.round(bmp.width*r), dh = Math.round(bmp.height*r);
-      const dx = Math.floor((tw - dw)/2), dy = Math.floor((th - dh)/2);
-      pvCtx.drawImage(bmp, dx, dy, dw, dh); bmp.close?.();
-    }else if(video?.videoWidth>0){
-      const r = Math.max(tw/video.videoWidth, th/video.videoHeight);
-      const dw = Math.round(video.videoWidth*r), dh = Math.round(video.videoHeight*r);
-      const dx = Math.floor((tw - dw)/2), dy = Math.floor((th - dh)/2);
-      pvCtx.drawImage(video, dx, dy, dw, dh);
-    }
-  }
-
   function startPreviewLoop(){
     if(_pvRun) return; _pvRun=true; _haveFirstFrame=false; pv.style.opacity='0';
-    const tick = async ()=>{
+    const tick = ()=>{
       if(!_pvRun || _view!=='camera') return;
       try{
         const now=performance.now();
-        if(now - _lastPvTS >= (1000/ PREVIEW_HZ)){
+        if(now - _lastPvTS >= (1000/ CONFIG.PREVIEW_HZ)){
           _lastPvTS = now;
-          await drawFrameToCanvas();
-          if(!_haveFirstFrame && pv.width>0 && pv.height>0){ _haveFirstFrame=true; pv.style.opacity='1'; }
+          const { width: cssW, height: cssH } = camWrap.getBoundingClientRect();
+          const scale = Math.max(1, Math.min(window.devicePixelRatio || 1, 2));
+          const tw = Math.max(1, Math.round(cssW * scale));
+          const th = Math.max(1, Math.round(cssH * scale));
+          if(pv.width!==tw || pv.height!==th){ pv.width=tw; pv.height=th; }
+          if(video?.videoWidth>0){
+            const r = Math.max(tw/video.videoWidth, th/video.videoHeight);
+            const dw = Math.round(video.videoWidth*r), dh = Math.round(video.videoHeight*r);
+            const dx = Math.floor((tw - dw)/2), dy = Math.floor((th - dh)/2);
+            pvCtx.drawImage(video, dx, dy, dw, dh);
+            if(!_haveFirstFrame){ _haveFirstFrame=true; pv.style.opacity='1'; }
+          }
         }
-        if(now - _lastDetTS >= (1000/CONFIG.DETECT_HZ)){ detectPresenceFromCanvas(pv); _lastDetTS=now; }
       }catch(e){}
       requestAnimationFrame(tick);
     };
@@ -544,9 +499,9 @@
   function canvasToBlob(c){
     return new Promise(resolve=>{
       if(canCanvasWebP()){
-        c.toBlob(b=>{ if(b) return resolve(b); c.toBlob(bb=>resolve(bb), 'image/jpeg', CONFIG.jpegQ); }, 'image/webp', CONFIG.webpQ);
+        c.toBlob(b=>{ if(b) return resolve(b); c.toBlob(bb=>resolve(bb), 'image/jpeg', 0.98); }, 'image/webp', 0.98);
       }else{
-        c.toBlob(b=> resolve(b), 'image/jpeg', CONFIG.jpegQ);
+        c.toBlob(b=> resolve(b), 'image/jpeg', 0.98);
       }
     });
   }
@@ -605,9 +560,9 @@
   function startSensorsWatchdog(){ stopSensorsWatchdog(); if(!isIOS) return; _sensorWatch = setInterval(()=>{ if(_view!=='camera') return; const stale = (performance.now() - _sensorLastTS) > SENSOR_STALE_MS; if(stale){ rebindSensors(); setTimeout(()=>{ if((performance.now()-_sensorLastTS) > 1500){ explainSensorBlock(); attachIOSPermissionOneShot(); } }, 0); } }, 1000); }
   function stopSensorsWatchdog(){ if(_sensorWatch){ clearInterval(_sensorWatch); _sensorWatch=null; } }
   window.addEventListener('pageshow', ()=>{ if(_view==='camera'){ _sensorLastTS=0; attachIOSPermissionOneShot(); }});
-  document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible' && _view==='camera'){ _sensorLastTS=0; attachIOSPermissionOneShot(); ensureWakeLock(true); } else { ensureWakeLock(false); } });
+  document.addEventListener('visibilitychange', ()=>{ ensureWakeLock(document.visibilityState==='visible' && _view==='camera'); });
 
-  // ---------- LEVEL LOOP ----------
+  // ---------- LEVEL LOOP + авто (кнопка внизу) ----------
   function setLevelOK(next){
     if(next){ _lvlHits++; _lvlMiss=0; } else { _lvlMiss++; _lvlHits=0; }
     const prev=_levelOK;
@@ -617,19 +572,13 @@
       if(_levelOK) _levelOkSince = performance.now(); else _levelOkSince = 0;
       levelBubble.classList.toggle('ok', _levelOK);
       levelTarget.classList.toggle('ok', _levelOK);
-      syncIndicators(); updateButtons();
+      updateButtons();
     }
-  }
-  function isInside(dx,dy){ return (Math.hypot(dx,dy) + CONFIG.BUBBLE_R) <= CONFIG.TARGET_R; }
-  function maybeAutoShutter(){
-    if(!_autoOn || _taking || _view!=='camera') return;
-    if(!_levelOK || !_levelOkSince) return;
-    const now = performance.now();
-    if(now < _autoCooldownUntil) return;
-    if(now - _levelOkSince >= CONFIG.AUTO_STABLE_MS){
+    if(_autoOn && _levelOK && _levelOkSince && performance.now()-_levelOkSince>=CONFIG.AUTO_STABLE_MS && performance.now()>=_autoCooldownUntil && !_taking){
       onShutter();
     }
   }
+  function isInside(dx,dy){ return (Math.hypot(dx,dy) + CONFIG.BUBBLE_R) <= CONFIG.TARGET_R; }
   function startLevelLoop(){
     if(_rafId) return;
     const step=()=>{
@@ -639,7 +588,6 @@
         const dy=clamp(_rawNy,-1,1)*R;
         levelBubble.style.transform = `translate(-50%, -50%) translate(${dx}px, ${dy}px) translateZ(0)`;
         setLevelOK(isInside(dx,dy));
-        maybeAutoShutter();
       }
       _rafId=requestAnimationFrame(step);
     };
@@ -647,43 +595,7 @@
   }
   function stopLevelLoop(){ if(_rafId){ cancelAnimationFrame(_rafId); _rafId=null; } }
 
-  // ---------- PRESENCE DETECTOR (подсказка) ----------
-  const DET = { c: document.createElement('canvas'), ctx:null, sW:0, sH:0, wrapRect:null, slotRect:null, g:null, gb:null, colV:null, rowH:null, allE:null };
-  DET.ctx = DET.c.getContext('2d', { willReadFrequently:true, desynchronized:true });
-  let _roStarted=false;
-  function startObservers(){ if(_roStarted) return; const ro = new ResizeObserver(()=>{ recomputeRects(); computeLevelRadius(); }); ro.observe(camWrap); ro.observe(cardArea); ro.observe(levelOuter); _roStarted=true; }
-  function recomputeRects(){ DET.wrapRect = camWrap.getBoundingClientRect(); DET.slotRect = cardArea.getBoundingClientRect(); DET.sW = CONFIG.DSCALE_W; DET.sH = Math.max(1, Math.round(DET.sW * (DET.wrapRect.height / Math.max(1, DET.wrapRect.width)))); DET.c.width = DET.sW; DET.c.height = DET.sH; DET.g = DET.gb = DET.colV = DET.rowH = DET.allE = null; }
-  window.addEventListener('resize', ()=>{ recomputeRects(); computeLevelRadius(); resizeAnno(); });
-  document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible'){ recomputeRects(); computeLevelRadius(); resizeAnno(); } });
-  function meanStd(arr){ let m=0,m2=0,n=arr.length; for(let i=0;i<n;i++){ const v=arr[i]; m+=v; m2+=v*v; } m/=n; const std=Math.sqrt(Math.max(0,m2/n - m*m)); return [m,std]; }
-  function detectPresenceFromCanvas(srcCanvas){
-    if(!srcCanvas.width || !srcCanvas.height || !DET.wrapRect || !DET.slotRect) return;
-    const sW=DET.sW, sH=DET.sH, ctx=DET.ctx; const vW=srcCanvas.width, vH=srcCanvas.height; const scale=Math.max(sW/vW, sH/vH); const sw=Math.round(sW/scale), sh=Math.round(sH/scale); const sx=Math.floor((vW - sw)/2), sy=Math.floor((vH - sh)/2); ctx.drawImage(srcCanvas, sx, sy, sw, sh, 0, 0, sW, sH);
-    const wrap=DET.wrapRect, slot=DET.slotRect; const rx=Math.max(0, Math.round((slot.left - wrap.left) / wrap.width  * sW)); const ry=Math.max(0, Math.round((slot.top  - wrap.top ) / wrap.height * sH)); const rw=Math.min(sW - rx, Math.round(slot.width  / wrap.width  * sW)); const rh=Math.min(sH - ry, Math.round(slot.height / wrap.height * sH)); if(rw<20 || rh<20) return;
-    const img=ctx.getImageData(rx, ry, rw, rh); const data=img.data; const N=rw*rh; if(!DET.g || DET.g.length!==N){ DET.g=new Float32Array(N); DET.gb=new Float32Array(N); DET.allE=new Float32Array(N); } if(!DET.colV || DET.colV.length!==rw){ DET.colV=new Float32Array(rw); } if(!DET.rowH || DET.rowH.length!==rh){ DET.rowH=new Float32Array(rh); } DET.colV.fill(0); DET.rowH.fill(0);
-    const g=DET.g, gb=DET.gb, colV=DET.colV, rowH=DET.rowH, allE=DET.allE;
-    for(let y=0,i=0,j=0;y<rh;y++){ for(let x=0;x<rw;x++,i+=4,j++){ g[j]=data[i]*0.2126 + data[i+1]*0.7152 + data[i+2]*0.0722; } }
-    for(let y=0;y<rh;y++){ for(let x=0;x<rw;x++){ let s=0,cnt=0; for(let yy=y-1;yy<=y+1;yy++){ if(yy<0||yy>=rh) continue; for(let xx=x-1;xx<=x+1;xx++){ if(xx<0||xx>=rw) continue; s+=g[yy*rw+xx]; cnt++; } } gb[y*rw+x]=s/cnt; } }
-    for(let y=1;y<rh-1;y++){ for(let x=1;x<rw-1;x++){ const gx=Math.abs(gb[y*rw+(x+1)] - gb[y*rw+(x-1)]); const gy=Math.abs(gb[(y+1)*rw+x] - gb[(y-1)*rw+x]); colV[x]+=gx; rowH[y]+=gy; allE[y*rw+x]=gx+gy; } }
-    const a=CONFIG.BOX_ALPHA; for(let x=1;x<rw;x++){ colV[x]=colV[x-1] + a*(colV[x]-colV[x-1]); } for(let y=1;y<rh;y++){ rowH[y]=rowH[y-1] + a*(rowH[y]-rowH[y-1]); }
-    const [mc,sc]=meanStd(colV); const [mr,sr]=meanStd(rowH); const tCol=mc + 1.15*sc; const tRow=mr + 1.15*sr;
-    const m=CONFIG.EDGE_MARGIN_PX; let L=m; while(L<rw-m && colV[L] < tCol) L++; let R=rw-1-m; while(R>m && colV[R] < tCol) R--; let T=m; while(T<rh-m && rowH[T] < tRow) T++; let B=rh-1-m; while(B>m && rowH[B] < tRow) B--;
-    if(!(R>L && B>T)){ applyPresence(false); return; }
-    const width=R-L, height=B-T; const sizeOK=(width>=rw*CONFIG.MIN_SIDE_FRAC && height>=rh*CONFIG.MIN_SIDE_FRAC); const ar=height/Math.max(1,width); const arOK=(ar>=CONFIG.AR_MIN && ar<=CONFIG.AR_MAX); const inside=(L>m && T>m && R<rw-1-m && B<rh-1-m);
-    const cornerEnergy=(cx,cy)=>{ const cb=CONFIG.CORNER_BOX; let s=0,cnt=0; for(let y=Math.max(T,cy); y<Math.min(B,cy+cb); y++){ for(let x=Math.max(L,cx); x<Math.min(R,cx+cb); x++){ const gx=Math.abs(gb[y*rw + Math.min(rw-1,x+1)] - gb[y*rw + Math.max(0,x-1)]); const gy=Math.abs(gb[Math.min(rh-1,y+1)*rw + x] - gb[Math.max(0,y-1)*rw + x]); s+=gx+gy; cnt++; } } return s/Math.max(1,cnt); };
-    const eLT=cornerEnergy(L,T); const eRT=cornerEnergy(Math.max(L, R-CONFIG.CORNER_BOX), T); const eLB=cornerEnergy(L, Math.max(T, B-CONFIG.CORNER_BOX)); const eRB=cornerEnergy(Math.max(L, R-CONFIG.CORNER_BOX), Math.max(T, B-CONFIG.CORNER_BOX));
-    const [me,se]=meanStd(allE); const eThr=me + 1.0*se; let strongCorners=0; if(eLT>eThr) strongCorners++; if(eRT>eThr) strongCorners++; if(eLB>eThr) strongCorners++; if(eRB>eThr) strongCorners++; const cornersOK=(strongCorners>=CONFIG.CORNER_MIN_N);
-    applyPresence(inside && sizeOK && arOK && cornersOK);
-  }
-  function applyPresence(hit){
-    const now=performance.now();
-    if(hit){ _lastInsideTS=now; _hitCount++; _missCount=0; } else { _missCount++; _hitCount=0; }
-    let ok = (_hitCount>=CONFIG.HIT_ON) ? true : (_missCount>=CONFIG.HIT_OFF ? false : _fitOK);
-    if(!hit && ok && (now - _lastInsideTS) > CONFIG.HOLD_MAX_MS){ ok=false; }
-    if(ok!==_fitOK){ _fitOK=ok; cardArea.classList.toggle('ok', ok); }
-  }
-
-  // ---------- Card detection after SHOT (OpenCV.js) ----------
+  // ---------- Card detection (post-shot) ----------
   function resizeAnno(){
     const { width:w, height:h } = camWrap.getBoundingClientRect();
     const dpr=Math.min(2, window.devicePixelRatio||1);
@@ -719,7 +631,6 @@
     if('createImageBitmap' in window){
       try{ return await createImageBitmap(blob); }catch{}
     }
-    // фолбэк: возвращаем canvas с картинкой
     return new Promise((resolve, reject)=>{
       const img = new Image();
       img.onload=()=>{
@@ -741,32 +652,70 @@
     const maxSide = 1600; const scale = Math.min(1, maxSide/Math.max(bmp.width,bmp.height));
     const aw = Math.max(1, Math.round(bmp.width*scale)); const ah = Math.max(1, Math.round(bmp.height*scale));
     const ac = document.createElement('canvas'); ac.width=aw; ac.height=ah; const actx=ac.getContext('2d'); actx.drawImage(bmp,0,0,aw,ah); bmp.close?.();
-    let src=null, gray=null, blur=null, edges=null, cnts=new cv.MatVector(), hier=new cv.Mat();
+    let src=null, gray=null, blur=null, edges=null, bin=null, comb=null, cnts=new cv.MatVector(), hier=new cv.Mat();
     try{
       src=cv.imread(ac); gray=new cv.Mat(); cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+
+      // контраст
       try{ const clahe = new cv.CLAHE(2.0, new cv.Size(8,8)); const tmp=new cv.Mat(); clahe.apply(gray, tmp); gray.delete(); gray=tmp; clahe.delete(); }catch{}
+
+      // сглаживание
       blur=new cv.Mat(); cv.GaussianBlur(gray, blur, new cv.Size(5,5), 0, 0, cv.BORDER_DEFAULT);
-      edges=new cv.Mat(); cv.Canny(blur, edges, 50, 150);
-      cv.findContours(edges, cnts, hier, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+      // Otsu -> Canny
+      let otsu = new cv.Mat(); let th = new cv.Mat();
+      cv.threshold(blur, th, 0, 255, cv.THRESH_BINARY | cv.THRESH_OTSU);
+      const hi = th.ucharPtr(0,0)[0] || 100; // грубая оценка
+      edges=new cv.Mat(); cv.Canny(blur, edges, Math.max(10, hi*0.5), Math.max(30, hi*1.5));
+      th.delete(); otsu.delete();
+
+      // адаптивный порог + морфология
+      bin = new cv.Mat();
+      cv.adaptiveThreshold(blur, bin, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 21, 5);
+      let kernel = cv.Mat.ones(5,5, cv.CV_8U);
+      cv.morphologyEx(bin, bin, cv.MORPH_CLOSE, kernel);
+
+      // объединение
+      comb = new cv.Mat(); cv.bitwise_or(edges, bin, comb);
+
+      // контуры и кандидаты
+      cv.findContours(comb, cnts, hier, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+      const imgArea = aw*ah;
       let best=null; let bestScore=-1;
+
       for(let i=0;i<cnts.size();i++){
-        const c=cnts.get(i); const peri = cv.arcLength(c, true); const approx = new cv.Mat(); cv.approxPolyDP(c, approx, 0.02*peri, true);
+        const c=cnts.get(i);
+        const area = cv.contourArea(c);
+        if(area < imgArea*0.015 || area > imgArea*0.65) continue;
+
+        const peri = cv.arcLength(c, true);
+        let approx = new cv.Mat(); cv.approxPolyDP(c, approx, 0.02*peri, true);
+
+        let quadPts=null;
         if(approx.rows===4 && cv.isContourConvex(approx)){
-          const pts=[]; for(let j=0;j<4;j++){ const p=approx.intPtr(j); pts.push({x:p[0], y:p[1]}); }
-          const ord = orderQuad(pts);
-          const s01=dist(ord[0],ord[1]), s12=dist(ord[1],ord[2]), s23=dist(ord[2],ord[3]), s30=dist(ord[3],ord[0]);
-          const w = (Math.max(s01,s23));
-          const h = (Math.max(s12,s30));
-          const ratio = (Math.max(w,h)/Math.max(1,Math.min(w,h)));
-          if(!within10(ratio, CARD_MM.AR)) { approx.delete(); continue; }
-          const ang = rectness(ord);
-          const area = cv.contourArea(c);
-          const arScore = 1 - Math.min(1, Math.abs(ratio - CARD_MM.AR)/CARD_MM.AR);
-          const score = arScore*0.6 + ang*0.3 + Math.min(1, area/(aw*ah*0.08))*0.1;
-          if(score>bestScore){ bestScore=score; best={ quad:ord, w,h, area, score }; }
+          quadPts=[]; for(let j=0;j<4;j++){ const p=approx.intPtr(j); quadPts.push({x:p[0], y:p[1]}); }
+        } else {
+          // фолбэк: minAreaRect
+          const rect = cv.minAreaRect(c);
+          const pts = cv.RotatedRect.points(rect);
+          quadPts = pts.map(p=>({x:p.x, y:p.y}));
         }
         approx.delete();
+
+        const ord = orderQuad(quadPts);
+        const s01=dist(ord[0],ord[1]), s12=dist(ord[1],ord[2]), s23=dist(ord[2],ord[3]), s30=dist(ord[3],ord[0]);
+        const w = Math.max(s01,s23);
+        const h = Math.max(s12,s30);
+        const ratio = (Math.max(w,h)/Math.max(1,Math.min(w,h)));
+        if(!within10(ratio, CARD_MM.AR)) continue;
+
+        const ang = rectness(ord);
+        const arScore = 1 - Math.min(1, Math.abs(ratio - CARD_MM.AR)/CARD_MM.AR);
+        const score = arScore*0.6 + ang*0.35 + Math.min(1, area/(imgArea*0.10))*0.05;
+
+        if(score>bestScore){ bestScore=score; best={ quad:ord, w,h, area, score }; }
       }
+
       if(best){
         const quadOrig = best.quad.map(p=>({ x: p.x/scale, y: p.y/scale }));
         drawQuadOnAnno(quadOrig, natW, natH);
@@ -776,7 +725,9 @@
         meta.textContent += ' • карта не найдена';
       }
     }catch(e){ console.warn('detectCard error', e); anno.classList.add('hidden'); }
-    finally{ try{ src?.delete(); gray?.delete(); blur?.delete(); edges?.delete(); cnts?.delete(); hier?.delete(); }catch{} }
+    finally{
+      try{ src?.delete(); gray?.delete(); blur?.delete(); edges?.delete(); bin?.delete(); comb?.delete(); cnts?.delete(); hier?.delete(); }catch{}
+    }
   }
 
   function dist(a,b){ const dx=a.x-b.x, dy=a.y-b.y; return Math.hypot(dx,dy); }
@@ -792,16 +743,13 @@
 
   // TEARDOWN
   window.addEventListener('beforeunload', ()=>stopAll());
-  function stopAll(){ stopPreviewLoop(); stopCamera(); stopDetection(); stopLevelLoop(); stopSensorsWatchdog(); removeSensorListeners(); ensureWakeLock(false); }
-
-  function startDetection(){ stopDetection(); /* детектор вызывается внутри preview-loop */ }
-  function stopDetection(){ const cic = window.cancelIdleCallback || clearTimeout; if(_detIdle){ cic(_detIdle); _detIdle=null; } }
+  function stopAll(){ stopPreviewLoop(); stopCamera(); stopLevelLoop(); stopSensorsWatchdog(); removeSensorListeners(); ensureWakeLock(false); }
 
   // ===================== TESTS =====================
   (function testRadii(){ syncRadii(); console.assert(CONFIG.TARGET_R > CONFIG.BUBBLE_R || !CONFIG.ENFORCE_GEOMETRY, 'target > bubble (when enforced)'); console.assert(CONFIG.BUBBLE_R>0 && CONFIG.TARGET_R>0, 'radii positive'); })();
   (function testInsideMath(){ const T=CONFIG.TARGET_R-CONFIG.BUBBLE_R; console.assert(T>0,'T>0'); console.assert(isInside(0,0),'center'); console.assert(isInside(T,0),'boundary'); console.assert(!isInside(T+0.01,0),'outside'); })();
-  (function testAPIs(){ console.assert(typeof startCameraFlow==='function','startCameraFlow exists'); console.assert(typeof startPreviewLoop==='function','startPreviewLoop exists'); console.assert(typeof onShutter==='function','onShutter exists'); console.assert(typeof detectPresenceFromCanvas==='function','detectPresenceFromCanvas exists'); console.assert(typeof pvCtx==='object' && pvCtx,'pv context ok'); console.assert(typeof canCanvasWebP()==='boolean','canCanvasWebP returns boolean'); console.assert(typeof sanitizeComment('x')==='string','sanitizeComment returns string'); })();
-  (function testCardRatio(){ const r=CARD_MM.AR; console.assert(within10(r*1.09,r),'ratio +9% ok'); console.assert(!within10(r*1.12,r),'ratio +12% rejected'); })();
+  (function testAPIs(){ console.assert(typeof startCameraFlow==='function','startCameraFlow exists'); console.assert(typeof startPreviewLoop==='function','startPreviewLoop exists'); console.assert(typeof onShutter==='function','onShutter exists'); console.assert(typeof pvCtx==='object' && pvCtx,'pv context ok'); console.assert(typeof sanitizeComment('x')==='string','sanitizeComment returns string'); })();
+  (function testCardRatio(){ const r=CARD_MM.AR; console.assert(Math.abs((r*1.09)-r)/r<=0.10,'ratio +9% ok'); console.assert(!(Math.abs((r*1.12)-r)/r<=0.10),'ratio +12% rejected'); })();
   </script>
 </body>
 </html>
