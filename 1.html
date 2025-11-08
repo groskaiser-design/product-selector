@@ -20,7 +20,6 @@
 
     /* CAMERA AREA */
     .cam-wrap{position:relative;border:1px solid var(--ring);border-radius:16px;overflow:hidden;background:#000;aspect-ratio:3/4;contain:layout paint;}
-    /* превью теперь canvas, но класс оставляем общий */
     .cam-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;opacity:0;transition:opacity .2s ease;transform:translateZ(0);backface-visibility:hidden}
     .cam-photo{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block;background:#000}
 
@@ -42,15 +41,13 @@
     /* Level (target + dot) */
     .center-level{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
     .level-outer{position:relative;width:160px;height:160px;border-radius:50%}
-    .level-target{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);border-radius:50%;border:2px solid rgba(255,255,255,.75);background:rgba(0,0,0,.15)}
+    .level-target{position:absolute;left:50%;top:50%;transform:translate(-50%, -50%);border-radius:50%;border:2px solid rgba(255,255,255,.75);background:rgba(0,0,0,.15)}
     .level-target.ok{border-color:#34d399}
     .level-bubble{
       position:absolute;left:50%;top:50%;
-      /* никаких плавностей на движении */
       transform: translate(-50%, -50%) translateZ(0);
       border-radius:50%;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.35);
       will-change:transform;
-      /* оставляем только плавное изменение цвета */
       transition: background-color .12s;
     }
     .level-bubble.ok{background:#22c55e}
@@ -97,7 +94,7 @@
       <input id="file-gallery" type="file" accept="image/*" class="hidden" />
 
       <div class="cam-wrap" id="camWrap" aria-label="Камера и/или снимок">
-        <!-- Скрытый <video> оставлен лишь как технический фолбэк (не показывается) -->
+        <!-- Скрытый <video> как технический фолбэк (не показывается) -->
         <video id="video" class="hidden" playsinline muted></video>
         <!-- Превью внутри окна теперь на canvas -->
         <canvas id="pv" class="cam-video" aria-label="Превью" role="img"></canvas>
@@ -207,7 +204,7 @@
   function canCanvasWebP(){ try{ const c=document.createElement('canvas'); return c.toDataURL('image/webp').startsWith('data:image/webp'); }catch{return false} }
 
   // sanitize comment (+fallback для старых движков без \p{})
-  let supportsUnicodeProps=false; try{ new RegExp('\\\p{L}','u'); supportsUnicodeProps=true; }catch{}
+  let supportsUnicodeProps=false; try{ new RegExp('\\p{L}','u'); supportsUnicodeProps=true; }catch{}
   function sanitizeComment(input){
     let s = String(input||'').slice(0, 200)
       .replace(/<[^>]*>/g, '')
@@ -261,6 +258,7 @@
   });
 
   // ===================== CAMERA (PHOTO MODE) =====================
+  btnShot.addEventListener('click', onShutter);
   btnTorch.addEventListener('click', toggleTorch);
   btnRetake.addEventListener('click', ()=>{ if(btnRetake.disabled) return; startCameraFlow(true); });
   btnGallery.addEventListener('click', ()=>fileGallery?.click());
@@ -316,14 +314,6 @@
     showCameraUI();
   }
 
-    // Инициализируем ImageCapture если доступен
-    ic = (typeof ImageCapture !== 'undefined' && S.track) ? new ImageCapture(S.track) : null;
-
-    // Подготовить превью (canvas) и UI
-    pv.style.opacity='0';
-    showCameraUI();
-  }
-
   // ======== Camera selection: lock back camera ========
   async function getPermission(){ try{ await navigator.mediaDevices.getUserMedia({ video:{ facingMode:{ ideal:'environment' } }, audio:false }); }catch{} }
   async function pickBackCamera(){
@@ -354,7 +344,6 @@
     try{
       const s = await openLockedBackCamera();
       bindStream(s);
-      // torch & zoom capabilities
       const caps=S.track?.getCapabilities?.()||{};
       S.torchCap=!!caps.torch; btnTorch.classList.toggle('hidden', !S.torchCap);
       if('zoom' in caps){
@@ -367,7 +356,6 @@
   function bindStream(stream){
     stopCamera();
     S.stream=stream; S.track=stream.getVideoTracks()[0];
-    // для фолбэка на <video> держим его скрытым, но запущенным
     try{ video.srcObject=stream; video.play?.(); }catch{}
   }
 
@@ -402,12 +390,6 @@
       const dx = Math.floor((tw - dw)/2), dy = Math.floor((th - dh)/2);
       pvCtx.drawImage(video, dx, dy, dw, dh);
     }
-  }else if(video?.videoWidth>0){
-      if(pv.width!==video.videoWidth||pv.height!==video.videoHeight){ pv.width=video.videoWidth; pv.height=video.videoHeight; }
-      pvCtx.drawImage(video, 0, 0);
-    }else{
-      // нечего рисовать
-    }
   }
 
   function startPreviewLoop(){
@@ -421,13 +403,8 @@
           await drawFrameToCanvas();
           if(!_haveFirstFrame && pv.width>0 && pv.height>0){ _haveFirstFrame=true; pv.style.opacity='1'; }
         }
-        // троттлинг детекции
         if(now - _lastDetTS >= (1000/CONFIG.DETECT_HZ)){ detectPresenceFromCanvas(pv); _lastDetTS=now; }
       }catch(e){}
-      requestAnimationFrame(tick);
-    };
-    requestAnimationFrame(tick);
-  }catch(e){ /* проглотим редкие ошибки grabFrame */ }
       requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
@@ -435,7 +412,6 @@
   function stopPreviewLoop(){ _pvRun=false; }
 
   // ---------- SHUTTER ----------
-  btnShot.addEventListener('click', onShutter);
   async function onShutter(){
     if(btnShot.disabled || _taking) return;
     _taking=true; updateButtons(); haptic();
@@ -443,7 +419,6 @@
     try{
       let blob=null;
       if(ic?.takePhoto){
-        // Можно передать настройки, если поддерживаются: { imageWidth, imageHeight, fillLightMode }
         blob = await ic.takePhoto().catch(()=>null);
       }
       if(!blob){ // фолбэк: снимок из canvas превью
@@ -461,6 +436,7 @@
       _taking=false; updateButtons();
     }
   }
+  btnShot.addEventListener('click', onShutter);
 
   function canvasToBlob(c){
     return new Promise(resolve=>{
@@ -746,16 +722,27 @@
   function stopAll(){ stopPreviewLoop(); stopCamera(); stopDetection(); stopLevelLoop(); stopSensorsWatchdog(); removeSensorListeners(); }
 
   // DETECTION LOOP CONTROLS (совместимость с прежней схемой)
-  function startDetection(){ stopDetection(); /* сам вызов детектора происходит в preview-loop с троттлингом */ }
+  function startDetection(){ stopDetection(); /* детектор вызывается в preview-loop с троттлингом */ }
   function stopDetection(){ const cic = window.cancelIdleCallback || clearTimeout; if(_detIdle){ cic(_detIdle); _detIdle=null; } }
 
-  // TESTS
+  // ===================== TESTS (консоль) =====================
   (function testRadii(){
     syncRadii();
     console.assert(CONFIG.TARGET_R > CONFIG.BUBBLE_R || !CONFIG.ENFORCE_GEOMETRY, 'target > bubble (when enforced)');
     console.assert(CONFIG.BUBBLE_R>0 && CONFIG.TARGET_R>0, 'radii positive');
   })();
   (function testInsideMath(){ const T=CONFIG.TARGET_R-CONFIG.BUBBLE_R; console.assert(T>0,'T>0'); console.assert(isInside(0,0),'center'); console.assert(isInside(T,0),'boundary'); console.assert(!isInside(T+0.01,0),'outside'); })();
+  (function testAPIs(){
+    console.assert(typeof startCameraFlow==='function','startCameraFlow exists');
+    console.assert(typeof startPreviewLoop==='function','startPreviewLoop exists');
+    console.assert(typeof onShutter==='function','onShutter exists');
+    console.assert(typeof detectPresenceFromCanvas==='function','detectPresenceFromCanvas exists');
+    console.assert(typeof pvCtx==='object' && pvCtx,'pv context ok');
+    console.assert(PREVIEW_HZ>0,'PREVIEW_HZ > 0');
+    console.assert(CONFIG.DSCALE_W>0,'DSCALE_W > 0');
+    console.assert(typeof canCanvasWebP()==='boolean','canCanvasWebP returns boolean');
+    console.assert(typeof sanitizeComment('x')==='string','sanitizeComment returns string');
+  })();
 
   // Начинаем сенсоры сразу (iOS — по касанию)
   enableLevelSensors(true);
