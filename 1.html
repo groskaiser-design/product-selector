@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no,maximum-scale=1" />
   <title>FoodCam — фото еды</title>
   <meta name="theme-color" content="#0a7cff" />
   <style>
@@ -26,6 +26,14 @@
       font: 16px/1.45 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, sans-serif;
       -webkit-font-smoothing: antialiased;
       -webkit-tap-highlight-color: transparent;
+      touch-action: pan-y pan-x; /* Prevent pinch zoom */
+    }
+    
+    /* Prevent zoom on camera elements */
+    video, canvas, img {
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
     }
     
     .container {
@@ -778,15 +786,7 @@
     STATE.hasTorch = !!caps.torch && !PLATFORM.isIOS; // Hide on iOS (unreliable)
     DOM.btnTorch.classList.toggle('hidden', !STATE.hasTorch);
     
-    // Try to set optimal zoom
-    if ('zoom' in caps && caps.zoom) {
-      try {
-        const minZoom = caps.zoom.min || 1;
-        STATE.track.applyConstraints({
-          advanced: [{ zoom: Math.max(1, minZoom) }]
-        }).catch(() => {});
-      } catch {}
-    }
+    // NO ZOOM - use camera as-is
     
     // Create ImageCapture if supported
     if (CONFIG.preferImageCapture && typeof ImageCapture !== 'undefined') {
@@ -921,7 +921,10 @@
     if (STATE.imageCapture?.takePhoto) {
       try {
         const blob = await STATE.imageCapture.takePhoto();
-        if (blob) return blob;
+        if (blob) {
+          // Check if we need to rotate
+          return await ensurePortraitBlob(blob);
+        }
       } catch (err) {
         console.warn('ImageCapture.takePhoto failed:', err);
       }
@@ -935,20 +938,78 @@
       throw new Error('Video not ready');
     }
     
+    // Determine if we need to rotate (video is landscape but we want portrait)
+    const isLandscape = vw > vh;
+    
+    let finalW, finalH;
+    if (isLandscape) {
+      // ROTATE: swap dimensions to make portrait
+      finalW = vh;
+      finalH = vw;
+    } else {
+      // Already portrait
+      finalW = vw;
+      finalH = vh;
+    }
+    
     // Scale down if too large
     const maxSide = CONFIG.maxPhotoSide;
-    const scale = Math.min(1, maxSide / Math.max(vw, vh));
-    const w = Math.round(vw * scale);
-    const h = Math.round(vh * scale);
+    const scale = Math.min(1, maxSide / Math.max(finalW, finalH));
+    const w = Math.round(finalW * scale);
+    const h = Math.round(finalH * scale);
     
     const canvas = document.createElement('canvas');
     canvas.width = w;
     canvas.height = h;
     
     const ctx = canvas.getContext('2d');
-    ctx.drawImage(video, 0, 0, w, h);
+    
+    if (isLandscape) {
+      // Rotate 90 degrees clockwise to make portrait
+      ctx.translate(w, 0);
+      ctx.rotate(Math.PI / 2);
+      ctx.drawImage(video, 0, 0, h, w);
+    } else {
+      // No rotation needed
+      ctx.drawImage(video, 0, 0, w, h);
+    }
     
     return canvasToBlob(canvas);
+  }
+  
+  async function ensurePortraitBlob(blob) {
+    // Check blob dimensions and rotate if needed
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const isLandscape = img.width > img.height;
+        
+        if (!isLandscape) {
+          // Already portrait
+          resolve(blob);
+          return;
+        }
+        
+        // Need to rotate
+        const canvas = document.createElement('canvas');
+        const w = img.height;
+        const h = img.width;
+        canvas.width = w;
+        canvas.height = h;
+        
+        const ctx = canvas.getContext('2d');
+        ctx.translate(w, 0);
+        ctx.rotate(Math.PI / 2);
+        ctx.drawImage(img, 0, 0);
+        
+        canvas.toBlob(rotatedBlob => {
+          URL.revokeObjectURL(img.src);
+          resolve(rotatedBlob);
+        }, 'image/jpeg', CONFIG.jpegQuality);
+      };
+      
+      img.src = URL.createObjectURL(blob);
+    });
   }
   
   async function onShutter() {
@@ -1384,6 +1445,31 @@
   // ==================== INIT ====================
   window.addEventListener('DOMContentLoaded', () => {
     startCameraFlow();
+    
+    // Prevent pinch zoom on camera area
+    let lastTouchDistance = 0;
+    DOM.camWrap.addEventListener('touchstart', (e) => {
+      if (e.touches.length > 1) {
+        e.preventDefault(); // Prevent zoom gesture
+        lastTouchDistance = 0;
+      }
+    }, { passive: false });
+    
+    DOM.camWrap.addEventListener('touchmove', (e) => {
+      if (e.touches.length > 1) {
+        e.preventDefault(); // Prevent zoom gesture
+      }
+    }, { passive: false });
+    
+    // Prevent double-tap zoom
+    let lastTap = 0;
+    DOM.camWrap.addEventListener('touchend', (e) => {
+      const now = Date.now();
+      if (now - lastTap < 300) {
+        e.preventDefault();
+      }
+      lastTap = now;
+    });
     
     // Telegram WebApp integration
     try {
