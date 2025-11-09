@@ -826,7 +826,151 @@ window.forceInitAllWheels = ensureAllWheelsOnce;
 /* ===========================
  * BLOCK C — SAVE (Apps Script)
  * =========================== */
+
 const BACKEND_URL = 'https://script.google.com/macros/s/AKfycby-mv1k6ggX8SgDrYr5ESLeUIksKzav4G4LzdTcdT0-KscizrPlWhRtLAhuHGruIrA9Ng/exec';
+const APP_VERSION  = 'frontend-2025-11-09';            // ↑ обновил версию
+const SCHEMA_VERSION = 'wheels+gender-v2';             // ↑ новая схема анкеты
+const REQUEST_TIMEOUT_MS = 30000;
+
+function nowIso(){ return new Date().toISOString(); }
+function todayLocalISO(tz){
+  try{
+    const d = new Date();
+    const y  = new Intl.DateTimeFormat('en-CA',{timeZone:tz,year:'numeric'}).format(d);
+    const m  = new Intl.DateTimeFormat('en-CA',{timeZone:tz,month:'2-digit'}).format(d);
+    const da = new Intl.DateTimeFormat('en-CA',{timeZone:tz,day:'2-digit'}).format(d);
+    return `${y}-${m}-${da}`;
+  }catch{ return new Date().toISOString().slice(0,10); }
+}
+function clientTZ(){ try{ return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch{ return 'UTC'; } }
+function genSaveId(){ return Date.now() + '_' + Math.random().toString(36).slice(2,10); }
+
+async function saveMeasurementsToDB(values, saveId){
+  if (!values || typeof values !== 'object') throw new Error('Нет данных для сохранения.');
+  const tg       = window.Telegram?.WebApp;
+  const tz       = clientTZ();
+  const dayLocal = todayLocalISO(tz);
+
+  // НОВОЕ: помечаем схему и передаём список фактических полей (для бэка/логов)
+  const payload = {
+    action: 'save',
+    schema: SCHEMA_VERSION,                 // ← явная схема анкеты
+    init_data: String(tg?.initData || ''),
+    tz, client_day_local: dayLocal,
+    locale: tg?.initDataUnsafe?.user?.language_code || '',
+    source: 'webapp', app_version: APP_VERSION,
+    t_client: nowIso(), save_id: saveId || genSaveId(),
+    data: values,
+    fields_present: Object.keys(values)     // ← можно игнорировать на бэке
+  };
+
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  let resp, raw, json = null;
+  try {
+    resp = await fetch(BACKEND_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8' }, // simple request, без preflight
+      body: JSON.stringify(payload),
+      redirect: 'follow', cache: 'no-store', credentials: 'omit', mode: 'cors',
+      signal: controller.signal
+    });
+    raw = await resp.text();
+    try { json = raw ? JSON.parse(raw) : null; } catch {}
+  } catch (err) {
+    if (err && err.name === 'AbortError') { const e = new Error('Сервер не ответил вовремя'); e.code = 408; throw e; }
+    throw err;
+  } finally { clearTimeout(t); }
+
+  const isRateLimited =
+    resp?.status === 429 ||
+    (json && (json.code === 429 || json.status === 429)) ||
+    /(?:too\s*many\s*requests|rate[-_\s]*limit|429|слишком\s+часто)/i.test(String(json?.error || resp?.statusText || ''));
+
+  if (!resp?.ok || !json || json.ok !== true) {
+    const msg = (json && json.error) ? json.error : `HTTP ${resp?.status ?? '0'} ${resp?.statusText ?? ''}`.trim();
+    if (isRateLimited) { const e = new Error('Too many requests'); e.code = 429; throw e; }
+    if (msg === 'timeout' || /timeout|network/i.test(String(msg))) { const e = new Error('Сервер не ответил вовремя'); e.code = 408; throw e; }
+    const e = new Error(msg || 'Save failed'); e.code = resp?.status ?? 0; throw e;
+  }
+  return {
+    ok: true,
+    day_local: json.day_local,
+    ts_iso:    json.ts_iso,
+    row_all:   Number(json.row_all),
+    row_calc:  Number(json.row_calc)
+  };
+}
+
+// ← безопасный пост-чек факта сохранения при таймауте
+async function fetchUserRow(){
+  const tg = window.Telegram?.WebApp;
+  try{
+    const resp = await fetch(BACKEND_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+      body: JSON.stringify({ action:'user_row', init_data:String(tg?.initData || '') }),
+      cache:'no-store', credentials:'omit', mode:'cors'
+    });
+    const raw = await resp.text();
+    const json = raw ? JSON.parse(raw) : null;
+    if (!resp.ok || !json || json.ok !== true) return null;
+    return json;
+  } catch { return null; }
+}
+
+async function confirmSavedAfterTimeout(prevRowCalc){
+  const row = await fetchUserRow().catch(()=>null);
+  if (row && row.found && Number(row.row_calc) && Number(row.row_calc) !== Number(prevRowCalc || 0)) {
+    return Number(row.row_calc);
+  }
+  return null;
+}
+
+// --- Ждём, пока новые данные появятся на сервере ---
+async function waitForFreshData(rowCalcAfterSave, fastMs = 10000, slowMs = 60000) {
+  const api = (window && typeof window.apiFrontBootstrap === 'function')
+    ? window.apiFrontBootstrap
+    : (typeof apiFrontBootstrap === 'function' ? apiFrontBootstrap : null);
+
+  if (!api) return null;
+
+  let seenFront = false, seenMacros = false, seenChart = false;
+  const t0 = Date.now();
+
+  // Фаза A — быстрая
+  while (Date.now() - t0 < fastMs) {
+    try {
+      const b = await api(rowCalcAfterSave);
+      const sameRow = Number(b?.row) === Number(rowCalcAfterSave);
+
+      if (b?.front)  seenFront  = seenFront  || !!(b.front.ready  || b.front.html);
+      if (b?.macros) seenMacros = seenMacros || !!b.macros.ready;
+      if (b?.chart)  seenChart  = seenChart  || !!b.chart.ready;
+
+      if ((seenFront && seenMacros && seenChart) || sameRow) return b;
+    } catch(_) {}
+    await new Promise(res => setTimeout(res, 200));
+  }
+
+  // Фаза B — медленная
+  const t1 = Date.now();
+  while (Date.now() - t1 < slowMs) {
+    try {
+      const b = await api(rowCalcAfterSave);
+      const sameRow = Number(b?.row) === Number(rowCalcAfterSave);
+      const allReady = !!(b?.front?.ready) && !!(b?.macros?.ready) && !!(b?.chart?.ready);
+      if (allReady || sameRow) return b;
+    } catch(_) {}
+    await new Promise(res => setTimeout(res, 750));
+  }
+  return null;
+}
+
+
+  
+/*const BACKEND_URL = 'https://script.google.com/macros/s/AKfycby-mv1k6ggX8SgDrYr5ESLeUIksKzav4G4LzdTcdT0-KscizrPlWhRtLAhuHGruIrA9Ng/exec';
 const APP_VERSION  = 'frontend-2025-10-21';
 const REQUEST_TIMEOUT_MS = 30000;
 function nowIso(){ return new Date().toISOString(); }
@@ -959,6 +1103,7 @@ async function waitForFreshData(rowCalcAfterSave, fastMs = 10000, slowMs = 60000
   }
   return null;
 }
+*/
 
 /* ============================================================
  *  BLOCK D — Кулдаун, попапы, сохранение
