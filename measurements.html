@@ -3,87 +3,109 @@
 <head>
 
   <script>
-/* ===== Namespace isolation for storage + backend ===== */
-(function (window) {
-  'use strict';
+/* === HARD NAMESPACE PATCH v2 — перехват методов storage + ns в fetch === */
+(function () {
+  const NS = 'bm';                 // <— во втором проекте, например, 'fit'
+  const PREFIX = NS + ':';         // все ключи будут храниться как bm:<key>
 
-  // ① УНИКАЛЬНЫЙ НЕЙМСПЕЙС ДЛЯ ПРОЕКТА (ПОМЕНЯЙ!)
-  const NS = 'bm';                    // <- в другом проекте: 'fit'
-  const KEY_PREFIX = NS + ':';
+  // Сохраняем «сырые» методы (для отладки/миграции)
+  const rawGet = Storage.prototype.getItem;
+  const rawSet = Storage.prototype.setItem;
+  const rawRem = Storage.prototype.removeItem;
+  const rawKey = Storage.prototype.key;
+  const rawClr = Storage.prototype.clear;
 
-  // ② Прокси-обёртка для localStorage/sessionStorage → автопрефикс ключей
-  function wrapStorage(store){
-    return new Proxy(store, {
-      get(target, prop, receiver){
-        if (prop === 'getItem')    return (k)    => target.getItem(KEY_PREFIX + String(k));
-        if (prop === 'setItem')    return (k, v) => target.setItem(KEY_PREFIX + String(k), v);
-        if (prop === 'removeItem') return (k)    => target.removeItem(KEY_PREFIX + String(k));
-        if (prop === 'key')        return (i)    => {
-          const raw = target.key(i);
-          if (!raw || !raw.startsWith(KEY_PREFIX)) return null;
-          return raw.slice(KEY_PREFIX.length);
-        };
-        // удобство: очистка только своего неймспейса
-        if (prop === 'clearNS')    return () => {
-          for (let i = target.length - 1; i >= 0; i--){
-            const k = target.key(i);
-            if (k && k.startsWith(KEY_PREFIX)) target.removeItem(k);
+  // Патчим конкретные инстансы (надежнее всего)
+  function patchInstance(store){
+    const get = rawGet.bind(store);
+    const set = rawSet.bind(store);
+    const rem = rawRem.bind(store);
+    const key = rawKey.bind(store);
+
+    try {
+      Object.defineProperties(store, {
+        getItem:    { configurable:true, writable:true, value: (k)=> get(PREFIX + String(k)) },
+        setItem:    { configurable:true, writable:true, value: (k,v)=> set(PREFIX + String(k), String(v)) },
+        removeItem: { configurable:true, writable:true, value: (k)=> rem(PREFIX + String(k)) },
+        key:        { configurable:true, writable:true, value: (i)=>{
+          let visible = -1;
+          for (let idx = 0; idx < store.length; idx++){
+            const name = key(idx);
+            if (name && name.startsWith(PREFIX)){
+              visible++;
+              if (visible === i) return name.slice(PREFIX.length);
+            }
           }
-        };
-        return Reflect.get(target, prop, receiver);
-      }
-    });
+          return null;
+        }},
+      });
+    } catch(_) { /* если браузер не даёт — ниже прототипный фолбэк */ }
   }
 
-  // ДАЛЕЕ В ЛЮБОМ КОДЕ ИСПОЛЬЗУЙТЕ ЭТИ ПЕРЕМЕННЫЕ:
-  const localStorage   = wrapStorage(window.localStorage);
-  const sessionStorage = wrapStorage(window.sessionStorage);
+  patchInstance(window.localStorage);
+  patchInstance(window.sessionStorage);
 
-  // ③ Хелпер: добавляет ns в payload
-  const withNs = (obj) => Object.assign({ ns: NS }, obj || {});
-
-  // ④ Патч fetch: если POST с JSON — подмешиваем {ns}
-  (function patchFetch(){
-    const orig = window.fetch;
-    window.fetch = function(input, init){
-      try{
-        const method = (init && init.method ? String(init.method) : 'GET').toUpperCase();
-        const isPost = method === 'POST';
-        const bodyIsJSON = init && typeof init.body === 'string' && /^\s*\{/.test(init.body);
-        if (isPost && bodyIsJSON){
-          const body = JSON.parse(init.body);
-          if (!('ns' in body)) init.body = JSON.stringify(withNs(body));
+  // Фолбэк: если инстансы запечатаны — патчим прототип
+  if (Storage.prototype.getItem === rawGet){
+    try{
+      Storage.prototype.getItem = function(k){ return rawGet.call(this, PREFIX + String(k)); };
+      Storage.prototype.setItem = function(k,v){ return rawSet.call(this, PREFIX + String(k), String(v)); };
+      Storage.prototype.removeItem = function(k){ return rawRem.call(this, PREFIX + String(k)); };
+      Storage.prototype.key = function(i){
+        let visible = -1;
+        for (let idx=0; idx<this.length; idx++){
+          const name = rawKey.call(this, idx);
+          if (name && name.startsWith(PREFIX)){
+            visible++;
+            if (visible === i) return name.slice(PREFIX.length);
+          }
         }
-      }catch(_){}
-      return orig.call(this, input, init);
-    };
-  })();
+        return null;
+      };
+    }catch(_){}
+  }
 
-  // ⑤ Экспорт в один глобал (для явных вызовов при желании)
-  window[NS] = window[NS] || {};
-  window[NS].withNs        = withNs;
-  window[NS].storage       = { localStorage, sessionStorage, KEY_PREFIX };
-  window[NS].NS            = NS;
-
-  // ⑥ (опционально) разовая миграция старых ключей без префикса
-  window[NS].migrateOldKeys = function(uid){
-    const candidates = [
-      'macros:last_row_calc:', 'macros:last_measurement_time:',
-      'inputs:vals:', 'comment:html:', 'macros:vals:', 'chart:data:',
-      'save_unlock_time'
-    ];
-    candidates.forEach(prefix=>{
-      const k = prefix.includes(':') ? (prefix + String(uid || 'anon')) : prefix;
-      const raw = window.localStorage.getItem(k); // старый ключ (без префикса)
-      if (raw != null && localStorage.getItem(k) == null){
-        localStorage.setItem(k, raw);             // новый ключ -> с префиксом
-        window.localStorage.removeItem(k);        // подчистить старый
+  // Утилиты для отладки/чистки именно своего пространства:
+  window.__ns = NS;
+  window.__nsList = function(){
+    const out=[];
+    for (let i=0; i<window.localStorage.length; i++){
+      const rawName = rawKey.call(window.localStorage, i);
+      if (rawName && rawName.startsWith(PREFIX)){
+        out.push({
+          rawKey: rawName,
+          userKey: rawName.slice(PREFIX.length),
+          value: rawGet.call(window.localStorage, rawName)
+        });
       }
-    });
+    }
+    try { console.table(out); } catch(_){}
+    return out;
+  };
+  window.__nsClear = function(){
+    for (let i = window.localStorage.length - 1; i >= 0; i--){
+      const rawName = rawKey.call(window.localStorage, i);
+      if (rawName && rawName.startsWith(PREFIX)){
+        rawRem.call(window.localStorage, rawName);
+      }
+    }
   };
 
-})(window);
+  // + ns в POST JSON — чтобы бэкенд разделял проекты
+  const origFetch = window.fetch;
+  window.fetch = function(input, init){
+    try{
+      const m = (init && init.method ? String(init.method) : 'GET').toUpperCase();
+      if (m === 'POST' && init && typeof init.body === 'string' && /^\s*\{/.test(init.body)){
+        const body = JSON.parse(init.body);
+        if (!('ns' in body)) init.body = JSON.stringify({ ...body, ns: NS });
+      }
+    }catch(_){}
+    return origFetch.call(this, input, init);
+  };
+})();
 </script>
+
 
 
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
