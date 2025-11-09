@@ -1,118 +1,13 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-
-  <script>
-/* === HARD NAMESPACE PATCH v2 — перехват методов storage + ns в fetch === */
-(function () {
-  const NS = 'bm';                 // <— во втором проекте, например, 'fit'
-  const PREFIX = NS + ':';         // все ключи будут храниться как bm:<key>
-
-  // Сохраняем «сырые» методы (для отладки/миграции)
-  const rawGet = Storage.prototype.getItem;
-  const rawSet = Storage.prototype.setItem;
-  const rawRem = Storage.prototype.removeItem;
-  const rawKey = Storage.prototype.key;
-  const rawClr = Storage.prototype.clear;
-
-  // Патчим конкретные инстансы (надежнее всего)
-  function patchInstance(store){
-    const get = rawGet.bind(store);
-    const set = rawSet.bind(store);
-    const rem = rawRem.bind(store);
-    const key = rawKey.bind(store);
-
-    try {
-      Object.defineProperties(store, {
-        getItem:    { configurable:true, writable:true, value: (k)=> get(PREFIX + String(k)) },
-        setItem:    { configurable:true, writable:true, value: (k,v)=> set(PREFIX + String(k), String(v)) },
-        removeItem: { configurable:true, writable:true, value: (k)=> rem(PREFIX + String(k)) },
-        key:        { configurable:true, writable:true, value: (i)=>{
-          let visible = -1;
-          for (let idx = 0; idx < store.length; idx++){
-            const name = key(idx);
-            if (name && name.startsWith(PREFIX)){
-              visible++;
-              if (visible === i) return name.slice(PREFIX.length);
-            }
-          }
-          return null;
-        }},
-      });
-    } catch(_) { /* если браузер не даёт — ниже прототипный фолбэк */ }
-  }
-
-  patchInstance(window.localStorage);
-  patchInstance(window.sessionStorage);
-
-  // Фолбэк: если инстансы запечатаны — патчим прототип
-  if (Storage.prototype.getItem === rawGet){
-    try{
-      Storage.prototype.getItem = function(k){ return rawGet.call(this, PREFIX + String(k)); };
-      Storage.prototype.setItem = function(k,v){ return rawSet.call(this, PREFIX + String(k), String(v)); };
-      Storage.prototype.removeItem = function(k){ return rawRem.call(this, PREFIX + String(k)); };
-      Storage.prototype.key = function(i){
-        let visible = -1;
-        for (let idx=0; idx<this.length; idx++){
-          const name = rawKey.call(this, idx);
-          if (name && name.startsWith(PREFIX)){
-            visible++;
-            if (visible === i) return name.slice(PREFIX.length);
-          }
-        }
-        return null;
-      };
-    }catch(_){}
-  }
-
-  // Утилиты для отладки/чистки именно своего пространства:
-  window.__ns = NS;
-  window.__nsList = function(){
-    const out=[];
-    for (let i=0; i<window.localStorage.length; i++){
-      const rawName = rawKey.call(window.localStorage, i);
-      if (rawName && rawName.startsWith(PREFIX)){
-        out.push({
-          rawKey: rawName,
-          userKey: rawName.slice(PREFIX.length),
-          value: rawGet.call(window.localStorage, rawName)
-        });
-      }
-    }
-    try { console.table(out); } catch(_){}
-    return out;
-  };
-  window.__nsClear = function(){
-    for (let i = window.localStorage.length - 1; i >= 0; i--){
-      const rawName = rawKey.call(window.localStorage, i);
-      if (rawName && rawName.startsWith(PREFIX)){
-        rawRem.call(window.localStorage, rawName);
-      }
-    }
-  };
-
-  // + ns в POST JSON — чтобы бэкенд разделял проекты
-  const origFetch = window.fetch;
-  window.fetch = function(input, init){
-    try{
-      const m = (init && init.method ? String(init.method) : 'GET').toUpperCase();
-      if (m === 'POST' && init && typeof init.body === 'string' && /^\s*\{/.test(init.body)){
-        const body = JSON.parse(init.body);
-        if (!('ns' in body)) init.body = JSON.stringify({ ...body, ns: NS });
-      }
-    }catch(_){}
-    return origFetch.call(this, input, init);
-  };
-})();
-</script>
-
-
-
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <meta charset="UTF-8" />
 <meta name="tma:home-url" content="./index.html" />
 <meta name="tma:home-hash" content="" />
 <title>Замеры тела</title>
+<!-- ✅ Namespace для изоляции хранилища этой анкеты -->
+<meta name="app:ns" content="zamery" />
 
 <!-- === SMART VERSION CONTROL: обновляем только при смене версии === -->
 <script>
@@ -316,13 +211,6 @@ window.addEventListener('pageshow', (e)=>{
   box-shadow: none !important;                        /* убираем тень */
 }
 
-/* (необязательно) Чуть приглушить сегменты столбиков,
-   если после выравнивания они кажутся ярче карточек. Разкомментируй при желании. */
-/*
-.kbju7 svg .seg.carb{ fill: rgba(52,211,153,.82) !important; }
-.kbju7 svg .seg.prot{ fill: rgba(96,165,250,.82) !important; }
-.kbju7 svg .seg.fat { fill: rgba(245,158,11,.82) !important; }
-*/
 
   
 </style>
@@ -578,6 +466,11 @@ window.addEventListener('pageshow', (e)=>{
   </div>
 
 <script>
+// === Namespace helpers (эта страница = "zamery") ===
+const APP_NS = document.querySelector('meta[name="app:ns"]')?.content || 'zamery';
+const NS  = (k) => `${APP_NS}::${k}`;   // одиночный ключ
+const NSP = (p) => `${APP_NS}::${p}`;   // префикс (которые потом + uid)
+
 /* ============================================================
  *  BLOCK 0: TMA boot + admin detect
  * ============================================================ */
@@ -1053,12 +946,13 @@ async function waitForFreshData(rowCalcAfterSave, fastMs = 10000, slowMs = 60000
  * ============================================================ */
 var SAVE_IN_PROGRESS = false;
 var COOLDOWN_MS = 60000;
-var COOLDOWN_KEY = 'save_unlock_time';
-function getUnlockTime(){ try { return Number(localStorage.getItem(COOLDOWN_KEY)) || 0; } catch(_) { return 0; } }
-function setUnlockTime(time){ try { localStorage.setItem(COOLDOWN_KEY, String(time)); } catch(_){} }
+var COOLDOWN_KEY_PREFIX = NSP('save_unlock_time:');
+function cooldownKey(uid){ return COOLDOWN_KEY_PREFIX + String(uid ?? currentUserId()); }
+function getUnlockTime(){ try { return Number(localStorage.getItem(cooldownKey())) || 0; } catch(_) { return 0; } }
+function setUnlockTime(time){ try { localStorage.setItem(cooldownKey(), String(time)); } catch(_){} }
 function canSaveNow(){ if (SAVE_IN_PROGRESS) return false; var now = Date.now(); return !(getUnlockTime() > now); }
 
-var ROWCALC_KEY_PREFIX = 'macros:last_row_calc:';
+var ROWCALC_KEY_PREFIX = NSP('macros:last_row_calc:');
 function currentUserId(){ try { return window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'anon'; } catch(_){ return 'anon'; } }
 function rowCalcKey(uid){ return ROWCALC_KEY_PREFIX + String(uid); }
 function setRowCalcForUser(rowCalc, uid){
@@ -1082,7 +976,7 @@ function getRowCalcForUser(uid){
 window.getRowCalcForUser = getRowCalcForUser;
 window.setRowCalcForUser = setRowCalcForUser;
 
-var LASTTIME_KEY_PREFIX = 'macros:last_measurement_time:';
+var LASTTIME_KEY_PREFIX = NSP('macros:last_measurement_time:');
 function lastTimeKey(uid){ return LASTTIME_KEY_PREFIX + String(uid); }
 function setLastMeasurementTime(timestamp, uid){
   if (typeof uid === 'undefined') uid = currentUserId();
@@ -1229,7 +1123,7 @@ function collectSurveyValues(){
 }
 
 /* === CACHE: inputs (анкета) === */
-const INPUTS_KEY_PREFIX = 'inputs:vals:';
+const INPUTS_KEY_PREFIX = NSP('inputs:vals:');
 if (typeof currentUserId !== 'function') {
   function currentUserId(){
     try { return window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'anon'; }
@@ -1335,8 +1229,8 @@ function handleSaveClick(e){
 
   try {
     const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
-    localStorage.removeItem('macros:vals:' + String(uid));
-    localStorage.removeItem('chart:data:' + String(uid));
+    localStorage.removeItem(NSP('macros:vals:') + String(uid));
+    localStorage.removeItem(NSP('chart:data:') + String(uid));
   } catch(_){}
 
   const saveTask = saveMeasurementsToDB(values, saveId);
@@ -1747,7 +1641,7 @@ function handleSaveClick(e){
           // ✅ не кладём старее reqRow
           if (b.macros.ready && b.macros.macros && !(reqRow && macrosRow < Number(reqRow))) {
             const seed = { row: b.macros.row || b.row || null, macros: b.macros.macros, updated_at: b.macros.updated_at };
-            localStorage.setItem('macros:vals:' + String(uid), JSON.stringify(seed));
+            localStorage.setItem(NSP('macros:vals:') + String(uid), JSON.stringify(seed));
           }
           try { window.startMacrosFlow(); } catch(_){}
         } else { try { window.startMacrosFlow(); } catch(_){} }
@@ -1760,7 +1654,7 @@ function handleSaveClick(e){
           // ✅ не кладём старее reqRow
           if (b.chart.ready && Array.isArray(b.chart.data) && !(reqRow && chartRow < Number(reqRow))) {
             const seed = { row: b.chart.row || b.row || null, data: b.chart.data, updated_at: b.chart.updated_at };
-            localStorage.setItem('chart:data:' + String(uid), JSON.stringify(seed));
+            localStorage.setItem(NSP('chart:data:') + String(uid), JSON.stringify(seed));
           }
           try { window.startChartFlow(); } catch(_){}
       } else { try { window.startChartFlow(); } catch(_){ } }
@@ -1793,7 +1687,7 @@ function handleSaveClick(e){
   const elAI = ()=>document.getElementById('ai-comment');
 
   /* ---------- Кэш комментария ---------- */
-  const COMMENT_KEY_PREFIX = 'comment:html:';
+  const COMMENT_KEY_PREFIX = NSP('comment:html:');
   function currentUserId(){ 
     try { return window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'anon'; } 
     catch(_){ return 'anon'; } 
@@ -2053,7 +1947,7 @@ function handleSaveClick(e){
   const BACKEND = (typeof BACKEND_URL !== 'undefined' && BACKEND_URL) ? BACKEND_URL : '';
   const host = () => document.getElementById('analytics');
 
-  const MACROS_KEY_PREFIX = 'macros:vals:';
+  const MACROS_KEY_PREFIX = NSP('macros:vals:');
   function currentUserId(){ try { return window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'anon'; } catch(_){ return 'anon'; } }
   function macrosKey(uid){ return MACROS_KEY_PREFIX + String(uid); }
   function saveMacrosCache(obj, uid){ try { localStorage.setItem(macrosKey(uid ?? currentUserId()), JSON.stringify(obj)); } catch(_){} }
@@ -2640,7 +2534,7 @@ function handleSaveClick(e){
       if (!(reqRow && Number(res.row || 0) < Number(reqRow))) {
         try {
           const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
-          localStorage.setItem(`chart:data:${String(uid)}`, JSON.stringify({ row: res.row, data, updated_at: res.updated_at }));
+          localStorage.setItem(`${NSP('chart:data:')}${String(uid)}`, JSON.stringify({ row: res.row, data, updated_at: res.updated_at }));
         } catch(_){}
       }
       return { done:true };
@@ -2674,7 +2568,7 @@ function handleSaveClick(e){
     const target = targetRow();
     try{
       const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
-      const raw = localStorage.getItem(`chart:data:${String(uid)}`);
+      const raw = localStorage.getItem(`${NSP('chart:data:')}${String(uid)}`);
       const cached = raw ? JSON.parse(raw) : null;
       if (cached?.data && !(target && Number(cached.row || 0) < Number(target))) {
         renderChartSafe(cached.data, 'READY');
