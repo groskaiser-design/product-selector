@@ -8,25 +8,34 @@
 <title>Замеры тела</title>
 
 <script>
-/* Изоляция storage для МОДУЛЯ "Замеры" — не задевая КБЖУ */
-(function isolateStorage(){
-  var PFX = 'fitapp-v2:measures:';   // любой уникальный префикс для "Замеров"
+/* Изоляция storage для МОДУЛЯ "Замеры", не ломая КБЖУ и общие кэши */
+(function scopedStorage(){
+  const PFX = 'fitapp-v2:measures:';
+  // Ключи, которые ДОЛЖНЫ оставаться общими между страницами
+  const BYPASS = /^(macros:|chart:|inputs:|comment:|save_unlock_time|macros:last_row_calc:|macros:last_measurement_time:)/;
 
   function patch(store){
     if (!store) return;
-    var _get = store.getItem.bind(store);
-    var _set = store.setItem.bind(store);
-    var _rem = store.removeItem.bind(store);
-    var norm = function(k){ return (k && !String(k).startsWith(PFX)) ? (PFX + k) : k; };
-    store.getItem    = function(k){ return _get(norm(k)); };
-    store.setItem    = function(k,v){ return _set(norm(k), v); };
-    store.removeItem = function(k){ return _rem(norm(k)); };
-    // (clear не трогаем специально)
+    const _get = store.getItem.bind(store);
+    const _set = store.setItem.bind(store);
+    const _rem = store.removeItem.bind(store);
+
+    const norm = (k)=>{
+      const s = (k == null) ? '' : String(k);
+      if (!s || s.startsWith(PFX) || BYPASS.test(s)) return s; // не трогаем общие ключи
+      return PFX + s; // префиксуем только «локальные» ключи анкеты
+    };
+
+    store.getItem    = (k)=> _get(norm(k));
+    store.setItem    = (k,v)=> _set(norm(k), v);
+    store.removeItem = (k)=> _rem(norm(k));
+    // clear() не трогаем
   }
   patch(window.localStorage);
   patch(window.sessionStorage);
 })();
 </script>
+
   
 <!-- === SMART VERSION CONTROL: обновляем только при смене версии === -->
 <script>
@@ -950,8 +959,8 @@ async function confirmSavedAfterTimeout(prevRowCalc){
 
 // --- Ждём, пока новые данные появятся на сервере ---
 async function waitForFreshData(rowCalcAfterSave, fastMs = 10000, slowMs = 60000) {
-  const api = (window && typeof window.apiFrontBootstrap === 'function')
-    ? window.apiFrontBootstrap
+  const api = (window && typeof window.apiFrontBootstrapMeasures === 'function')
+    ? window.apiFrontBootstrapMeasures
     : (typeof apiFrontBootstrap === 'function' ? apiFrontBootstrap : null);
 
   if (!api) return null;
@@ -1086,8 +1095,8 @@ async function confirmSavedAfterTimeout(prevRowCalc){
 
 // --- Ждем, пока новые данные появятся на сервере (ДОЛЖНА БЫТЬ ВНЕ других функций!) ---
 async function waitForFreshData(rowCalcAfterSave, fastMs = 10000, slowMs = 60000) {
-  const api = (window && typeof window.apiFrontBootstrap === 'function')
-    ? window.apiFrontBootstrap
+  const api = (window && typeof window.apiFrontBootstrapMeasures === 'function')
+    ? window.apiFrontBootstrapMeasures
     : (typeof apiFrontBootstrap === 'function' ? apiFrontBootstrap : null);
 
   if (!api) return null;
@@ -1396,8 +1405,8 @@ function handleSaveClick(e){
   collapseAccordionSafe();
   requestAnimationFrame(()=>requestAnimationFrame(scrollTopNoJump));
   setTimeout(()=>{
-    callIf('startFrontDataFlow');
-    callIf(window.startFrontDataFlow);
+    callIf('startMeasuresFrontDataFlow');
+    callIf();
     callIf(window.startMacrosFlow);
     callIf(window.startChartFlow);
   }, 0);
@@ -1450,7 +1459,7 @@ function handleSaveClick(e){
         }
         setUnlockTime(Date.now() + 2000);
         showPopup('Не подтверждено', 'Сервер не успел ответить. Проверьте «Последний замер».', 'error');
-        callIf('startFrontDataFlow');
+        callIf('startMeasuresFrontDataFlow');
         return;
       }
 
@@ -1805,7 +1814,7 @@ function handleSaveClick(e){
   requestAnimationFrame(()=>requestAnimationFrame(scrollTopNoJump));
   setTimeout(()=>{
     try { startFrontDataFlow(); } catch(_){}
-    try { window.startFrontDataFlow(); } catch(_){}  // ← AI комментарий
+    try { (); } catch(_){}  // ← AI комментарий
     try { window.startMacrosFlow(); } catch(_){}
     try { window.startChartFlow(); } catch(_){}
   }, 0);
@@ -1909,7 +1918,7 @@ function handleSaveClick(e){
       init_data: String(tg?.initData || ''),
       row: Number(requestedRow || 0) || undefined
     }
-    window.apiFrontBootstrap = apiFrontBootstrap;
+    window.apiFrontBootstrapMeasures = apiFrontBootstrap;
 
     const t0 = performance?.now ? performance.now() : Date.now();
     const resp = await fetch(BACKEND, {
@@ -1934,7 +1943,7 @@ function handleSaveClick(e){
     }
     return json;
   }
-  window.apiFrontBootstrap = apiFrontBootstrap;
+  window.apiFrontBootstrapMeasures = apiFrontBootstrap;
 
   async function apiFrontWait(timeoutSec){
     const payload = {
@@ -2147,7 +2156,7 @@ function handleSaveClick(e){
     if (r.done) return;
     _pollTimer = setTimeout(()=>pollLoop(), r.wait);
   }
-  window.startFrontDataFlow = function(){ pollLoop(); };
+   = function(){ pollLoop(); };
 
   setAIStatus('Ждём данные…');
   setAnalyticsPlaceholder();
@@ -2201,7 +2210,7 @@ function handleSaveClick(e){
         renderAIComment(b.front.html || '');
       } else {
         setAIStatus('Обрабатываем… (ждём комментарий)');
-        window.startFrontDataFlow();
+        ();
       }
 
       try{
@@ -2231,7 +2240,7 @@ function handleSaveClick(e){
       } catch(_){}
 
     } catch {
-      window.startFrontDataFlow();
+      ();
       try{
         const r = await apiLastInputs();
         if (r && r.found && r.inputs){
@@ -2468,7 +2477,7 @@ function handleSaveClick(e){
   }
 
   /* ---------- Public start ---------- */
-  window.startFrontDataFlow = function(){
+  window.startMeasuresFrontDataFlow = function(){
     _commentRunId += 1;
     const runId = _commentRunId;
     _commentStatus = 'INIT';
@@ -2503,12 +2512,12 @@ function handleSaveClick(e){
         _commentAbort = null; 
       }
     } else {
-      window.startFrontDataFlow();
+      window.startMeasuresFrontDataFlow();
     }
   });
 
   /* ---------- Initial start ---------- */
-  window.startFrontDataFlow();
+  window.startMeasuresFrontDataFlow();
 })();
   
 /* ============================================================
