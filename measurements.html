@@ -964,6 +964,7 @@ async function waitForFreshData(rowCalcAfterSave, fastMs = 10000, slowMs = 60000
  *  BLOCK D — Кулдаун, попапы, сохранение
  * ============================================================ */
 
+/* --- Кулдаун --- */
 var SAVE_IN_PROGRESS = false;
 var COOLDOWN_MS = 60000;
 var COOLDOWN_KEY = 'save_unlock_time';
@@ -971,6 +972,7 @@ function getUnlockTime(){ try { return Number(localStorage.getItem(COOLDOWN_KEY)
 function setUnlockTime(time){ try { localStorage.setItem(COOLDOWN_KEY, String(time)); } catch(_){} }
 function canSaveNow(){ if (SAVE_IN_PROGRESS) return false; var now = Date.now(); return !(getUnlockTime() > now); }
 
+/* --- row_calc локальный кэш --- */
 var ROWCALC_KEY_PREFIX = 'macros:last_row_calc:';
 function currentUserId(){ try { return window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'anon'; } catch(_){ return 'anon'; } }
 function rowCalcKey(uid){ return ROWCALC_KEY_PREFIX + String(uid); }
@@ -995,6 +997,7 @@ function getRowCalcForUser(uid){
 window.getRowCalcForUser = getRowCalcForUser;
 window.setRowCalcForUser = setRowCalcForUser;
 
+/* --- «Последний замер» --- */
 var LASTTIME_KEY_PREFIX = 'macros:last_measurement_time:';
 function lastTimeKey(uid){ return LASTTIME_KEY_PREFIX + String(uid); }
 function setLastMeasurementTime(timestamp, uid){
@@ -1028,11 +1031,12 @@ function updateLastTimeDisplay(timestamp){
 window.setLastMeasurementTime = setLastMeasurementTime;
 window.getLastMeasurementTime = getLastMeasurementTime;
 
-// === Row lock: держим целевой row после сохранения, чтобы не откатываться
+/* --- Row lock: не показывать старую строку после сохранения --- */
 var __desiredRow = null, __desiredRowUntil = 0;
 function lockDesiredRow(row, ms){ __desiredRow = Number(row)||null; __desiredRowUntil = Date.now() + (ms||60000); }
 function desiredRow(){ return (Date.now() < __desiredRowUntil) ? __desiredRow : null; }
 
+/* --- UI утилиты --- */
 function getSaveBtn(){ return document.getElementById('saveBtn'); }
 function setSavingState(isSaving){
   var btn = getSaveBtn(); if (!btn) return;
@@ -1071,7 +1075,8 @@ function scrollTopNoJump(){
   }catch(_){}
 }
 
-/* === СБОР КОЛЁС === */
+/* --- СБОР КОЛЁС --- 
+   опирается на внешние: FIELDS / fieldByKey / wheels / ensureWheel */
 function collectWheelValues(){
   var out = {};
   for (var i=0; i<FIELDS.length; i++){
@@ -1085,7 +1090,7 @@ function collectWheelValues(){
   return out;
 }
 
-/* === СБОР АНКЕТЫ (сейчас оставляем только gender) === */
+/* --- СБОР АНКЕТЫ (Новая анкета: только gender) --- */
 function collectSurveyValues(){
   const out = {};
   const g = document.querySelector('.binary-btn.active[data-field="gender"]');
@@ -1093,7 +1098,7 @@ function collectSurveyValues(){
   return out;
 }
 
-/* === CACHE: inputs (анкета) === */
+/* --- Кэш инпутов (для фронтовых потоков) --- */
 const INPUTS_KEY_PREFIX = 'inputs:vals:';
 if (typeof currentUserId !== 'function') {
   function currentUserId(){
@@ -1108,14 +1113,14 @@ function loadInputsCache(uid){
   catch(_) { return null; }
 }
 
-// ===== ВАЛИДАЦИЯ =====
+/* --- Валидация формы под новую анкету --- */
 function isFormValid() {
   try {
     const w = collectWheelValues();
     const s = collectSurveyValues();
     if (s.gender !== 'male' && s.gender !== 'female') return false;
 
-    // Обязательные колёса (fat не обязателен)
+    // Обязательные колёса (fat НЕ обязателен)
     const required = [
       'weight','height',
       'neck','shoulders','chest','waist',
@@ -1149,19 +1154,33 @@ function updateSaveButton() {
     requestAnimationFrame(updateSaveButton);
   });
   document.addEventListener('click', (e) => {
-    if (e.target?.closest?.('.binary-btn') || e.target?.closest?.('.choice-item')) {
+    if (e.target?.closest?.('.binary-btn')) {
       setTimeout(updateSaveButton, 50);
     }
   }, { passive: true });
+  // Эти элементы могут отсутствовать — добавляем слушатели только если найдутся
   const bfNone = document.getElementById('bf-none');
   const optFat = document.getElementById('opt_fat');
   if (bfNone) bfNone.addEventListener('change', updateSaveButton);
   if (optFat) optFat.addEventListener('change', updateSaveButton);
+
   setInterval(updateSaveButton, 1000);
 })();
 
-/* === КНОПКА СОХРАНЕНИЯ: Сохраняем ВЕСЬ ПАКЕТ === */
-async function handleSaveClick(e){
+/* --- Сохранение: отправляем весь пакет значений --- */
+function safeGenSaveId(){
+  try { if (typeof genSaveId === 'function') return genSaveId(); } catch(_){}
+  return 's_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+}
+
+function callIf(fnName /*, ...args */){
+  try {
+    const fn = (typeof fnName === 'string') ? (window[fnName]) : fnName;
+    if (typeof fn === 'function') return fn.apply(null, Array.prototype.slice.call(arguments,1));
+  } catch(_){}
+}
+
+function handleSaveClick(e){
   if (e && e.preventDefault) { try { e.preventDefault(); } catch(_){} }
   if (!canSaveNow()) {
     showPopup('Too many requests','Не нужно так часто нажимать эту кнопку','error');
@@ -1169,8 +1188,8 @@ async function handleSaveClick(e){
   }
 
   if (!isFormValid()) {
-    const tg1 = window.Telegram?.WebApp;
-    try { tg1?.HapticFeedback?.notificationOccurred?.('error'); } catch(_){}
+    const tg = window.Telegram?.WebApp;
+    try { tg?.HapticFeedback?.notificationOccurred?.('error'); } catch(_){}
     showPopup('Не все поля заполнены', 'Заполните все обязательные поля анкеты.', 'error');
     return;
   }
@@ -1178,14 +1197,11 @@ async function handleSaveClick(e){
   const tg = window.Telegram?.WebApp;
   const prevRowCalc = getRowCalcForUser();
 
-  // 🔒 Пинним «ожидаемый новый» row: не показываем старые данные
+  // Пинним «ожидаемый новый» row
   const minNewRow = (Number(prevRowCalc) || 0) + 1;
   try { lockDesiredRow(minNewRow, 60000); } catch(_) {}
 
-  // Надёжный saveId
-  const saveId = (typeof genSaveId === 'function')
-    ? genSaveId()
-    : ('s_' + Date.now() + '_' + Math.random().toString(36).slice(2));
+  const saveId = safeGenSaveId();
 
   SAVE_IN_PROGRESS = true;
   setUnlockTime(Date.now() + COOLDOWN_MS);
@@ -1194,6 +1210,7 @@ async function handleSaveClick(e){
 
   const values = { ...collectWheelValues(), ...collectSurveyValues() };
 
+  // Чистим фронтовые кэши, чтобы после нового сохранения перерисовать
   try {
     const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
     localStorage.removeItem('macros:vals:' + String(uid));
@@ -1202,8 +1219,7 @@ async function handleSaveClick(e){
 
   let saveTask;
   try {
-    // обязательная внешняя функция
-    saveTask = saveMeasurementsToDB(values, saveId);
+    saveTask = saveMeasurementsToDB(values, saveId); // внешняя функция — обязательна
   } catch (err) {
     setSavingState(false);
     SAVE_IN_PROGRESS = false;
@@ -1214,10 +1230,10 @@ async function handleSaveClick(e){
   collapseAccordionSafe();
   requestAnimationFrame(()=>requestAnimationFrame(scrollTopNoJump));
   setTimeout(()=>{
-    try { if (typeof startFrontDataFlow === 'function') startFrontDataFlow(); } catch(_){}
-    try { if (typeof window.startFrontDataFlow === 'function') window.startFrontDataFlow(); } catch(_){}
-    try { if (typeof window.startMacrosFlow === 'function') window.startMacrosFlow(); } catch(_){}
-    try { if (typeof window.startChartFlow === 'function') window.startChartFlow(); } catch(_){}
+    callIf('startFrontDataFlow');
+    callIf(window.startFrontDataFlow);
+    callIf(window.startMacrosFlow);
+    callIf(window.startChartFlow);
   }, 0);
 
   try { tg?.HapticFeedback?.notificationOccurred?.('success'); } catch(_){}
@@ -1230,12 +1246,12 @@ async function handleSaveClick(e){
       const ts = res?.ts_iso ? Date.parse(res.ts_iso) : Date.now();
       setLastMeasurementTime(ts);
 
-      // 🔒 Перелочим на фактический row (ещё на 10с)
+      // Перелочим уже на фактический row (ещё на 10с)
       try { lockDesiredRow(Number(rowCalc) || minNewRow, 10000); } catch(_){}
 
-      try { if (typeof window.startMacrosFlow === 'function') window.startMacrosFlow(); } catch(_){}
-      try { if (typeof window.startChartFlow === 'function') window.startChartFlow(); } catch(_){}
-      
+      callIf(window.startMacrosFlow);
+      callIf(window.startChartFlow);
+
       try {
         const uid = (typeof currentUserId === 'function') ? currentUserId() : 'anon';
         saveInputsCache({ row: rowCalc || null, inputs: values, updated_at: new Date().toISOString() }, uid);
@@ -1261,14 +1277,14 @@ async function handleSaveClick(e){
 
           try { lockDesiredRow(Number(confirmed) || minNewRow, 10000); } catch(_){}
 
-          try { if (typeof window.startMacrosFlow === 'function') window.startMacrosFlow(); } catch(_){}
-          try { if (typeof window.startChartFlow === 'function') window.startChartFlow(); } catch(_){}
+          callIf(window.startMacrosFlow);
+          callIf(window.startChartFlow);
           try { if (typeof waitForFreshData === 'function') { void waitForFreshData(confirmed, 10000, 60000).catch(()=>{}); } } catch(_){}
           return;
         }
         setUnlockTime(Date.now() + 2000);
         showPopup('Не подтверждено', 'Сервер не успел ответить. Проверьте «Последний замер».', 'error');
-        try { if (typeof startFrontDataFlow === 'function') startFrontDataFlow(); } catch(_){}
+        callIf('startFrontDataFlow');
         return;
       }
 
@@ -1287,6 +1303,7 @@ async function handleSaveClick(e){
     });
 }
 
+/* --- Привязка кнопки сохранения --- */
 (function bindSave(){
   var btn = document.getElementById('saveBtn');
   if (!btn) return;
@@ -1296,10 +1313,8 @@ async function handleSaveClick(e){
 })();
 
 
-
-
   
-/*var SAVE_IN_PROGRESS = false;
+/* var SAVE_IN_PROGRESS = false;
 var COOLDOWN_MS = 60000;
 var COOLDOWN_KEY = 'save_unlock_time';
 function getUnlockTime(){ try { return Number(localStorage.getItem(COOLDOWN_KEY)) || 0; } catch(_) { return 0; } }
@@ -1405,8 +1420,7 @@ function scrollTopNoJump(){
     html.style.scrollBehavior = prev || '';
   }catch(_){}
 }
-
-/* === СБОР КОЛЁС === */
+/* === СБОР КОЛЁС === 
 function collectWheelValues(){
   var out = {};
   for (var i=0; i<FIELDS.length; i++){
@@ -1420,7 +1434,7 @@ function collectWheelValues(){
   return out;
 }
 
-/* === СБОР АНКЕТЫ (все селекторы) === */
+/* === СБОР АНКЕТЫ (все селекторы) === 
 //neck, shoulders, chest, waist, bicep_l_rel, bicep_r_rel, bicep_l_flex, bicep_r_flex, thigh_l, thigh_r, calf_l, calf_r, hips, wrist, knee, ankle
  function collectSurveyValues(){
    const out = {};
@@ -1482,10 +1496,10 @@ function collectWheelValues(){
   }catch(_){}
 
   return out;
-}*/
+}
 
 
-  /* === CACHE: inputs (анкета) === */
+  /* === CACHE: inputs (анкета) === 
 const INPUTS_KEY_PREFIX = 'inputs:vals:';
 if (typeof currentUserId !== 'function') {
   function currentUserId(){
@@ -1549,7 +1563,7 @@ function isFormValid() {
   } catch (e) {
     return false;
   } 
-  }*/
+  }
 
   
 function updateSaveButton() {
@@ -1582,7 +1596,7 @@ function updateSaveButton() {
   setInterval(updateSaveButton, 1000);
 })();
 
-/* === КНОПКА СОХРАНЕНИЯ: Сохраняем ВЕСЬ ПАКЕТ === */
+/* === КНОПКА СОХРАНЕНИЯ: Сохраняем ВЕСЬ ПАКЕТ === 
 function handleSaveClick(e){
   if (e && e.preventDefault) { try { e.preventDefault(); } catch(_){} }
   if (!canSaveNow()) {
@@ -1698,7 +1712,9 @@ function handleSaveClick(e){
   var newBtn = btn.cloneNode(true);
   btn.parentNode.replaceChild(newBtn, btn);
   newBtn.addEventListener('click', handleSaveClick, false);
-})();*/
+})(); 
+  
+*/
 
 /* ============================================================
  *  BLOCK E: Front data flow (AI + last inputs)
