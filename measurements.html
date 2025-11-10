@@ -2955,565 +2955,6 @@ function handleSaveClick_bm(e){
 })();
 
 
- /* ============================================================
- *  BLOCK E3: ЗАМЕРЫ План vs Факт график
- * ============================================================ */
-
-<div id="pfHApp">
-  <div id="scroller"><div id="rows"></div></div>
-  <div id="timeline" hidden>
-    <div class="wheel-mask"></div>
-    <div id="dateWheel" class="wheel"></div>
-  </div>
-  <div id="loadingIndicator" class="loading"></div>
-  <div id="scrollHint" class="hint hidden">
-    <svg viewBox="0 0 24 24"><path d="M12 8l-6 6h12z"/></svg>
-  </div>
-</div>
-  
-  
-  
-  (function initPlanFactChart() {
-  'use strict';
-
-  var LABELS = {
-    fat: '% Жира',
-    neck: 'Шея',
-    shoulders: 'Плечи',
-    chest: 'Грудь',
-    waist: 'Талия',
-    hips: 'Ягодицы',
-    thigh: 'Бедро',
-    calf: 'Икра',
-    bicep: 'Бицепс'
-  };
-
-  var ORDER = ['fat','neck','shoulders','chest','waist','hips','thigh','calf','bicep'];
-
-  function round(n, p){ var m = Math.pow(10, p||1); return Math.round(n*m)/m; }
-  function fmtNum(n){ return isFinite(n) ? round(n,1) : '—'; }
-  function fmtDeltaNoUnit(n){ if(!isFinite(n)) return '—'; var s=n>0?'+':''; return s+round(n,1); }
-
-  // Снимок-объект -> строки
-  function toRowsFromSnapshot(json){
-    var rows = [];
-    if (!json) return rows;
-    for (var i=0;i<ORDER.length;i++){
-      var key = ORDER[i];
-      var it = json[key];
-      if (!it) continue;
-      var unit = it.unit || (key==='fat' ? '%' : 'см');
-      var plan = Number(it.plan != null ? it.plan : it.target);
-      var fact = Number(it.fact != null ? it.fact : it.actual);
-      var delta = (it.hasOwnProperty('delta') && isFinite(Number(it.delta)))
-        ? Number(it.delta)
-        : (isFinite(fact)&&isFinite(plan) ? (fact - plan) : NaN);
-      rows.push({
-        key:key,
-        label: LABELS[key] || key,
-        unit: unit,
-        target: plan,
-        actual: fact,
-        delta: delta
-      });
-    }
-    return rows;
-  }
-
-  // Массив строк из бэка [{metric,unit,plan,fact,delta}] -> строки для UI
-  function toRowsFromArray(arr){
-    if (!Array.isArray(arr)) return [];
-    var out = [];
-    for (var i=0;i<arr.length;i++){
-      var r = arr[i] || {};
-      var key = String(r.metric || r.key || '');
-      if (!key) continue;
-      var unit = String(r.unit || (key==='fat' ? '%' : 'см'));
-      var plan = Number(r.plan != null ? r.plan : r.target);
-      var fact = Number(r.fact != null ? r.fact : r.actual);
-      var delta = (r.hasOwnProperty('delta') && isFinite(Number(r.delta)))
-        ? Number(r.delta)
-        : (isFinite(fact)&&isFinite(plan) ? (fact - plan) : NaN);
-      out.push({
-        key: key,
-        label: LABELS[key] || r.label || key,
-        unit: unit,
-        target: plan,
-        actual: fact,
-        delta: delta
-      });
-    }
-    return out;
-  }
-
-  function buildDomains(list){
-    var cmMax = 0;
-    for (var i=0;i<list.length;i++){
-      var d = list[i]; var u = String(d.unit||'').trim();
-      if (u !== '%'){
-        if (isFinite(d.target)) cmMax = Math.max(cmMax, d.target);
-        if (isFinite(d.actual)) cmMax = Math.max(cmMax, d.actual);
-      }
-    }
-    return { '%':100, 'см': cmMax||1, 'cm': cmMax||1 };
-  }
-
-  function render(el, initialData){
-    var state = { data: initialData || [] };
-    var rowsEl = el.querySelector('#rows');
-    var scroller = el.querySelector('#scroller');
-    var hint = el.querySelector('#scrollHint');
-    if (!rowsEl || !scroller){ return { setData:function(){} }; }
-
-    var lastScrollTop = scroller.scrollTop || 0;
-    var lastDirUp = false;
-
-    function draw(){
-      var data = state.data || [];
-      var maxByUnit = buildDomains(data);
-      rowsEl.innerHTML = '';
-
-      for (var i=0;i<data.length;i++){
-        var d = data[i];
-        var unitMax = maxByUnit[String(d.unit||'').trim()] || 1;
-        var hasPlan = isFinite(d.target);
-        var hasFact = isFinite(d.actual);
-
-        var row = document.createElement('div');
-        row.className = 'row';
-
-        var top = document.createElement('div');
-        top.className = 'top';
-
-        var deltaStr = isFinite(d.delta)
-          ? fmtDeltaNoUnit(d.delta) + (d.delta>0?' ▲':(d.delta<0?' ▼':''))
-          : '—';
-
-        var nameText = d.key==='fat' ? (LABELS[d.key]||d.label) : (d.label + ' (' + d.unit + ')');
-
-        top.innerHTML =
-          '<span class="name">' + nameText + '</span>' +
-          '<span class="vals">' +
-            '<span class="kv"><span class="lab">Факт:</span> <b class="val">' + fmtNum(d.actual) + '</b></span>' +
-            '<span class="dot">•</span>' +
-            '<span class="kv"><span class="lab">План:</span> <b class="val">' + fmtNum(d.target) + '</b></span>' +
-            '<span class="dot">•</span>' +
-            '<span class="kv"><span class="lab">∆:</span> <b class="val">' + deltaStr + '</b></span>' +
-          '</span>';
-
-        if (hasPlan || hasFact){
-          var g = document.createElement('div'); g.className = 'gauge';
-
-          if (hasPlan){
-            var wp = Math.max(0, Math.min(100, (d.target/unitMax)*100));
-            var plan = document.createElement('div');
-            plan.className = 'plan';
-            plan.style.setProperty('--wp', wp + '%');
-            g.appendChild(plan);
-          }
-          if (hasFact){
-            var wf = Math.max(0, Math.min(100, (d.actual/unitMax)*100));
-            var fact = document.createElement('div');
-            fact.className = 'fact';
-            fact.style.setProperty('--wf', wf + '%');
-
-            if (isFinite(d.delta)){
-              if (d.key==='fat' || d.key==='waist'){
-                if (d.actual > d.target && hasPlan) fact.classList.add('red');
-              } else {
-                if (hasPlan && d.actual < d.target) fact.classList.add('orange');
-              }
-            } else {
-              fact.classList.add('neutral');
-            }
-            g.appendChild(fact);
-          }
-
-          row.appendChild(top);
-          row.appendChild(g);
-        } else {
-          row.appendChild(top);
-        }
-
-        rowsEl.appendChild(row);
-      }
-
-      limitToRows(5);
-      updateHint();
-    }
-
-    function limitToRows(n){
-      var items = rowsEl.children, rows = [];
-      for (var i=0;i<items.length;i++){
-        if (items[i].classList && items[i].classList.contains('row')) rows.push(items[i]);
-      }
-      if (!rows.length) return;
-
-      var csList = getComputedStyle(rowsEl);
-      var maxH = parseFloat(csList.paddingTop) + parseFloat(csList.paddingBottom);
-
-      for (var k=0;k<Math.min(n, rows.length);k++){
-        var r = rows[k], cs = getComputedStyle(r);
-        maxH += r.offsetHeight + parseFloat(cs.marginTop||0) + parseFloat(cs.marginBottom||0);
-      }
-      maxH += 2;
-      scroller.style.maxHeight = Math.ceil(maxH) + 'px';
-    }
-
-    function updateHint(){
-      if (!hint) return;
-      var hasMore = (scroller.scrollHeight - scroller.clientHeight) > 2;
-      hint.classList.toggle('hidden', !hasMore);
-      if (!hasMore) return;
-
-      var st = scroller.scrollTop;
-      if (Math.abs(st - lastScrollTop) > 0.5){ lastDirUp = st < lastScrollTop; }
-      lastScrollTop = st;
-
-      var nearTop = st <= 1;
-      var nearBottom = Math.ceil(st + scroller.clientHeight) >= scroller.scrollHeight - 2;
-
-      var showUp = nearBottom && !nearTop ? true : (nearTop && !nearBottom ? false : lastDirUp);
-      var svg = hint.querySelector('svg');
-      if (svg) svg.classList.toggle('up', showUp);
-    }
-
-    draw();
-    scroller.addEventListener('scroll', updateHint, { passive:true });
-    window.addEventListener('resize', function(){ limitToRows(5); updateHint(); }, { passive:true });
-
-    return {
-      setData: function(payload){
-        // payload может быть: массив [{metric,unit,plan,fact,delta}] ИЛИ снимок-объект
-        var data;
-        if (Array.isArray(payload)){
-          // массив — либо уже нормализован, либо «сырые» metric/plan/fact
-          if (payload.length && payload[0] && (payload[0].metric != null || payload[0].plan != null || payload[0].fact != null)){
-            data = toRowsFromArray(payload);
-          } else {
-            data = payload;
-          }
-        } else {
-          data = toRowsFromSnapshot(payload);
-        }
-        state.data = data;
-        draw();
-      }
-    };
-  }
-
-  function normalizeSeries(input){
-    if (!input) return { dates:[], rows:[] };
-
-    var seriesMap = null;
-    if (input.series && typeof input.series === 'object' && !Array.isArray(input.series)){
-      seriesMap = input.series;
-    } else if (Array.isArray(input) && input.length && input[0] && typeof input[0] === 'object' && ('date' in input[0])){
-      seriesMap = {};
-      for (var i=0;i<input.length;i++){
-        var it = input[i]; if (!it) continue;
-        var k = String(it.date || i);
-        var snap = it.data || it.snapshot;
-        if (!snap){
-          var rest = {}; for (var key in it){ if (key!=='date' && Object.prototype.hasOwnProperty.call(it,key)) rest[key]=it[key]; }
-          snap = rest;
-        }
-        seriesMap[k] = snap;
-      }
-    } else {
-      return { dates:['—'], rows:[ toRowsFromSnapshot(input) ] };
-    }
-
-    var dates = Object.keys(seriesMap).sort(function(a,b){
-      var da = new Date(a), db = new Date(b);
-      if (isFinite(da.getTime()) && isFinite(db.getTime())) return da - db;
-      return a > b ? 1 : -1;
-    });
-
-    var rows = [];
-    for (var j=0;j<dates.length;j++){
-      rows.push(toRowsFromSnapshot(seriesMap[dates[j]] || {}));
-    }
-    return { dates:dates, rows:rows };
-  }
-
-  function formatDateRu(s){
-    var d = new Date(s);
-    if (!isFinite(d.getTime())) return s;
-    try {
-      return d.toLocaleDateString('ru-RU',{year:'numeric',month:'short',day:'2-digit'});
-    } catch(_) { return s; }
-  }
-
-  function setupTimeline(norm, api){
-    var tl = document.getElementById('timeline');
-    var wheel = document.getElementById('dateWheel');
-    var maskEl = tl ? tl.querySelector('.wheel-mask') : null;
-    if (!tl || !wheel) return;
-
-    var n = (norm && Array.isArray(norm.rows)) ? norm.rows.length : 0;
-    if (n === 0){ tl.hidden = true; return; }
-
-    tl.hidden = false;
-    wheel.innerHTML = '';
-    var items = new Array(n);
-    var active = -1;
-    var rafId = 0;
-    var snapTimer = 0;
-
-    function syncMask(){
-      if (!maskEl) return;
-      var el = items[Math.max(0,active)] || items[0]; if (!el) return;
-      var rect = el.getBoundingClientRect();
-      var wr = wheel.getBoundingClientRect();
-      var pr = tl.getBoundingClientRect();
-      var padX=8, padY=8, scale=1.5;
-      var w = Math.round(rect.width*scale + padX*2);
-      var h = Math.round(rect.height + padY*2);
-      var centerX = wr.left + wr.width/2;
-      var left = Math.round(centerX - w/2 - pr.left);
-      var top = Math.round((wr.top - pr.top) + (wr.height - h)/2);
-      maskEl.style.setProperty('--mask-left', left+'px');
-      maskEl.style.setProperty('--mask-top', top+'px');
-      maskEl.style.setProperty('--mask-w', w+'px');
-      maskEl.style.setProperty('--mask-h', h+'px');
-    }
-
-    function setAria(){
-      for (var k=0;k<items.length;k++){
-        if (!items[k]) continue;
-        items[k].setAttribute('aria-selected', String(k===active));
-        items[k].setAttribute('tabindex', k===active ? '0' : '-1');
-      }
-    }
-
-    function activate(i){
-      if (i===active || i<0 || i>=n) return;
-      if (items[active]){ items[active].classList.remove('active'); items[active].setAttribute('aria-selected','false'); }
-      active = i;
-      if (items[active]){ items[active].classList.add('active'); items[active].setAttribute('aria-selected','true'); }
-      setAria();
-      if (api) api.setData(norm.rows[i] || []);
-      syncMask();
-    }
-
-    function centerTo(i, announce, behavior){
-      i = Math.max(0, Math.min(n-1, i));
-      var el = items[i]; if (!el) return;
-      var target = el.offsetLeft + el.offsetWidth/2 - wheel.clientWidth/2;
-      wheel.scrollTo({ left: Math.max(0,target), behavior: behavior||'auto' });
-      activate(i);
-      syncMask();
-    }
-
-    function onScroll(){
-      if (rafId) cancelAnimationFrame(rafId);
-      rafId = requestAnimationFrame(function(){
-        var center = wheel.scrollLeft + wheel.clientWidth/2;
-        var best=-1, bestDist=1e12;
-        for (var k=0;k<n;k++){
-          var el = items[k], c = el.offsetLeft + el.offsetWidth/2, d = Math.abs(c-center);
-          if (d < bestDist){ bestDist = d; best = k; }
-        }
-        activate(best);
-        syncMask();
-        if (snapTimer) clearTimeout(snapTimer);
-        snapTimer = setTimeout(function(){
-          var el = items[active]; if (!el) return;
-          var target = el.offsetLeft + el.offsetWidth/2 - wheel.clientWidth/2;
-          var curCenter = wheel.scrollLeft + wheel.clientWidth/2;
-          if (Math.abs(curCenter - (el.offsetLeft + el.offsetWidth/2)) > 3){
-            wheel.scrollTo({ left: Math.max(0,target), behavior:'auto' });
-          }
-        }, 140);
-      });
-    }
-
-    for (var i=0;i<n;i++){
-      var dateStr = norm.dates[i];
-      var btn = document.createElement('button');
-      btn.className='item'; btn.type='button';
-      btn.setAttribute('role','option'); btn.setAttribute('aria-selected','false');
-      btn.dataset.idx = String(i);
-      btn.textContent = formatDateRu(dateStr || String(i));
-      (function(idx){ btn.addEventListener('click', function(){ centerTo(Number(idx), true, 'smooth'); }); })(i);
-      wheel.appendChild(btn); items[i]=btn;
-    }
-
-    function ensureSpacers(){
-      var olds = wheel.querySelectorAll('.spacer'); olds.forEach(function(x){ x.remove(); });
-      var left = document.createElement('div'); left.className='spacer'; left.setAttribute('aria-hidden','true');
-      var right= document.createElement('div'); right.className='spacer'; right.setAttribute('aria-hidden','true');
-      wheel.prepend(left); wheel.appendChild(right); resizeSpacers();
-    }
-    function resizeSpacers(){ var edge = Math.max(0, Math.floor(wheel.clientWidth/2)); wheel.style.setProperty('--edge', edge+'px'); }
-
-    ensureSpacers();
-    wheel.addEventListener('scroll', onScroll, { passive:true });
-    wheel.addEventListener('wheel', function(e){ if (Math.abs(e.deltaY)>Math.abs(e.deltaX)){ e.preventDefault(); wheel.scrollLeft += e.deltaY; } }, { passive:false });
-    wheel.addEventListener('keydown', function(e){
-      if (e.key==='ArrowLeft'){ e.preventDefault(); centerTo(active-1, true, 'smooth'); }
-      else if (e.key==='ArrowRight'){ e.preventDefault(); centerTo(active+1, true, 'smooth'); }
-    });
-    window.addEventListener('resize', function(){ resizeSpacers(); centerTo(active,false,'auto'); syncMask(); }, { passive:true });
-
-    centerTo(n-1, false, 'auto');
-    syncMask();
-  }
-
-  var container = document.getElementById('pfHApp');
-  if (!container) return;
-
-  var api = render(container, []);
-
-  if (typeof window !== 'undefined'){
-    window.PlanFactChart = {
-      setData: function(json){
-        if (api) api.setData(json);
-      },
-      setSeries: function(json){
-        var nrm = normalizeSeries(json || {});
-        if (api){
-          var l = nrm.rows[(nrm.rows.length - 1) | 0] || [];
-          api.setData(l);
-        }
-        setupTimeline(nrm, api);
-      }
-    };
-  }
-
-  // ===== Подключение к бэкенду (front_chart_data) =====
-  (function initAPI(){
-    var tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
-    var BACKEND = (typeof BACKEND_URL_bm !== 'undefined' && BACKEND_URL_bm) ? BACKEND_URL_bm : '';
-
-    function targetRow(){
-      if (typeof desiredRow === 'function' && desiredRow()!=null) return desiredRow();
-      if (typeof getRowCalcForUser_bm === 'function') return getRowCalcForUser_bm();
-      return null;
-    }
-
-    function apiFrontPlanFact(requestedRow, signal){
-      var payload = {
-        action: 'front_chart_data',
-        init_data: String(tg && tg.initData ? tg.initData : ''),
-        row: Number(requestedRow || 0) || undefined
-      };
-      return fetch(BACKEND, {
-        method:'POST',
-        headers:{ 'Content-Type':'text/plain;charset=UTF-8' },
-        body: JSON.stringify(payload),
-        cache:'no-store',
-        credentials:'omit',
-        mode:'cors',
-        signal: signal
-      }).then(function(resp){
-        return resp.text().then(function(text){
-          var json=null; try{ json = text ? JSON.parse(text) : null; }catch(_){}
-          if (!resp.ok || !json) throw new Error('HTTP '+resp.status);
-          return json; // <= НЕ трогаем структуру; дальше разрулим
-        });
-      });
-    }
-
-    var runId = 0, timer = 0, aborter = null;
-    var loadingIndicator = document.getElementById('loadingIndicator');
-    function showLoading(){ if (loadingIndicator) loadingIndicator.classList.add('visible'); }
-    function hideLoading(){ if (loadingIndicator) loadingIndicator.classList.remove('visible'); }
-
-    function tick(id){
-      if (aborter){ try{ aborter.abort(); }catch(_){ } }
-      aborter = new AbortController();
-      showLoading();
-
-      var reqRow = targetRow();
-      apiFrontPlanFact(reqRow, aborter.signal).then(function(res){
-        if (id !== runId) return;
-
-        if (!res || !res.ready){
-          var wait = Math.max(200, Math.min(1000, Number(res && res.retry_after_ms) || 500));
-          timer = setTimeout(function(){ loop(id); }, wait);
-          return;
-        }
-
-        hideLoading();
-
-        // Бэк сейчас отдаёт либо {data:[{metric,unit,plan,fact,delta}]}, либо series-снимки
-        var payload = res.data || res.series || res;
-        if (window.PlanFactChart){
-          if (payload && payload.series){
-            window.PlanFactChart.setSeries(payload);
-          } else {
-            window.PlanFactChart.setData(payload);
-          }
-        }
-
-        try{
-          var uid='anon'; if (typeof currentUserId_bm === 'function') uid = currentUserId_bm();
-          var cacheKey = 'bm:pf:data:' + uid;
-          localStorage.setItem(cacheKey, JSON.stringify({ row: res.row, payload: payload, updated_at: res.updated_at }));
-        }catch(_){}
-      }).catch(function(err){
-        if (err.name === 'AbortError') return;
-        hideLoading();
-        console.warn('[Plan-Fact] API error:', err);
-        timer = setTimeout(function(){ loop(id); }, 1000);
-      });
-    }
-
-    function loop(id){ if (id!==runId) return; clearTimeout(timer); tick(id); }
-
-    window.startPlanFactFlow_bm = function(){
-      if (!BACKEND){ console.warn('[E3] BACKEND_URL_bm не задан'); return; }
-
-      runId += 1; var id = runId;
-
-      try{
-        var uid='anon'; if (typeof currentUserId_bm === 'function') uid = currentUserId_bm();
-        var cacheKey='bm:pf:data:'+uid;
-        var raw = localStorage.getItem(cacheKey);
-        var cached = raw ? JSON.parse(raw) : null;
-        if (cached && cached.payload && window.PlanFactChart){
-          if (cached.payload.series) window.PlanFactChart.setSeries(cached.payload);
-          else window.PlanFactChart.setData(cached.payload);
-        }
-      }catch(_){}
-
-      loop(id);
-    };
-
-    if (BACKEND){ window.startPlanFactFlow_bm(); }
-  })();
-
-  // ===== Haptic (Telegram) =====
-  (function initHaptic(){
-    var root = document.getElementById('dateWheel'); if (!root) return;
-    var touching=false, lastTick=0, stopTimer=0, TICK_EVERY=180, STOP_DELAY=160;
-
-    function tick(){
-      var h = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.HapticFeedback;
-      if (h && h.selectionChanged) h.selectionChanged();
-    }
-    function bump(){
-      var h = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.HapticFeedback;
-      if (h && h.impactOccurred) h.impactOccurred('medium');
-      else if (h && h.notificationOccurred) h.notificationOccurred('success');
-    }
-
-    root.addEventListener('touchstart', function(){ touching=true; clearTimeout(stopTimer); }, { passive:true });
-    root.addEventListener('touchend',   function(){ touching=false; }, { passive:true });
-    root.addEventListener('touchcancel',function(){ touching=false; }, { passive:true });
-    root.addEventListener('scroll', function(){
-      if (!touching) return;
-      var now = (performance && performance.now) ? performance.now() : Date.now();
-      if (now - lastTick >= TICK_EVERY){ lastTick = now; tick(); }
-      clearTimeout(stopTimer); stopTimer = setTimeout(bump, STOP_DELAY);
-    }, { passive:true });
-    root.addEventListener('click', function(e){ if (e.target.closest && e.target.closest('.item')) tick(); }, { passive:true });
-  })();
-})();
-
-
 /* ============================================================
  *  BLOCK P (Admin): «Скорость работы»
  * ============================================================ */
@@ -3806,5 +3247,410 @@ PageLaunch→UpdateComment: ${comment} s`;
 
 })();
 </script>
+  <!-- ============== E3: План vs Факт (DROP-IN) ============== -->
+<section id="block-e3" class="card">
+  <header class="card-header">План vs Факт</header>
+
+  <style>
+    /* --- E3 styles (локальные) --- */
+    #pfHApp { position: relative; }
+    #pfHApp .loading { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; font-size: 14px; }
+    #pfHApp .loading.visible { display: flex; }
+    #pfHApp #scroller { overflow: auto; -webkit-overflow-scrolling: touch; }
+    #pfHApp #rows { padding: 8px 12px; }
+
+    #pfHApp .row { margin: 8px 0; padding: 8px 6px; border-radius: 10px; background: rgba(0,0,0,0.04); }
+    #pfHApp .row .top { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+    #pfHApp .row .name { font-weight: 600; }
+    #pfHApp .row .vals { display: inline-flex; align-items:center; gap: 8px; opacity: 0.9; font-size: 13px; }
+    #pfHApp .row .vals .kv .lab { opacity: 0.7; margin-right: 4px; }
+    #pfHApp .row .vals .dot { opacity: 0.4; }
+
+    #pfHApp .gauge { position: relative; height: 10px; border-radius: 6px; background: rgba(0,0,0,0.08); overflow: hidden; }
+    #pfHApp .gauge .plan { position:absolute; left:0; top:0; bottom:0; width: var(--wp); background: rgba(0,0,0,0.15); }
+    #pfHApp .gauge .fact { position:absolute; left:0; top:0; bottom:0; width: var(--wf); background: rgba(0,0,0,0.35); }
+    #pfHApp .gauge .fact.orange { background: rgba(255,165,0,0.8); }
+    #pfHApp .gauge .fact.red { background: rgba(220,20,60,0.85); }
+    #pfHApp .gauge .fact.neutral { background: rgba(0,0,0,0.25); }
+
+    #pfHApp #timeline { margin-top: 6px; }
+    #pfHApp .wheel { display:flex; gap:10px; overflow:auto; padding: 8px 10px; -webkit-overflow-scrolling: touch; scroll-behavior: smooth; }
+    #pfHApp .wheel .item { flex: 0 0 auto; border: 1px solid rgba(0,0,0,0.15); background:#fff; border-radius: 10px; padding:6px 10px; font-size: 13px; }
+    #pfHApp .wheel .item.active { background: #111; color:#fff; border-color:#111; }
+    #pfHApp .wheel .spacer { flex: 0 0 var(--edge, 50%); height: 1px; opacity: 0; }
+    #pfHApp .wheel-mask { position:absolute; pointer-events:none; border-radius: 12px; box-shadow: 0 0 0 2px rgba(0,0,0,0.1) inset; left:var(--mask-left,0); top:var(--mask-top,0); width:var(--mask-w,0); height:var(--mask-h,0); transition: left .08s, top .08s, width .08s, height .08s; }
+
+    #pfHApp .hint { position:absolute; right:8px; bottom:8px; background: rgba(0,0,0,0.6); color:#fff; border-radius: 999px; padding: 4px; display:flex; align-items:center; justify-content:center; opacity: 0.85; }
+    #pfHApp .hint.hidden { display:none; }
+    #pfHApp .hint svg { width:18px; height:18px; transform: rotate(0deg); transition: transform .15s; }
+    #pfHApp .hint svg.up { transform: rotate(180deg); }
+  </style>
+
+  <!-- Контейнер блока -->
+  <div class="card-body">
+    <div id="pfHApp">
+      <div id="scroller"><div id="rows"></div></div>
+      <div id="timeline" hidden>
+        <div class="wheel-mask"></div>
+        <div id="dateWheel" class="wheel"></div>
+      </div>
+      <div id="loadingIndicator" class="loading">Загрузка…</div>
+      <div id="scrollHint" class="hint hidden">
+        <svg viewBox="0 0 24 24"><path d="M12 8l-6 6h12z"/></svg>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  /* ============================================================
+   *  BLOCK E3: ЗАМЕРЫ План vs Факт график (готовый drop-in)
+   * ============================================================ */
+  (function initPlanFactChart() {
+    'use strict';
+
+    var LABELS = { fat:'% Жира', neck:'Шея', shoulders:'Плечи', chest:'Грудь', waist:'Талия', hips:'Ягодицы', thigh:'Бедро', calf:'Икра', bicep:'Бицепс' };
+    var ORDER  = ['fat','neck','shoulders','chest','waist','hips','thigh','calf','bicep'];
+
+    function round(n, p){ var m=Math.pow(10, p||1); return Math.round(n*m)/m; }
+    function fmtNum(n){ return isFinite(n)? round(n,1) : '—'; }
+    function fmtDeltaNoUnit(n){ if(!isFinite(n)) return '—'; var s=n>0?'+':''; return s+round(n,1); }
+
+    // Снимок (одна дата) -> строки
+    function toRows(json){
+      var rows=[]; if(!json) return rows;
+      for(var i=0;i<ORDER.length;i++){
+        var key=ORDER[i]; var it=json[key]; if(!it) continue;
+        var unit = it.unit || (key==='fat'?'%':'см');
+        var plan = Number(it.plan != null ? it.plan : it.target);
+        var fact = Number(it.fact != null ? it.fact : it.actual);
+        var delta = (it.hasOwnProperty('delta') && isFinite(Number(it.delta))) ? Number(it.delta)
+                   : (isFinite(fact)&&isFinite(plan) ? fact-plan : NaN);
+        rows.push({ key:key, label:LABELS[key]||key, unit:unit, target:plan, actual:fact, delta:delta });
+      }
+      return rows;
+    }
+
+    // Нормализация: поддерживаем и мап { date: snapshot }, и массив {date, data}, и просто снимок
+    function normalizeSeries(input){
+      if(!input) return { dates:[], rows:[] };
+
+      var seriesMap = null;
+      if (input.series && typeof input.series==='object' && !Array.isArray(input.series)) {
+        seriesMap = input.series;               // { "2025-11-10": {..}, ... }
+      } else if (Array.isArray(input) && input.length && input[0] && typeof input[0]==='object' && ('date' in input[0])) {
+        seriesMap = {};
+        for (var i=0;i<input.length;i++){
+          var it=input[i]; if(!it) continue;
+          var snap = it.data || it.snapshot;
+          if(!snap){ var tmp=Object.assign({}, it); delete tmp.date; snap = tmp; }
+          seriesMap[String(it.date||i)] = snap;
+        }
+      } else {
+        return { dates:['—'], rows:[toRows(input)] }; // просто снимок
+      }
+
+      var dates = Object.keys(seriesMap);
+      dates.sort(function(a,b){
+        var da=new Date(a), db=new Date(b);
+        if(isFinite(da)&&isFinite(db)) return da-db; return a>b?1:-1;
+      });
+
+      var rows=[];
+      for (var j=0;j<dates.length;j++) rows.push(toRows(seriesMap[dates[j]]||{}));
+      return { dates:dates, rows:rows };
+    }
+
+    function buildDomains(list){
+      var cmMax=0;
+      for(var i=0;i<list.length;i++){
+        var d=list[i]; var u=(d.unit||'').trim();
+        if(u!=='%'){ if(isFinite(d.target)) cmMax=Math.max(cmMax,d.target); if(isFinite(d.actual)) cmMax=Math.max(cmMax,d.actual); }
+      }
+      return { '%':100, 'см':cmMax||1, 'cm':cmMax||1 };
+    }
+
+    function render(el, initialData){
+      var state={ data: initialData };
+      var rowsEl=el.querySelector('#rows');
+      var scroller=el.querySelector('#scroller');
+      var hint=el.querySelector('#scrollHint');
+      if(!rowsEl||!scroller){ return { setData:function(){} }; }
+
+      var lastScrollTop=scroller.scrollTop||0, lastDirUp=false;
+
+      function limitToRows(n){
+        var items=rowsEl.children, rows=[];
+        for(var i=0;i<items.length;i++){ if(items[i].classList && items[i].classList.contains('row')) rows.push(items[i]); }
+        if(!rows.length) return;
+        var csList=getComputedStyle(rowsEl);
+        var maxH=parseFloat(csList.paddingTop)+parseFloat(csList.paddingBottom);
+        for(var k=0;k<Math.min(n, rows.length);k++){
+          var r=rows[k]; var cs=getComputedStyle(r);
+          maxH += r.offsetHeight + parseFloat(cs.marginTop||0) + parseFloat(cs.marginBottom||0);
+        }
+        scroller.style.maxHeight=Math.ceil(maxH+2)+'px';
+      }
+
+      function updateHint(){
+        if(!hint) return;
+        var hasMore=(scroller.scrollHeight - scroller.clientHeight) > 2;
+        hint.classList.toggle('hidden', !hasMore);
+        if(!hasMore) return;
+        var st=scroller.scrollTop;
+        if(Math.abs(st-lastScrollTop)>0.5){ lastDirUp = st<lastScrollTop; }
+        lastScrollTop=st;
+        var nearTop=st<=1, nearBottom=Math.ceil(st+scroller.clientHeight)>=scroller.scrollHeight-2;
+        var showUp = nearBottom && !nearTop ? true : (nearTop && !nearBottom ? false : lastDirUp);
+        var svg=hint.querySelector('svg'); if(svg) svg.classList.toggle('up', showUp);
+      }
+
+      function draw(){
+        var data=state.data||[];
+        var maxByUnit=buildDomains(data);
+        rowsEl.innerHTML='';
+
+        for(var i=0;i<data.length;i++){
+          var d=data[i], u=(d.unit||'').trim();
+          var unitMax=maxByUnit[u]||1;
+          var hasPlan=isFinite(d.target), hasFact=isFinite(d.actual);
+
+          var row=document.createElement('div'); row.className='row';
+          var top=document.createElement('div'); top.className='top';
+
+          var deltaStr=isFinite(d.delta) ? (fmtDeltaNoUnit(d.delta) + (d.delta>0?' ▲':(d.delta<0?' ▼':''))) : '—';
+          var nameText = d.key==='fat' ? (LABELS[d.key]||d.label) : (d.label + ' (' + d.unit + ')');
+
+          top.innerHTML = '<span class="name">'+nameText+'</span>' +
+            '<span class="vals">' +
+              '<span class="kv"><span class="lab">Факт:</span> <b class="val">'+fmtNum(d.actual)+'</b></span>' +
+              '<span class="dot">•</span>' +
+              '<span class="kv"><span class="lab">План:</span> <b class="val">'+fmtNum(d.target)+'</b></span>' +
+              '<span class="dot">•</span>' +
+              '<span class="kv"><span class="lab">∆:</span> <b class="val">'+deltaStr+'</b></span>' +
+            '</span>';
+
+          if (hasPlan || hasFact){
+            var g=document.createElement('div'); g.className='gauge';
+
+            if (hasPlan){
+              var wp=Math.max(0, Math.min(100, (d.target/unitMax)*100));
+              var plan=document.createElement('div'); plan.className='plan'; plan.style.setProperty('--wp', wp+'%'); g.appendChild(plan);
+            }
+            if (hasFact){
+              var wf=Math.max(0, Math.min(100, (d.actual/unitMax)*100));
+              var fact=document.createElement('div'); fact.className='fact'; fact.style.setProperty('--wf', wf+'%');
+
+              if (isFinite(d.delta)){
+                if (d.key==='fat' || d.key==='waist'){ if (d.actual > d.target && hasPlan) fact.classList.add('red'); }
+                else { if (hasPlan && d.actual < d.target) fact.classList.add('orange'); }
+              } else {
+                fact.classList.add('neutral');
+              }
+              g.appendChild(fact);
+            }
+
+            row.appendChild(top); row.appendChild(g);
+          } else {
+            row.appendChild(top);
+          }
+          rowsEl.appendChild(row);
+        }
+        limitToRows(5); updateHint();
+      }
+
+      draw();
+      scroller.addEventListener('scroll', updateHint, { passive:true });
+      window.addEventListener('resize', function(){ limitToRows(5); updateHint(); }, { passive:true });
+
+      return { setData:function(payload){ state.data = Array.isArray(payload)? payload : toRows(payload); draw(); } };
+    }
+
+    function formatDateRu(s){
+      var d=new Date(s); if(!isFinite(d.getTime())) return s;
+      try { return d.toLocaleDateString('ru-RU', {year:'numeric', month:'short', day:'2-digit'}); }
+      catch(_){ return s; }
+    }
+
+    function setupTimeline(norm, api){
+      var tl=document.getElementById('timeline');
+      var wheel=document.getElementById('dateWheel');
+      var maskEl=tl? tl.querySelector('.wheel-mask'):null;
+      if(!tl || !wheel) return;
+
+      var n=(norm && Array.isArray(norm.rows)) ? norm.rows.length : 0;
+      if (n===0){ tl.hidden=true; return; }
+      tl.hidden=false; wheel.innerHTML='';
+      var items=new Array(n), active=-1, rafId=0, snapTimer=0;
+
+      function syncMask(){
+        if(!maskEl) return;
+        var el=items[Math.max(0,active)]||items[0]; if(!el) return;
+        var rect=el.getBoundingClientRect(), wr=wheel.getBoundingClientRect(), pr=tl.getBoundingClientRect();
+        var padX=8, padY=8, scale=1.5;
+        var w=Math.round(rect.width*scale + padX*2), h=Math.round(rect.height + padY*2);
+        var centerX=wr.left + wr.width/2;
+        var left=Math.round(centerX - w/2 - pr.left);
+        var top=Math.round((wr.top - pr.top) + (wr.height - h)/2);
+        maskEl.style.setProperty('--mask-left', left+'px');
+        maskEl.style.setProperty('--mask-top', top+'px');
+        maskEl.style.setProperty('--mask-w', w+'px');
+        maskEl.style.setProperty('--mask-h', h+'px');
+      }
+      function setAria(){
+        for(var k=0;k<items.length;k++){ if(!items[k]) continue;
+          items[k].setAttribute('aria-selected', String(k===active));
+          items[k].setAttribute('tabindex', k===active ? '0' : '-1');
+        }
+      }
+      function activate(i){
+        if(i===active || i<0 || i>=n) return;
+        if(items[active]){ items[active].classList.remove('active'); items[active].setAttribute('aria-selected','false'); }
+        active=i;
+        if(items[active]){ items[active].classList.add('active'); items[active].setAttribute('aria-selected','true'); }
+        setAria();
+        if(api) api.setData(norm.rows[i]||[]);
+        syncMask();
+      }
+      function centerTo(i, announce, behavior){
+        i=Math.max(0, Math.min(n-1, i));
+        var el=items[i]; if(!el) return;
+        var target=el.offsetLeft + el.offsetWidth/2 - wheel.clientWidth/2;
+        wheel.scrollTo({ left: Math.max(0,target), behavior: behavior||'auto' });
+        activate(i); syncMask();
+      }
+      function onScroll(){
+        if(rafId) cancelAnimationFrame(rafId);
+        rafId=requestAnimationFrame(function(){
+          var center=wheel.scrollLeft + wheel.clientWidth/2;
+          var best=-1, bestDist=1e12;
+          for(var k=0;k<n;k++){ var el=items[k]; var c=el.offsetLeft + el.offsetWidth/2; var d=Math.abs(c-center);
+            if(d<bestDist){ bestDist=d; best=k; } }
+          activate(best); syncMask();
+          if(snapTimer) clearTimeout(snapTimer);
+          snapTimer=setTimeout(function(){
+            var el=items[active]; if(!el) return;
+            var target=el.offsetLeft + el.offsetWidth/2 - wheel.clientWidth/2;
+            var curCenter=wheel.scrollLeft + wheel.clientWidth/2;
+            if(Math.abs(curCenter-(el.offsetLeft+el.offsetWidth/2))>3){
+              wheel.scrollTo({ left: Math.max(0,target), behavior:'auto' });
+            }
+          },140);
+        });
+      }
+
+      for(var i=0;i<n;i++){
+        var dateStr=norm.dates[i];
+        var btn=document.createElement('button');
+        btn.className='item'; btn.type='button'; btn.setAttribute('role','option'); btn.setAttribute('aria-selected','false'); btn.dataset.idx=String(i);
+        btn.textContent=formatDateRu(dateStr||String(i));
+        btn.addEventListener('click', (function(idx){ return function(){ centerTo(Number(idx), true, 'smooth'); }; })(i));
+        wheel.appendChild(btn); items[i]=btn;
+      }
+
+      function ensureSpacers(){
+        wheel.querySelectorAll('.spacer').forEach(function(x){ x.remove(); });
+        var left=document.createElement('div'); left.className='spacer'; left.setAttribute('aria-hidden','true');
+        var right=document.createElement('div'); right.className='spacer'; right.setAttribute('aria-hidden','true');
+        wheel.prepend(left); wheel.appendChild(right); resizeSpacers();
+      }
+      function resizeSpacers(){ var edge=Math.max(0, Math.floor(wheel.clientWidth/2)); wheel.style.setProperty('--edge', edge+'px'); }
+
+      ensureSpacers();
+      wheel.addEventListener('scroll', onScroll, { passive:true });
+      wheel.addEventListener('wheel', function(e){ if(Math.abs(e.deltaY)>Math.abs(e.deltaX)){ e.preventDefault(); wheel.scrollLeft += e.deltaY; } }, { passive:false });
+      wheel.addEventListener('keydown', function(e){ if(e.key==='ArrowLeft'){ e.preventDefault(); centerTo(active-1,true,'smooth'); } else if(e.key==='ArrowRight'){ e.preventDefault(); centerTo(active+1,true,'smooth'); }});
+      window.addEventListener('resize', function(){ resizeSpacers(); centerTo(active,false,'auto'); syncMask(); }, { passive:true });
+
+      centerTo(n-1,false,'auto'); syncMask();
+    }
+
+    var container=document.getElementById('pfHApp'); if(!container) return;
+    var apiUI=render(container, []);
+
+    // Публичный API (если нужно из других мест)
+    window.PlanFactChart = {
+      setData: function(json){ if(apiUI) apiUI.setData(json); },
+      setSeries: function(json){ var nrm=normalizeSeries(json||{}); if(apiUI){ var last=nrm.rows[(nrm.rows.length-1)|0]||[]; apiUI.setData(last); } setupTimeline(nrm, apiUI); }
+    };
+
+    // --- Загрузка из бэка: используем глобальный api(...) если он уже есть ---
+    (function initAPI(){
+      var tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+      var init_data = String(tg && tg.initData ? tg.initData : '');
+      var loadingIndicator=document.getElementById('loadingIndicator');
+
+      function showLoading(){ if(loadingIndicator) loadingIndicator.classList.add('visible'); }
+      function hideLoading(){ if(loadingIndicator) loadingIndicator.classList.remove('visible'); }
+
+      function mapAndRender(res){
+        // Бэкенд bmFrontChartData_ возвращает:
+        // { ok, ready, data: [...] }  ИЛИ { ok, ready, data: { series:{...} } } — обе формы поддержаны
+        if (res && res.ok && res.ready){
+          var payload = res.data || res.series || res;
+          // Если это массив строк — отрисуем как есть. Если объект с series — построим таймлайн.
+          if (Array.isArray(payload)) {
+            window.PlanFactChart.setData(payload);
+          } else {
+            window.PlanFactChart.setSeries(payload);
+          }
+          return true;
+        }
+        return false;
+      }
+
+      async function pull(){
+        showLoading();
+        try{
+          var response;
+          if (typeof window.api === 'function'){
+            response = await window.api({ action:'front_chart_data', init_data: init_data });
+          } else {
+            // fallback: прямой fetch, если нет api()
+            var BACKEND = (typeof BACKEND_URL_bm!=='undefined' && BACKEND_URL_bm) ? BACKEND_URL_bm : '';
+            if (!BACKEND) throw new Error('BACKEND_URL_bm is not set');
+            var payload = { action:'front_chart_data', init_data: init_data };
+            var resp = await fetch(BACKEND, { method:'POST', headers:{'Content-Type':'text/plain;charset=UTF-8'}, body: JSON.stringify(payload), cache:'no-store', credentials:'omit', mode:'cors' });
+            var txt = await resp.text(); response = txt ? JSON.parse(txt) : null;
+          }
+
+          if (!mapAndRender(response)){
+            // подождём и повторим, если ещё не готово
+            var wait = Math.max(200, Math.min(1200, Number(response && response.retry_after_ms) || 500));
+            setTimeout(pull, wait);
+            return;
+          }
+        } catch(e){
+          console.warn('[E3] front_chart_data error:', e);
+          setTimeout(pull, 1000);
+          return;
+        } finally {
+          hideLoading();
+        }
+      }
+
+      pull();
+    })();
+
+    // Haptic (по желанию)
+    (function initHaptic(){
+      var root=document.getElementById('dateWheel'); if(!root) return;
+      var touching=false, lastTick=0, stopTimer=0, TICK_EVERY=180, STOP_DELAY=160;
+      function tick(){ var h=window.Telegram&&window.Telegram.WebApp&&window.Telegram.WebApp.HapticFeedback; if(h&&h.selectionChanged) h.selectionChanged(); }
+      function bump(){ var h=window.Telegram&&window.Telegram.WebApp&&window.Telegram.WebApp.HapticFeedback; if(h&&h.impactOccurred) h.impactOccurred('medium'); else if(h&&h.notificationOccurred) h.notificationOccurred('success'); }
+      root.addEventListener('touchstart', function(){ touching=true; clearTimeout(stopTimer); }, {passive:true});
+      root.addEventListener('touchend',   function(){ touching=false; }, {passive:true});
+      root.addEventListener('touchcancel',function(){ touching=false; }, {passive:true});
+      root.addEventListener('scroll', function(){
+        if(!touching) return;
+        var now=(performance&&performance.now)?performance.now():Date.now();
+        if(now-lastTick>=TICK_EVERY){ lastTick=now; tick(); }
+        clearTimeout(stopTimer); stopTimer=setTimeout(bump, STOP_DELAY);
+      }, {passive:true});
+      root.addEventListener('click', function(e){ if(e.target.closest && e.target.closest('.item')) tick(); }, {passive:true});
+    })();
+  })();
+  </script>
+</section>
+<!-- ============ /E3: План vs Факт (END) ============ -->
 </body>
 </html>
