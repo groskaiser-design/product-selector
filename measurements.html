@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0006'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0007'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -81,6 +81,274 @@ window.addEventListener('pageshow', (e)=>{
   .label{font-size:13px;font-weight:800}
   .unit{font-size:12px;opacity:.9}
   .help{margin-top:6px;text-align:center;font-size:12px;opacity:.8}
+
+  /* === E3: ЗАМЕРЫ План vs Факт - стили графика === */
+  #pfHApp {
+    --name-size: clamp(10px, 3.2vw, 16px);
+    --name-weight: 400;
+    --meta-size: clamp(10px, 3.2vw, 16px);
+    --value-size: clamp(10px, 3.8vw, 16px);
+    --value-weight: 800;
+    --line-name: 1.25;
+    --gauge-height: 28px;
+    --plan-radius: 6px;
+    --fact-radius: 3px;
+    --fact-height: 50%;
+    --fact-green: #22c55e;
+    --fact-orange: #f59e0b;
+    --fact-red: #ef4444;
+    --plan-fill: rgba(255,255,255,.38);
+    --plan-border: rgba(255,255,255,.52);
+    position: relative;
+  }
+  #pfHApp .scroller {
+    position: relative;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    scroll-snap-type: y proximity;
+    scroll-behavior: smooth;
+    border-radius: 16px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255,255,255,.35) transparent;
+  }
+  #pfHApp .scroller::-webkit-scrollbar { width: 8px; height: 8px; }
+  #pfHApp .scroller::-webkit-scrollbar-track { background: transparent; }
+  #pfHApp .scroller::-webkit-scrollbar-thumb {
+    background-color: rgba(255,255,255,.35);
+    border-radius: 8px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  #pfHApp .scroller:hover::-webkit-scrollbar-thumb { background-color: rgba(255,255,255,.55); }
+  #pfHApp .scroll-hint {
+    position: relative;
+    margin: 10px auto 0;
+    opacity: .65;
+    pointer-events: none;
+    transition: opacity .2s ease;
+    width: 18px;
+    height: 18px;
+  }
+  #pfHApp .scroll-hint.hidden { opacity: 0; visibility: hidden; }
+  #pfHApp .scroll-hint svg {
+    display: block;
+    width: 18px;
+    height: 18px;
+    filter: drop-shadow(0 1px 2px rgba(0,0,0,.25));
+    animation: hint-bounce 1.2s infinite;
+  }
+  #pfHApp .scroll-hint svg.up { rotate: 180deg; animation-name: hint-bounce-up; }
+  @keyframes hint-bounce { 0%,100% { transform: translate(0,0) } 50% { transform: translate(0,4px) } }
+  @keyframes hint-bounce-up { 0%,100% { transform: translate(0,0) } 50% { transform: translate(0,-4px) } }
+  @media (prefers-reduced-motion:reduce) { #pfHApp .scroll-hint svg { animation: none; } }
+  #pfHApp .list {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    padding: 8px 10px;
+    border-radius: 16px;
+    overflow: hidden;
+    background: linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.06));
+    border: 1px solid rgba(255,255,255,.30);
+  }
+  #pfHApp .row {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 4px;
+    scroll-snap-align: start;
+  }
+  #pfHApp .row + .row {
+    border-top: 1px solid rgba(255,255,255,.22);
+    margin-top: 8px;
+    padding-top: 16px;
+  }
+  #pfHApp .top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-start;
+    gap: 4px 0;
+    flex-wrap: wrap;
+  }
+  #pfHApp .top .name {
+    flex: 1 0 100%;
+    display: block;
+    font-size: var(--name-size);
+    font-weight: var(--name-weight);
+    line-height: var(--line-name);
+  }
+  #pfHApp .vals {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    font-size: var(--meta-size);
+    line-height: 1.25;
+    margin-top: 0;
+  }
+  #pfHApp .vals .kv {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 2px;
+  }
+  #pfHApp .vals .lab {
+    color: rgba(255,255,255,.82);
+    margin-right: 2px;
+  }
+  #pfHApp .vals .val {
+    font-weight: var(--value-weight);
+    font-size: var(--value-size);
+  }
+  #pfHApp .dot {
+    color: rgba(255,255,255,.82);
+    margin: 0 2px;
+  }
+  #pfHApp .gauge {
+    position: relative;
+    height: var(--gauge-height);
+    border-radius: var(--plan-radius);
+  }
+  #pfHApp .plan {
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: var(--wp, 0%);
+    border-radius: var(--plan-radius);
+    background: var(--plan-fill);
+    border: 1px solid var(--plan-border);
+    box-shadow: inset 0 -1px 0 rgba(255,255,255,.18);
+    z-index: 1;
+  }
+  #pfHApp .fact {
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    height: var(--fact-height);
+    width: var(--wf, 0%);
+    min-width: 6px;
+    border-radius: var(--fact-radius);
+    border: 1px solid rgba(255,255,255,.95);
+    background: var(--fact-green);
+    box-shadow: inset 0 -1px 0 rgba(255,255,255,.16), 0 10px 24px -14px rgba(9,25,52,.55);
+    transform-origin: left center;
+    transition: width .22s ease;
+    z-index: 2;
+  }
+  #pfHApp .fact.orange { background: var(--fact-orange); }
+  #pfHApp .fact.red { background: var(--fact-red); }
+  @supports (background: color-mix(in oklab, white 50%, black)) {
+    #pfHApp .fact {
+      background: linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,0) 60%),
+                 color-mix(in oklab, var(--fact-green) 88%, transparent);
+    }
+    #pfHApp .fact.orange {
+      background: linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,0) 60%),
+                 color-mix(in oklab, var(--fact-orange) 88%, transparent);
+    }
+    #pfHApp .fact.red {
+      background: linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,0) 60%),
+                 color-mix(in oklab, var(--fact-red) 88%, transparent);
+    }
+  }
+  #pfHApp .fact.neutral {
+    background: rgba(255,255,255,.08);
+    border-color: rgba(255,255,255,.6);
+    box-shadow: inset 0 -1px 0 rgba(255,255,255,.12);
+  }
+  #pfHApp .timeline {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 8px 6px;
+  }
+  #pfHApp .timeline[hidden] { display: none !important; }
+  #pfHApp .wheel {
+    position: relative;
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    padding: 10px 8px;
+    border-radius: 14px;
+    scrollbar-width: none;
+  }
+  #pfHApp .wheel::-webkit-scrollbar { display: none; }
+  #pfHApp .wheel .item {
+    flex: 0 0 auto;
+    min-width: 76px;
+    padding: 8px 12px;
+    margin: 0 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    opacity: .6;
+    border-radius: 14px;
+    border: 1px solid rgba(255,255,255,.25);
+    background: rgba(255,255,255,.08);
+    scroll-snap-align: center;
+    font-size: clamp(12px, 3.3vw, 14px);
+    font-weight: 700;
+    letter-spacing: .2px;
+    color: #fff;
+    user-select: none;
+    transition: opacity .18s ease, transform .18s ease, box-shadow .18s ease;
+    line-height: 1.2;
+  }
+  #pfHApp .wheel .item.active {
+    opacity: 1;
+    background: rgba(255,255,255,.18);
+    border-color: rgba(255,255,255,.45);
+    box-shadow: 0 6px 20px rgba(27,35,78,.18);
+    transform: scale(1.02);
+  }
+  #pfHApp .wheel .spacer {
+    flex: 0 0 var(--edge, 0px);
+    height: 1px;
+    padding: 0;
+    margin: 0;
+    border: 0;
+    background: transparent;
+  }
+  #pfHApp .wheel-mask {
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+  }
+  #pfHApp .wheel-mask::before {
+    content: "";
+    position: absolute;
+    left: var(--mask-left, 50%);
+    top: var(--mask-top, 50%);
+    width: var(--mask-w, min(70%, 260px));
+    height: var(--mask-h, 44px);
+    border-radius: 16px;
+    border: 1.5px solid rgba(255,255,255,.35);
+    background: rgba(255,255,255,.08);
+    box-shadow: inset 0 -1px 0 rgba(255,255,255,.16), 0 8px 24px rgba(27,35,78,.12);
+    box-sizing: border-box;
+  }
+  #pfHApp .loading-indicator {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 20px;
+    height: 20px;
+    border: 2px solid rgba(255,255,255,.3);
+    border-top-color: rgba(255,255,255,.9);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    opacity: 0;
+    transition: opacity 0.2s;
+    z-index: 10;
+  }
+  #pfHApp .loading-indicator.visible { opacity: 1; }
+  @keyframes spin { to { transform: rotate(360deg); } }
 
   .duo{
     position:relative;display:flex;gap:6px;padding:12px;border-radius:14px;
@@ -506,6 +774,36 @@ window.addEventListener('pageshow', (e)=>{
       </div>
     </section>
 
+<!-- E3: ЗАМЕРЫ План vs Факт -->
+    <section class="section" id="sec-plan-fact">
+      <div class="section-h" data-toggle="sec-plan-fact" role="button" tabindex="0" aria-controls="sec-plan-fact" aria-expanded="true">
+        <h2>План vs Факт</h2>
+        <div class="toggle" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M8 10l4 4 4-4" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+      </div>
+      <div class="section-content">
+        <div class="field">
+          <div id="pfHApp" role="region" aria-label="План против факта">
+            <div class="loading-indicator" id="loadingIndicator" aria-hidden="true"></div>
+            <div class="scroller" id="scroller">
+              <div class="list" id="rows"></div>
+            </div>
+            <div class="scroll-hint" id="scrollHint" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M6 9l6 6 6-6" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </div>
+            <div class="timeline" id="timeline" hidden>
+              <div class="wheel" id="dateWheel" tabindex="0" aria-label="Выбор даты" role="listbox"></div>
+              <div class="wheel-mask" aria-hidden="true"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    
     <!-- Админская «Скорость работы» (вставляется динамически только для user_id=196047220) -->
     <div id="admin-section-anchor"></div>
 
@@ -2657,6 +2955,711 @@ function handleSaveClick_bm(e){
 })();
 
 
+ /* ============================================================
+ *  BLOCK E3: ЗАМЕРЫ План vs Факт график
+ * ============================================================ */
+(function initPlanFactChart() {
+  'use strict';
+  
+  var LABELS = {
+    fat: '% Жира',
+    neck: 'Шея',
+    shoulders: 'Плечи',
+    chest: 'Грудь',
+    waist: 'Талия',
+    hips: 'Ягодицы',
+    thigh: 'Бедро',
+    calf: 'Икра',
+    bicep: 'Бицепс'
+  };
+  
+  var ORDER = ['fat', 'neck', 'shoulders', 'chest', 'waist', 'hips', 'thigh', 'calf', 'bicep'];
+
+  function round(n, p) {
+    var m = Math.pow(10, p || 1);
+    return Math.round(n * m) / m;
+  }
+
+  function fmtNum(n) {
+    return isFinite(n) ? round(n, 1) : '—';
+  }
+
+  function fmtDeltaNoUnit(n) {
+    if (!isFinite(n)) return '—';
+    var s = n > 0 ? '+' : '';
+    return s + round(n, 1);
+  }
+
+  function toRows(json) {
+    var rows = [];
+    if (!json) return rows;
+    for (var i = 0; i < ORDER.length; i++) {
+      var key = ORDER[i];
+      var it = json[key];
+      if (!it) continue;
+      var unit = it.unit || (key === 'fat' ? '%' : 'см');
+      var planRaw = it.plan != null ? it.plan : it.target;
+      var factRaw = it.fact != null ? it.fact : it.actual;
+      var plan = Number(planRaw);
+      var fact = Number(factRaw);
+      var deltaVal = NaN;
+      if (it.hasOwnProperty('delta') && isFinite(Number(it.delta))) {
+        deltaVal = Number(it.delta);
+      } else if (isFinite(fact) && isFinite(plan)) {
+        deltaVal = fact - plan;
+      }
+      rows.push({
+        key: key,
+        label: LABELS[key] || key,
+        unit: unit,
+        target: plan,
+        actual: fact,
+        delta: deltaVal
+      });
+    }
+    return rows;
+  }
+
+  function buildDomains(list) {
+    var cmMax = 0;
+    for (var i = 0; i < list.length; i++) {
+      var d = list[i];
+      var u = (d.unit || '').trim();
+      if (u !== '%') {
+        if (isFinite(d.target)) cmMax = Math.max(cmMax, d.target);
+        if (isFinite(d.actual)) cmMax = Math.max(cmMax, d.actual);
+      }
+    }
+    return { '%': 100, 'см': cmMax || 1, 'cm': cmMax || 1 };
+  }
+
+  function render(el, initialData) {
+    var state = { data: initialData };
+    var rowsEl = el.querySelector('#rows');
+    var scroller = el.querySelector('#scroller');
+    var hint = el.querySelector('#scrollHint');
+    
+    if (!rowsEl || !scroller) {
+      return { setData: function() {} };
+    }
+
+    var lastScrollTop = scroller.scrollTop || 0;
+    var lastDirUp = false;
+
+    function draw() {
+      var data = state.data || [];
+      var maxByUnit = buildDomains(data);
+      rowsEl.innerHTML = '';
+      
+      for (var i = 0; i < data.length; i++) {
+        var d = data[i];
+        var unitMax = maxByUnit[(d.unit || '').trim()] || 1;
+        var hasPlan = isFinite(d.target);
+        var hasFact = isFinite(d.actual);
+
+        var row = document.createElement('div');
+        row.className = 'row';
+        
+        var top = document.createElement('div');
+        top.className = 'top';
+        
+        var deltaStr = isFinite(d.delta) 
+          ? fmtDeltaNoUnit(d.delta) + (d.delta > 0 ? ' ▲' : (d.delta < 0 ? ' ▼' : ''))
+          : '—';
+        
+        var nameText = d.key === 'fat' 
+          ? (LABELS[d.key] || d.label)
+          : (d.label + ' (' + d.unit + ')');
+        
+        top.innerHTML = '<span class="name">' + nameText + '</span>' +
+          '<span class="vals">' +
+            '<span class="kv"><span class="lab">Факт:</span> <b class="val">' + fmtNum(d.actual) + '</b></span>' +
+            '<span class="dot">•</span>' +
+            '<span class="kv"><span class="lab">План:</span> <b class="val">' + fmtNum(d.target) + '</b></span>' +
+            '<span class="dot">•</span>' +
+            '<span class="kv"><span class="lab">∆:</span> <b class="val">' + deltaStr + '</b></span>' +
+          '</span>';
+
+        if (hasPlan || hasFact) {
+          var g = document.createElement('div');
+          g.className = 'gauge';
+          
+          if (hasPlan) {
+            var wp = Math.max(0, Math.min(100, (d.target / unitMax) * 100));
+            var plan = document.createElement('div');
+            plan.className = 'plan';
+            plan.style.setProperty('--wp', wp + '%');
+            g.appendChild(plan);
+          }
+          
+          if (hasFact) {
+            var wf = Math.max(0, Math.min(100, (d.actual / unitMax) * 100));
+            var fact = document.createElement('div');
+            fact.className = 'fact';
+            fact.style.setProperty('--wf', wf + '%');
+            
+            if (isFinite(d.delta)) {
+              if (d.key === 'fat' || d.key === 'waist') {
+                if (d.actual > d.target && hasPlan) {
+                  fact.classList.add('red');
+                }
+              } else {
+                if (hasPlan && d.actual < d.target) {
+                  fact.classList.add('orange');
+                }
+              }
+            } else {
+              fact.classList.add('neutral');
+            }
+            
+            g.appendChild(fact);
+          }
+          
+          row.appendChild(top);
+          row.appendChild(g);
+        } else {
+          row.appendChild(top);
+        }
+
+        rowsEl.appendChild(row);
+      }
+      
+      limitToRows(5);
+      updateHint();
+    }
+
+    function limitToRows(n) {
+      var items = rowsEl.children;
+      var rows = [];
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].classList && items[i].classList.contains('row')) {
+          rows.push(items[i]);
+        }
+      }
+      if (!rows.length) return;
+      
+      var csList = getComputedStyle(rowsEl);
+      var maxH = parseFloat(csList.paddingTop) + parseFloat(csList.paddingBottom);
+      
+      for (var i = 0; i < Math.min(n, rows.length); i++) {
+        var r = rows[i];
+        var cs = getComputedStyle(r);
+        maxH += r.offsetHeight + parseFloat(cs.marginTop || 0) + parseFloat(cs.marginBottom || 0);
+      }
+      
+      maxH += 2;
+      scroller.style.maxHeight = Math.ceil(maxH) + 'px';
+    }
+
+    function updateHint() {
+      if (!hint) return;
+      var hasMore = (scroller.scrollHeight - scroller.clientHeight) > 2;
+      hint.classList.toggle('hidden', !hasMore);
+      if (!hasMore) return;
+
+      var st = scroller.scrollTop;
+      if (Math.abs(st - lastScrollTop) > 0.5) {
+        lastDirUp = st < lastScrollTop;
+      }
+      lastScrollTop = st;
+
+      var nearTop = st <= 1;
+      var nearBottom = Math.ceil(st + scroller.clientHeight) >= scroller.scrollHeight - 2;
+
+      var showUp = false;
+      if (nearTop && !nearBottom) {
+        showUp = false;
+      } else if (nearBottom && !nearTop) {
+        showUp = true;
+      } else {
+        showUp = lastDirUp;
+      }
+
+      var svg = hint.querySelector('svg');
+      if (svg) {
+        svg.classList.toggle('up', showUp);
+      }
+    }
+
+    draw();
+    scroller.addEventListener('scroll', updateHint, { passive: true });
+    window.addEventListener('resize', function() {
+      limitToRows(5);
+      updateHint();
+    }, { passive: true });
+
+    return {
+      setData: function(payload) {
+        state.data = Array.isArray(payload) ? payload : toRows(payload);
+        draw();
+      }
+    };
+  }
+
+  function normalizeSeries(input) {
+    if (!input) return { dates: [], rows: [] };
+    
+    var seriesMap = null;
+    if (input.series && typeof input.series === 'object' && !Array.isArray(input.series)) {
+      seriesMap = input.series;
+    } else if (Array.isArray(input) && input.length && input[0] && typeof input[0] === 'object' && ('date' in input[0])) {
+      seriesMap = {};
+      for (var i = 0; i < input.length; i++) {
+        var it = input[i];
+        if (!it) continue;
+        var k = String(it.date || i);
+        seriesMap[k] = it.data || it.snapshot || {};
+      }
+    } else {
+      return { dates: ['—'], rows: [toRows(input)] };
+    }
+    
+    var dates = Object.keys(seriesMap);
+    dates.sort(function(a, b) {
+      var da = new Date(a);
+      var db = new Date(b);
+      if (isFinite(da.getTime()) && isFinite(db.getTime())) {
+        return da - db;
+      }
+      return a > b ? 1 : -1;
+    });
+    
+    var rows = [];
+    for (var j = 0; j < dates.length; j++) {
+      rows.push(toRows(seriesMap[dates[j]] || {}));
+    }
+    
+    return { dates: dates, rows: rows };
+  }
+
+  function formatDateRu(s) {
+    var d = new Date(s);
+    if (!isFinite(d.getTime())) return s;
+    try {
+      return d.toLocaleDateString('ru-RU', {
+        year: 'numeric',
+        month: 'short',
+        day: '2-digit'
+      });
+    } catch (_) {
+      return s;
+    }
+  }
+
+  function setupTimeline(norm, api) {
+    var tl = document.getElementById('timeline');
+    var wheel = document.getElementById('dateWheel');
+    var maskEl = tl ? tl.querySelector('.wheel-mask') : null;
+    
+    if (!tl || !wheel) return;
+
+    var n = (norm && Array.isArray(norm.rows)) ? norm.rows.length : 0;
+    if (n === 0) {
+      tl.hidden = true;
+      return;
+    }
+
+    tl.hidden = false;
+    wheel.innerHTML = '';
+    var items = new Array(n);
+    var active = -1;
+    var rafId = 0;
+    var snapTimer = 0;
+
+    function syncMask() {
+      if (!maskEl) return;
+      var el = items[Math.max(0, active)] || items[0];
+      if (!el) return;
+      var rect = el.getBoundingClientRect();
+      var wr = wheel.getBoundingClientRect();
+      var pr = tl.getBoundingClientRect();
+      var padX = 8;
+      var padY = 8;
+      var scale = 1.5;
+      var w = Math.round(rect.width * scale + padX * 2);
+      var h = Math.round(rect.height + padY * 2);
+      var centerX = wr.left + wr.width / 2;
+      var left = Math.round(centerX - w / 2 - pr.left);
+      var top = Math.round((wr.top - pr.top) + (wr.height - h) / 2);
+      maskEl.style.setProperty('--mask-left', left + 'px');
+      maskEl.style.setProperty('--mask-top', top + 'px');
+      maskEl.style.setProperty('--mask-w', w + 'px');
+      maskEl.style.setProperty('--mask-h', h + 'px');
+    }
+
+    function setAria() {
+      for (var k = 0; k < items.length; k++) {
+        if (!items[k]) continue;
+        items[k].setAttribute('aria-selected', String(k === active));
+        items[k].setAttribute('tabindex', k === active ? '0' : '-1');
+      }
+    }
+
+    function activate(i) {
+      if (i === active || i < 0 || i >= n) return;
+      if (items[active]) {
+        items[active].classList.remove('active');
+        items[active].setAttribute('aria-selected', 'false');
+      }
+      active = i;
+      if (items[active]) {
+        items[active].classList.add('active');
+        items[active].setAttribute('aria-selected', 'true');
+      }
+      setAria();
+      if (api) api.setData(norm.rows[i] || []);
+      syncMask();
+    }
+
+    function centerTo(i, announce, behavior) {
+      i = Math.max(0, Math.min(n - 1, i));
+      var el = items[i];
+      if (!el) return;
+      var target = el.offsetLeft + el.offsetWidth / 2 - wheel.clientWidth / 2;
+      wheel.scrollTo({
+        left: Math.max(0, target),
+        behavior: behavior || 'auto'
+      });
+      activate(i);
+      syncMask();
+    }
+
+    function onScroll() {
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(function() {
+        var center = wheel.scrollLeft + wheel.clientWidth / 2;
+        var best = -1;
+        var bestDist = 1e12;
+        for (var k = 0; k < n; k++) {
+          var el = items[k];
+          var c = el.offsetLeft + el.offsetWidth / 2;
+          var d = Math.abs(c - center);
+          if (d < bestDist) {
+            bestDist = d;
+            best = k;
+          }
+        }
+        activate(best);
+        syncMask();
+        if (snapTimer) clearTimeout(snapTimer);
+        snapTimer = setTimeout(function() {
+          var el = items[active];
+          if (!el) return;
+          var target = el.offsetLeft + el.offsetWidth / 2 - wheel.clientWidth / 2;
+          var curCenter = wheel.scrollLeft + wheel.clientWidth / 2;
+          if (Math.abs(curCenter - (el.offsetLeft + el.offsetWidth / 2)) > 3) {
+            wheel.scrollTo({
+              left: Math.max(0, target),
+              behavior: 'auto'
+            });
+          }
+        }, 140);
+      });
+    }
+
+    for (var i = 0; i < n; i++) {
+      var dateStr = norm.dates[i];
+      var btn = document.createElement('button');
+      btn.className = 'item';
+      btn.type = 'button';
+      btn.setAttribute('role', 'option');
+      btn.setAttribute('aria-selected', 'false');
+      btn.dataset.idx = String(i);
+      btn.textContent = formatDateRu(dateStr || String(i));
+      btn.addEventListener('click', (function(idx) {
+        return function() {
+          centerTo(Number(idx), true, 'smooth');
+        };
+      })(i));
+      wheel.appendChild(btn);
+      items[i] = btn;
+    }
+
+    function ensureSpacers() {
+      var olds = wheel.querySelectorAll('.spacer');
+      olds.forEach(function(x) { x.remove(); });
+      var left = document.createElement('div');
+      left.className = 'spacer';
+      left.setAttribute('aria-hidden', 'true');
+      var right = document.createElement('div');
+      right.className = 'spacer';
+      right.setAttribute('aria-hidden', 'true');
+      wheel.prepend(left);
+      wheel.appendChild(right);
+      resizeSpacers();
+    }
+
+    function resizeSpacers() {
+      var edge = Math.max(0, Math.floor(wheel.clientWidth / 2));
+      wheel.style.setProperty('--edge', edge + 'px');
+    }
+
+    ensureSpacers();
+    wheel.addEventListener('scroll', onScroll, { passive: true });
+    wheel.addEventListener('wheel', function(e) {
+      if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+        e.preventDefault();
+        wheel.scrollLeft += e.deltaY;
+      }
+    }, { passive: false });
+    wheel.addEventListener('keydown', function(e) {
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        centerTo(active - 1, true, 'smooth');
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        centerTo(active + 1, true, 'smooth');
+      }
+    });
+    window.addEventListener('resize', function() {
+      resizeSpacers();
+      centerTo(active, false, 'auto');
+      syncMask();
+    }, { passive: true });
+
+    centerTo(n - 1, false, 'auto');
+    syncMask();
+  }
+
+  var container = document.getElementById('pfHApp');
+  if (!container) return;
+
+  var api = render(container, []);
+
+  if (typeof window !== 'undefined') {
+    window.PlanFactChart = {
+      setData: function(json) {
+        if (api) api.setData(json);
+      },
+      setSeries: function(json) {
+        var nrm = normalizeSeries(json || {});
+        if (api) {
+          var l = nrm.rows[(nrm.rows.length - 1) | 0] || [];
+          api.setData(l);
+        }
+        setupTimeline(nrm, api);
+      }
+    };
+  }
+
+  // Подключение к бэкенду
+  (function initAPI() {
+    var tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+    var BACKEND = (typeof BACKEND_URL_bm !== 'undefined' && BACKEND_URL_bm) ? BACKEND_URL_bm : '';
+
+    function targetRow() {
+      if (typeof desiredRow === 'function' && desiredRow() != null) {
+        return desiredRow();
+      }
+      if (typeof getRowCalcForUser_bm === 'function') {
+        return getRowCalcForUser_bm();
+      }
+      return null;
+    }
+
+    function apiFrontPlanFact(requestedRow, signal) {
+      var payload = {
+        action: 'front_plan_fact',
+        init_data: String(tg && tg.initData ? tg.initData : ''),
+        row: Number(requestedRow || 0) || undefined
+      };
+      
+      return fetch(BACKEND, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+        body: JSON.stringify(payload),
+        cache: 'no-store',
+        credentials: 'omit',
+        mode: 'cors',
+        signal: signal
+      }).then(function(resp) {
+        return resp.text().then(function(text) {
+          var json = null;
+          try {
+            json = text ? JSON.parse(text) : null;
+          } catch (_) {}
+          
+          if (!resp.ok || !json) {
+            throw new Error('HTTP ' + resp.status);
+          }
+          return json;
+        });
+      });
+    }
+
+    var runId = 0;
+    var timer = 0;
+    var aborter = null;
+    var loadingIndicator = document.getElementById('loadingIndicator');
+
+    function showLoading() {
+      if (loadingIndicator) {
+        loadingIndicator.classList.add('visible');
+      }
+    }
+
+    function hideLoading() {
+      if (loadingIndicator) {
+        loadingIndicator.classList.remove('visible');
+      }
+    }
+
+    function tick(id) {
+      if (aborter) {
+        try {
+          aborter.abort();
+        } catch (_) {}
+      }
+      aborter = new AbortController();
+      showLoading();
+
+      var reqRow = targetRow();
+      apiFrontPlanFact(reqRow, aborter.signal).then(function(res) {
+        if (id !== runId) return;
+
+        if (!res || !res.ready) {
+          var wait = Math.max(200, Math.min(1000, Number(res && res.retry_after_ms) || 500));
+          timer = setTimeout(function() {
+            loop(id);
+          }, wait);
+          return;
+        }
+
+        hideLoading();
+
+        var payload = res.series ? { series: res.series } : (res.data || res);
+
+        if (window.PlanFactChart) {
+          if (payload && payload.series) {
+            window.PlanFactChart.setSeries(payload);
+          } else {
+            window.PlanFactChart.setData(payload);
+          }
+        }
+
+        try {
+          var uid = 'anon';
+          if (typeof currentUserId_bm === 'function') {
+            uid = currentUserId_bm();
+          }
+          var cacheKey = 'bm:pf:data:' + uid;
+          var cacheData = JSON.stringify({
+            row: res.row,
+            payload: payload,
+            updated_at: res.updated_at
+          });
+          localStorage.setItem(cacheKey, cacheData);
+        } catch (_) {}
+      }).catch(function(err) {
+        if (err.name === 'AbortError') return;
+        hideLoading();
+        console.warn('[Plan-Fact] API error:', err);
+        timer = setTimeout(function() {
+          loop(id);
+        }, 1000);
+      });
+    }
+
+    function loop(id) {
+      if (id !== runId) return;
+      clearTimeout(timer);
+      tick(id);
+    }
+
+    window.startPlanFactFlow_bm = function() {
+      if (!BACKEND) {
+        console.warn('[E3] BACKEND_URL_bm не задан');
+        return;
+      }
+
+      runId += 1;
+      var id = runId;
+
+      try {
+        var uid = 'anon';
+        if (typeof currentUserId_bm === 'function') {
+          uid = currentUserId_bm();
+        }
+        var cacheKey = 'bm:pf:data:' + uid;
+        var raw = localStorage.getItem(cacheKey);
+        var cached = raw ? JSON.parse(raw) : null;
+
+        if (cached && cached.payload && window.PlanFactChart) {
+          if (cached.payload.series) {
+            window.PlanFactChart.setSeries(cached.payload);
+          } else {
+            window.PlanFactChart.setData(cached.payload);
+          }
+        }
+      } catch (_) {}
+
+      loop(id);
+    };
+
+    if (BACKEND) {
+      window.startPlanFactFlow_bm();
+    }
+  })();
+
+  // Haptic для Telegram
+  (function initHaptic() {
+    var root = document.getElementById('dateWheel');
+    if (!root) return;
+
+    var touching = false;
+    var lastTick = 0;
+    var stopTimer = 0;
+    var TICK_EVERY = 180;
+    var STOP_DELAY = 160;
+
+    function tick() {
+      if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.HapticFeedback && window.Telegram.WebApp.HapticFeedback.selectionChanged) {
+        window.Telegram.WebApp.HapticFeedback.selectionChanged();
+      }
+    }
+
+    function bump() {
+      var h = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.HapticFeedback ? window.Telegram.WebApp.HapticFeedback : null;
+      if (h && h.impactOccurred) {
+        h.impactOccurred('medium');
+      } else if (h && h.notificationOccurred) {
+        h.notificationOccurred('success');
+      }
+    }
+
+    root.addEventListener('touchstart', function() {
+      touching = true;
+      clearTimeout(stopTimer);
+    }, { passive: true });
+
+    root.addEventListener('touchend', function() {
+      touching = false;
+    }, { passive: true });
+
+    root.addEventListener('touchcancel', function() {
+      touching = false;
+    }, { passive: true });
+
+    root.addEventListener('scroll', function() {
+      if (!touching) return;
+      var now = (performance && performance.now) ? performance.now() : Date.now();
+      if (now - lastTick >= TICK_EVERY) {
+        lastTick = now;
+        tick();
+      }
+      clearTimeout(stopTimer);
+      stopTimer = setTimeout(bump, STOP_DELAY);
+    }, { passive: true });
+
+    root.addEventListener('click', function(e) {
+      if (e.target.closest && e.target.closest('.item')) {
+        tick();
+      }
+    }, { passive: true });
+  })();
+})(); 
+
+
 
 
 /* ============================================================
@@ -2946,9 +3949,10 @@ PageLaunch→UpdateComment: ${comment} s`;
     if (now - last < 300) e.preventDefault();
     last = now;
   }, opts);
+
+
+
 })();
 </script>
-
-
 </body>
 </html>
