@@ -2165,332 +2165,6 @@ function handleSaveClick_bm(e){
   window.startMacrosFlow_bm_bm();
 })();
 
-  
-/*/============================================================
-  BLOCK E2 — Analytics Chart (POLYBARS, без кнопок)
-  Совместим с front_chart_data, desiredRow(), локкэшем и вызовами
-=============================================================-->*/
-(function chartPOLYInit(){
-  const tg = window.Telegram?.WebApp;
-  const BACKEND = (typeof BACKEND_URL_bm !== 'undefined' && BACKEND_URL_bm) ? BACKEND_URL_bm : '';
-  const host = () => document.getElementById('analytics');
-
-  /* --- CSS один раз --- */
-  function injectPOLYStylesOnce(){
-    if (document.getElementById('kbju7-styles')) return;
-    const css = `
-      .kbju7{ --H:170; --gap:8; --c-carb:#34d399; --c-prot:#60a5fa; --c-fat:#f59e0b; position:relative; }
-      .kbju7-body{padding:6px 8px 4px}
-      .kbju7-scroll{position:relative; overflow-x:auto; overflow-y:hidden; -webkit-overflow-scrolling:touch; scrollbar-width:none; touch-action:pan-x}
-      .kbju7-scroll::-webkit-scrollbar{display:none}
-      .kbju7-footer{padding:6px 10px 10px; text-align:center; font-size:12px; opacity:.8}
-      .kbju7 svg{display:block}
-      .kbju7 .bar{transform:scaleY(0); transform-origin:bottom; transform-box:fill-box; transition:transform .35s ease}
-      .kbju7 .bar.show{transform:scaleY(1)}
-      .kbju7 .sel{fill:none; stroke:#fff; stroke-width:2; rx:16; ry:16; opacity:0; transition:opacity .12s ease, transform .18s ease}
-    `;
-    const s = document.createElement('style');
-    s.id = 'kbju7-styles';
-    s.textContent = css;
-    document.head.appendChild(s);
-  }
-
-  /* --- Разметка (идемпотентно) --- */
-  function ensureHost(){
-    const el = host(); if (!el) return null;
-    let box = el.querySelector('#kbju7-box');
-    if (box) return box;
-    const html = `
-      <div class="field kbju7-card" id="kbju7-box" style="margin-top:12px">
-        <div class="kbju7" id="kbju7">
-          <div class="kbju7-body">
-            <div class="kbju7-scroll">
-              <svg id="kbju7-svg" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Динамика БЖУ"></svg>
-            </div>
-          </div>
-          <div class="kbju7-footer" id="kbju7-hint">Динамика вашей нормы БЖУ</div>
-        </div>
-      </div>`;
-    el.insertAdjacentHTML('beforeend', html);
-    return el.querySelector('#kbju7-box');
-  }
-
-  /* --- Нормализация --- */
-  function normalize(arr){
-    if (!Array.isArray(arr)) return [];
-    return arr.map(d=>{
-      const date = d.date || d.day || d.ds || '';
-      const protein_g = +((d.protein_g ?? d.protein) || 0);
-      const fat_g     = +((d.fat_g     ?? d.fat)     || 0);
-      const carbs_g   = +((d.carbs_g   ?? d.carbs)   || 0);
-      return { date, protein_g, fat_g, carbs_g };
-    }).filter(x=>x.date);
-  }
-  function sigOf(arr){
-    const a = normalize(arr||[]);
-    if (!a.length) return '0';
-    const last = a[a.length-1];
-    const sum = a.reduce((s,x)=> s + x.protein_g + x.fat_g + x.carbs_g, 0);
-    return `${a.length}|${last.date}|${Math.round(sum)}`;
-  }
-
-  /* --- Рендер --- */
-  function renderKBJU(rootEl, data, opts={}){
-    const root = (typeof rootEl==='string') ? document.getElementById(rootEl) : rootEl;
-    if (!root) return;
-    const svg = root.querySelector('#kbju7-svg');
-    const list = normalize(data).sort((a,b)=> new Date(a.date)-new Date(b.date));
-
-    const H = 170, DATE_PAD = 18, TOP_PAD = 14;
-    const scroll = svg.parentElement;
-    const W = (scroll && scroll.clientWidth) || root.clientWidth || 320;
-    const VISIBLE = Math.max(5, Math.min(9, +opts.visible || 7));
-    const GAP = 8;
-    const BAR = Math.max(12, Math.floor((W - GAP*(VISIBLE+1))/VISIBLE));
-    const contentW = (list.length ? list.length : 1) * (BAR + GAP) + GAP;
-
-    svg.setAttribute('viewBox', `0 0 ${contentW} ${H}`);
-    svg.setAttribute('width', contentW);
-    svg.setAttribute('height', H);
-
-    if (!list.length){
-      svg.innerHTML = `<text x="10" y="22" fill="#fff" opacity=".85" font-size="14" font-weight="700">Нет данных</text>`;
-      return;
-    }
-
-    const gramsMax = Math.max(50, ...list.map(d=>d.protein_g+d.fat_g+d.carbs_g));
-    const yBase = H-2-DATE_PAD;
-    const usableH = H - TOP_PAD - DATE_PAD - 6;
-    const yN = v => usableH * (v/gramsMax);
-    const yDate = H-6;
-
-    const NS = svg.namespaceURI;
-    const gBars = document.createElementNS(NS,'g');
-    const gDates= document.createElementNS(NS,'g');
-    const gSel  = document.createElementNS(NS,'g');
-
-    // defs (градиенты)
-    const defs = document.createElementNS(NS, 'defs');
-    function grad(id, color){
-      const g=document.createElementNS(NS,'linearGradient');
-      g.setAttribute('id',id); g.setAttribute('x1','0'); g.setAttribute('y1','0'); g.setAttribute('x2','0'); g.setAttribute('y2','1');
-      const a=(off,col,op)=>{const s=document.createElementNS(NS,'stop'); s.setAttribute('offset',off); s.setAttribute('stop-color',col); s.setAttribute('stop-opacity',op); g.appendChild(s);};
-      a('0% ',color,.95); a('100%',color,.65); return g;
-    }
-    defs.appendChild(grad('gCarb','#34d399'));
-    defs.appendChild(grad('gProt','#60a5fa'));
-    defs.appendChild(grad('gFat' ,'#f59e0b'));
-
-    function rect(x,y,w,h,r=10,fill=null,klass=''){
-      const e = document.createElementNS(NS,'rect');
-      e.setAttribute('x',x); e.setAttribute('y',Math.max(0,y));
-      e.setAttribute('width',w); e.setAttribute('height',Math.max(0,h));
-      if (r){ e.setAttribute('rx',r); e.setAttribute('ry',r); }
-      if (fill) e.setAttribute('fill',fill);
-      if (klass) e.setAttribute('class',klass);
-      return e;
-    }
-    function text(x,y,txt){
-      const t=document.createElementNS(NS,'text');
-      t.setAttribute('x',x); t.setAttribute('y',y);
-      t.setAttribute('text-anchor','middle');
-      t.setAttribute('font-size','12'); t.setAttribute('font-weight','700');
-      t.setAttribute('fill','rgba(255,255,255,.9)');
-      t.textContent=txt; t.style.pointerEvents='none';
-      return t;
-    }
-
-    const fmtD = d=>{ try{ return new Date(d).toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit'});}catch{return d;} };
-
-    const outlines=[];
-    list.forEach((d,i)=>{
-      const x = GAP + i*(BAR+GAP);
-      const hc = yN(d.carbs_g);
-      const hp = yN(d.protein_g);
-      const hf = yN(d.fat_g);
-
-      const rc = rect(x, yBase-hc, BAR, hc, 10, 'url(#gCarb)', 'bar');
-      const rp = rect(x, yBase-(hc+hp), BAR, hp, 10, 'url(#gProt)', 'bar');
-      const rf = rect(x, yBase-(hc+hp+hf), BAR, hf, 10, 'url(#gFat)' , 'bar');
-
-      gBars.appendChild(rc); gBars.appendChild(rp); gBars.appendChild(rf);
-
-      const t = text(x+BAR/2, yDate, fmtD(d.date));
-      gDates.appendChild(t);
-
-      const sumH = hc+hp+hf;
-      const outline = rect(x-1, yBase - Math.max(sumH,2), BAR+2, Math.max(sumH,2), 16, null);
-      outline.setAttribute('class','sel');
-      outlines.push(outline);
-      gSel.appendChild(outline);
-    });
-
-    // сетка
-    const grid = document.createElementNS(NS,'g');
-    const lines = 4;
-    for(let i=1;i<=lines;i++){
-      const y = yBase - (usableH * i / (lines+0));
-      const ln=document.createElementNS(NS,'line');
-      ln.setAttribute('x1',0); ln.setAttribute('x2',contentW);
-      ln.setAttribute('y1',y); ln.setAttribute('y2',y);
-      ln.setAttribute('stroke','rgba(255,255,255,.08)');
-      ln.setAttribute('stroke-width','1');
-      grid.appendChild(ln);
-    }
-
-    svg.innerHTML = '';
-    svg.appendChild(defs);
-    svg.appendChild(grid);
-    svg.appendChild(gBars);
-    svg.appendChild(gSel);
-    svg.appendChild(gDates);
-
-    // стартовая анимация
-    if (opts.animate){
-      requestAnimationFrame(()=> svg.querySelectorAll('.bar').forEach(e=>e.classList.add('show')));
-    }
-
-    // подсветить последний столбец
-    const last = outlines[outlines.length-1];
-    if (last){
-      last.style.opacity = '1';
-      last.style.transform = 'translateY(-6px)';
-    }
-
-    // автоскролл вправо
-    try{ svg.parentElement.scrollLeft = svg.parentElement.scrollWidth; }catch(_){}
-    // ресайз без анимации
-    if (root.__kbjuResize){ window.removeEventListener('resize', root.__kbjuResize); }
-    let raf=0; root.__kbjuResize = function(){
-      cancelAnimationFrame(raf);
-      raf=requestAnimationFrame(()=> renderKBJU(root, data, { ...opts, animate:false }));
-    };
-    window.addEventListener('resize', root.__kbjuResize, {passive:true});
-  }
-
-  /* --- API/транспорт --- */
-  async function apiFrontChartData_bm(requestedRow, signal){
-    const payload = { action:'front_chart_data', init_data:String(tg?.initData||''), row: Number(requestedRow||0) || undefined };
-    const resp = await fetch(BACKEND, {
-      method:'POST', headers:{'Content-Type':'text/plain;charset=UTF-8'},
-      body: JSON.stringify(payload), cache:'no-store', credentials:'omit', mode:'cors', signal
-    });
-    const raw = await resp.text(); let json=null; try{ json = raw ? JSON.parse(raw) : null; }catch(_){}
-    if (!resp.ok || !json) throw new Error(`HTTP ${resp.status}`);
-    return json;
-  }
-
-  /* --- Helpers --- */
-  function currentUserId_safe(){ try{ return window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'anon'; }catch{ return 'anon'; } }
-  function targetRow(){
-    return (typeof desiredRow === 'function' && desiredRow()!=null) ? desiredRow()
-         : (typeof getRowCalcForUser_bm === 'function' ? getRowCalcForUser_bm() : null);
-  }
-
-  /* --- Polling/state --- */
-  let _animatedOnce=false, _lastSig='', _status='INIT', _timer=0, _run=0, _abort=null;
-  const RANK={INIT:0, NO_ROW:1, WAITING:2, READY:3};
-
-  function renderSafe(data,nextStatus){
-    if ((RANK[nextStatus]??0) < (RANK[_status]??0)) return;
-    const box = ensureHost(); if (!box) return;
-    const hint = box.querySelector('#kbju7-hint');
-
-    if (nextStatus==='READY' && data?.length){
-      renderKBJU(box.querySelector('#kbju7'), data, { visible:7, animate: !_animatedOnce });
-      _animatedOnce = true;
-      if (hint) hint.textContent = 'Динамика вашей нормы БЖУ';
-      _status='READY'; _lastSig = `READY|${sigOf(data)}`;
-      return;
-    }
-    if (nextStatus==='WAITING'){ if (hint) hint.textContent = 'Обрабатываем данные…'; }
-    if (nextStatus==='NO_ROW'){ if (hint) hint.textContent = 'Сначала заполните анкету и сохраните.'; }
-    _status = nextStatus;
-  }
-
-  async function pollOnce(runId){
-    if (runId!==_run) return {done:true};
-    const reqRow = targetRow();
-
-    if (_abort){ try{ _abort.abort(); }catch(_){ } }
-    const c = new AbortController(); _abort = c;
-
-    try{
-      const res = await apiFrontChartData_bm(reqRow, c.signal);
-      if (runId!==_run) return {done:true};
-
-      if (res?.row && reqRow && Number(res.row) < Number(reqRow)){
-        renderSafe([], 'WAITING');
-        const wait = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
-        return {done:false, wait};
-      }
-
-      const serverRow = Number(res?.row);
-      if (Number.isFinite(serverRow) && (reqRow==null || serverRow>reqRow)){
-        try{ setRowCalcForUser_bm(serverRow); }catch(_){}
-      }
-
-      if (!res?.ready){
-        renderSafe([], res?.status || 'WAITING');
-        const wait = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
-        return {done:false, wait};
-      }
-
-      const data = Array.isArray(res?.data) ? res.data : [];
-      if (`READY|${sigOf(data)}` !== _lastSig){
-        renderSafe(data, 'READY');
-        // кэш
-        try{
-          const uid = currentUserId_safe();
-          localStorage.setItem(`bm:chart:data:${String(uid)}`, JSON.stringify({ row: res.row, data, updated_at: res.updated_at }));
-        }catch(_){}
-      }
-      return {done:true};
-    } catch(err){
-      if (err?.name==='AbortError') return {done:true};
-      return {done:false, wait:1000};
-    }
-  }
-
-  async function loop(runId){
-    if (runId!==_run) return; clearTimeout(_timer);
-    const r = await pollOnce(runId);
-    if (r.done || runId!==_run) return;
-    _timer = setTimeout(()=>loop(runId), r.wait);
-  }
-
-  /* --- Публичный старт (совместимость) --- */
-  window.startChartFlow_bm_bm = function(){
-    injectPOLYStylesOnce(); ensureHost();
-    _run += 1; _status='INIT'; _lastSig='';
-    // показать кэш, если не старее desiredRow
-    const trg = targetRow();
-    try{
-      const uid = currentUserId_safe();
-      const raw = localStorage.getItem(`bm:chart:data:${String(uid)}`);
-      const cached = raw ? JSON.parse(raw) : null;
-      if (cached?.data && !(trg && Number(cached.row||0) < Number(trg))){
-        renderSafe(cached.data, 'READY');
-      } else {
-        renderSafe([], 'WAITING');
-      }
-    }catch(_){ renderSafe([], 'WAITING'); }
-    if (_abort){ try{ _abort.abort(); }catch(_){} _abort=null; }
-    loop(_run);
-  };
-
-  document.addEventListener('visibilitychange', ()=>{
-    if (document.visibilityState==='hidden'){
-      clearTimeout(_timer); if (_abort){ try{ _abort.abort(); }catch(_){} _abort=null; }
-    } else { window.startChartFlow_bm_bm(); }
-  });
-
-  // автостарт
-  window.startChartFlow_bm_bm();
-})();
-
-
-
 /* ============================================================
  *  BLOCK P (Admin): «Скорость работы»
  * ============================================================ */
@@ -2778,6 +2452,341 @@ PageLaunch→UpdateComment: ${comment} s`;
     if (now - last < 300) e.preventDefault();
     last = now;
   }, opts);
+})();
+</script>
+
+<script>
+/* ============================================================
+   BLOCK E2 — Analytics Chart (POLYBARS, без кнопок)
+   Совместим с front_chart_data, desiredRow(), локкэшем и вызовами
+============================================================= */
+(function chartPOLYInit(){
+  const tg = window.Telegram?.WebApp;
+  const BACKEND = (typeof BACKEND_URL_bm !== 'undefined' && BACKEND_URL_bm) ? BACKEND_URL_bm : '';
+  const host = () => document.getElementById('analytics');
+
+  // --- CSS один раз ---
+  function injectPOLYStylesOnce(){
+    if (document.getElementById('kbju7-styles')) return;
+    const css = `
+      .kbju7{ --H:170; --gap:8; position:relative; }
+      .kbju7-body{padding:6px 8px 4px}
+      .kbju7-scroll{position:relative; overflow-x:auto; overflow-y:hidden; -webkit-overflow-scrolling:touch; scrollbar-width:none; touch-action:pan-x}
+      .kbju7-scroll::-webkit-scrollbar{display:none}
+      .kbju7-footer{padding:6px 10px 10px; text-align:center; font-size:12px; opacity:.8}
+      .kbju7 svg{display:block}
+      .kbju7 .bar{transform:scaleY(0); transform-origin:bottom; transform-box:fill-box; transition:transform .35s ease}
+      .kbju7 .bar.show{transform:scaleY(1)}
+      .kbju7 .sel{fill:none; stroke:#fff; stroke-width:2; rx:16; ry:16; opacity:0; transition:opacity .12s ease, transform .18s ease}
+    `;
+    const s = document.createElement('style');
+    s.id = 'kbju7-styles';
+    s.textContent = css;
+    document.head.appendChild(s);
+  }
+
+  // --- Разметка (идемпотентно) ---
+  function ensureHost(){
+    const el = host(); if (!el) return null;
+    let box = el.querySelector('#kbju7-box');
+    if (box) return box;
+    const html = `
+      <div class="field kbju7-card" id="kbju7-box" style="margin-top:12px">
+        <div class="kbju7" id="kbju7">
+          <div class="kbju7-body">
+            <div class="kbju7-scroll">
+              <svg id="kbju7-svg" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Динамика БЖУ"></svg>
+            </div>
+          </div>
+          <div class="kbju7-footer" id="kbju7-hint">Динамика вашей нормы БЖУ</div>
+        </div>
+      </div>`;
+    el.insertAdjacentHTML('beforeend', html);
+    return el.querySelector('#kbju7-box');
+  }
+
+  // --- Нормализация ---
+  function normalize(arr){
+    if (!Array.isArray(arr)) return [];
+    return arr.map(d=>{
+      const date = d.date || d.day || d.ds || '';
+      const protein_g = +((d.protein_g ?? d.protein) || 0);
+      const fat_g     = +((d.fat_g     ?? d.fat)     || 0);
+      const carbs_g   = +((d.carbs_g   ?? d.carbs)   || 0);
+      return { date, protein_g, fat_g, carbs_g };
+    }).filter(x=>x.date);
+  }
+  function sigOf(arr){
+    const a = normalize(arr||[]);
+    if (!a.length) return '0';
+    const last = a[a.length-1];
+    const sum = a.reduce((s,x)=> s + x.protein_g + x.fat_g + x.carbs_g, 0);
+    return `${a.length}|${last.date}|${Math.round(sum)}`;
+  }
+
+  // --- Рендер ---
+  function renderKBJU(rootEl, data, opts={}){
+    const root = (typeof rootEl==='string') ? document.getElementById(rootEl) : rootEl;
+    if (!root) return;
+    const svg = root.querySelector('#kbju7-svg');
+    const list = normalize(data).sort((a,b)=> new Date(a.date)-new Date(b.date));
+
+    const H = 170, DATE_PAD = 18, TOP_PAD = 14;
+    const scroll = svg.parentElement;
+    const W = (scroll && scroll.clientWidth) || root.clientWidth || 320;
+    const VISIBLE = Math.max(5, Math.min(9, +opts.visible || 7));
+    const GAP = 8;
+    const BAR = Math.max(12, Math.floor((W - GAP*(VISIBLE+1))/VISIBLE));
+    const contentW = (list.length ? list.length : 1) * (BAR + GAP) + GAP;
+
+    svg.setAttribute('viewBox', `0 0 ${contentW} ${H}`);
+    svg.setAttribute('width', contentW);
+    svg.setAttribute('height', H);
+
+    if (!list.length){
+      svg.innerHTML = `<text x="10" y="22" fill="#fff" opacity=".85" font-size="14" font-weight="700">Нет данных</text>`;
+      return;
+    }
+
+    const gramsMax = Math.max(50, ...list.map(d=>d.protein_g+d.fat_g+d.carbs_g));
+    const yBase = H-2-DATE_PAD;
+    const usableH = H - TOP_PAD - DATE_PAD - 6;
+    const yN = v => usableH * (v/gramsMax);
+    const yDate = H-6;
+
+    const NS = svg.namespaceURI;
+    const gBars = document.createElementNS(NS,'g');
+    const gDates= document.createElementNS(NS,'g');
+    const gSel  = document.createElementNS(NS,'g');
+
+    // defs (градиенты)
+    const defs = document.createElementNS(NS, 'defs');
+    function grad(id, color){
+      const g=document.createElementNS(NS,'linearGradient');
+      g.setAttribute('id',id); g.setAttribute('x1','0'); g.setAttribute('y1','0'); g.setAttribute('x2','0'); g.setAttribute('y2','1');
+      const a=(off,col,op)=>{const s=document.createElementNS(NS,'stop'); s.setAttribute('offset',off); s.setAttribute('stop-color',col); s.setAttribute('stop-opacity',op); g.appendChild(s);};
+      a('0% ',color,.95); a('100%',color,.65); return g;
+    }
+    defs.appendChild(grad('gCarb','#34d399'));
+    defs.appendChild(grad('gProt','#60a5fa'));
+    defs.appendChild(grad('gFat' ,'#f59e0b'));
+
+    function rect(x,y,w,h,r=10,fill=null,klass=''){
+      const e = document.createElementNS(NS,'rect');
+      e.setAttribute('x',x); e.setAttribute('y',Math.max(0,y));
+      e.setAttribute('width',w); e.setAttribute('height',Math.max(0,h));
+      if (r){ e.setAttribute('rx',r); e.setAttribute('ry',r); }
+      if (fill) e.setAttribute('fill',fill);
+      if (klass) e.setAttribute('class',klass);
+      return e;
+    }
+    function text(x,y,txt){
+      const t=document.createElementNS(NS,'text');
+      t.setAttribute('x',x); t.setAttribute('y',y);
+      t.setAttribute('text-anchor','middle');
+      t.setAttribute('font-size','12'); t.setAttribute('font-weight','700');
+      t.setAttribute('fill','rgba(255,255,255,.9)');
+      t.textContent=txt; t.style.pointerEvents='none';
+      return t;
+    }
+
+    const fmtD = d=>{ try{ return new Date(d).toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit'});}catch{return d;} };
+
+    const outlines=[];
+    list.forEach((d,i)=>{
+      const x = GAP + i*(BAR+GAP);
+      const hc = yN(d.carbs_g);
+      const hp = yN(d.protein_g);
+      const hf = yN(d.fat_g);
+
+      const rc = rect(x, yBase-hc, BAR, hc, 10, 'url(#gCarb)', 'bar');
+      const rp = rect(x, yBase-(hc+hp), BAR, hp, 10, 'url(#gProt)', 'bar');
+      const rf = rect(x, yBase-(hc+hp+hf), BAR, hf, 10, 'url(#gFat)' , 'bar');
+
+      gBars.appendChild(rc); gBars.appendChild(rp); gBars.appendChild(rf);
+
+      const t = text(x+BAR/2, yDate, fmtD(d.date));
+      gDates.appendChild(t);
+
+      const sumH = hc+hp+hf;
+      const outline = rect(x-1, yBase - Math.max(sumH,2), BAR+2, Math.max(sumH,2), 16, null);
+      outline.setAttribute('class','sel');
+      outlines.push(outline);
+      gSel.appendChild(outline);
+    });
+
+    // сетка
+    const grid = document.createElementNS(NS,'g');
+    const lines = 4;
+    for(let i=1;i<=lines;i++){
+      const y = yBase - (usableH * i / (lines+0));
+      const ln=document.createElementNS(NS,'line');
+      ln.setAttribute('x1',0); ln.setAttribute('x2',contentW);
+      ln.setAttribute('y1',y); ln.setAttribute('y2',y);
+      ln.setAttribute('stroke','rgba(255,255,255,.08)');
+      ln.setAttribute('stroke-width','1');
+      grid.appendChild(ln);
+    }
+
+    svg.innerHTML = '';
+    svg.appendChild(defs);
+    svg.appendChild(grid);
+    svg.appendChild(gBars);
+    svg.appendChild(gSel);
+    svg.appendChild(gDates);
+
+    // стартовая анимация
+    if (opts.animate){
+      requestAnimationFrame(()=> svg.querySelectorAll('.bar').forEach(e=>e.classList.add('show')));
+    }
+
+    // подсветить последний столбец
+    const last = outlines[outlines.length-1];
+    if (last){
+      last.style.opacity = '1';
+      last.style.transform = 'translateY(-6px)';
+    }
+
+    // автоскролл вправо
+    try{ svg.parentElement.scrollLeft = svg.parentElement.scrollWidth; }catch(_){}
+  }
+
+  // --- API/транспорт ---
+  async function apiFrontChartData_bm(requestedRow, signal){
+    const payload = { action:'front_chart_data', init_data:String(tg?.initData||''), row: Number(requestedRow||0) || undefined };
+    const resp = await fetch(BACKEND, {
+      method:'POST', headers:{'Content-Type':'text/plain;charset=UTF-8'},
+      body: JSON.stringify(payload), cache:'no-store', credentials:'omit', mode:'cors', signal
+    });
+    const raw = await resp.text(); let json=null; try{ json = raw ? JSON.parse(raw) : null; }catch(_){}
+    if (!resp.ok || !json) throw new Error(`HTTP ${resp.status}`);
+    return json;
+  }
+
+  // --- Helpers ---
+  function currentUserId_safe(){ try{ return window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'anon'; }catch{ return 'anon'; } }
+  function targetRow(){
+    return (typeof desiredRow === 'function' && desiredRow()!=null) ? desiredRow()
+         : (typeof getRowCalcForUser_bm === 'function' ? getRowCalcForUser_bm() : null);
+  }
+
+  // --- Polling/state ---
+  let _animatedOnce=false, _lastSig='', _status='INIT', _timer=0, _run=0, _abort=null;
+  const RANK={INIT:0, NO_ROW:1, WAITING:2, READY:3};
+
+  function renderSafe(data,nextStatus){
+    const box = ensureHost(); if (!box) return;
+    const hint = box.querySelector('#kbju7-hint');
+
+    if (nextStatus==='READY' && data?.length){
+      renderKBJU(box.querySelector('#kbju7'), data, { visible:7, animate: !_animatedOnce });
+      _animatedOnce = true;
+      if (hint) hint.textContent = 'Динамика вашей нормы БЖУ';
+      _status='READY'; _lastSig = `READY|${sigOf(data)}`;
+      return;
+    }
+    if (nextStatus==='WAITING'){ if (hint) hint.textContent = 'Обрабатываем данные…'; }
+    if (nextStatus==='NO_ROW'){ if (hint) hint.textContent = 'Сначала заполните анкету и сохраните.'; }
+    _status = nextStatus;
+  }
+
+  async function pollOnce(runId){
+    if (runId!==_run) return {done:true};
+    const reqRow = targetRow();
+
+    if (_abort){ try{ _abort.abort(); }catch(_){ } }
+    const c = new AbortController(); _abort = c;
+
+    try{
+      const res = await apiFrontChartData_bm(reqRow, c.signal);
+      if (runId!==_run) return {done:true};
+
+      if (res?.row && reqRow && Number(res.row) < Number(reqRow)){
+        renderSafe([], 'WAITING');
+        const wait = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
+        return {done:false, wait};
+      }
+
+      const serverRow = Number(res?.row);
+      if (Number.isFinite(serverRow) && (reqRow==null || serverRow>reqRow)){
+        try{ setRowCalcForUser_bm(serverRow); }catch(_){}
+      }
+
+      if (!res?.ready){
+        renderSafe([], res?.status || 'WAITING');
+        const wait = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
+        return {done:false, wait};
+      }
+
+      const data = Array.isArray(res?.data) ? res.data : [];
+      if (`READY|${sigOf(data)}` !== _lastSig){
+        renderSafe(data, 'READY');
+        // кэш
+        try{
+          const uid = currentUserId_safe();
+          localStorage.setItem(`bm:chart:data:${String(uid)}`, JSON.stringify({ row: res.row, data, updated_at: res.updated_at }));
+        }catch(_){}
+      }
+      return {done:true};
+    } catch(err){
+      if (err?.name==='AbortError') return {done:true};
+      return {done:false, wait:1000};
+    }
+  }
+
+  async function loop(runId){
+    if (runId!==_run) return; clearTimeout(_timer);
+    const r = await pollOnce(runId);
+    if (r.done || runId!==_run) return;
+    _timer = setTimeout(()=>loop(runId), r.wait);
+  }
+
+  // --- Публичный старт ---
+  window.startChartFlow_bm_bm = function(){
+    injectPOLYStylesOnce(); ensureHost();
+    _run += 1; _status='INIT'; _lastSig='';
+
+    // показать кэш, если не старее desiredRow
+    const trg = targetRow();
+    try{
+      const uid = currentUserId_safe();
+      const raw = localStorage.getItem(`bm:chart:data:${String(uid)}`);
+      const cached = raw ? JSON.parse(raw) : null;
+      if (cached?.data && !(trg && Number(cached.row||0) < Number(trg))){
+        renderSafe(cached.data, 'READY');
+      } else {
+        renderSafe([], 'WAITING');
+      }
+    }catch(_){ renderSafe([], 'WAITING'); }
+
+    if (_abort){ try{ _abort.abort(); }catch(_){} _abort=null; }
+    loop(_run);
+  };
+
+  // --- DEMO: если бэкенд не задан, заранее кладём тестовые данные в кэш, чтобы график появился сразу
+  if (!BACKEND) {
+    const demo = [
+      {date:'2025-10-28', protein_g:180, fat_g:60, carbs_g:240},
+      {date:'2025-10-30', protein_g:175, fat_g:58, carbs_g:230},
+      {date:'2025-11-02', protein_g:190, fat_g:62, carbs_g:260},
+      {date:'2025-11-05', protein_g:185, fat_g:59, carbs_g:245},
+      {date:'2025-11-07', protein_g:200, fat_g:64, carbs_g:270},
+      {date:'2025-11-09', protein_g:195, fat_g:61, carbs_g:255}
+    ];
+    try{
+      const uid = currentUserId_safe();
+      localStorage.setItem(`bm:chart:data:${String(uid)}`, JSON.stringify({ row: 0, data: demo, updated_at: Date.now() }));
+    }catch(_){}
+  }
+
+  document.addEventListener('visibilitychange', ()=>{
+    if (document.visibilityState==='hidden'){
+      clearTimeout(_timer); if (_abort){ try{ _abort.abort(); }catch(_){} _abort=null; }
+    } else { window.startChartFlow_bm_bm(); }
+  });
+
+  // автостарт
+  window.startChartFlow_bm_bm();
 })();
 </script>
 
