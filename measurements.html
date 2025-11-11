@@ -2949,6 +2949,364 @@ PageLaunch→UpdateComment: ${comment} s`;
 })();
 </script>
 
+  <script id="bm-kbju7-dropin">
+(function(){
+  // ---------- Конфиг ----------
+  const BACKEND = (typeof BACKEND_URL_bm !== 'undefined' && BACKEND_URL_bm)
+    ? BACKEND_URL_bm
+    : 'https://script.google.com/macros/s/YOUR_ID/exec'; // ← если нет глобальной константы, поставь свой URL
+
+  const HOST_SELECTOR = '#analytics';   // куда вставлять карточку
+  const VISIBLE_BARS  = 7;              // сколько столбиков держать на экране
+  const CARD_RADIUS   = 18;             // скругление капсул
+
+  // ---------- Утилиты ----------
+  const tg = window.Telegram?.WebApp;
+  try{ tg?.ready?.(); }catch(_){}
+  const hapticSelect = ()=>{ try{ tg?.HapticFeedback?.selectionChanged?.(); }catch(_){ } };
+
+  function currentUid(){
+    try { return tg?.initDataUnsafe?.user?.id || 'anon'; } catch { return 'anon'; }
+  }
+
+  function getDesiredRow(){
+    try{
+      if (typeof window.desiredRow === 'function'){
+        const r = window.desiredRow(); if (r != null) return Number(r);
+      }
+    }catch(_){}
+    try{
+      const key = 'bm:macros:last_row_calc:' + String(currentUid());
+      const v = localStorage.getItem(key) ?? sessionStorage.getItem(key);
+      return v ? Number(v) : null;
+    }catch(_){ return null; }
+  }
+
+  function saveChartCache(obj){
+    try{
+      localStorage.setItem('bm:chart:data:'+String(currentUid()), JSON.stringify(obj));
+    }catch(_){}
+  }
+  function loadChartCache(){
+    try{
+      const raw = localStorage.getItem('bm:chart:data:'+String(currentUid()));
+      return raw ? JSON.parse(raw) : null;
+    }catch(_){ return null; }
+  }
+
+  // ---------- Стили (1 раз) ----------
+  (function injectStylesOnce(){
+    if (document.getElementById('kbju7-styles-dropin')) return;
+    const css = `
+.kbju7{ --h:160; --gap:8; --ink:#fff; --c-carb:#34d399; --c-prot:#60a5fa; --c-fat:#f59e0b; position:relative; }
+.kbju7-card{
+  background: rgba(255,255,255,.12);
+  border: 1px solid rgba(255,255,255,.24);
+  border-radius: 14px;
+  box-shadow: none;
+}
+.kbju7-viewport{position:relative;padding:6px 8px 4px}
+.kbju7-scroll{position:relative;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;scrollbar-width:none;touch-action: pan-x}
+.kbju7-scroll::-webkit-scrollbar{display:none}
+.kbju7-info{
+  display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:nowrap;
+  padding:10px 12px;min-height:42px;font-size:clamp(12px,3.4vw,14px);font-variant-numeric:tabular-nums;
+}
+.legend-tap{
+  display:inline-flex;align-items:center;justify-content:center;gap:6px; padding:8px 10px;
+  border:1px solid rgba(255,255,255,.9); background:transparent; color:inherit; font:inherit;
+  border-radius:12px; min-height:36px; cursor:pointer; white-space:nowrap;
+}
+.legend-tap .dot{width:6px;height:6px;border-radius:50%;flex:0 0 6px}
+.legend-tap[data-key="prot"] .dot{background: var(--c-prot)}
+.legend-tap[data-key="fat"]  .dot{background: var(--c-fat)}
+.legend-tap[data-key="carb"] .dot{background: var(--c-carb)}
+.legend-tap.active{background:rgba(255,255,255,.12); border-color:transparent}
+.sel-outline{fill:none;stroke:#fff;stroke-width:2;rx:18;ry:18}
+.kbju7 svg, .kbju7 svg * { -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; user-select:none }
+@media (max-width:340px){ .kbju7-info{gap:6px} .legend-tap{padding:6px 8px} }
+    `;
+    const s = document.createElement('style');
+    s.id = 'kbju7-styles-dropin';
+    s.textContent = css;
+    document.head.appendChild(s);
+  })();
+
+  // ---------- Вью + хост ----------
+  function ensureHost(){
+    const root = document.querySelector(HOST_SELECTOR);
+    if (!root) return null;
+    let box = root.querySelector('#chart-kbju7-box');
+    if (box) return box;
+    const html = `
+      <div class="field" id="chart-kbju7-box" style="margin-top:12px">
+        <div class="kbju7 kbju7-card" id="kbju7-host" style="--r:${CARD_RADIUS}">
+          <div class="kbju7-viewport">
+            <div class="kbju7-scroll" id="kbju7-scroll">
+              <svg id="kbju7-svg" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="График БЖУ"></svg>
+            </div>
+          </div>
+          <div class="kbju7-info" id="kbju7-info" role="tablist" aria-label="Выбор нутриента">
+            <button type="button" class="legend-tap" data-key="prot" aria-pressed="false"><span class="dot"></span><span>Б:</span> <b class="v" id="kbju7-p">—</b> г</button>
+            <button type="button" class="legend-tap" data-key="fat"  aria-pressed="false"><span class="dot"></span><span>Ж:</span> <b class="v" id="kbju7-f">—</b> г</button>
+            <button type="button" class="legend-tap" data-key="carb" aria-pressed="false"><span class="dot"></span><span>У:</span> <b class="v" id="kbju7-c">—</b> г</button>
+          </div>
+        </div>
+        <div class="help" id="chart-hint" style="text-align:center;margin-top:6px">Загружаем график…</div>
+      </div>`;
+    root.insertAdjacentHTML('beforeend', html);
+    return root.querySelector('#chart-kbju7-box');
+  }
+
+  // ---------- Рендер ----------
+  function normalize(list){
+    if (!Array.isArray(list)) return [];
+    return list.map(d=>{
+      const date = d.date || d.day || d.ds || '';
+      const P = d.protein_g ?? d.protein ?? 0;
+      const F = d.fat_g     ?? d.fat     ?? 0;
+      const C = d.carbs_g   ?? d.carbs   ?? 0;
+      return { date, protein_g:+P||0, fat_g:+F||0, carbs_g:+C||0 };
+    }).filter(x=>x.date);
+  }
+  function fmtDate(d){ try{ return new Date(d).toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit'});}catch{ return d; } }
+
+  function render(hostOrId, data, opts={}){
+    const root = (typeof hostOrId === 'string')
+      ? document.getElementById(hostOrId)
+      : hostOrId;
+    if (!root) return;
+
+    const scr = root.querySelector('#kbju7-scroll');
+    const svg = root.querySelector('#kbju7-svg');
+    const info = root.querySelector('#kbju7-info');
+
+    const list = normalize(data).sort((a,b)=> new Date(a.date) - new Date(b.date));
+    const H = 160, DATE_PAD=18, TOP_PAD=14, LIFT=8;
+
+    const getW = ()=>{
+      const W = (scr?.clientWidth) || root.clientWidth || 320;
+      const GAP = 8;
+      const BAR = Math.max(12, Math.floor((W - GAP*(VISIBLE_BARS+1))/VISIBLE_BARS));
+      return { W, GAP, BAR };
+    };
+    const { GAP, BAR } = getW();
+
+    const filter = root.getAttribute('data-filter') || 'all';
+    let gramsMax;
+    if (filter==='prot') gramsMax = Math.max(50, ...list.map(d=>d.protein_g||0));
+    else if (filter==='fat') gramsMax = Math.max(50, ...list.map(d=>d.fat_g||0));
+    else if (filter==='carb') gramsMax = Math.max(50, ...list.map(d=>d.carbs_g||0));
+    else gramsMax = Math.max(50, ...list.map(d=>(d.protein_g||0)+(d.fat_g||0)+(d.carbs_g||0)));
+    const toPixels = v => (H - TOP_PAD - DATE_PAD - 4) * (v/gramsMax);
+
+    const width = list.length*(BAR+GAP)+GAP;
+    svg.setAttribute('viewBox', `0 0 ${width} ${H}`);
+    svg.setAttribute('width', width);
+    svg.setAttribute('height', H);
+
+    const defs = el('defs'), gBars = el('g'), gSel = el('g'), gHit = el('g');
+    const outlines=[], groups=[], dates=[];
+    const yBase = H-2-DATE_PAD, yDate = H-6, R = +getComputedStyle(root).getPropertyValue('--r') || CARD_RADIUS;
+
+    list.forEach((d,i)=>{
+      const x = GAP + i*(BAR+GAP);
+
+      let c = d.carbs_g||0, p = d.protein_g||0, f = d.fat_g||0;
+      if (filter==='prot'){ c=0; f=0; }
+      else if (filter==='fat'){ c=0; p=0; }
+      else if (filter==='carb'){ p=0; f=0; }
+
+      const hC = toPixels(c), hP = toPixels(p), hF = toPixels(f);
+      const sum = hC+hP+hF;
+      const topY = yBase - Math.max(sum,0);
+
+      // clip capsule
+      const clipId = `clip_${i}_${Date.now()}`;
+      const cp = el('clipPath', { id:clipId });
+      cp.appendChild(rect(x, Math.max(TOP_PAD, topY), BAR, Math.max(sum,0.0001), R));
+      defs.appendChild(cp);
+
+      const group = el('g', { 'clip-path': `url(#${clipId})` });
+      group.style.transition = 'transform .2s ease';
+
+      const rc = rect(x, yBase - hC, BAR, hC); rc.setAttribute('fill','rgba(52,211,153,.85)');
+      const rp = rect(x, yBase - (hC+hP), BAR, hP); rp.setAttribute('fill','rgba(96,165,250,.85)');
+      const rf = rect(x, yBase - (hC+hP+hF), BAR, hF); rf.setAttribute('fill','rgba(245,158,11,.85)');
+      rc.classList.add('seg','carb'); rp.classList.add('seg','prot'); rf.classList.add('seg','fat');
+
+      group.appendChild(rc); group.appendChild(rp); group.appendChild(rf);
+      gBars.appendChild(group); groups.push(group);
+
+      if (filter!=='all'){
+        const val = filter==='prot' ? (d.protein_g||0) : filter==='fat' ? (d.fat_g||0) : (d.carbs_g||0);
+        const hSel = filter==='prot' ? hP : filter==='fat' ? hF : hC;
+        if (hSel > 22){
+          const tx = el('text', { x: x+BAR/2, y: yBase - (hSel*0.75), 'text-anchor':'middle' });
+          tx.textContent = String(Math.round(val));
+          tx.setAttribute('font-size','14'); tx.setAttribute('font-weight','900'); tx.setAttribute('fill','#fff');
+          tx.style.pointerEvents='none'; tx.style.dominantBaseline='middle';
+          group.appendChild(tx);
+        }
+      }
+
+      const tDate = el('text', { x: x+BAR/2, y: yDate, 'text-anchor':'middle' });
+      tDate.textContent = fmtDate(d.date);
+      tDate.setAttribute('font-size','12'); tDate.setAttribute('font-weight','700'); tDate.setAttribute('fill','rgba(255,255,255,.9)');
+      tDate.style.opacity='0'; tDate.style.transition='opacity .18s ease';
+      tDate.style.pointerEvents='none'; gBars.appendChild(tDate); dates.push(tDate);
+
+      const outline = rect(x-1, topY, BAR+2, Math.max(sum,2), R);
+      outline.setAttribute('class','sel-outline'); outline.style.opacity='0';
+      outline.style.transition='transform .2s ease, opacity .12s ease';
+      gSel.appendChild(outline); outlines.push(outline);
+
+      const hit = rect(x, 0, BAR, H, R); hit.setAttribute('fill','transparent'); hit.style.cursor='pointer';
+      hit.addEventListener('click', ()=> select(i, d)); gHit.appendChild(hit);
+    });
+
+    svg.innerHTML=''; svg.appendChild(defs); svg.appendChild(gBars); svg.appendChild(gSel); svg.appendChild(gHit);
+
+    const infP = document.getElementById('kbju7-p');
+    const infF = document.getElementById('kbju7-f');
+    const infC = document.getElementById('kbju7-c');
+    const select = (idx,d)=>{
+      if (infP) infP.textContent = Math.round(d.protein_g||0);
+      if (infF) infF.textContent = Math.round(d.fat_g||0);
+      if (infC) infC.textContent = Math.round(d.carbs_g||0);
+      outlines.forEach((o,i)=>{ o.style.opacity = (i===idx?'1':'0'); o.style.transform = (i===idx?`translateY(-${LIFT}px)`:'translateY(0)'); });
+      groups.forEach((g,i)=>{ g.style.transform = (i===idx?`translateY(-${LIFT}px)`:'translateY(0)'); });
+      dates.forEach((t,i)=>{ t.style.opacity = (i===idx?'1':'0'); });
+      hapticSelect();
+    };
+    if (list.length){ select(list.length-1, list[list.length-1]); scr && (scr.scrollLeft = scr.scrollWidth); }
+
+    // легенда: фильтр + перерисовка
+    if (!root.__legendBound && info){
+      info.addEventListener('click', (e)=>{
+        const btn = e.target.closest('.legend-tap'); if (!btn) return;
+        const key = btn.dataset.key;
+        const cur = root.getAttribute('data-filter') || 'all';
+        const next = (cur === key) ? 'all' : key;
+        root.setAttribute('data-filter', next);
+        info.querySelectorAll('.legend-tap').forEach(b=>{
+          const on = (next === b.dataset.key);
+          b.classList.toggle('active', on);
+          b.setAttribute('aria-pressed', String(on));
+        });
+        render(root, data, opts); // перерисовать без анимации
+      }, { passive:true });
+      root.__legendBound = true;
+    }
+
+    // ресайз — без анимации
+    if (root.__resizeHandler) window.removeEventListener('resize', root.__resizeHandler);
+    let raf = 0;
+    root.__resizeHandler = function(){ cancelAnimationFrame(raf); raf = requestAnimationFrame(()=> render(root, data, opts)); };
+    window.addEventListener('resize', root.__resizeHandler, { passive:true });
+
+    function el(tag, attrs){ const e = document.createElementNS('http://www.w3.org/2000/svg', tag); if (attrs) for (const k in attrs) e.setAttribute(k, attrs[k]); return e; }
+    function rect(x,y,w,h,r=0){ const e = el('rect', { x, y:Math.max(0,y), width:w, height:Math.max(0,h) }); if (r){ e.setAttribute('rx',r); e.setAttribute('ry',r); } return e; }
+  }
+
+  // ---------- API ----------
+  async function fetchChart(row, signal){
+    const payload = {
+      action: 'front_chart_data',
+      init_data: String(tg?.initData || ''),
+      row: Number(row || 0) || undefined
+    };
+    const resp = await fetch(BACKEND, {
+      method:'POST',
+      headers:{ 'Content-Type':'text/plain;charset=UTF-8' },
+      body: JSON.stringify(payload),
+      cache:'no-store', credentials:'omit', mode:'cors', signal
+    });
+    const raw = await resp.text();
+    let json = null; try{ json = raw ? JSON.parse(raw) : null; }catch(_){}
+    if (!resp.ok || !json) throw new Error(`HTTP ${resp.status}`);
+    return json;
+  }
+
+  // ---------- Пуллинг + публичный запуск ----------
+  let _timer = 0, _abort = null, _runId = 0;
+  function setHint(text){ const h = document.getElementById('chart-hint'); if (h){ h.textContent = text; h.style.display = 'block'; } }
+
+  async function pollOnce(runId){
+    if (runId !== _runId) return { done:true };
+    const reqRow = getDesiredRow();
+    if (_abort){ try{ _abort.abort(); }catch(_){ } }
+    const controller = new AbortController(); _abort = controller;
+
+    try{
+      const res = await fetchChart(reqRow, controller.signal);
+      // если сервер вернул более старый row — подождём свежий
+      if (res?.row && reqRow && Number(res.row) < Number(reqRow)){
+        setHint('Обрабатываем данные…');
+        return { done:false, wait: 500 };
+      }
+      if (!res?.ready){
+        setHint('Обрабатываем данные…');
+        return { done:false, wait: Math.max(200, Math.min(1000, Number(res?.retry_after_ms)||500)) };
+      }
+
+      const box = ensureHost();
+      render(document.getElementById('kbju7-host'), res.data || [], {});
+      setHint('Динамика вашей нормы БЖУ');
+
+      // кэшируем (если не старее требуемого row)
+      if (!(reqRow && Number(res.row||0) < Number(reqRow))) {
+        saveChartCache({ row: res.row || null, data: res.data || [], updated_at: res.updated_at || new Date().toISOString() });
+      }
+      return { done:true };
+    } catch(_){
+      setHint('Не удалось загрузить график. Попробуйте позже.');
+      return { done:false, wait: 1000 };
+    }
+  }
+
+  async function pollLoop(runId){
+    if (runId !== _runId) return;
+    clearTimeout(_timer);
+    const r = await pollOnce(runId);
+    if (r.done || runId !== _runId) return;
+    _timer = setTimeout(()=> pollLoop(runId), r.wait);
+  }
+
+  // Публичная точка — совместимо с остальной страницей
+  window.startChartFlow_bm_bm = function(){
+    _runId += 1;
+    const runId = _runId;
+    ensureHost();
+
+    // показать кэш, если есть и не старее desiredRow()
+    const target = getDesiredRow();
+    const cached = loadChartCache();
+    if (cached?.data && !(target && Number(cached.row||0) < Number(target))) {
+      render(document.getElementById('kbju7-host'), cached.data, {});
+      setHint('Динамика вашей нормы БЖУ');
+    } else {
+      setHint('Загружаем график…');
+    }
+
+    clearTimeout(_timer);
+    if (_abort){ try{ _abort.abort(); }catch(_){ } _abort = null; }
+    pollLoop(runId);
+  };
+
+  // Автозапуск + реакция на видимость
+  window.startChartFlow_bm_bm();
+  document.addEventListener('visibilitychange', ()=>{
+    if (document.visibilityState === 'hidden'){
+      clearTimeout(_timer);
+      if (_abort){ try{ _abort.abort(); }catch(_){ } _abort = null; }
+    } else {
+      window.startChartFlow_bm_bm();
+    }
+  });
+})();
+</script>
+
 
 </body>
 </html>
