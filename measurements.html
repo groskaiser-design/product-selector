@@ -1591,7 +1591,7 @@ function handleSaveClick_bm(e){
     try { window.startFrontDataFlow_bm_bm(); } catch(_){}  // ← AI комментарий
     try { window.startMacrosFlow_bm_bm(); } catch(_){}
     try { window.startChartFlow_bm_bm(); } catch(_){}
-    try { window.startPlanFactFlow_bm(); } catch(_){}
+    try { window.startPlanFactFlow_bm(); } catch(_){}  // ← ДОБАВИТЬ ЭТУ СТРОКУ
   }, 0);
 
   try { tg?.HapticFeedback?.notificationOccurred?.('success'); } catch(_){}
@@ -1606,9 +1606,9 @@ function handleSaveClick_bm(e){
 
       // 🔒 Перелочим уже на фактический row (ещё на 10с)
       try { lockDesiredRow(Number(rowCalc) || minNewRow, 10000); } catch(_){}
-
       try { window.startMacrosFlow_bm_bm(); } catch(_){}
       try { window.startChartFlow_bm_bm(); } catch(_){}
+      try { window.startPlanFactFlow_bm(); } catch(_){}  // ← ДОБАВИТЬ
       
       try {
         const uid = (typeof currentUserId_bm === 'function') ? currentUserId_bm() : 'anon';
@@ -2945,7 +2945,351 @@ function handleSaveClick_bm(e){
   window.startChartFlow_bm_bm();
 })();
 
+/* ============================================================
+ *  BLOCK E3 — План/Факт график замеров
+ * ============================================================ */
+(function planFactChartInit(){
+  const tg = window.Telegram?.WebApp;
+  const BACKEND = (typeof BACKEND_URL_bm !== 'undefined' && BACKEND_URL_bm) ? BACKEND_URL_bm : '';
+  
+  const PF_CACHE_KEY_PREFIX = 'bm:planfact:data:';
+  
+  function currentUserId_bm(){ 
+    try { return window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'anon'; } 
+    catch(_){ return 'anon'; } 
+  }
+  
+  function pfCacheKey(uid){ return PF_CACHE_KEY_PREFIX + String(uid ?? currentUserId_bm()); }
+  
+  function savePFCache(obj, uid){ 
+    try { localStorage.setItem(pfCacheKey(uid), JSON.stringify(obj)); } 
+    catch(_){} 
+  }
+  
+  function loadPFCache(uid){ 
+    try { 
+      const raw = localStorage.getItem(pfCacheKey(uid)); 
+      return raw ? JSON.parse(raw) : null; 
+    } catch(_) { return null; } 
+  }
 
+  /* ---------- API ---------- */
+  async function apiPlanFactData(requestedRow, signal){
+    const payload = { 
+      action:'plan_fact_data', 
+      init_data:String(tg?.initData || ''), 
+      row: Number(requestedRow||0) || undefined 
+    };
+    
+    const resp = await fetch(BACKEND, {
+      method:'POST', 
+      headers:{ 'Content-Type':'text/plain;charset=UTF-8' },
+      body: JSON.stringify(payload), 
+      cache:'no-store', 
+      credentials:'omit', 
+      mode:'cors', 
+      signal
+    });
+    
+    const raw = await resp.text();
+    let json = null; 
+    try { json = raw ? JSON.parse(raw) : null; } 
+    catch(_){}
+    
+    if (!resp.ok || !json) throw new Error(`HTTP ${resp.status}`);
+    return json;
+  }
+
+  function targetRow(){
+    return (typeof desiredRow === 'function' && desiredRow() != null)
+      ? desiredRow()
+      : (typeof getRowCalcForUser_bm === 'function' ? getRowCalcForUser_bm() : null);
+  }
+
+  /* ---------- Render ---------- */
+  let _pfLastSig = '';
+  let _pfTimer = 0;
+  let _pfRunId = 0;
+  let _pfAbort = null;
+  let _pfStatus = 'INIT';
+  const STATUS_RANK = { INIT:0, NO_ROW:1, WAITING:2, READY:3 };
+
+  function renderPFGraph(data, status){
+    const box = document.getElementById('plan-fact-chart-box');
+    const hint = document.getElementById('pf-hint');
+    const pfRows = document.getElementById('pfRows');
+    const pfTimeline = document.getElementById('pfTimeline');
+    const pfLoadingIndicator = document.getElementById('pfLoadingIndicator');
+    
+    if (!box || !pfRows) return;
+
+    // Показываем индикатор загрузки
+    if (pfLoadingIndicator) {
+      pfLoadingIndicator.classList.toggle('visible', status === 'WAITING');
+    }
+
+    if (status === 'READY' && data && data.length){
+      if (hint) hint.textContent = 'Ваш прогресс по замерам';
+      
+      // Рендерим данные
+      renderPFData(data);
+      
+      return;
+    }
+    
+    if (status === 'WAITING'){
+      if (hint) hint.textContent = 'Загружаем данные…';
+      pfRows.innerHTML = '<div style="padding:20px;text-align:center;opacity:0.7">Обрабатываем…</div>';
+      return;
+    }
+    
+    if (status === 'NO_ROW'){
+      if (hint) hint.textContent = 'Сначала заполните анкету и сохраните.';
+      pfRows.innerHTML = '';
+      return;
+    }
+    
+    if (hint) hint.textContent = '—';
+  }
+
+  function renderPFData(data){
+    const pfRows = document.getElementById('pfRows');
+    const pfTimeline = document.getElementById('pfTimeline');
+    const pfDateWheel = document.getElementById('pfDateWheel');
+    
+    if (!pfRows) return;
+
+    // Группируем по датам
+    const byDate = {};
+    data.forEach(item => {
+      const d = item.date || item.day || '';
+      if (!d) return;
+      if (!byDate[d]) byDate[d] = [];
+      byDate[d].push(item);
+    });
+
+    const dates = Object.keys(byDate).sort().reverse(); // новые сверху
+    if (!dates.length) {
+      pfRows.innerHTML = '<div style="padding:20px;text-align:center;opacity:0.7">Нет данных</div>';
+      return;
+    }
+
+    // Рендерим последнюю дату по умолчанию
+    renderDateData(dates[0], byDate[dates[0]]);
+
+    // Если дат больше одной, показываем timeline
+    if (dates.length > 1 && pfTimeline && pfDateWheel) {
+      pfTimeline.hidden = false;
+      
+      // Очищаем колесо
+      pfDateWheel.innerHTML = '';
+      
+      // Добавляем спейсеры для центрирования
+      const spacer1 = document.createElement('div');
+      spacer1.className = 'pf-spacer';
+      spacer1.style.setProperty('--edge', '40%');
+      pfDateWheel.appendChild(spacer1);
+      
+      // Добавляем даты
+      dates.forEach((date, idx) => {
+        const item = document.createElement('div');
+        item.className = 'pf-item';
+        item.textContent = formatDate(date);
+        item.dataset.date = date;
+        
+        if (idx === 0) item.classList.add('active');
+        
+        item.addEventListener('click', () => {
+          pfDateWheel.querySelectorAll('.pf-item').forEach(i => i.classList.remove('active'));
+          item.classList.add('active');
+          renderDateData(date, byDate[date]);
+          
+          // Scroll to center
+          item.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+        });
+        
+        pfDateWheel.appendChild(item);
+      });
+      
+      // Спейсер справа
+      const spacer2 = document.createElement('div');
+      spacer2.className = 'pf-spacer';
+      spacer2.style.setProperty('--edge', '40%');
+      pfDateWheel.appendChild(spacer2);
+      
+    } else if (pfTimeline) {
+      pfTimeline.hidden = true;
+    }
+  }
+
+  function renderDateData(date, items){
+    const pfRows = document.getElementById('pfRows');
+    if (!pfRows) return;
+
+    pfRows.innerHTML = '';
+    
+    items.forEach(item => {
+      const row = document.createElement('div');
+      row.className = 'pf-row';
+      
+      const name = item.label || item.measure_name || 'Замер';
+      const plan = Number(item.plan_value) || 0;
+      const fact = Number(item.fact_value) || 0;
+      const unit = item.unit || '';
+      
+      // Вычисляем процент выполнения
+      const percent = plan > 0 ? Math.min(100, (fact / plan) * 100) : 0;
+      
+      // Определяем цвет
+      let colorClass = 'neutral';
+      if (fact > 0) {
+        if (percent >= 95) colorClass = '';  // зелёный (по умолчанию)
+        else if (percent >= 70) colorClass = 'orange';
+        else colorClass = 'red';
+      }
+      
+      row.innerHTML = `
+        <div class="pf-top">
+          <div class="pf-name">${name}</div>
+          <div class="pf-vals">
+            <div class="pf-kv">
+              <span class="pf-lab">План:</span>
+              <span class="pf-val">${plan.toFixed(1)}</span>
+              <span class="pf-lab">${unit}</span>
+            </div>
+            <span class="pf-dot">•</span>
+            <div class="pf-kv">
+              <span class="pf-lab">Факт:</span>
+              <span class="pf-val">${fact > 0 ? fact.toFixed(1) : '—'}</span>
+              ${fact > 0 ? `<span class="pf-lab">${unit}</span>` : ''}
+            </div>
+          </div>
+        </div>
+        <div class="pf-gauge">
+          <div class="pf-plan" style="--wp:100%"></div>
+          <div class="pf-fact ${colorClass}" style="--wf:${percent.toFixed(1)}%"></div>
+        </div>
+      `;
+      
+      pfRows.appendChild(row);
+    });
+  }
+
+  function formatDate(dateStr){
+    try {
+      const d = new Date(dateStr);
+      return d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
+    } catch {
+      return dateStr;
+    }
+  }
+
+  function renderPFSafe(data, nextStatus){
+    const cur = STATUS_RANK[_pfStatus] ?? 0;
+    const nxt = STATUS_RANK[nextStatus] ?? 0;
+    if (nxt < cur) return;
+
+    const nextSig = `${nextStatus}|${data?.length || 0}`;
+    if (nextSig === _pfLastSig) return;
+
+    renderPFGraph(data, nextStatus);
+    _pfStatus = nextStatus;
+    _pfLastSig = nextSig;
+  }
+
+  /* ---------- Polling ---------- */
+  async function pollOnce(runId){
+    if (runId !== _pfRunId) return { done:true };
+
+    const reqRow = targetRow();
+
+    if (_pfAbort) { try{ _pfAbort.abort(); }catch(_){ } }
+    const controller = new AbortController();
+    _pfAbort = controller;
+
+    try{
+      const res = await apiPlanFactData(reqRow, controller.signal);
+      if (runId !== _pfRunId) return { done:true };
+
+      if (res?.row && reqRow && Number(res.row) < Number(reqRow)) {
+        renderPFSafe([], 'WAITING');
+        const waitOld = 500;
+        return { done:false, wait: waitOld };
+      }
+
+      const serverRow = Number(res?.row);
+      if (Number.isFinite(serverRow) && (reqRow == null || serverRow > reqRow)) {
+        if (typeof setRowCalcForUser_bm === 'function') {
+          setRowCalcForUser_bm(serverRow);
+        }
+      }
+
+      if (!res?.ready){
+        renderPFSafe([], 'WAITING');
+        const wait = 500;
+        return { done:false, wait };
+      }
+
+      // READY
+      const data = Array.isArray(res?.data) ? res.data : [];
+      renderPFSafe(data, 'READY');
+      
+      if (!(reqRow && Number(res.row || 0) < Number(reqRow))) {
+        savePFCache({ row: res.row, data, updated_at: res.updated_at });
+      }
+      
+      return { done:true };
+
+    } catch(err){
+      if (err?.name === 'AbortError') return { done:true };
+      if (runId !== _pfRunId) return { done:true };
+      renderPFSafe([], 'WAITING');
+      return { done:false, wait: 1000 };
+    }
+  }
+
+  async function pollLoop(runId){
+    if (runId !== _pfRunId) return;
+    clearTimeout(_pfTimer);
+    const r = await pollOnce(runId);
+    if (r.done || runId !== _pfRunId) return;
+    _pfTimer = setTimeout(()=>pollLoop(runId), r.wait);
+  }
+
+  /* ---------- Public start ---------- */
+  window.startPlanFactFlow_bm = function(){
+    _pfRunId += 1;
+    const runId = _pfRunId;
+    _pfStatus = 'INIT';
+    _pfLastSig = '';
+
+    // Показываем кэш
+    const target = targetRow();
+    const cached = loadPFCache();
+    if (cached?.data && !(target && Number(cached.row || 0) < Number(target))) {
+      renderPFSafe(cached.data, 'READY');
+    } else {
+      renderPFSafe([], 'WAITING');
+    }
+
+    clearTimeout(_pfTimer);
+    if (_pfAbort){ try{ _pfAbort.abort(); }catch(_){ } _pfAbort = null; }
+
+    pollLoop(runId);
+  };
+
+  document.addEventListener('visibilitychange', ()=>{
+    if (document.visibilityState === 'hidden'){
+      clearTimeout(_pfTimer);
+      if (_pfAbort){ try{ _pfAbort.abort(); }catch(_){ } _pfAbort = null; }
+    } else {
+      window.startPlanFactFlow_bm();
+    }
+  });
+
+  // Автозапуск
+  window.startPlanFactFlow_bm();
+})();
 
 
 /* ============================================================
