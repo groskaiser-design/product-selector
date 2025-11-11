@@ -2897,7 +2897,8 @@ try{
 })();
 */
 
-/* ============================================================
+
+  /* ============================================================
  *  BLOCK E2 — Plan/Fact Chart (интегрированный с backend)
  * ============================================================ */
 (function planFactChartInit(){
@@ -2911,7 +2912,7 @@ try{
   function savePFCache_bm(obj, uid){ try { localStorage.setItem(pfKey_bm(uid), JSON.stringify(obj)); } catch(_){} }
   function loadPFCache_bm(uid){ try { const raw = localStorage.getItem(pfKey_bm(uid)); return raw ? JSON.parse(raw) : null; } catch(_) { return null; } }
 
-  /* ---------- Render Chart (точная копия из первого файла) ---------- */
+  /* ---------- Render Chart ---------- */
   function toRows(payload){
     if(!payload||typeof payload!=='object')return[];
     const LABELS={fat:'% жира',neck:'Шея',shoulders:'Плечи',chest:'Грудь',waist:'Талия',hips:'Ягодицы',thigh:'Бедро',calf:'Икра',bicep:'Бицепс'};
@@ -2974,43 +2975,40 @@ try{
     return{setData:function(payload){state.data=Array.isArray(payload)?payload:toRows(payload);draw();}};
   }
 
-function normalizeSeries(input){
-  if(!input)return{dates:[],rows:[]};
-  
-  let seriesMap=null;
-  
-  // ✅ Проверяем: если input.series — объект с датами
-  if(input.series && typeof input.series==='object' && !Array.isArray(input.series)){
-    seriesMap=input.series;
-  }
-  // ✅ Если input САМ является объектом с датами (без обёртки .series)
-  else if(typeof input==='object' && !Array.isArray(input) && !input.series){
-    // Проверяем, что ключи похожи на даты
-    const keys = Object.keys(input);
-    if(keys.length > 0 && /^\d{4}-\d{2}-\d{2}$/.test(keys[0])){
-      seriesMap = input;
+  function normalizeSeries(input){
+    if(!input)return{dates:[],rows:[]};
+    
+    let seriesMap=null;
+    
+    if(input.series && typeof input.series==='object' && !Array.isArray(input.series)){
+      seriesMap=input.series;
     }
-  }
-  
-  if(!seriesMap){
-    return{dates:['—'],rows:[toRows(input)]};
-  }
-  
-  const dates=Object.keys(seriesMap);
-  dates.sort(function(a,b){
-    const da=new Date(a);
-    const db=new Date(b);
-    if(isFinite(da.getTime())&&isFinite(db.getTime())){
-      return da-db;
+    else if(typeof input==='object' && !Array.isArray(input) && !input.series){
+      const keys = Object.keys(input);
+      if(keys.length > 0 && /^\d{4}-\d{2}-\d{2}$/.test(keys[0])){
+        seriesMap = input;
+      }
     }
-    return a>b?1:-1;
-  });
-  const rows=[];
-  for(let j=0;j<dates.length;j++){
-    rows.push(toRows(seriesMap[dates[j]]||{}));
+    
+    if(!seriesMap){
+      return{dates:['—'],rows:[toRows(input)]};
+    }
+    
+    const dates=Object.keys(seriesMap);
+    dates.sort(function(a,b){
+      const da=new Date(a);
+      const db=new Date(b);
+      if(isFinite(da.getTime())&&isFinite(db.getTime())){
+        return da-db;
+      }
+      return a>b?1:-1;
+    });
+    const rows=[];
+    for(let j=0;j<dates.length;j++){
+      rows.push(toRows(seriesMap[dates[j]]||{}));
+    }
+    return{dates:dates,rows:rows};
   }
-  return{dates:dates,rows:rows};
-}
 
   function formatDateRu(s){
     const d=new Date(s);if(!isFinite(d.getTime()))return s;
@@ -3087,6 +3085,7 @@ function normalizeSeries(input){
 
   /* ---------- Render logic ---------- */
   let _pfApi=null;
+  
   function renderChart(series,status){
     ensurePFHost();
     const container=document.getElementById('pfHApp');if(!container)return;
@@ -3101,6 +3100,17 @@ function normalizeSeries(input){
       setupTimeline(nrm,_pfApi);
       return;
     }
+    
+    // НЕ очищаем при WAITING если уже показали READY
+    if(status==='WAITING' && _pfStatus==='READY'){
+      if(hint){hint.textContent='Обновляем данные…';}
+      return;
+    }
+    
+    // Очищаем контейнер при других статусах
+    container.innerHTML='';
+    _pfApi=null;
+    
     if(status==='WAITING'){
       if(hint){hint.style.display='block';hint.textContent='Обрабатываем данные замеров…';}
       return;
@@ -3116,16 +3126,17 @@ function normalizeSeries(input){
   let _pfRunId=0;
   let _pfAbort=null;
   let _pfStatus='INIT';
+  let _pfInitialized=false;
   const STATUS_RANK={INIT:0,NO_ROW:1,WAITING:2,READY:3};
 
-function renderChartSafe(series, nextStatus){
-  const cur = STATUS_RANK[_pfStatus] ?? 0;
-  const nxt = STATUS_RANK[nextStatus] ?? 0;
-  if(nxt < cur) return;  // только защита от отката статуса
-  
-  renderChart(series, nextStatus);
-  _pfStatus = nextStatus;
-}
+  function renderChartSafe(series,nextStatus){
+    const cur=STATUS_RANK[_pfStatus]??0;
+    const nxt=STATUS_RANK[nextStatus]??0;
+    if(nxt<cur)return;
+    
+    renderChart(series,nextStatus);
+    _pfStatus=nextStatus;
+  }
 
   /* ---------- API ---------- */
   async function apiFrontPlanFact_bm(requestedRow,signal){
@@ -3174,11 +3185,8 @@ function renderChartSafe(series, nextStatus){
         return{done:false,wait};
       }
 
-      // READY
-      const series = res?.series || null;
-      renderChartSafe(series, 'READY');  // ← БЕЗ оборачивания
-      
-      
+      const series=res?.series||null;
+      renderChartSafe(series,'READY');
       
       if(!(reqRow&&Number(res.row||0)<Number(reqRow))){
         try{
@@ -3205,9 +3213,18 @@ function renderChartSafe(series, nextStatus){
 
   /* ---------- Public start ---------- */
   window.startPlanFactFlow_bm_bm=function(){
+    // Защита от повторного запуска если уже показали график
+    if(_pfInitialized && _pfStatus==='READY'){
+      return;
+    }
+    
     _pfRunId+=1;
     const runId=_pfRunId;
-    _pfStatus='INIT';
+    
+    // НЕ сбрасываем READY → INIT
+    if(_pfStatus!=='READY'){
+      _pfStatus='INIT';
+    }
 
     ensurePFHost();
 
@@ -3218,6 +3235,7 @@ function renderChartSafe(series, nextStatus){
       const cached=raw?JSON.parse(raw):null;
       if(cached?.series&&!(target&&Number(cached.row||0)<Number(target))){
         renderChartSafe(cached.series,'READY');
+        _pfInitialized=true;
       }
     }catch(_){}
 
@@ -3238,7 +3256,6 @@ function renderChartSafe(series, nextStatus){
 
   window.startPlanFactFlow_bm_bm();
 })();
-
   
 
 /* ============================================================
