@@ -3118,13 +3118,40 @@ function normalizeSeries(input){
   let _pfStatus='INIT';
   const STATUS_RANK={INIT:0,NO_ROW:1,WAITING:2,READY:3};
 
-  function renderChartSafe(series,nextStatus){
-    const cur=STATUS_RANK[_pfStatus]??0;
-    const nxt=STATUS_RANK[nextStatus]??0;
-    if(nxt<cur)return;
-    renderChart(series,nextStatus);
-    _pfStatus=nextStatus;
+function renderChartSafe(series,nextStatus){
+  const cur=STATUS_RANK[_pfStatus]??0;
+  const nxt=STATUS_RANK[nextStatus]??0;
+  if(nxt<cur)return;
+  
+  // ✅ Улучшенная проверка: ищем даты глубже
+  if(nextStatus==='READY' && _pfStatus==='READY'){
+    if(!series) {
+      console.warn('⚠️ Пропущен пустой READY (series = null)');
+      return;
+    }
+    
+    // Проверяем: есть ли даты в series напрямую или в series.series
+    let hasDates = false;
+    if(typeof series === 'object'){
+      const keys = Object.keys(series);
+      // Если есть ключи-даты напрямую
+      hasDates = keys.some(k => /^\d{4}-\d{2}-\d{2}$/.test(k));
+      // Или если есть вложенный series с датами
+      if(!hasDates && series.series && typeof series.series === 'object'){
+        const nestedKeys = Object.keys(series.series);
+        hasDates = nestedKeys.some(k => /^\d{4}-\d{2}-\d{2}$/.test(k));
+      }
+    }
+    
+    if(!hasDates){
+      console.warn('⚠️ Пропущен пустой READY (нет дат)');
+      return;
+    }
   }
+  
+  renderChart(series,nextStatus);
+  _pfStatus=nextStatus;
+}
 
   /* ---------- API ---------- */
   async function apiFrontPlanFact_bm(requestedRow,signal){
@@ -3175,13 +3202,9 @@ function normalizeSeries(input){
 
       // READY
       const series = res?.series || null;
+      renderChartSafe(series, 'READY');  // ← БЕЗ оборачивания
       
-      // ✅ Адаптация: если series — объект с датами, оборачиваем
-      const seriesData = (series && typeof series === 'object' && !Array.isArray(series))
-        ? { series: series }  // ← оборачиваем в структуру для normalizeSeries
-        : series;
       
-      renderChartSafe(seriesData, 'READY');
       
       if(!(reqRow&&Number(res.row||0)<Number(reqRow))){
         try{
