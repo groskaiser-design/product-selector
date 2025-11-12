@@ -2423,7 +2423,6 @@ function handleSaveClick_bm(e){
 
   var _chartTimer = 0;
   var _chartRunId = 0;
-  var _chartAbort = null;
   var _chartStatus = 'INIT';
   var STATUS_RANK = { INIT:0, NO_ROW:1, EMPTY:2, WAITING:3, READY:4 };
 
@@ -2441,7 +2440,7 @@ function handleSaveClick_bm(e){
     _chartStatus = nextStatus;
   }
 
-  function apiFrontChartData_bm(requestedRow, signal){
+  function apiFrontChartData_bm(requestedRow){
     var payload = {
       action: 'front_chart_data',
       init_data: String(tg && tg.initData ? tg.initData : ''),
@@ -2454,8 +2453,7 @@ function handleSaveClick_bm(e){
       body: JSON.stringify(payload),
       cache: 'no-store',
       credentials: 'omit',
-      mode: 'cors',
-      signal: signal
+      mode: 'cors'
     }).then(function(resp){
       return resp.text().then(function(raw){
         var json = null; 
@@ -2483,14 +2481,7 @@ function handleSaveClick_bm(e){
 
     var reqRow = targetRow();
 
-    if (_chartAbort) { 
-      try{ _chartAbort.abort(); }
-      catch(_){ } 
-    }
-    var controller = new AbortController();
-    _chartAbort = controller;
-
-    return apiFrontChartData_bm(reqRow, controller.signal)
+    return apiFrontChartData_bm(reqRow)
       .then(function(res){
         if (runId !== _chartRunId) return { done:true };
 
@@ -2552,7 +2543,6 @@ function handleSaveClick_bm(e){
 
       })
       .catch(function(err){
-        if (err && err.name === 'AbortError') return { done:true };
         if (runId !== _chartRunId) return { done:true };
         renderChartSafe(null, 'WAITING');
         return { done:false, wait: 1000 };
@@ -2580,23 +2570,13 @@ function handleSaveClick_bm(e){
     }
 
     clearTimeout(_chartTimer);
-    if (_chartAbort){ 
-      try{ _chartAbort.abort(); }
-      catch(_){ } 
-      _chartAbort = null; 
-    }
-
     pollLoop(runId);
   };
 
   document.addEventListener('visibilitychange', function(){
     if (document.visibilityState === 'hidden'){
       clearTimeout(_chartTimer);
-      if (_chartAbort){ 
-        try{ _chartAbort.abort(); }
-        catch(_){ } 
-        _chartAbort = null; 
-      }
+      _chartRunId = _chartRunId + 1;
     } else {
       window.startChartFlow_bm_bm();
     }
