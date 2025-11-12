@@ -2396,39 +2396,42 @@ function handleSaveClick_bm(e){
  *  BLOCK E3 — Analytics Chart Plan-Fact (poll + cache) тащит данные
  * ============================================================ */
 (function chartPlanFactInit(){
-  const tg = window.Telegram?.WebApp;
-  const BACKEND = (typeof BACKEND_URL_bm !== 'undefined' && BACKEND_URL_bm) ? BACKEND_URL_bm : '';
+  var tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+  var BACKEND = (typeof BACKEND_URL_bm !== 'undefined' && BACKEND_URL_bm) ? BACKEND_URL_bm : '';
   
-  const CHART_KEY_PREFIX = 'bm:chart:data:';
+  var CHART_KEY_PREFIX = 'bm:chart:data:';
   function currentUserId_bm(){ 
-    try { return window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'anon'; } 
-    catch(_){ return 'anon'; } 
+    try { 
+      if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe && window.Telegram.WebApp.initDataUnsafe.user) {
+        return window.Telegram.WebApp.initDataUnsafe.user.id || 'anon';
+      }
+      return 'anon';
+    } catch(_){ return 'anon'; } 
   }
-  function chartKey_bm(uid){ return CHART_KEY_PREFIX + String(uid ?? currentUserId_bm()); }
+  function chartKey_bm(uid){ return CHART_KEY_PREFIX + String(uid || currentUserId_bm()); }
   function saveChartCache_bm(obj, uid){ 
     try { localStorage.setItem(chartKey_bm(uid), JSON.stringify(obj)); } 
     catch(_){} 
   }
   function loadChartCache_bm(uid){ 
     try { 
-      const raw = localStorage.getItem(chartKey_bm(uid)); 
+      var raw = localStorage.getItem(chartKey_bm(uid)); 
       return raw ? JSON.parse(raw) : null; 
     } catch(_) { return null; } 
   }
 
-  let _chartTimer = 0;
-  let _chartRunId = 0;
-  let _chartAbort = null;
-  let _chartStatus = 'INIT';
-  const STATUS_RANK = { INIT:0, NO_ROW:1, EMPTY:2, WAITING:3, READY:4 };
+  var _chartTimer = 0;
+  var _chartRunId = 0;
+  var _chartAbort = null;
+  var _chartStatus = 'INIT';
+  var STATUS_RANK = { INIT:0, NO_ROW:1, EMPTY:2, WAITING:3, READY:4 };
 
   function renderChartSafe(chartData, nextStatus){
-    const cur = STATUS_RANK[_chartStatus] ?? 0;
-    const nxt = STATUS_RANK[nextStatus] ?? 0;
-    if (nxt < cur) return; // не откатываем статус
+    var cur = STATUS_RANK[_chartStatus] || 0;
+    var nxt = STATUS_RANK[nextStatus] || 0;
+    if (nxt < cur) return;
 
     if (nextStatus === 'READY' && chartData){
-      // Передаём данные в глобальный API графика
       if (window.PlanFactChart && window.PlanFactChart.setSeries){
         window.PlanFactChart.setSeries(chartData);
       }
@@ -2437,141 +2440,141 @@ function handleSaveClick_bm(e){
     _chartStatus = nextStatus;
   }
 
-  async function apiFrontChartData_bm(requestedRow, signal){
-    const payload = {
-      action: 'front_chart_data', // или 'front_plan_fact'
-      init_data: String(tg?.initData || ''),
+  function apiFrontChartData_bm(requestedRow, signal){
+    var payload = {
+      action: 'front_chart_data',
+      init_data: String(tg && tg.initData ? tg.initData : ''),
       row: Number(requestedRow || 0) || undefined
     };
 
-    const resp = await fetch(BACKEND, {
+    return fetch(BACKEND, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
       body: JSON.stringify(payload),
       cache: 'no-store',
       credentials: 'omit',
       mode: 'cors',
-      signal
+      signal: signal
+    }).then(function(resp){
+      return resp.text().then(function(raw){
+        var json = null; 
+        try { json = raw ? JSON.parse(raw) : null; } 
+        catch(_){}
+        if (!resp.ok || !json) throw new Error('HTTP ' + resp.status);
+        return json;
+      });
     });
-
-    const raw = await resp.text();
-    let json = null; 
-    try { json = raw ? JSON.parse(raw) : null; } 
-    catch(_){}
-
-    if (!resp.ok || !json) throw new Error(`HTTP ${resp.status}`);
-    return json;
   }
 
   function targetRow(){
-    return (typeof desiredRow === 'function' && desiredRow() != null)
-      ? desiredRow()
-      : (typeof getRowCalcForUser_bm === 'function' ? getRowCalcForUser_bm() : null);
+    if (typeof desiredRow === 'function') {
+      var dr = desiredRow();
+      if (dr != null) return dr;
+    }
+    if (typeof getRowCalcForUser_bm === 'function') {
+      return getRowCalcForUser_bm();
+    }
+    return null;
   }
 
-  async function pollOnce(runId){
-    if (runId !== _chartRunId) return { done:true };
+  function pollOnce(runId){
+    if (runId !== _chartRunId) return Promise.resolve({ done:true });
 
-    const reqRow = targetRow();
+    var reqRow = targetRow();
 
     if (_chartAbort) { 
       try{ _chartAbort.abort(); }
       catch(_){ } 
     }
-    const controller = new AbortController();
+    var controller = new AbortController();
     _chartAbort = controller;
 
-    try{
-      const res = await apiFrontChartData_bm(reqRow, controller.signal);
-      if (runId !== _chartRunId) return { done:true };
+    return apiFrontChartData_bm(reqRow, controller.signal)
+      .then(function(res){
+        if (runId !== _chartRunId) return { done:true };
 
-      const serverRow = Number(res?.row || 0);
-      
-      // Не показываем старый ответ
-      if (serverRow && reqRow && serverRow < reqRow) {
-        renderChartSafe(null, 'WAITING');
-        return { done:false, wait: 500 };
-      }
-
-      // Обновляем row_calc если сервер знает больше
-      if (Number.isFinite(serverRow) && (reqRow == null || serverRow > reqRow)) {
-        if (typeof setRowCalcForUser_bm === 'function') {
-          setRowCalcForUser_bm(serverRow);
+        var serverRow = Number(res && res.row ? res.row : 0);
+        
+        if (serverRow && reqRow && serverRow < reqRow) {
+          renderChartSafe(null, 'WAITING');
+          return { done:false, wait: 500 };
         }
-      }
 
-      const status = res.status || 'WAITING';
-      
-      if (status === 'NO_ROW'){
-        renderChartSafe(null, 'NO_ROW');
+        if (Number.isFinite(serverRow) && (reqRow == null || serverRow > reqRow)) {
+          if (typeof setRowCalcForUser_bm === 'function') {
+            setRowCalcForUser_bm(serverRow);
+          }
+        }
+
+        var status = res.status || 'WAITING';
+        
+        if (status === 'NO_ROW'){
+          renderChartSafe(null, 'NO_ROW');
+          return { done:true };
+        }
+
+        if (status === 'EMPTY'){
+          renderChartSafe(null, 'EMPTY');
+          return { done:false, wait: 500 };
+        }
+
+        if (!res.ready){
+          renderChartSafe(null, 'WAITING');
+          return { done:false, wait: 500 };
+        }
+
+        var chartData = null;
+        
+        if (res.series && typeof res.series === 'object'){
+          chartData = { series: res.series };
+        } 
+        else if (Array.isArray(res.data) && res.data.length > 0){
+          chartData = res.data;
+        }
+
+        if (!chartData){
+          renderChartSafe(null, 'EMPTY');
+          return { done:false, wait: 500 };
+        }
+
+        renderChartSafe(chartData, 'READY');
+
+        if (!(reqRow && serverRow < reqRow)) {
+          saveChartCache_bm({ 
+            row: serverRow, 
+            data: chartData, 
+            updated_at: res.updated_at || new Date().toISOString() 
+          });
+        }
+
         return { done:true };
-      }
 
-      if (status === 'EMPTY'){
-        renderChartSafe(null, 'EMPTY');
-        return { done:false, wait: 500 };
-      }
-
-      if (!res.ready){
+      })
+      .catch(function(err){
+        if (err && err.name === 'AbortError') return { done:true };
+        if (runId !== _chartRunId) return { done:true };
         renderChartSafe(null, 'WAITING');
-        return { done:false, wait: 500 };
-      }
-
-      // READY — проверяем формат данных
-      let chartData = null;
-      
-      // Новый формат: series
-      if (res.series && typeof res.series === 'object'){
-        chartData = { series: res.series };
-      } 
-      // Старый формат: data массив
-      else if (Array.isArray(res.data) && res.data.length > 0){
-        chartData = res.data;
-      }
-
-      if (!chartData){
-        renderChartSafe(null, 'EMPTY');
-        return { done:false, wait: 500 };
-      }
-
-      renderChartSafe(chartData, 'READY');
-
-      // Сохраняем в кэш (если не старее reqRow)
-      if (!(reqRow && serverRow < reqRow)) {
-        saveChartCache_bm({ 
-          row: serverRow, 
-          data: chartData, 
-          updated_at: res.updated_at || new Date().toISOString() 
-        });
-      }
-
-      return { done:true };
-
-    } catch(err){
-      if (err?.name === 'AbortError') return { done:true };
-      if (runId !== _chartRunId) return { done:true };
-      renderChartSafe(null, 'WAITING');
-      return { done:false, wait: 1000 };
-    }
+        return { done:false, wait: 1000 };
+      });
   }
 
-  async function pollLoop(runId){
+  function pollLoop(runId){
     if (runId !== _chartRunId) return;
     clearTimeout(_chartTimer);
-    const r = await pollOnce(runId);
-    if (r.done || runId !== _chartRunId) return;
-    _chartTimer = setTimeout(()=>pollLoop(runId), r.wait);
+    pollOnce(runId).then(function(r){
+      if (r.done || runId !== _chartRunId) return;
+      _chartTimer = setTimeout(function(){ pollLoop(runId); }, r.wait);
+    });
   }
 
   window.startChartFlow_bm_bm = function(){
-    _chartRunId += 1;
-    const runId = _chartRunId;
+    _chartRunId = _chartRunId + 1;
+    var runId = _chartRunId;
     _chartStatus = 'INIT';
 
-    // Показываем кэш если он не старее desiredRow
-    const target = targetRow();
-    const cached = loadChartCache_bm();
-    if (cached?.data && !(target && Number(cached.row || 0) < Number(target))) {
+    var target = targetRow();
+    var cached = loadChartCache_bm();
+    if (cached && cached.data && !(target && Number(cached.row || 0) < Number(target))) {
       renderChartSafe(cached.data, 'READY');
     }
 
@@ -2585,7 +2588,7 @@ function handleSaveClick_bm(e){
     pollLoop(runId);
   };
 
-  document.addEventListener('visibilitychange', ()=>{
+  document.addEventListener('visibilitychange', function(){
     if (document.visibilityState === 'hidden'){
       clearTimeout(_chartTimer);
       if (_chartAbort){ 
