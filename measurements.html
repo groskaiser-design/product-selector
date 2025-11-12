@@ -1743,14 +1743,277 @@ function handleSaveClick_bm(e){
           try { window.startChartFlow_bm_bm(); } catch(_){} 
         }
    
-    // Это кусок для графика с замерами
-              try {
-        const seriesNow = b.chart?.series || b.chart?.data;
-        if (b.chart?.ready && seriesNow) {
-          if (window.PlanFactChart?.setSeries) { window.PlanFactChart.setSeries(seriesNow); }
-          else { window.__pendingChartSeries = seriesNow; }
+    /* ==================== Временная шкала (серии дат) ==================== */
+(function initTimeline(){
+  function parseJSONFromTemplateIfExists(id){ 
+    var el=document.getElementById(id); 
+    if(!el) return null; 
+    return parseJSONFromTemplate(id); 
+  }
+  
+  function normalizeSeries(input){
+    if(!input) return { dates:[], rows:[] };
+    var seriesMap = null;
+    if (input.series && typeof input.series === 'object' && !Array.isArray(input.series)) {
+      seriesMap = input.series;
+    } else if (Array.isArray(input) && input.length && input[0] && typeof input[0] === 'object' && ('date' in input[0])) {
+      seriesMap = {}; 
+      for (var i=0;i<input.length;i++){ 
+        var it=input[i]; 
+        if(!it) continue; 
+        var k=String(it.date||i); 
+        seriesMap[k] = it.data || it.snapshot || {}; 
+      }
+    } else {
+      return { dates:['—'], rows:[ toRows(input) ] };
+    }
+    var dates = Object.keys(seriesMap);
+    dates.sort(function(a,b){ 
+      var da=new Date(a), db=new Date(b); 
+      if(isFinite(da.getTime()) && isFinite(db.getTime())) return da-db; 
+      return (a>b?1:-1); 
+    });
+    var rows = []; 
+    for(var j=0;j<dates.length;j++){ 
+      rows.push( toRows(seriesMap[dates[j]]||{}) ); 
+    }
+    return { dates:dates, rows:rows };
+  }
+  
+  function formatDateRu(s){ 
+    var d=new Date(s); 
+    if(!isFinite(d.getTime())) return s; 
+    try{ 
+      return d.toLocaleDateString('ru-RU',{year:'numeric',month:'short',day:'2-digit'}); 
+    }catch(_){ 
+      return s; 
+    } 
+  }
+
+  var currentNorm = null; // ← хранит текущие данные
+  var currentApi = null;
+
+  function setupTimeline(norm, api){
+    const tl = document.getElementById('timeline');
+    const wheel = document.getElementById('dateWheel');
+    const maskEl = tl ? tl.querySelector('.wheel-mask') : null;
+    if(!tl || !wheel) return;
+
+    const n = (norm && Array.isArray(norm.rows)) ? norm.rows.length : 0;
+    if(n <= 1){ tl.hidden = true; return; }
+
+    tl.hidden = false;
+    currentNorm = norm; // ← сохраняем
+    currentApi = api;
+
+    // Очистка старых обработчиков
+    const oldWheel = wheel.cloneNode(false);
+    wheel.parentNode.replaceChild(oldWheel, wheel);
+    const newWheel = oldWheel; // переназначаем ссылку
+
+    newWheel.innerHTML = '';
+    const items = new Array(n);
+
+    function syncMask(){
+      if(!maskEl) return;
+      const el = items[Math.max(0, active)] || items[0];
+      if(!el) return;
+      const rect = el.getBoundingClientRect();
+      const wr = newWheel.getBoundingClientRect();
+      const pr = tl.getBoundingClientRect();
+      const padX = 8, padY = 8;
+      const scale = 1.5;
+      const w = Math.round(rect.width * scale + padX*2);
+      const h = Math.round(rect.height + padY*2);
+      const centerX = wr.left + wr.width/2;
+      const left = Math.round(centerX - w/2 - pr.left);
+      const top  = Math.round((wr.top - pr.top) + (wr.height - h)/2);
+      maskEl.style.setProperty('--mask-left', left + 'px');
+      maskEl.style.setProperty('--mask-top',  top  + 'px');
+      maskEl.style.setProperty('--mask-w',    w    + 'px');
+      maskEl.style.setProperty('--mask-h',    h    + 'px');
+    }
+    
+    for(let i=0;i<n;i++){
+      const label = formatDateRu(norm.dates[i]||String(i));
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'item';
+      btn.setAttribute('role','option');
+      btn.setAttribute('aria-selected','false');
+      btn.dataset.idx = String(i);
+      btn.textContent = label;
+      
+      btn.addEventListener('click', function(){ 
+        scrollLock = true;
+        centerTo(Number(this.dataset.idx), true, 'smooth'); 
+        setTimeout(() => { scrollLock = false; }, 600);
+      });
+      
+      newWheel.appendChild(btn);
+      items[i] = btn;
+    }
+
+    function ensureSpacers(){
+      const olds = newWheel.querySelectorAll('.spacer'); 
+      olds.forEach(x=>x.remove());
+      const left = document.createElement('div'); 
+      left.className='spacer'; 
+      left.setAttribute('aria-hidden','true');
+      const right = document.createElement('div'); 
+      right.className='spacer'; 
+      right.setAttribute('aria-hidden','true');
+      newWheel.prepend(left); 
+      newWheel.appendChild(right); 
+      resizeSpacers();
+    }
+    
+    function resizeSpacers(){ 
+      const edge = Math.max(0, Math.floor(newWheel.clientWidth/2)); 
+      newWheel.style.setProperty('--edge', edge+'px'); 
+    }
+    
+    ensureSpacers();
+
+    let active = -1, rafId = 0, snapTimer = 0;
+    let scrollLock = false; // ← игнорим scroll при клике
+    
+    function setAria(){ 
+      for(let k=0;k<items.length;k++){ 
+        if(!items[k]) continue; 
+        items[k].setAttribute('aria-selected', String(k===active)); 
+        items[k].setAttribute('tabindex', k===active? '0':'-1'); 
+      } 
+    }
+    
+    function activate(i, announce){
+      if(i === active || i < 0 || i >= n) return;
+      if(items[active]){ 
+        items[active].classList.remove('active'); 
+        items[active].setAttribute('aria-selected','false'); 
+      }
+      active = i;
+      if(items[active]){ 
+        items[active].classList.add('active'); 
+        items[active].setAttribute('aria-selected','true'); 
+      }
+      setAria();
+      api && api.setData(norm.rows[i]||[]);
+      syncMask();
+    }
+    
+    function centerTo(i, announce, behavior){
+      i = Math.max(0, Math.min(n-1, i)); 
+      const el = items[i]; 
+      if(!el) return;
+      const target = el.offsetLeft + el.offsetWidth/2 - newWheel.clientWidth/2;
+      newWheel.scrollTo({ left: Math.max(0, target), behavior: (behavior||'auto') });
+      activate(i, announce);
+      syncMask();
+    }
+    
+    function onScroll(){
+      if(scrollLock) return; // ← блокируем при клике
+      
+      if(rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(function(){
+        const center = newWheel.scrollLeft + newWheel.clientWidth/2;
+        let best = -1, bestDist = 1e12;
+        for(let k=0;k<n;k++){
+          const el = items[k]; 
+          const c = el.offsetLeft + el.offsetWidth/2; 
+          const d = Math.abs(c - center);
+          if(d < bestDist){ bestDist = d; best = k; }
         }
-        } catch(_){}
+        activate(best, best !== active);
+        syncMask();
+        
+        if(snapTimer) clearTimeout(snapTimer);
+        snapTimer = setTimeout(function(){
+          if(scrollLock) return;
+          const el = items[active]; 
+          if(!el) return;
+          const target = el.offsetLeft + el.offsetWidth/2 - newWheel.clientWidth/2;
+          const curCenter = newWheel.scrollLeft + newWheel.clientWidth/2;
+          if(Math.abs(curCenter - (el.offsetLeft + el.offsetWidth/2)) > 3){
+            newWheel.scrollTo({ left: Math.max(0, target), behavior: 'auto' });
+          }
+        }, 140);
+      });
+    }
+
+    newWheel.addEventListener('scroll', onScroll, { passive:true });
+    newWheel.addEventListener('wheel', function(e){ 
+      if(Math.abs(e.deltaY) > Math.abs(e.deltaX)){ 
+        e.preventDefault(); 
+        newWheel.scrollLeft += e.deltaY; 
+      } 
+    }, { passive:false });
+    
+    newWheel.addEventListener('keydown', function(e){ 
+      if(e.key==='ArrowLeft'){ 
+        e.preventDefault(); 
+        scrollLock = true;
+        centerTo(active-1, true, 'smooth'); 
+        setTimeout(() => { scrollLock = false; }, 600);
+      } else if(e.key==='ArrowRight'){ 
+        e.preventDefault(); 
+        scrollLock = true;
+        centerTo(active+1, true, 'smooth'); 
+        setTimeout(() => { scrollLock = false; }, 600);
+      } 
+    });
+    
+    window.addEventListener('resize', function(){ 
+      resizeSpacers(); 
+      centerTo(active, false, 'auto'); 
+      syncMask(); 
+    }, { passive:true });
+
+    // ✅ Старт с последней даты
+    setTimeout(() => {
+      centerTo(n-1, false, 'auto');
+      syncMask();
+    }, 100);
+  }
+
+  function pickSeriesInput(){
+    let seriesInput = parseJSONFromTemplateIfExists('pfSeries_demo');
+    if (typeof window !== 'undefined' && window.PLAN_FACT_SERIES) { 
+      seriesInput = window.PLAN_FACT_SERIES; 
+    }
+    else if (typeof window !== 'undefined' && window.PLAN_FACT_JSON && (window.PLAN_FACT_JSON.series || Array.isArray(window.PLAN_FACT_JSON))) { 
+      seriesInput = window.PLAN_FACT_JSON; 
+    }
+    return seriesInput;
+  }
+
+  const seriesInput = pickSeriesInput();
+  const norm = normalizeSeries(seriesInput||{});
+  
+  if (norm.rows.length>1){ 
+    const last = norm.rows[(norm.rows.length-1)|0] || []; 
+    api && api.setData(last); 
+    setupTimeline(norm, api); 
+  } else { 
+    const tl=document.getElementById('timeline'); 
+    if(tl) tl.hidden=true; 
+  }
+
+  if (typeof window !== 'undefined' && window.PlanFactChart){
+    window.PlanFactChart.setSeries = function(json){
+      const nrm = normalizeSeries(json||{});
+      if(nrm.rows.length > 1){
+        const last = nrm.rows[(nrm.rows.length-1)|0] || [];
+        if(api) api.setData(last);
+        setupTimeline(nrm, api);
+      } else {
+        const tl = document.getElementById('timeline');
+        if(tl) tl.hidden = true;
+      }
+    };
+  }
+})();
              } catch(_){}     // может и не нужен?
 
     } catch {
@@ -2601,343 +2864,7 @@ function handleSaveClick_bm(e){
         })();
 
   
-/* ==================== Временная шкала (серии дат) ==================== */
-(function initTimeline(){
-  function parseJSONFromTemplateIfExists(id){ 
-    var el=document.getElementById(id); 
-    if(!el) return null; 
-    return parseJSONFromTemplate(id); 
-  }
-  
-  function normalizeSeries(input){
-    if(!input) return { dates:[], rows:[] };
-    var seriesMap = null;
-    if (input.series && typeof input.series === 'object' && !Array.isArray(input.series)) {
-      seriesMap = input.series;
-    } else if (Array.isArray(input) && input.length && input[0] && typeof input[0] === 'object' && ('date' in input[0])) {
-      seriesMap = {}; 
-      for (var i=0;i<input.length;i++){ 
-        var it=input[i]; 
-        if(!it) continue; 
-        var k=String(it.date||i); 
-        seriesMap[k] = it.data || it.snapshot || {}; 
-      }
-    } else {
-      return { dates:['—'], rows:[ toRows(input) ] };
-    }
-    var dates = Object.keys(seriesMap);
-    dates.sort(function(a,b){ 
-      var da=new Date(a), db=new Date(b); 
-      if(isFinite(da.getTime()) && isFinite(db.getTime())) return da-db; 
-      return (a>b?1:-1); 
-    });
-    var rows = []; 
-    for(var j=0;j<dates.length;j++){ 
-      rows.push( toRows(seriesMap[dates[j]]||{}) ); 
-    }
-    return { dates:dates, rows:rows };
-  }
-  
-  function formatDateRu(s){ 
-    var d=new Date(s); 
-    if(!isFinite(d.getTime())) return s; 
-    try{ 
-      return d.toLocaleDateString('ru-RU',{year:'numeric',month:'short',day:'2-digit'}); 
-    }catch(_){ 
-      return s; 
-    } 
-  }
 
-  let timelineInstance = null; // ← Singleton
-
-  function setupTimeline(norm, api){
-    const tl = document.getElementById('timeline');
-    const wheel = document.getElementById('dateWheel');
-    const maskEl = tl ? tl.querySelector('.wheel-mask') : null;
-    if(!tl || !wheel) return;
-
-    const n = (norm && Array.isArray(norm.rows)) ? norm.rows.length : 0;
-    if(n <= 1){ tl.hidden = true; return; }
-
-    // ✅ Если уже инициализировано — только обновляем данные
-    if(timelineInstance && timelineInstance.update){
-      timelineInstance.update(norm, api);
-      return;
-    }
-
-    tl.hidden = false; 
-    wheel.innerHTML = '';
-    const items = new Array(n);
-
-    function syncMask(){
-      if(!maskEl) return;
-      const el = items[Math.max(0, active)] || items[0];
-      if(!el) return;
-      const rect = el.getBoundingClientRect();
-      const wr = wheel.getBoundingClientRect();
-      const pr = tl.getBoundingClientRect();
-      const padX = 8, padY = 8;
-      const scale = 1.5;
-      const w = Math.round(rect.width * scale + padX*2);
-      const h = Math.round(rect.height + padY*2);
-      const centerX = wr.left + wr.width/2;
-      const left = Math.round(centerX - w/2 - pr.left);
-      const top  = Math.round((wr.top - pr.top) + (wr.height - h)/2);
-      maskEl.style.setProperty('--mask-left', left + 'px');
-      maskEl.style.setProperty('--mask-top',  top  + 'px');
-      maskEl.style.setProperty('--mask-w',    w    + 'px');
-      maskEl.style.setProperty('--mask-h',    h    + 'px');
-    }
-    
-    for(let i=0;i<n;i++){
-      const label = formatDateRu(norm.dates[i]||String(i));
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'item';
-      btn.setAttribute('role','option');
-      btn.setAttribute('aria-selected','false');
-      btn.dataset.idx = String(i);
-      btn.textContent = label;
-      
-      // ✅ ИСПРАВЛЕНО: прямой вызов activate без scroll
-      btn.addEventListener('click', function(e){ 
-        e.preventDefault();
-        e.stopPropagation();
-        const idx = Number(this.dataset.idx);
-        programmaticScroll = true;
-        centerTo(idx, true, 'smooth'); 
-        setTimeout(() => { programmaticScroll = false; }, 400);
-      });
-      
-      wheel.appendChild(btn);
-      items[i] = btn;
-    }
-
-    function ensureSpacers(){
-      const olds = wheel.querySelectorAll('.spacer'); 
-      olds.forEach(x=>x.remove());
-      const left = document.createElement('div'); 
-      left.className='spacer'; 
-      left.setAttribute('aria-hidden','true');
-      const right = document.createElement('div'); 
-      right.className='spacer'; 
-      right.setAttribute('aria-hidden','true');
-      wheel.prepend(left); 
-      wheel.appendChild(right); 
-      resizeSpacers();
-    }
-    
-    function resizeSpacers(){ 
-      const edge = Math.max(0, Math.floor(wheel.clientWidth/2)); 
-      wheel.style.setProperty('--edge', edge+'px'); 
-    }
-    
-    ensureSpacers();
-
-    let active = -1, rafId = 0, snapTimer = 0;
-    let programmaticScroll = false; // ← флаг для игнора событий от centerTo()
-    
-    function setAria(){ 
-      for(let k=0;k<items.length;k++){ 
-        if(!items[k]) continue; 
-        items[k].setAttribute('aria-selected', String(k===active)); 
-        items[k].setAttribute('tabindex', k===active? '0':'-1'); 
-      } 
-    }
-    
-    function activate(i, announce){
-      if(i === active || i < 0 || i >= n) return;
-      if(items[active]){ 
-        items[active].classList.remove('active'); 
-        items[active].setAttribute('aria-selected','false'); 
-      }
-      active = i;
-      if(items[active]){ 
-        items[active].classList.add('active'); 
-        items[active].setAttribute('aria-selected','true'); 
-      }
-      setAria();
-      api && api.setData(norm.rows[i]||[]);
-      syncMask();
-    }
-    
-    function centerTo(i, announce, behavior){
-      i = Math.max(0, Math.min(n-1, i)); 
-      const el = items[i]; 
-      if(!el) return;
-      const target = el.offsetLeft + el.offsetWidth/2 - wheel.clientWidth/2;
-      programmaticScroll = true; // ← блокируем onScroll
-      wheel.scrollTo({ left: Math.max(0, target), behavior: (behavior||'auto') });
-      activate(i, announce);
-      syncMask();
-      setTimeout(() => { programmaticScroll = false; }, 300);
-    }
-    
-    function onScroll(){
-      if(programmaticScroll) return; // ← игнорим scroll от centerTo/клика
-      
-      if(rafId) cancelAnimationFrame(rafId);
-      rafId = requestAnimationFrame(function(){
-        const center = wheel.scrollLeft + wheel.clientWidth/2;
-        let best = -1, bestDist = 1e12;
-        for(let k=0;k<n;k++){
-          const el = items[k]; 
-          const c = el.offsetLeft + el.offsetWidth/2; 
-          const d = Math.abs(c - center);
-          if(d < bestDist){ bestDist = d; best = k; }
-        }
-        const changed = best !== active;
-        activate(best, changed);
-        syncMask();
-        
-        if(snapTimer) clearTimeout(snapTimer);
-        snapTimer = setTimeout(function(){
-          if(programmaticScroll) return; // ← на всякий случай
-          const el = items[active]; 
-          if(!el) return;
-          const target = el.offsetLeft + el.offsetWidth/2 - wheel.clientWidth/2;
-          const curCenter = wheel.scrollLeft + wheel.clientWidth/2;
-          if(Math.abs(curCenter - (el.offsetLeft + el.offsetWidth/2)) > 3){
-            programmaticScroll = true;
-            wheel.scrollTo({ left: Math.max(0, target), behavior: 'auto' });
-            setTimeout(() => { programmaticScroll = false; }, 200);
-          }
-        }, 140);
-      });
-    }
-
-    wheel.addEventListener('scroll', onScroll, { passive:true });
-    wheel.addEventListener('wheel', function(e){ 
-      if(Math.abs(e.deltaY) > Math.abs(e.deltaX)){ 
-        e.preventDefault(); 
-        wheel.scrollLeft += e.deltaY; 
-      } 
-    }, { passive:false });
-    
-    wheel.addEventListener('keydown', function(e){ 
-      if(e.key==='ArrowLeft'){ 
-        e.preventDefault(); 
-        centerTo(active-1, true, 'smooth'); 
-      } else if(e.key==='ArrowRight'){ 
-        e.preventDefault(); 
-        centerTo(active+1, true, 'smooth'); 
-      } 
-    });
-    
-    window.addEventListener('resize', function(){ 
-      resizeSpacers(); 
-      centerTo(active, false, 'auto'); 
-      syncMask(); 
-    }, { passive:true });
-
-    // ✅ КЛЮЧЕВОЙ МОМЕНТ: сначала activate, затем centerTo
-    const lastIndex = n-1;
-    activate(lastIndex, false);
-    setTimeout(() => {
-      programmaticScroll = true;
-      centerTo(lastIndex, false, 'auto');
-      setTimeout(() => { programmaticScroll = false; }, 300);
-    }, 50);
-    
-    syncMask();
-
-    // ✅ Singleton API
-    timelineInstance = {
-      update: function(newNorm, newApi){
-        if(!newNorm || !Array.isArray(newNorm.rows)) return;
-        norm = newNorm;
-        api = newApi;
-        const newN = newNorm.rows.length;
-        
-        // Перерисовываем items
-        wheel.innerHTML = '';
-        items.length = newN;
-        for(let i=0;i<newN;i++){
-          const label = formatDateRu(newNorm.dates[i]||String(i));
-          const btn = document.createElement('button');
-          btn.type = 'button';
-          btn.className = 'item';
-          btn.setAttribute('role','option');
-          btn.setAttribute('aria-selected','false');
-          btn.dataset.idx = String(i);
-          btn.textContent = label;
-          btn.addEventListener('click', function(e){ 
-            e.preventDefault();
-            e.stopPropagation();
-            const idx = Number(this.dataset.idx);
-            programmaticScroll = true;
-            centerTo(idx, true, 'smooth'); 
-            setTimeout(() => { programmaticScroll = false; }, 400);
-          });
-          wheel.appendChild(btn);
-          items[i] = btn;
-        }
-        ensureSpacers();
-        
-        const lastIdx = newN - 1;
-        activate(lastIdx, false);
-        setTimeout(() => {
-          programmaticScroll = true;
-          centerTo(lastIdx, false, 'auto');
-          setTimeout(() => { programmaticScroll = false; }, 300);
-        }, 50);
-      }
-    };
-  }
-
-  function pickSeriesInput(){
-    let seriesInput = parseJSONFromTemplateIfExists('pfSeries_demo');
-    if (typeof window !== 'undefined' && window.PLAN_FACT_SERIES) { 
-      seriesInput = window.PLAN_FACT_SERIES; 
-    }
-    else if (typeof window !== 'undefined' && window.PLAN_FACT_JSON && (window.PLAN_FACT_JSON.series || Array.isArray(window.PLAN_FACT_JSON))) { 
-      seriesInput = window.PLAN_FACT_JSON; 
-    }
-    return seriesInput;
-  }
-
-  const seriesInput = pickSeriesInput();
-  const norm = normalizeSeries(seriesInput||{});
-  
-  if (norm.rows.length>1){ 
-    const last = norm.rows[(norm.rows.length-1)|0] || []; 
-    api && api.setData(last); 
-    setupTimeline(norm, api); 
-  } else { 
-    const tl=document.getElementById('timeline'); 
-    if(tl) tl.hidden=true; 
-  }
-
-  if (typeof window !== 'undefined' && window.PlanFactChart){
-    window.PlanFactChart.setSeries = function(json){
-      const nrm = normalizeSeries(json||{});
-      if(api){ 
-        const l = nrm.rows[(nrm.rows.length-1)|0] || []; 
-        api.setData(l); 
-      }
-      setupTimeline(nrm, api);
-    };
-  }
-
-  // ✅ Гидратация кеша/pending ПОСЛЕ инициализации timeline
-  setTimeout(() => {
-    try{
-      if (window.__pendingChartSeries && window.PlanFactChart?.setSeries){
-        window.PlanFactChart.setSeries(window.__pendingChartSeries);
-        window.__pendingChartSeries = null;
-        return;
-      }
-      const uid = (typeof currentUserId_bm === 'function') ? currentUserId_bm() : 'anon';
-      const raw = localStorage.getItem('bm:chart:data:' + String(uid));
-      if (!raw) return;
-      const obj = JSON.parse(raw);
-      const series = obj?.series || obj?.data;
-      if (series && window.PlanFactChart?.setSeries) {
-        window.PlanFactChart.setSeries(series);
-      }
-    }catch(_){}
-  }, 100);
-})();
 
 //!-- HAPTIC for timeline: bind to .TabList.no-scrollbar -->
 
