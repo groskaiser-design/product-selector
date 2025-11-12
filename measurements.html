@@ -2199,7 +2199,7 @@ function handleSaveClick_bm(e){
 
 
 /* ============================================================
- *  BLOCK E2 — Analytics Chart (poll + cache) — аналог E1
+ *  BLOCK E2 — Analytics Chart (упрощённая версия через bootstrap)
  * ============================================================ */
 (function chartAnalyticsInit(){
   const tg = window.Telegram?.WebApp;
@@ -2211,54 +2211,61 @@ function handleSaveClick_bm(e){
   function saveChartCache_bm(obj, uid){ try { localStorage.setItem(chartKey_bm(uid), JSON.stringify(obj)); } catch(_){} }
   function loadChartCache_bm(uid){ try { const raw = localStorage.getItem(chartKey_bm(uid ?? currentUserId_bm())); return raw ? JSON.parse(raw) : null; } catch(_) { return null; } }
 
-  async function apiFrontChart_bm(requestedRow, signal){
-    const base = { init_data:String(tg?.initData||''), row: Number(requestedRow||0)||undefined };
-
-    // 1) Пробуем отдельный экшен (если на бэке есть)
-    try{
-      const r1 = await fetch(BACKEND, {
-        method:'POST', headers:{'Content-Type':'text/plain;charset=UTF-8'},
-        body: JSON.stringify({ action:'front_chart', ...base }),
-        cache:'no-store', credentials:'omit', mode:'cors', signal
-      });
-      const t1 = await r1.text(); let j1=null; try{ j1=t1?JSON.parse(t1):null; }catch(_){}
-      if (r1.ok && j1 && (('ready' in j1) || j1.series || j1.data)) return j1;
-    }catch(_){}
-
-    // 2) Фоллбэк на front_bootstrap → достаём chart
-    const r2 = await fetch(BACKEND, {
-      method:'POST', headers:{'Content-Type':'text/plain;charset=UTF-8'},
-      body: JSON.stringify({ action:'front_bootstrap', ...base }),
-      cache:'no-store', credentials:'omit', mode:'cors', signal
-    });
-    const t2 = await r2.text(); let j2=null; try{ j2=t2?JSON.parse(t2):null; }catch(_){}
-    if (!r2.ok || !j2) throw new Error(`HTTP ${r2.status}`);
-
-    const block = j2.chart || {};
-    return {
-      row: Number(block.row || j2.row || 0),
-      ready: !!block.ready,
-      series: block.series || block.data || null,
-      retry_after_ms: Number(block.retry_after_ms || j2.retry_after_ms || 500),
-      updated_at: block.updated_at || j2.updated_at
+  async function apiFrontBootstrap_bm(requestedRow, signal){
+    const payload = {
+      action: 'front_bootstrap',
+      init_data: String(tg?.initData || ''),
+      row: Number(requestedRow || 0) || undefined
     };
+    
+    const resp = await fetch(BACKEND, {
+      method:'POST',
+      headers:{ 'Content-Type':'text/plain;charset=UTF-8' },
+      body: JSON.stringify(payload),
+      cache:'no-store', 
+      credentials:'omit', 
+      mode:'cors',
+      signal
+    });
+    
+    const raw = await resp.text();
+    let json = null; 
+    try { json = raw ? JSON.parse(raw) : null; } 
+    catch(_){}
+    
+    if (!resp.ok || !json) throw new Error(`HTTP ${resp.status}`);
+    return json;
   }
 
   function applySeriesToChart(series){
     if (!series) return;
+    
     if (window.PlanFactChart?.setSeries){
-      try { window.PlanFactChart.setSeries(series); } catch(_){}
+      try { 
+        window.PlanFactChart.setSeries(series); 
+        console.log('✅ Chart updated with series:', Object.keys(series || {}).length, 'dates');
+      } catch(e){ 
+        console.error('❌ setSeries error:', e); 
+      }
       return;
     }
-    // Если график ещё не смонтирован (E3 не успел) — подождём
+    
     window.__pendingChartSeries = series;
+    console.log('⏳ Chart not ready, saved to pending:', Object.keys(series || {}).length, 'dates');
+    
     let tries = 0;
     const t = setInterval(()=>{
       if (window.PlanFactChart?.setSeries){
-        try { window.PlanFactChart.setSeries(window.__pendingChartSeries); } catch(_){}
+        try { 
+          window.PlanFactChart.setSeries(window.__pendingChartSeries); 
+          console.log('✅ Chart delayed update:', Object.keys(window.__pendingChartSeries || {}).length, 'dates');
+        } catch(e){ 
+          console.error('❌ Delayed setSeries error:', e); 
+        }
         window.__pendingChartSeries = null;
         clearInterval(t);
-      } else if (++tries > 120) { // до ~12 сек
+      } else if (++tries > 120) {
+        console.error('❌ Chart mount timeout');
         clearInterval(t);
       }
     }, 100);
@@ -2279,33 +2286,53 @@ function handleSaveClick_bm(e){
     _abort = ctrl;
 
     try{
-      const res = await apiFrontChart_bm(reqRow, ctrl.signal);
+      const res = await apiFrontBootstrap_bm(reqRow, ctrl.signal);
       if (runId !== _runId) return {done:true};
 
-      const serverRow = Number(res?.row || 0);
-      if (reqRow && serverRow && serverRow < Number(reqRow)) {
-        return {done:false, wait: Math.max(200, Math.min(1000, Number(res?.retry_after_ms)||500))};
+      const chartBlock = res?.chart;
+      if (!chartBlock) {
+        console.log('⚠️ No chart block in response');
+        return {done:false, wait:500};
       }
 
+      const serverRow = Number(res?.row || 0);
+      
+      // Не показываем старые данные
+      if (reqRow && serverRow && serverRow < Number(reqRow)) {
+        console.log('⏳ Waiting for fresh data: server=%s, expected=%s', serverRow, reqRow);
+        return {done:false, wait: Math.max(200, Math.min(1000, Number(chartBlock.retry_after_ms)||500))};
+      }
+
+      // Обновляем row_calc если сервер знает больше
       if (Number.isFinite(serverRow) && (reqRow == null || serverRow > reqRow)) {
         try { setRowCalcForUser_bm(serverRow); } catch(_){}
       }
 
-      if (res?.ready && (res.series || res.data)) {
-        const series = res.series || res.data;
+      if (chartBlock.ready && (chartBlock.series || chartBlock.data)) {
+        const series = chartBlock.series || chartBlock.data;
+        
+        // Кэшируем только если не старее reqRow
         if (!(reqRow && serverRow < Number(reqRow))) {
           try {
-            const uid = (typeof currentUserId_bm === 'function') ? currentUserId_bm() : 'anon';
-            saveChartCache_bm({ row: serverRow, series, updated_at: res.updated_at || new Date().toISOString() }, uid);
+            saveChartCache_bm({ 
+              row: serverRow, 
+              series, 
+              updated_at: res.updated_at || new Date().toISOString() 
+            });
           } catch(_){}
         }
+        
+        console.log('📊 Chart data ready (from bootstrap):', series);
         applySeriesToChart(series);
         return {done:true};
       }
 
-      return {done:false, wait: Math.max(200, Math.min(1000, Number(res?.retry_after_ms)||500))};
+      console.log('⏳ Chart not ready yet, status:', chartBlock.status);
+      return {done:false, wait: Math.max(200, Math.min(1000, Number(chartBlock.retry_after_ms)||500))};
+      
     } catch(err){
       if (err?.name === 'AbortError') return {done:true};
+      console.error('❌ Chart poll error:', err);
       return {done:false, wait:1000};
     }
   }
@@ -2318,12 +2345,12 @@ function handleSaveClick_bm(e){
     _timer = setTimeout(()=>pollLoop(runId), r.wait);
   }
 
-  // Публичный старт (его зовут E и SAVE), плюс автозапуск ниже
   window.startChartFlow_bm_bm = function(){
     _runId += 1;
     const runId = _runId;
+    
+    console.log('🚀 Starting chart flow (via bootstrap), runId=%s', runId);
 
-    // Сразу показать кеш (если не старее desiredRow)
     const target =
       (typeof desiredRow === 'function' && desiredRow() != null)
         ? desiredRow()
@@ -2333,7 +2360,10 @@ function handleSaveClick_bm(e){
     if (cached && (cached.series || cached.data)) {
       const row = Number(cached.row || 0);
       if (!(target && row && row < Number(target))) {
+        console.log('📦 Using cached chart data, row=%s', row);
         applySeriesToChart(cached.series || cached.data);
+      } else {
+        console.log('⚠️ Cached data too old: cached_row=%s, target=%s', row, target);
       }
     }
 
@@ -2351,7 +2381,6 @@ function handleSaveClick_bm(e){
     }
   });
 
-  // Автозапуск при загрузке
   window.startChartFlow_bm_bm();
 })();
 
