@@ -2393,370 +2393,216 @@ function handleSaveClick_bm(e){
 })();
 
 
-//============================================================
-//  BLOCK E3 — просто визуал ЗАМЕРЫ Analytics Chart plan fact
-//============================================================
-(function(){
-  var LABELS = { fat:'% Жира', neck:'Шея', shoulders:'Плечи', chest:'Грудь', waist:'Талия', hips:'Ягодицы', thigh:'Бедро', calf:'Икра', bicep:'Бицепс' };
-  var ORDER = ['fat','neck','shoulders','chest','waist','hips','thigh','calf','bicep'];
-
-  /* -------- JSON helpers -------- */
-  function parseJSONFromTemplate(id){
-    var el = document.getElementById(id);
-    if (!el || el.tagName !== 'TEMPLATE') return null;
-    var raw = '';
-    if (el.content && typeof el.content.textContent === 'string') raw = el.content.textContent; else raw = el.textContent || '';
-    raw = raw.trim();
-    if (!raw || (raw[0] !== '{' && raw[0] !== '[')) return null;
-    try { return JSON.parse(raw); } catch (e) {
-      function softSanitizeJSON(txt){
-        var s = String(txt);
-        for(;;){ var i = s.indexOf('/*'); if(i === -1) break; var j = s.indexOf('*/', i+2); s = (j === -1) ? (s.slice(0,i) + s.slice(i+2)) : (s.slice(0,i) + s.slice(j+2)); }
-        s = s.split('\n').map(function(line){ var idx = line.indexOf('//'); return (idx > 0 && line[idx-1] === ':') ? line : (idx !== -1 ? line.slice(0, idx) : line); }).join('\n');
-        s = s.split('"').join('"').split('"').join('"').split(''').join("'").split(''').join("'");
-        var out = '';
-        for(var ii=0;ii<s.length;ii++){
-          var ch = s[ii];
-          if(ch === ','){
-            var k=ii+1; while(k<s.length && (s[k]===' '||s[k]==='\t'||s[k]==='\r'||s[k]==='\n')) k++;
-            if(k<s.length && (s[k] === '}' || s[k] === ']')){ continue; }
-          }
-          out += ch;
-        }
-        s = out;
-        var res = '';
-        for(var iii=0;iii<s.length;){
-          var p = s.indexOf('"delta"', iii);
-          if(p === -1){ res += s.slice(iii); break; }
-          res += s.slice(iii, p + 7);
-          var c = p + 7; while(c < s.length && s[c] !== ':') c++;
-          if(c >= s.length){ iii = c; break; }
-          res += s.slice(p + 7, c + 1);
-          var kk = c + 1; while(kk<s.length && (s[kk]===' '||s[kk]==='\t'||s[kk]==='\r'||s[kk]==='\n')) kk++;
-          if(kk<s.length && (s[kk] === ',' || s[kk] === '}')){ res += ' null'; iii = kk; }
-          else { iii = kk; }
-        }
-        return res;
-      }
-      try { return JSON.parse(softSanitizeJSON(raw)); } catch (e2) { return null; }
-    }
-  }
-
-  function toRows(json){
-    var rows=[]; if(!json) return rows;
-    for(var i=0;i<ORDER.length;i++){
-      var key = ORDER[i];
-      var it = json[key];
-      if(!it) continue;
-      var unit = it.unit || (key==='fat' ? '%' : 'см');
-      var planRaw = (it.plan != null ? it.plan : it.target);
-      var factRaw = (it.fact != null ? it.fact : it.actual);
-      var plan = Number(planRaw);
-      var fact = Number(factRaw);
-      if(!isFinite(plan) || !isFinite(fact)) continue;
-      var delta = (it.hasOwnProperty('delta') && isFinite(Number(it.delta))) ? Number(it.delta) : null;
-      rows.push({ key: key, label: (LABELS[key]||key), unit: unit, target: plan, actual: fact, delta: delta });
-    }
-    return rows;
-  }
-
-  /* -------------------- Рендер списка -------------------- */
-  function render(el, initialData){
-    var state = { data: initialData };
-    var rowsEl = el.querySelector('#rows');
-    var scroller = el.querySelector('#scroller');
-    var hint = el.querySelector('#scrollHint');
-    if(!rowsEl || !scroller){ return { setData: function(_){} }; }
-
-    var lastScrollTop = scroller.scrollTop || 0;
-    var lastDirUp = false;
-
-    function buildDomains(list){
-      var cmMax = 0; for(var i=0;i<list.length;i++){ var d=list[i]; var u=(d.unit||'').trim(); if(u!=='%') cmMax=Math.max(cmMax, (d.target||0), (d.actual||0)); }
-      return { '%':100, 'см':cmMax||1, 'cm':cmMax||1 };
-    }
-
-    function draw(){
-      var data = state.data || []; var maxByUnit = buildDomains(data); rowsEl.innerHTML='';
-      for(var i=0;i<data.length;i++){
-        var d = data[i]; var delta = (isFinite(d.delta) ? d.delta : null); var unitMax = maxByUnit[(d.unit||'').trim()] || 1;
-        var wp = Math.max(0, Math.min(100, ((d.target||0)/unitMax)*100));
-        var wf = Math.max(0, Math.min(100, ((d.actual||0)/unitMax)*100));
-
-        var row = document.createElement('div'); row.className='row';
-        var top = document.createElement('div'); top.className='top';
-        top.innerHTML = '<span class="name">'+(d.key==='fat' ? (LABELS[d.key]||d.label) : (d.label+' ('+d.unit+')'))+'</span>'+
-          '<span class="vals">'+
-            '<span class="kv"><span class="lab">Факт:</span> <b class="val">'+round(d.actual,1)+'</b></span>'+
-            '<span class="dot">•</span>'+
-            '<span class="kv"><span class="lab">План:</span> <b class="val">'+round(d.target,1)+'</b></span>'+
-            '<span class="dot">•</span>'+
-            '<span class="kv"><span class="lab">∆:</span> <b class="val">'+fmtDeltaNoUnit(delta)+(isFinite(delta)?(delta>0?' ▲':(delta<0?' ▼':'')):'')+'</b></span>'+
-          '</span>';
-
-        var g = document.createElement('div'); g.className='gauge';
-        var plan = document.createElement('div'); plan.className='plan'; plan.style.setProperty('--wp', wp+'%');
-        var fact = document.createElement('div'); fact.className='fact'; fact.style.setProperty('--wf', wf+'%');
-
-        if (isFinite(delta)) {
-          if (d.key === 'fat' || d.key === 'waist') { if (d.actual > d.target) fact.classList.add('red'); }
-          else { if (d.actual < d.target) fact.classList.add('orange'); }
-        } else { fact.classList.add('neutral'); }
-
-        g.appendChild(plan); g.appendChild(fact); row.appendChild(top); row.appendChild(g);
-        rowsEl.appendChild(row);
-      }
-      limitToRows(5);
-      updateHint();
-    }
-
-    function limitToRows(n){
-      var items = rowsEl.children; var rows=[]; for(var i=0;i<items.length;i++){ if(items[i].classList && items[i].classList.contains('row')) rows.push(items[i]); }
-      if(!rows.length) return; var csList = getComputedStyle(rowsEl); var maxH = parseFloat(csList.paddingTop) + parseFloat(csList.paddingBottom);
-      for(var i=0;i<Math.min(n,rows.length);i++){ var r=rows[i]; var cs=getComputedStyle(r); maxH += r.offsetHeight + parseFloat(cs.marginTop||0) + parseFloat(cs.marginBottom||0); }
-      maxH += 2; scroller.style.maxHeight = Math.ceil(maxH) + 'px';
-    }
-
-    function updateHint(){
-      if(!hint) return;
-      var hasMore = (scroller.scrollHeight - scroller.clientHeight) > 2;
-      hint.classList.toggle('hidden', !hasMore);
-      if(!hasMore) return;
-
-      var st = scroller.scrollTop;
-      if (Math.abs(st - lastScrollTop) > 0.5) {
-        lastDirUp = st < lastScrollTop;
-      }
-      lastScrollTop = st;
-
-      var nearTop = st <= 1;
-      var nearBottom = Math.ceil(st + scroller.clientHeight) >= scroller.scrollHeight - 2;
-
-      var showUp = false;
-      if (nearTop && !nearBottom) showUp = false;
-      else if (nearBottom && !nearTop) showUp = true;
-      else showUp = lastDirUp;
-
-      var svg = hint.querySelector('svg');
-      if(svg){ svg.classList.toggle('up', showUp); }
-    }
-
-    function fmtDeltaNoUnit(n){ if(!isFinite(n)) return '—'; var s=n>0?'+':''; return s+round(n,1); }
-    function round(n,p){ var m=Math.pow(10, (p||1)); return Math.round(n*m)/m; }
-
-    draw();
-    scroller.addEventListener('scroll', updateHint, { passive:true });
-    window.addEventListener('resize', function(){ limitToRows(5); updateHint(); }, { passive:true });
-
-    return { setData:function(payload){ state.data = Array.isArray(payload) ? payload : toRows(payload); draw(); } };
-  }
-
-  // Инициализация — данные придут через startChartFlow_bm_bm
-  var container = document.getElementById('pfHApp');
-  var api = render(container, []);
-
-  if(typeof window!== 'undefined'){
-    window.PlanFactChart = { 
-      mount:function(el, json){ return render(el, toRows(json)); }, 
-      setData:function(json){ api && api.setData(json); } 
-    };
-  }
-
-  /* ==================== Временная шкала (серии дат) ==================== */
-  (function initTimeline(){
-    function parseJSONFromTemplateIfExists(id){ var el=document.getElementById(id); if(!el) return null; return parseJSONFromTemplate(id); }
-    
-    function normalizeSeries(input){
-      if(!input) return { dates:[], rows:[] };
-      var seriesMap = null;
-      if (input.series && typeof input.series === 'object' && !Array.isArray(input.series)) {
-        seriesMap = input.series;
-      } else if (Array.isArray(input) && input.length && input[0] && typeof input[0] === 'object' && ('date' in input[0])) {
-        seriesMap = {}; for (var i=0;i<input.length;i++){ var it=input[i]; if(!it) continue; var k=String(it.date||i); seriesMap[k] = it.data || it.snapshot || {}; }
-      } else {
-        return { dates:['—'], rows:[ toRows(input) ] };
-      }
-      var dates = Object.keys(seriesMap);
-      dates.sort(function(a,b){ var da=new Date(a), db=new Date(b); if(isFinite(da.getTime()) && isFinite(db.getTime())) return da-db; return (a>b?1:-1); });
-      var rows = []; for(var j=0;j<dates.length;j++){ rows.push( toRows(seriesMap[dates[j]]||{}) ); }
-      return { dates:dates, rows:rows };
-    }
-    
-    function formatDateRu(s){ var d=new Date(s); if(!isFinite(d.getTime())) return s; try{ return d.toLocaleDateString('ru-RU',{year:'numeric',month:'short',day:'2-digit'}); }catch(_){ return s; } }
-
-    function setupTimeline(norm, api){
-      var tl = document.getElementById('timeline');
-      var wheel = document.getElementById('dateWheel');
-      var maskEl = tl ? tl.querySelector('.wheel-mask') : null;
-      if(!tl || !wheel) return;
-
-      var n = (norm && Array.isArray(norm.rows)) ? norm.rows.length : 0;
-      if(n <= 1){ tl.hidden = true; return; }
-
-      tl.hidden = false; wheel.innerHTML = '';
-      var items = new Array(n);
-
-      var active = -1, rafId = 0, snapTimer = 0;
-
-      function syncMask(){
-        if(!maskEl) return;
-        var el = items[Math.max(0, active)] || items[0];
-        if(!el) return;
-        var rect = el.getBoundingClientRect();
-        var wr = wheel.getBoundingClientRect();
-        var pr = tl.getBoundingClientRect();
-        var padX = 8, padY = 8;
-        var scale = 1.5;
-        var w = Math.round(rect.width * scale + padX*2);
-        var h = Math.round(rect.height + padY*2);
-        var centerX = wr.left + wr.width/2;
-        var left = Math.round(centerX - w/2 - pr.left);
-        var top  = Math.round((wr.top - pr.top) + (wr.height - h)/2);
-        maskEl.style.setProperty('--mask-left', left + 'px');
-        maskEl.style.setProperty('--mask-top',  top  + 'px');
-        maskEl.style.setProperty('--mask-w',    w    + 'px');
-        maskEl.style.setProperty('--mask-h',    h    + 'px');
-      }
-      
-      for(var i=0;i<n;i++){
-        var label = formatDateRu(norm.dates[i]||String(i));
-        var btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'item';
-        btn.setAttribute('role','option');
-        btn.setAttribute('aria-selected','false');
-        btn.dataset.idx = String(i);
-        btn.textContent = label;
-        btn.addEventListener('click', function(){ centerTo(Number(this.dataset.idx), true, 'smooth'); });
-        wheel.appendChild(btn);
-        items[i] = btn;
-      }
-
-      function ensureSpacers(){
-        var olds = wheel.querySelectorAll('.spacer'); 
-        for(var ii=0;ii<olds.length;ii++) olds[ii].remove();
-        var left = document.createElement('div'); left.className='spacer'; left.setAttribute('aria-hidden','true');
-        var right = document.createElement('div'); right.className='spacer'; right.setAttribute('aria-hidden','true');
-        wheel.insertBefore(left, wheel.firstChild); 
-        wheel.appendChild(right); 
-        resizeSpacers();
-      }
-      function resizeSpacers(){ var edge = Math.max(0, Math.floor(wheel.clientWidth/2)); wheel.style.setProperty('--edge', edge+'px'); }
-      ensureSpacers();
-
-      function setAria(){ for(var k=0;k<items.length;k++){ if(!items[k]) continue; items[k].setAttribute('aria-selected', String(k===active)); items[k].setAttribute('tabindex', k===active? '0':'-1'); } }
-      
-      function activate(i, announce){
-        if(i === active || i < 0 || i >= n) return;
-        if(items[active]){ items[active].classList.remove('active'); items[active].setAttribute('aria-selected','false'); }
-        active = i;
-        if(items[active]){ items[active].classList.add('active'); items[active].setAttribute('aria-selected','true'); }
-        setAria();
-        api && api.setData(norm.rows[i]||[]);
-        syncMask();
-      }
-      
-      function centerTo(i, announce, behavior){
-        i = Math.max(0, Math.min(n-1, i)); var el = items[i]; if(!el) return;
-        var target = el.offsetLeft + el.offsetWidth/2 - wheel.clientWidth/2;
-        wheel.scrollTo({ left: Math.max(0, target), behavior: (behavior||'auto') });
-        activate(i, announce);
-        syncMask();
-      }
-      
-      function onScroll(){
-        if(rafId) cancelAnimationFrame(rafId);
-        rafId = requestAnimationFrame(function(){
-          var center = wheel.scrollLeft + wheel.clientWidth/2;
-          var best = -1, bestDist = 1e12;
-          for(var k=0;k<n;k++){
-            var el = items[k]; var c = el.offsetLeft + el.offsetWidth/2; var d = Math.abs(c - center);
-            if(d < bestDist){ bestDist = d; best = k; }
-          }
-          var changed = best !== active;
-          activate(best, changed);
-          syncMask();
-          if(snapTimer) clearTimeout(snapTimer);
-          snapTimer = setTimeout(function(){
-            var el = items[active]; if(!el) return;
-            var target = el.offsetLeft + el.offsetWidth/2 - wheel.clientWidth/2;
-            var curCenter = wheel.scrollLeft + wheel.clientWidth/2;
-            if(Math.abs(curCenter - (el.offsetLeft + el.offsetWidth/2)) > 3){
-              wheel.scrollTo({ left: Math.max(0, target), behavior: 'auto' });
-            }
-          }, 140);
-        });
-      }
-
-      wheel.addEventListener('scroll', onScroll, { passive:true });
-      wheel.addEventListener('wheel', function(e){ if(Math.abs(e.deltaY) > Math.abs(e.deltaX)){ e.preventDefault(); wheel.scrollLeft += e.deltaY; } }, { passive:false });
-      wheel.addEventListener('keydown', function(e){ if(e.key==='ArrowLeft'){ e.preventDefault(); centerTo(active-1, true, 'smooth'); } else if(e.key==='ArrowRight'){ e.preventDefault(); centerTo(active+1, true, 'smooth'); } });
-      window.addEventListener('resize', function(){ resizeSpacers(); centerTo(active, false, 'auto'); syncMask(); }, { passive:true });
-
-      centerTo(n-1, false, 'auto');
-      syncMask();
-    }
-
-    var tl = document.getElementById('timeline'); 
-    if(tl) tl.hidden = true;
-
-    if (typeof window !== 'undefined' && window.PlanFactChart){
-      window.PlanFactChart.setSeries = function(json){
-        var nrm = normalizeSeries(json||{});
-        if(api){ var l = nrm.rows[(nrm.rows.length-1)|0] || []; api.setData(l); }
-        setupTimeline(nrm, api);
-      };
-    }
-  })();
-
-})();
-
-//!-- HAPTIC for timeline -->
-(function () {
-  var root = document.getElementById('dateWheel') || document.body;
-  var scroller = document.querySelector('div.TabList.no-scrollbar') || root;
-  if (!scroller) return;
-
-  var touching = false, lastTick = 0, stopTimer = 0;
-  var TICK_EVERY = 180;
-  var STOP_DELAY = 160;
-
-  function tick(){
-    try {
-      if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.HapticFeedback) {
-        window.Telegram.WebApp.HapticFeedback.selectionChanged();
-      }
-    } catch(_){}
-  }
+/* ============================================================
+ *  BLOCK E2 — Analytics Chart Plan-Fact (poll + cache) тащит данные
+ * ============================================================ */
+(function chartPlanFactInit(){
+  var tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+  var BACKEND = (typeof BACKEND_URL_bm !== 'undefined' && BACKEND_URL_bm) ? BACKEND_URL_bm : '';
   
-  function bump(){
-    try {
-      var tg = window.Telegram;
-      if (!tg || !tg.WebApp || !tg.WebApp.HapticFeedback) return;
-      var h = tg.WebApp.HapticFeedback;
-      if (h.impactOccurred) {
-        h.impactOccurred('medium');
-      } else if (h.notificationOccurred) {
-        h.notificationOccurred('success');
+  var CHART_KEY_PREFIX = 'bm:chart:data:';
+  function currentUserId_bm(){ 
+    try { 
+      if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe && window.Telegram.WebApp.initDataUnsafe.user) {
+        return window.Telegram.WebApp.initDataUnsafe.user.id || 'anon';
       }
-    } catch(_){}
+      return 'anon';
+    } catch(_){ return 'anon'; } 
+  }
+  function chartKey_bm(uid){ return CHART_KEY_PREFIX + String(uid || currentUserId_bm()); }
+  function saveChartCache_bm(obj, uid){ 
+    try { localStorage.setItem(chartKey_bm(uid), JSON.stringify(obj)); } 
+    catch(_){} 
+  }
+  function loadChartCache_bm(uid){ 
+    try { 
+      var raw = localStorage.getItem(chartKey_bm(uid)); 
+      return raw ? JSON.parse(raw) : null; 
+    } catch(_) { return null; } 
   }
 
-  root.addEventListener('touchstart', function(){ touching = true; clearTimeout(stopTimer); }, {passive:true});
-  root.addEventListener('touchend', function(){ touching = false; }, {passive:true});
-  root.addEventListener('touchcancel', function(){ touching = false; }, {passive:true});
+  var _chartTimer = 0;
+  var _chartRunId = 0;
+  var _chartAbort = null;
+  var _chartStatus = 'INIT';
+  var STATUS_RANK = { INIT:0, NO_ROW:1, EMPTY:2, WAITING:3, READY:4 };
 
-  scroller.addEventListener('scroll', function(){
-    if (!touching) return;
-    var now = (performance && performance.now) ? performance.now() : Date.now();
-    if (now - lastTick >= TICK_EVERY) { lastTick = now; tick(); }
-    clearTimeout(stopTimer);
-    stopTimer = setTimeout(bump, STOP_DELAY);
-  }, {passive:true});
+  function renderChartSafe(chartData, nextStatus){
+    var cur = STATUS_RANK[_chartStatus] || 0;
+    var nxt = STATUS_RANK[nextStatus] || 0;
+    if (nxt < cur) return;
 
-  root.addEventListener('click', function(e){
-    if (e.target && e.target.closest && e.target.closest('.item')) tick();
-  }, {passive:true});
+    if (nextStatus === 'READY' && chartData){
+      if (window.PlanFactChart && window.PlanFactChart.setSeries){
+        window.PlanFactChart.setSeries(chartData);
+      }
+    }
+    
+    _chartStatus = nextStatus;
+  }
+
+  function apiFrontChartData_bm(requestedRow, signal){
+    var payload = {
+      action: 'front_chart_data',
+      init_data: String(tg && tg.initData ? tg.initData : ''),
+      row: Number(requestedRow || 0) || undefined
+    };
+
+    return fetch(BACKEND, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+      body: JSON.stringify(payload),
+      cache: 'no-store',
+      credentials: 'omit',
+      mode: 'cors',
+      signal: signal
+    }).then(function(resp){
+      return resp.text().then(function(raw){
+        var json = null; 
+        try { json = raw ? JSON.parse(raw) : null; } 
+        catch(_){}
+        if (!resp.ok || !json) throw new Error('HTTP ' + resp.status);
+        return json;
+      });
+    });
+  }
+
+  function targetRow(){
+    if (typeof desiredRow === 'function') {
+      var dr = desiredRow();
+      if (dr != null) return dr;
+    }
+    if (typeof getRowCalcForUser_bm === 'function') {
+      return getRowCalcForUser_bm();
+    }
+    return null;
+  }
+
+  function pollOnce(runId){
+    if (runId !== _chartRunId) return Promise.resolve({ done:true });
+
+    var reqRow = targetRow();
+
+    if (_chartAbort) { 
+      try{ _chartAbort.abort(); }
+      catch(_){ } 
+    }
+    var controller = new AbortController();
+    _chartAbort = controller;
+
+    return apiFrontChartData_bm(reqRow, controller.signal)
+      .then(function(res){
+        if (runId !== _chartRunId) return { done:true };
+
+        var serverRow = Number(res && res.row ? res.row : 0);
+        
+        if (serverRow && reqRow && serverRow < reqRow) {
+          renderChartSafe(null, 'WAITING');
+          return { done:false, wait: 500 };
+        }
+
+        if (Number.isFinite(serverRow) && (reqRow == null || serverRow > reqRow)) {
+          if (typeof setRowCalcForUser_bm === 'function') {
+            setRowCalcForUser_bm(serverRow);
+          }
+        }
+
+        var status = res.status || 'WAITING';
+        
+        if (status === 'NO_ROW'){
+          renderChartSafe(null, 'NO_ROW');
+          return { done:true };
+        }
+
+        if (status === 'EMPTY'){
+          renderChartSafe(null, 'EMPTY');
+          return { done:false, wait: 500 };
+        }
+
+        if (!res.ready){
+          renderChartSafe(null, 'WAITING');
+          return { done:false, wait: 500 };
+        }
+
+        var chartData = null;
+        
+        if (res.series && typeof res.series === 'object'){
+          chartData = { series: res.series };
+        } 
+        else if (Array.isArray(res.data) && res.data.length > 0){
+          chartData = res.data;
+        }
+
+        if (!chartData){
+          renderChartSafe(null, 'EMPTY');
+          return { done:false, wait: 500 };
+        }
+
+        renderChartSafe(chartData, 'READY');
+
+        if (!(reqRow && serverRow < reqRow)) {
+          saveChartCache_bm({ 
+            row: serverRow, 
+            data: chartData, 
+            updated_at: res.updated_at || new Date().toISOString() 
+          });
+        }
+
+        return { done:true };
+
+      })
+      .catch(function(err){
+        if (err && err.name === 'AbortError') return { done:true };
+        if (runId !== _chartRunId) return { done:true };
+        renderChartSafe(null, 'WAITING');
+        return { done:false, wait: 1000 };
+      });
+  }
+
+  function pollLoop(runId){
+    if (runId !== _chartRunId) return;
+    clearTimeout(_chartTimer);
+    pollOnce(runId).then(function(r){
+      if (r.done || runId !== _chartRunId) return;
+      _chartTimer = setTimeout(function(){ pollLoop(runId); }, r.wait);
+    });
+  }
+
+  window.startChartFlow_bm_bm = function(){
+    _chartRunId = _chartRunId + 1;
+    var runId = _chartRunId;
+    _chartStatus = 'INIT';
+
+    var target = targetRow();
+    var cached = loadChartCache_bm();
+    if (cached && cached.data && !(target && Number(cached.row || 0) < Number(target))) {
+      renderChartSafe(cached.data, 'READY');
+    }
+
+    clearTimeout(_chartTimer);
+    if (_chartAbort){ 
+      try{ _chartAbort.abort(); }
+      catch(_){ } 
+      _chartAbort = null; 
+    }
+
+    pollLoop(runId);
+  };
+
+  document.addEventListener('visibilitychange', function(){
+    if (document.visibilityState === 'hidden'){
+      clearTimeout(_chartTimer);
+      if (_chartAbort){ 
+        try{ _chartAbort.abort(); }
+        catch(_){ } 
+        _chartAbort = null; 
+      }
+    } else {
+      window.startChartFlow_bm_bm();
+    }
+  });
+
+  window.startChartFlow_bm_bm();
 })();
   
 //============================================================
