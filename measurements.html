@@ -2393,6 +2393,175 @@ function handleSaveClick_bm(e){
 })();
 
 
+/* ============================================================
+ *  BLOCK E2 — Analytics Chart (poll + cache, like macros)
+ * ============================================================ */
+(function chartAnalyticsInit(){
+  const tg = window.Telegram?.WebApp;
+  const BACKEND = (typeof BACKEND_URL_bm !== 'undefined' && BACKEND_URL_bm) ? BACKEND_URL_bm : '';
+
+  /* ---------- Helpers ---------- */
+  const KEY_PREFIX = 'bm:chart:data:';
+  function currentUserId_bm(){ try { return tg?.initDataUnsafe?.user?.id || 'anon'; } catch(_){ return 'anon'; } }
+  function chartKey_bm(uid){ return KEY_PREFIX + String(uid ?? currentUserId_bm()); }
+  function saveChartCache_bm(obj, uid){ try { localStorage.setItem(chartKey_bm(uid), JSON.stringify(obj)); } catch(_){} }
+  function loadChartCache_bm(uid){ try { const raw = localStorage.getItem(chartKey_bm(uid)); return raw ? JSON.parse(raw) : null; } catch(_){ return null; } }
+
+  function targetRow(){
+    return (typeof desiredRow === 'function' && desiredRow() != null)
+      ? desiredRow()
+      : (typeof getRowCalcForUser_bm === 'function' ? getRowCalcForUser_bm() : null);
+  }
+
+  function normalizeServerPayload(res){
+    // Поддерживаем и {series:{...}/[...]}, и {data:[...]} как в bootstrap
+    return res?.series ?? res?.data ?? null;
+  }
+
+  // Безопасная подстановка данных в график
+  function applySeriesToChart(series){
+    if (!series) return;
+    if (window.PlanFactChart?.setSeries){
+      window.PlanFactChart.setSeries(series);
+      return;
+    }
+    // График ещё не смонтирован — подождём
+    window.__pendingChartSeries = series;
+    let tries = 0;
+    const t = setInterval(()=>{
+      if (window.PlanFactChart?.setSeries){
+        try { window.PlanFactChart.setSeries(window.__pendingChartSeries); } catch(_){}
+        window.__pendingChartSeries = null;
+        clearInterval(t);
+      } else if (++tries > 60) {
+        clearInterval(t); // не ждём вечно
+      }
+    }, 100);
+  }
+
+  /* ---------- API ---------- */
+  async function apiFrontChart_bm(requestedRow, signal){
+    const payload = {
+      action: 'front_chart',
+      init_data: String(tg?.initData || ''),
+      row: Number(requestedRow || 0) || undefined
+    };
+    const resp = await fetch(BACKEND, {
+      method:'POST',
+      headers:{ 'Content-Type':'text/plain;charset=UTF-8' },
+      body: JSON.stringify(payload),
+      cache:'no-store', credentials:'omit', mode:'cors',
+      signal
+    });
+    const raw = await resp.text();
+    let json = null; try { json = raw ? JSON.parse(raw) : null; } catch(_){}
+    if (!resp.ok || !json) throw new Error(`HTTP ${resp.status}`);
+    return json;
+  }
+
+  /* ---------- State & polling ---------- */
+  let _runId = 0;
+  let _timer = 0;
+  let _abort = null;
+  let _status = 'INIT';
+  const STATUS_RANK = { INIT:0, WAITING:1, READY:2 };
+  function bumpStatus(next){
+    if ((STATUS_RANK[next] ?? 0) >= (STATUS_RANK[_status] ?? 0)) _status = next;
+  }
+
+  async function pollOnce(runId){
+    if (runId !== _runId) return { done:true };
+    const reqRow = targetRow();
+
+    if (_abort) { try{ _abort.abort(); }catch(_){ } }
+    const controller = new AbortController();
+    _abort = controller;
+
+    try{
+      const res = await apiFrontChart_bm(reqRow, controller.signal);
+      if (runId !== _runId) return { done:true };
+
+      const serverRow = Number(res?.row || 0);
+      const ready = !!res?.ready;
+      const retry = Math.max(200, Math.min(1500, Number(res?.retry_after_ms) || 500));
+
+      // Не показываем данные старее «замка»
+      if (reqRow && serverRow && serverRow < Number(reqRow)) {
+        bumpStatus('WAITING');
+        return { done:false, wait: retry };
+      }
+
+      // Если сервер знает более новый row — обновляем локально
+      if (Number.isFinite(serverRow) && (reqRow == null || serverRow > Number(reqRow))) {
+        try { setRowCalcForUser_bm(serverRow); } catch(_){}
+      }
+
+      const series = normalizeServerPayload(res);
+
+      if (ready && series){
+        applySeriesToChart(series);
+        // Кешируем только если не старее target
+        if (!(reqRow && serverRow < Number(reqRow))) {
+          saveChartCache_bm({ row: serverRow, series, updated_at: res?.updated_at || new Date().toISOString() });
+        }
+        bumpStatus('READY');
+        return { done:true };
+      }
+
+      // Ещё считаем
+      bumpStatus('WAITING');
+      return { done:false, wait: retry };
+
+    } catch(err){
+      if (err?.name === 'AbortError') return { done:true };
+      // Сетевые сбои/таймаут — мягкий повтор
+      bumpStatus('WAITING');
+      return { done:false, wait: 1000 };
+    }
+  }
+
+  async function pollLoop(runId){
+    if (runId !== _runId) return;
+    clearTimeout(_timer);
+    const r = await pollOnce(runId);
+    if (r.done || runId !== _runId) return;
+    _timer = setTimeout(()=>pollLoop(runId), r.wait);
+  }
+
+  /* ---------- Public start ---------- */
+  window.startChartFlow_bm_bm = function startChartFlow(){
+    _runId += 1;
+    const runId = _runId;
+    _status = 'INIT';
+
+    // Показать кеш (если не старее desiredRow)
+    const target = targetRow();
+    const cached = loadChartCache_bm();
+    if (cached?.series && !(target && Number(cached.row || 0) < Number(target))) {
+      applySeriesToChart(cached.series);
+      bumpStatus('READY');
+    }
+
+    clearTimeout(_timer);
+    if (_abort){ try{ _abort.abort(); }catch(_){ } _abort = null; }
+    pollLoop(runId);
+  };
+
+  // Остановка/возобновление при смене видимости
+  document.addEventListener('visibilitychange', ()=>{
+    if (document.visibilityState === 'hidden'){
+      clearTimeout(_timer);
+      if (_abort){ try{ _abort.abort(); }catch(_){ } _abort = null; }
+    } else {
+      window.startChartFlow_bm_bm();
+    }
+  });
+
+  // Автостарт на загрузке
+  window.startChartFlow_bm_bm();
+})();
+
+
 
 /* ============================================================
  *  BLOCK E3 — Analytics Chart Plan-Fact 
