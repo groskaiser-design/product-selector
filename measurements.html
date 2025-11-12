@@ -2197,7 +2197,6 @@ function handleSaveClick_bm(e){
   window.startMacrosFlow_bm_bm();
 })();
 
-
 /* ============================================================
  *  BLOCK E2 — Analytics Chart (упрощённая версия через bootstrap)
  * ============================================================ */
@@ -2237,28 +2236,31 @@ function handleSaveClick_bm(e){
     return json;
   }
 
-  function applySeriesToChart(series){
-    if (!series) return;
+  function applySeriesToChart(payload){
+    if (!payload) return;
     
     if (window.PlanFactChart?.setSeries){
       try { 
-        window.PlanFactChart.setSeries(series); 
-        console.log('✅ Chart updated with series:', Object.keys(series || {}).length, 'dates');
+        window.PlanFactChart.setSeries(payload);
+        const count = payload.series 
+          ? Object.keys(payload.series).length 
+          : (Array.isArray(payload) ? payload.length : 1);
+        console.log('✅ Chart updated, dates:', count);
       } catch(e){ 
-        console.error('❌ setSeries error:', e); 
+        console.error('❌ setSeries error:', e, payload); 
       }
       return;
     }
     
-    window.__pendingChartSeries = series;
-    console.log('⏳ Chart not ready, saved to pending:', Object.keys(series || {}).length, 'dates');
+    window.__pendingChartSeries = payload;
+    console.log('⏳ Chart not ready, saved to pending');
     
     let tries = 0;
     const t = setInterval(()=>{
       if (window.PlanFactChart?.setSeries){
         try { 
-          window.PlanFactChart.setSeries(window.__pendingChartSeries); 
-          console.log('✅ Chart delayed update:', Object.keys(window.__pendingChartSeries || {}).length, 'dates');
+          window.PlanFactChart.setSeries(window.__pendingChartSeries);
+          console.log('✅ Chart delayed update');
         } catch(e){ 
           console.error('❌ Delayed setSeries error:', e); 
         }
@@ -2309,21 +2311,23 @@ function handleSaveClick_bm(e){
       }
 
       if (chartBlock.ready && (chartBlock.series || chartBlock.data)) {
-        const series = chartBlock.series || chartBlock.data;
+        // ✅ ПРАВИЛЬНО: передаём СТРУКТУРУ как есть
+        const payload = chartBlock.series 
+          ? { series: chartBlock.series }  // ← Заворачиваем для E3
+          : chartBlock.data;               // ← Массив — как есть
         
-        // Кэшируем только если не старее reqRow
+        // Кэшируем как пришло
         if (!(reqRow && serverRow < Number(reqRow))) {
           try {
-            saveChartCache_bm({ 
-              row: serverRow, 
-              series, 
-              updated_at: res.updated_at || new Date().toISOString() 
-            });
+            const cacheObj = { row: serverRow, updated_at: res.updated_at || new Date().toISOString() };
+            if (chartBlock.series) cacheObj.series = chartBlock.series;
+            if (chartBlock.data) cacheObj.data = chartBlock.data;
+            saveChartCache_bm(cacheObj);
           } catch(_){}
         }
         
-        console.log('📊 Chart data ready (from bootstrap):', series);
-        applySeriesToChart(series);
+        console.log('📊 Chart data ready (from bootstrap):', payload);
+        applySeriesToChart(payload);
         return {done:true};
       }
 
@@ -2361,7 +2365,8 @@ function handleSaveClick_bm(e){
       const row = Number(cached.row || 0);
       if (!(target && row && row < Number(target))) {
         console.log('📦 Using cached chart data, row=%s', row);
-        applySeriesToChart(cached.series || cached.data);
+        const cachedPayload = cached.series ? { series: cached.series } : cached.data;
+        applySeriesToChart(cachedPayload);
       } else {
         console.log('⚠️ Cached data too old: cached_row=%s, target=%s', row, target);
       }
@@ -2383,6 +2388,7 @@ function handleSaveClick_bm(e){
 
   window.startChartFlow_bm_bm();
 })();
+
 
 
 
