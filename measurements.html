@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0003'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0004'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -2390,7 +2390,202 @@ function handleSaveClick_bm(e){
 //============================================================
 //  BLOCK E3 — ЗАМЕРЫ Analytics Chart plan fact
 //============================================================
-      (function(){
+/* ============================================================
+ *  BLOCK E3 — Analytics Chart (plan/fact) — ПОДКЛЮЧЕНИЕ К БЭКУ (BD)
+ *  1:1 как у макросов: polling → cache (localStorage) → дедуп по row.
+ *  Бэкенд берёт данные из колонки BD.
+ *  Ожидаемые формы ответа:
+ *   • { ok, ready, status, row, series: { "YYYY-MM-DD": { ... } }, updated_at }
+ *   • { ok, ready, status, row, data:   [ {date, data:{...}}, ... ], updated_at }
+ *   • { ok, ready, status, row, data:   { ... } } // одиночный срез (текущий)
+ * ============================================================ */
+(function chartAnalyticsInit(){
+  const tg = window.Telegram?.WebApp;
+  const BACKEND = (typeof BACKEND_URL_bm !== 'undefined' && BACKEND_URL_bm) ? BACKEND_URL_bm : '';
+
+  /* ---------- КЭШ (ровно как у макросов) ---------- */
+  const CHART_KEY_PREFIX = 'bm:chart:data:';
+  function uidSafe(){
+    try { return window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'anon'; } catch(_){ return 'anon'; }
+  }
+  function chartKey(u){ return CHART_KEY_PREFIX + String(u ?? uidSafe()); }
+  function saveChartCache(obj, u){
+    try { localStorage.setItem(chartKey(u), JSON.stringify(obj)); } catch(_){}
+  }
+  function loadChartCache(u){
+    try { const raw = localStorage.getItem(chartKey(u)); return raw ? JSON.parse(raw) : null; } catch(_){ return null; }
+  }
+
+  /* ---------- УНИФИКАЦИЯ под PlanFactChart ---------- */
+  function normalizeForWidgetFromData(data){
+    // 1) {series:{...}}
+    if (data && typeof data === 'object' && !Array.isArray(data) && data.series && typeof data.series === 'object'){
+      return { kind:'seriesObj', value: data.series };
+    }
+    // 2) [ {date, data:{...}}, ... ]
+    if (Array.isArray(data) && data.length && typeof data[0] === 'object' && ('date' in data[0])){
+      return { kind:'seriesArr', value: data };
+    }
+    // 3) { ... } — одиночный срез
+    if (data && typeof data === 'object' && !Array.isArray(data)){
+      return { kind:'rows', value: data };
+    }
+    return { kind:'none', value: null };
+  }
+  function normalizeForWidgetFromResponse(res){
+    if (res && res.series && typeof res.series === 'object') return { kind:'seriesObj', value: res.series };
+    if (Array.isArray(res?.data)) return { kind:'seriesArr', value: res.data };
+    if (res && res.data && typeof res.data === 'object') return { kind:'rows', value: res.data };
+    return { kind:'none', value: null };
+  }
+  function renderToChart(payload){
+    if (!window.PlanFactChart || !payload) return;
+    if (payload.kind === 'seriesObj') { window.PlanFactChart.setSeries({ series: payload.value }); return; }
+    if (payload.kind === 'seriesArr') { window.PlanFactChart.setSeries(payload.value); return; }
+    if (payload.kind === 'rows')      { window.PlanFactChart.setData(payload.value); return; }
+  }
+
+  /* ---------- API (симметрия с front_macros): пробуем два экшена ---------- */
+  async function apiFrontChart_bm(requestedRow, signal){
+    const common = { init_data: String(tg?.initData || ''), row: Number(requestedRow || 0) || undefined };
+    const actions = ['front_chart', 'front_chart_data']; // бэк читает BD; тут просто дёргаем
+    let lastErr = null;
+    for (const action of actions){
+      try{
+        const resp = await fetch(BACKEND, {
+          method:'POST',
+          headers:{ 'Content-Type':'text/plain;charset=UTF-8' },
+          body: JSON.stringify({ action, ...common }),
+          cache:'no-store', credentials:'omit', mode:'cors', signal
+        });
+        const raw = await resp.text();
+        const json = raw ? JSON.parse(raw) : null;
+        if (!resp.ok || !json) throw new Error(`HTTP ${resp.status}`);
+        return json;
+      }catch(e){ lastErr = e; }
+    }
+    throw lastErr || new Error('chart_endpoint_unavailable');
+  }
+
+  /* ---------- POLL (1:1 как у макросов) ---------- */
+  let _chartTimer = 0;
+  let _chartRunId = 0;
+  let _chartAbort = null;
+
+  async function pollOnce(runId){
+    if (runId !== _chartRunId) return { done:true };
+
+    const reqRow =
+      (typeof desiredRow === 'function' && desiredRow() != null)
+        ? desiredRow()
+        : (typeof getRowCalcForUser_bm === 'function' ? getRowCalcForUser_bm() : null);
+
+    if (_chartAbort){ try{ _chartAbort.abort(); }catch(_){ } }
+    const controller = new AbortController();
+    _chartAbort = controller;
+
+    try{
+      const res = await apiFrontChart_bm(reqRow, controller.signal);
+      if (runId !== _chartRunId) return { done:true };
+
+      // если сервер ответил старым row — подождём
+      if (res?.row && reqRow && Number(res.row) < Number(reqRow)) {
+        const waitOld = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
+        return { done:false, wait: waitOld };
+      }
+
+      // если сервер знает свежее — обновим локально
+      const serverRow = Number(res?.row);
+      if (Number.isFinite(serverRow) && (reqRow == null || serverRow > reqRow)) {
+        try { setRowCalcForUser_bm && setRowCalcForUser_bm(serverRow); } catch(_){}
+      }
+
+      if (!res?.ready){
+        const wait = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
+        return { done:false, wait };
+      }
+
+      // READY → отрисовать и положить в кэш (в том же формате, что читает bootstrap)
+      const payload = normalizeForWidgetFromResponse(res);
+      if (payload.kind !== 'none'){
+        renderToChart(payload);
+        // сохраняем в { row, data, updated_at } — как делает front_bootstrap
+        let dataForCache = null;
+        if (payload.kind === 'seriesObj') dataForCache = { series: payload.value };
+        else if (payload.kind === 'seriesArr') dataForCache = payload.value;
+        else if (payload.kind === 'rows') dataForCache = payload.value;
+
+        if (!(reqRow && Number(res.row || 0) < Number(reqRow))) {
+          saveChartCache({
+            row: res.row || null,
+            data: dataForCache,
+            updated_at: res.updated_at || new Date().toISOString()
+          });
+        }
+      }
+      return { done:true };
+    } catch(err){
+      if (err?.name === 'AbortError') return { done:true };
+      return { done:false, wait: 1000 };
+    }
+  }
+
+  async function pollLoop(runId){
+    if (runId !== _chartRunId) return;
+    clearTimeout(_chartTimer);
+    const r = await pollOnce(runId);
+    if (r.done || runId !== _chartRunId) return;
+    _chartTimer = setTimeout(()=>pollLoop(runId), r.wait);
+  }
+
+  /* ---------- ПУБЛИЧНЫЙ СТАРТ (одинаково с макросами) ---------- */
+  window.startChartFlow_bm_bm = function start(){
+    _chartRunId += 1;
+    const runId = _chartRunId;
+
+    // ждём, пока смонтируется сам E3-виджет
+    if (!window.PlanFactChart){
+      setTimeout(()=>{ if (runId === _chartRunId) window.startChartFlow_bm_bm(); }, 120);
+      return;
+    }
+
+    // показать кэш (если он не старее desiredRow)
+    const target =
+      (typeof desiredRow === 'function' && desiredRow() != null)
+        ? desiredRow()
+        : (typeof getRowCalcForUser_bm === 'function' ? getRowCalcForUser_bm() : null);
+
+    const cached = loadChartCache();
+    if (cached && !(target && Number(cached.row || 0) < Number(target))){
+      const n = normalizeForWidgetFromData(cached.data);
+      renderToChart(n);
+    }
+
+    // запустить опрос
+    clearTimeout(_chartTimer);
+    if (_chartAbort){ try{ _chartAbort.abort(); }catch(_){ } _chartAbort = null; }
+    pollLoop(runId);
+  };
+
+  // перезапуск при возвращении во вкладку (как у макросов)
+  document.addEventListener('visibilitychange', ()=>{
+    if (document.visibilityState === 'hidden'){
+      clearTimeout(_chartTimer);
+      if (_chartAbort){ try{ _chartAbort.abort(); }catch(_){ } _chartAbort = null; }
+    } else {
+      window.startChartFlow_bm_bm();
+    }
+  });
+
+  // автостарт (симметрично макросам)
+  window.startChartFlow_bm_bm();
+})();
+
+   
+  
+  
+  
+  (function(){
         const LABELS = { fat:'% Жира', neck:'Шея', shoulders:'Плечи', chest:'Грудь', waist:'Талия', hips:'Ягодицы', thigh:'Бедро', calf:'Икра', bicep:'Бицепс' };
         const ORDER = ['fat','neck','shoulders','chest','waist','hips','thigh','calf','bicep'];
 
