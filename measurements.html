@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0003'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0004'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -2220,493 +2220,228 @@ function handleSaveClick_bm(e){
 
 
 //============================================================
-//  BLOCK E2 — Analytics Chart (KBJU7, SVG + легенда)
+//  BLOCK E2 — Analytics Chart
 //============================================================
+// BLOCK E2 (NEW) — Body Measurements Chart (План vs Факт) с Timeline
+function planFactChartInit(chartData) {
+    const container = document.getElementById('analytics');
+    if (!container) return;
 
-(function chartKBJUInit(){
-  const tg = window.Telegram?.WebApp;
-  const BACKEND = (typeof BACKEND_URL_bm !== 'undefined' && BACKEND_URL_bm) ? BACKEND_URL_bm : '';
-  const host = () => document.getElementById('analytics');
-
-  /* ---------- Styles once ---------- */
-  function injectKBJUStylesOnce(){
-    if (document.getElementById('kbju7-styles')) return;
-    const css = `
-    .kbju7{ --h:160; --gap:8; --ink:#fff; --c-carb:#34d399; --c-prot:#60a5fa; --c-fat:#f59e0b; position:relative }
-    .kbju7-card{
-      background:linear-gradient(180deg, var(--cardA), var(--cardB));
-      border:1px solid var(--border); border-radius:18px;
-      backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
-      box-shadow:var(--shadow); color:var(--ink)
-    }
-    .kbju7-viewport{position:relative;padding:6px 8px 4px}
-    .kbju7-scroll{position:relative;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;scrollbar-width:none;touch-action: pan-x}
-    .kbju7-scroll::-webkit-scrollbar{display:none}
-    .kbju7-info{
-      display:flex; align-items:center; justify-content:center;
-      gap:8px; flex-wrap:nowrap;
-      padding:10px 12px; min-height:42px;
-      font-size:clamp(12px, 3.4vw, 14px);
-      font-variant-numeric:tabular-nums;
-    }
-    .kbju7-info .v{display:inline-block; min-width:0; text-align:center}
-    .legend-tap{
-      display:inline-flex; align-items:center; justify-content:center;
-      flex:1 1 0; min-width:0;
-      gap:6px; padding:8px 10px;
-      white-space:nowrap; line-height:1;
-      border:1px solid rgba(255,255,255,.9); background:transparent; color:inherit; font:inherit;
-      border-radius:12px; min-height:36px; cursor:pointer;
-    }
-    .legend-tap:focus-visible{outline:2px solid rgba(255,255,255,.7); outline-offset:2px}
-    .legend-tap .dot{width:6px; height:6px; border-radius:50%; flex:0 0 6px; min-width:6px; min-height:6px}
-    .legend-tap[data-key="prot"] .dot{background: var(--c-prot)}
-    .legend-tap[data-key="fat"]  .dot{background: var(--c-fat)}
-    .legend-tap[data-key="carb"] .dot{background: var(--c-carb)}
-    .legend-tap.active{background:rgba(255,255,255,.12); border-color:transparent}
-    .bar-anim{transform:scaleY(0); transform-origin:bottom; transform-box:fill-box; transition:transform .35s ease;}
-    .bar-anim.show{transform:scaleY(1)}
-    .sel-outline{fill:none;stroke:#fff;stroke-width:2;rx:18;ry:18}
-    .kbju7[data-filter="prot"] .legend-tap:not([data-key="prot"]),
-    .kbju7[data-filter="fat"]  .legend-tap:not([data-key="fat"]),
-    .kbju7[data-filter="carb"] .legend-tap:not([data-key="carb"]) {opacity:.7}
-    .kbju7, .kbju7 * { -webkit-tap-highlight-color: transparent; }
-    .kbju7 svg, .kbju7 svg * { -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; }
-    @media (max-width: 340px){
-      .kbju7-info{ gap:6px; }
-      .legend-tap{ padding:6px 8px; }
-    }`;
-    const s = document.createElement('style');
-    s.id = 'kbju7-styles';
-    s.textContent = css;
-    document.head.appendChild(s);
-  }
-
-  /* ---------- Renderer (idempotent) ---------- */
-  (function exposeRenderKBJU7(){
-    if (window.renderKBJU7) return;
-
-    window.renderKBJU7 = function renderKBJU7(hostEl, data, opts = {}){
-      const root = (typeof hostEl === 'string')
-        ? document.getElementById(hostEl)
-        : (hostEl && hostEl.nodeType === 1 ? hostEl : document.getElementById('kbju7-host'));
-      if (!root) return;
-
-      const scr  = root.querySelector('#kbju7-scroll');
-      let svg = root.querySelector('#kbju7-svg');
-      if (!svg) {
-        const s = document.createElementNS('http://www.w3.org/2000/svg','svg');
-        s.setAttribute('id','kbju7-svg');
-        (scr || root).appendChild(s); svg = s;
-      }
-      const infP = root.querySelector('#kbju7-p');
-      const infF = root.querySelector('#kbju7-f');
-      const infC = root.querySelector('#kbju7-c');
-
-      const list = (data || []).slice().sort((a,b)=> new Date(a.date) - new Date(b.date));
-      if (!list.length){
-        svg.innerHTML = '<text x="8" y="20" fill="#fff" opacity=".8">Нет данных</text>';
-        return;
-      }
-
-      const H = 160, DATE_PAD = 18, LIFT = 8, TOP_PAD = 14;
-      const visible = Number(opts.visible || 7);
-      const shape   = opts.shape || 'clip-capsule';
-      const animateOnce = !!opts.animate; // ← только при первом READY
-
-      function computeBarW(){
-        const W = (scr && scr.clientWidth) || root.clientWidth || 320;
-        const gap = 8;
-        const bar = Math.max(12, Math.floor((W - gap*(visible+1)) / visible));
-        return { bar, gap };
-      }
-      const fmtD = d => { try { return new Date(d).toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit'}); } catch { return d; } };
-
-      function draw(doAnim = animateOnce){
-        const { bar:BAR, gap:GAP } = computeBarW();
-        const outerR = parseFloat(getComputedStyle(root).getPropertyValue('--r')) || 18;
-        const contentW = list.length * (BAR + GAP) + GAP;
-        const filter = root.getAttribute('data-filter') || 'all';
-
-        let gramsMax;
-        if (filter==='prot') gramsMax = Math.max(50, ...list.map(d => (d.protein_g||0)));
-        else if (filter==='fat') gramsMax = Math.max(50, ...list.map(d => (d.fat_g||0)));
-        else if (filter==='carb') gramsMax = Math.max(50, ...list.map(d => (d.carbs_g||0)));
-        else gramsMax = Math.max(50, ...list.map(d => (d.protein_g||0)+(d.fat_g||0)+(d.carbs_g||0)));
-
-        const yG = v => (H - TOP_PAD - DATE_PAD - 4) * (v/gramsMax);
-
-        svg.setAttribute('viewBox', `0 0 ${contentW} ${H}`);
-        svg.setAttribute('width', contentW);
-        svg.setAttribute('height', H);
-
-        const defs = document.createElementNS('http://www.w3.org/2000/svg','defs');
-        const gBars = document.createElementNS('http://www.w3.org/2000/svg','g');
-        const gSel  = document.createElementNS('http://www.w3.org/2000/svg','g');
-        const gHit  = document.createElementNS('http://www.w3.org/2000/svg','g');
-        const groups=[]; const dates=[]; const outlines=[];
-
-        const yBase = H-2-DATE_PAD;
-        const yDate = H-6;
-
-        list.forEach((d, i)=>{
-          const x = GAP + i*(BAR + GAP);
-          let gC = (d.carbs_g||0), gP = (d.protein_g||0), gF = (d.fat_g||0);
-          if (filter==='prot'){ gC = 0; gF = 0; }
-          else if (filter==='fat'){ gC = 0; gP = 0; }
-          else if (filter==='carb'){ gP = 0; gF = 0; }
-
-          const hC = yG(gC), hP = yG(gP), hF = yG(gF);
-          const sum = hC+hP+hF;
-          const topY = yBase - Math.max(sum, 0);
-
-          // capsule clipping per bar
-          let clipId = null;
-          if (shape === 'clip-capsule'){
-            clipId = `clip_${i}`;
-            const cp = document.createElementNS('http://www.w3.org/2000/svg','clipPath');
-            cp.setAttribute('id', clipId);
-            const pill = rect(x, Math.max(TOP_PAD, topY), BAR, Math.max(sum, 0.0001), outerR);
-            cp.appendChild(pill); defs.appendChild(cp);
-          }
-
-          const group = document.createElementNS('http://www.w3.org/2000/svg','g');
-          if (clipId) group.setAttribute('clip-path', `url(#${clipId})`);
-          group.style.transition = 'transform .2s ease';
-
-          const rc = rect(x, yBase - hC, BAR, hC, 0);
-          const rp = rect(x, yBase - (hC + hP), BAR, hP, 0);
-          const rf = rect(x, yBase - (hC + hP + hF), BAR, hF, 0);
-          rc.setAttribute('fill', 'rgba(52,211,153,.85)');
-          rp.setAttribute('fill', 'rgba(96,165,250,.85)');
-          rf.setAttribute('fill', 'rgba(245,158,11,.85)');
-
-          // анимируем только когда нужно
-          rc.classList.add('seg','carb'); rp.classList.add('seg','prot'); rf.classList.add('seg','fat');
-          if (doAnim){ rc.classList.add('bar-anim'); rp.classList.add('bar-anim'); rf.classList.add('bar-anim'); }
-
-          group.appendChild(rc); group.appendChild(rp); group.appendChild(rf);
-          gBars.appendChild(group); groups.push(group);
-
-          if (filter !== 'all'){
-            const gSelVal = filter==='prot' ? (d.protein_g||0) : filter==='fat' ? (d.fat_g||0) : (d.carbs_g||0);
-            const hSel = filter==='prot' ? hP : filter==='fat' ? hF : hC;
-            if (hSel > 22){
-              const tx = document.createElementNS('http://www.w3.org/2000/svg','text');
-              tx.textContent = String(Math.round(gSelVal));
-              tx.setAttribute('x', x + BAR/2);
-              tx.setAttribute('y', yBase - (hSel * 0.75));
-              tx.setAttribute('text-anchor','middle');
-              tx.setAttribute('font-size','14');
-              tx.setAttribute('font-weight','900');
-              tx.setAttribute('fill','#fff');
-              tx.setAttribute('opacity','0.98');
-              tx.style.pointerEvents = 'none';
-              tx.style.dominantBaseline = 'middle';
-              group.appendChild(tx);
-            }
-          }
-
-          const tDate = document.createElementNS('http://www.w3.org/2000/svg','text');
-          tDate.textContent = fmtD(d.date);
-          tDate.setAttribute('x', x + BAR/2);
-          tDate.setAttribute('y', yDate);
-          tDate.setAttribute('text-anchor','middle');
-          tDate.setAttribute('font-size','12');
-          tDate.setAttribute('font-weight','700');
-          tDate.setAttribute('fill','rgba(255,255,255,.9)');
-          tDate.style.opacity = '0';
-          tDate.style.transition = 'opacity .18s ease';
-          tDate.style.pointerEvents = 'none';
-          gBars.appendChild(tDate); dates.push(tDate);
-
-          const selOutline = rect(x-1, topY, BAR+2, Math.max(sum,2), outerR);
-          selOutline.setAttribute('class','sel-outline'); selOutline.style.opacity = '0';
-          selOutline.style.transition = 'transform .2s ease, opacity .12s ease';
-          gSel.appendChild(selOutline); outlines.push(selOutline);
-
-          const hit = rect(x, 0, BAR, H, outerR); hit.setAttribute('fill','transparent'); hit.style.cursor='pointer';
-          hit.addEventListener('click', ()=> select(i, d)); gHit.appendChild(hit);
-        });
-
-        svg.innerHTML = '';
-        svg.appendChild(defs); svg.appendChild(gBars); svg.appendChild(gSel); svg.appendChild(gHit);
-
-        // включаем анимацию только если doAnim === true
-        if (doAnim){
-          requestAnimationFrame(()=>{ svg.querySelectorAll('.bar-anim').forEach(el=> el.classList.add('show')); });
-        }
-
-        select(list.length-1, list[list.length-1]);
-        if (scr){ scr.scrollLeft = scr.scrollWidth; }
-
-        function select(idx, d){
-          if (infP) infP.textContent = Math.round(d.protein_g||0);
-          if (infF) infF.textContent = Math.round(d.fat_g||0);
-          if (infC) infC.textContent = Math.round(d.carbs_g||0);
-
-          outlines.forEach((o,i)=>{ o.style.opacity = (i===idx ? '1' : '0'); o.style.transform = (i===idx ? `translateY(-${LIFT}px)` : 'translateY(0)'); });
-          groups.forEach((g,i)=>{ g.style.transform = (i===idx ? `translateY(-${LIFT}px)` : 'translateY(0)'); });
-          dates.forEach((t,i)=>{ t.style.opacity = (i===idx ? '1' : '0'); });
-
-          try{ window.Telegram?.WebApp?.HapticFeedback?.selectionChanged?.(); }catch(_){}
-        }
-
-        function rect(x,y,w,h,r=0){
-          const e = document.createElementNS('http://www.w3.org/2000/svg','rect');
-          e.setAttribute('x', x); e.setAttribute('y', Math.max(0,y));
-          e.setAttribute('width', w); e.setAttribute('height', Math.max(0,h));
-          if (r){ e.setAttribute('rx', r); e.setAttribute('ry', r); }
-          return e;
-        }
-      }
-
-      draw(/* doAnim from opts.animate */);
-
-      // уникальный resize handler, без анимации
-      if (root.__kbjuResizeHandler){
-        try{ window.removeEventListener('resize', root.__kbjuResizeHandler); }catch(_){}
-      }
-      let __kbjuRaf = 0;
-      root.__kbjuResizeHandler = function(){
-        cancelAnimationFrame(__kbjuRaf);
-        __kbjuRaf = requestAnimationFrame(()=> draw(false)); // ← без анимации
-      };
-      window.addEventListener('resize', root.__kbjuResizeHandler, { passive:true });
-
-      // легенда: перерисовка без анимации
-      (function bindLegend(){
-        if (!root || root.__legendBound) return;
-        const info = root.querySelector('#kbju7-info'); if (!info) return;
-        info.addEventListener('click', (e)=>{
-          const btn = e.target.closest('.legend-tap'); if (!btn) return;
-          const key = btn.dataset.key;
-          const cur = root.getAttribute('data-filter') || 'all';
-          const next = (cur === key) ? 'all' : key;
-          root.setAttribute('data-filter', next);
-          info.querySelectorAll('.legend-tap').forEach(b=>{
-            const on = (next === b.dataset.key);
-            b.classList.toggle('active', on);
-            b.setAttribute('aria-pressed', String(on));
-          });
-          // IMPORTANT: передаём сам root и отключаем анимацию
-          window.renderKBJU7(root, data, { ...opts, animate:false });
-        }, { passive: true });
-        root.__legendBound = true;
-      })();
-    };
-  })();
-
-  /* ---------- Host scaffold ---------- */
-  function ensureKBJUHost(){
-    const el = host(); if (!el) return null;
-    let box = el.querySelector('#chart-kbju7-box');
-    if (box) return box;
-
-    const html = `
-      <div class="field" id="chart-kbju7-box" style="margin-top:12px">
-        <div class="kbju7 kbju7-card" id="kbju7-host" style="--r:18">
-          <div class="kbju7-viewport">
-            <div class="kbju7-scroll" id="kbju7-scroll">
-              <svg id="kbju7-svg" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="График БЖУ"></svg>
+    // 1. HTML-структура и Стили для графика и Timeline
+    const chartHTML = `
+        <div class="chart-container">
+            <div class="chart-timeline" id="chartTimeline">
+                <!-- Сюда будет вставлено колесо дат -->
             </div>
-          </div>
-          <div class="kbju7-info" id="kbju7-info" role="tablist" aria-label="Выбор нутриента">
-            <button type="button" class="legend-tap" data-key="prot" aria-label="Показать только белки (вкл/выкл)" aria-pressed="false"><span class="dot" aria-hidden="true"></span><span>Б:</span> <b class="v" id="kbju7-p">—</b> г</button>
-            <button type="button" class="legend-tap" data-key="fat"  aria-label="Показать только жиры (вкл/выкл)"  aria-pressed="false"><span class="dot" aria-hidden="true"></span><span>Ж:</span> <b class="v" id="kbju7-f">—</b> г</button>
-            <button type="button" class="legend-tap" data-key="carb" aria-label="Показать только углеводы (вкл/выкл)" aria-pressed="false"><span class="dot" aria-hidden="true"></span><span>У:</span> <b class="v" id="kbju7-c">—</b> г</button>
-          </div>
+            <div class="chart-wrapper">
+                <div class="chart-title">План vs Факт</div>
+                <div class="chart-legend" id="chartLegend">
+                    <span class="legend-item"><span class="legend-color plan"></span>План</span>
+                    <span class="legend-item"><span class="legend-color fact"></span>Факт</span>
+                </div>
+                <div class="chart-body" id="planFactChartBody">
+                    <!-- Сюда будет вставлен график -->
+                </div>
+            </div>
         </div>
-        <div class="help" id="chart-hint" style="text-align:center;margin-top:6px">Загружаем график…</div>
-      </div>`;
-    el.insertAdjacentHTML('beforeend', html);
-    return el.querySelector('#chart-kbju7-box');
-  }
+        <style>
+            .chart-container {
+                padding: 10px 0;
+                background: var(--tg-theme-bg-color);
+                border-radius: 10px;
+                margin-top: 10px;
+            }
+            .chart-timeline {
+                overflow-x: auto;
+                white-space: nowrap;
+                padding: 0 10px 10px 10px;
+                -webkit-overflow-scrolling: touch;
+                scrollbar-width: none; /* Firefox */
+            }
+            .chart-timeline::-webkit-scrollbar {
+                display: none; /* Chrome, Safari */
+            }
+            .chart-timeline .item {
+                display: inline-block;
+                padding: 5px 10px;
+                margin-right: 5px;
+                border-radius: 5px;
+                font-size: 14px;
+                cursor: pointer;
+                background: var(--tg-theme-secondary-bg-color);
+                color: var(--tg-theme-hint-color);
+            }
+            .chart-timeline .item.active {
+                background: var(--tg-theme-button-color);
+                color: var(--tg-theme-button-text-color);
+                font-weight: bold;
+            }
+            .chart-wrapper {
+                padding: 10px;
+            }
+            .chart-title {
+                font-size: 18px;
+                font-weight: bold;
+                color: var(--tg-theme-text-color);
+                margin-bottom: 10px;
+            }
+            .chart-legend {
+                display: flex;
+                justify-content: flex-start;
+                margin-bottom: 15px;
+                font-size: 14px;
+            }
+            .legend-item {
+                display: flex;
+                align-items: center;
+                margin-right: 15px;
+                color: var(--tg-theme-hint-color);
+            }
+            .legend-color {
+                display: inline-block;
+                width: 10px;
+                height: 10px;
+                border-radius: 50%;
+                margin-right: 5px;
+            }
+            .legend-color.plan { background-color: #007bff; } /* Синий */
+            .legend-color.fact { background-color: #28a745; } /* Зеленый */
 
-  /* ---------- Render helpers ---------- */
-  function normalizeChartData(arr){
-    if (!Array.isArray(arr)) return [];
-    return arr.map(d=>{
-      const date = d.date || d.day || d.ds || '';
-      const protein_g = d.protein_g ?? d.protein ?? 0;
-      const fat_g     = d.fat_g     ?? d.fat     ?? 0;
-      const carbs_g   = d.carbs_g   ?? d.carbs   ?? 0;
-      return { date, protein_g: Number(protein_g) || 0, fat_g: Number(fat_g) || 0, carbs_g: Number(carbs_g) || 0 };
-    }).filter(x=>x.date);
-  }
+            .chart-body {
+                display: grid;
+                grid-template-columns: repeat(2, 1fr);
+                gap: 15px;
+            }
+            .chart-item {
+                background: var(--tg-theme-secondary-bg-color);
+                padding: 10px;
+                border-radius: 8px;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                text-align: center;
+            }
+            .item-title {
+                font-size: 14px;
+                color: var(--tg-theme-hint-color);
+                margin-bottom: 5px;
+            }
+            .item-value-row {
+                display: flex;
+                justify-content: center;
+                align-items: baseline;
+                width: 100%;
+            }
+            .item-value {
+                font-size: 20px;
+                font-weight: bold;
+                margin: 0 5px;
+            }
+            .item-unit {
+                font-size: 14px;
+                color: var(--tg-theme-hint-color);
+            }
+            .value-plan { color: #007bff; }
+            .value-fact { color: #28a745; }
+            .item-delta {
+                font-size: 12px;
+                margin-top: 5px;
+                color: var(--tg-theme-hint-color);
+            }
+            .delta-positive { color: #28a745; } /* Зеленый */
+            .delta-negative { color: #dc3545; } /* Красный */
+        </style>
+    `;
 
-  // сигнатура данных для анти-дублирования рендера
-  function sigOf(arr){
-    const a = normalizeChartData(arr || []);
-    if (!a.length) return '0';
-    const last = a[a.length-1];
-    const sum = a.reduce((s,x)=> s + x.protein_g + x.fat_g + x.carbs_g, 0);
-    return `${a.length}|${last.date}|${Math.round(sum)}`;
-  }
+    // Вставляем HTML и стили
+    container.insertAdjacentHTML('beforeend', chartHTML);
 
-  let _chartAnimatedOnce = false;  // анимировать только первый READY
-  let _chartLastSig = '';          // статус+данные (для дедупа)
-  let _chartTimer = 0;
-  let _chartRunId = 0;
-  let _chartAbort = null;
-  let _chartStatus = 'INIT';
-  const STATUS_RANK = { INIT:0, NO_ROW:1, WAITING:2, EMPTY:3, READY:4 };
+    const state = {
+        allSeries: chartData.series || {},
+        activeDate: null,
+    };
 
-  function renderChart(data, status){
-    injectKBJUStylesOnce();
-    const box = ensureKBJUHost(); if (!box) return;
-    const hint = box.querySelector('#chart-hint');
-    const hostId = 'kbju7-host';
+    const drawTimeline = () => {
+        const timeline = document.getElementById('chartTimeline');
+        if (!timeline) return;
 
-    if (status === 'READY' && data && data.length){
-      if (hint){ hint.style.display = 'block'; hint.textContent = 'Динамика вашей нормы БЖУ'; }
-      window.renderKBJU7(hostId, normalizeChartData(data), {
-        visible:7, shape:'clip-capsule', animate: !_chartAnimatedOnce
-      });
-      _chartAnimatedOnce = true; // больше не анимируем
-      return;
+        // Сортируем даты по возрастанию для корректного отображения Timeline
+        const dates = Object.keys(state.allSeries).sort(); 
+        timeline.innerHTML = dates.map(date => {
+            const isActive = date === state.activeDate;
+            // Форматируем дату для отображения: 13 ноя
+            const displayDate = new Date(date).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+            return `<div class="item ${isActive ? 'active' : ''}" data-date="${date}">${displayDate}</div>`;
+        }).join('');
+
+        // Добавлен обработчик клика для смены активной даты
+        // Используем делегирование, чтобы не вешать обработчик на каждый элемент
+        timeline.onclick = (e) => {
+            const item = e.target.closest('.item');
+            if (item && item.dataset.date) {
+                const newDate = item.dataset.date;
+                if (newDate !== state.activeDate) {
+                    state.activeDate = newDate;
+                    drawChart(); // Перерисовываем график с новыми данными
+                }
+            }
+        };
+
+        // Прокручиваем к активной дате (самой последней)
+        const activeItem = timeline.querySelector('.item.active');
+        if (activeItem) {
+            activeItem.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+        }
+    };
+
+    const drawChart = () => {
+        const chartBody = document.getElementById('planFactChartBody');
+        if (!chartBody) return;
+
+        const activeData = state.allSeries[state.activeDate];
+        if (!activeData) {
+            chartBody.innerHTML = '<div style="grid-column: 1 / -1; text-align: center; color: var(--tg-theme-hint-color);">Нет данных для выбранной даты.</div>';
+            return;
+        }
+
+        const items = Object.keys(activeData).map(key => {
+            const item = activeData[key];
+            // Форматируем заголовок: fat -> Fat, waist_hips_ratio -> Waist Hips Ratio
+            const title = key.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' '); 
+            const unit = item.unit || '';
+            const plan = fmtNum(item.plan);
+            const fact = fmtNum(item.fact);
+            const delta = item.delta !== undefined ? fmtNum(item.delta) : null;
+            
+            // Определяем класс для дельты: положительная (зеленый), отрицательная (красный)
+            const deltaClass = item.delta > 0 ? 'delta-positive' : (item.delta < 0 ? 'delta-negative' : '');
+            const deltaText = delta !== null ? `(${item.delta > 0 ? '+' : ''}${delta} ${unit})` : '';
+
+            return `
+                <div class="chart-item">
+                    <div class="item-title">${title}</div>
+                    <div class="item-value-row">
+                        <span class="item-value value-plan">${plan}</span>
+                        <span class="item-value value-fact">${fact}</span>
+                        <span class="item-unit">${unit}</span>
+                    </div>
+                    ${delta !== null ? `<div class="item-delta ${deltaClass}">${deltaText}</div>` : ''}
+                </div>
+            `;
+        }).join('');
+
+        chartBody.innerHTML = items;
+        drawTimeline(); // Перерисовываем Timeline для обновления активного класса
+    };
+
+    // Инициализация: устанавливаем последнюю дату как активную и рисуем
+    const dates = Object.keys(state.allSeries).sort();
+    if (dates.length > 0) {
+        state.activeDate = dates[dates.length - 1]; // Последняя дата
+        drawChart();
     }
-    if (status === 'EMPTY' || status === 'WAITING'){
-      if (hint){ hint.style.display = 'block'; hint.textContent = 'Обрабатываем данные…'; }
-      return;
-    }
-    if (status === 'NO_ROW'){
-      if (hint){ hint.style.display = 'block'; hint.textContent = 'Сначала заполните анкету и сохраните.'; }
-      return;
-    }
-    if (hint){ hint.style.display = 'block'; hint.textContent = '—'; }
-  }
+}
 
-  function renderChartSafe(data, nextStatus){
-    const cur = STATUS_RANK[_chartStatus] ?? 0;
-    const nxt = STATUS_RANK[nextStatus] ?? 0;
-    if (nxt < cur) return; // не откатываем статус
-
-    const nextSig = `${nextStatus}|${sigOf(data)}`;
-    if (nextSig === _chartLastSig) return; // ничего не поменялось — не дёргаем график
-
-    renderChart(data, nextStatus);
-    _chartStatus = nextStatus;
-    _chartLastSig = nextSig;
-  }
-
-  /* ---------- API ---------- */
-  async function apiFrontChartData_bm(requestedRow, signal){
-    const payload = { action:'front_chart_data', init_data:String(tg?.initData || ''), row: Number(requestedRow||0) || undefined };
-    const resp = await fetch(BACKEND, {
-      method:'POST', headers:{ 'Content-Type':'text/plain;charset=UTF-8' },
-      body: JSON.stringify(payload), cache:'no-store', credentials:'omit', mode:'cors', signal
-    });
-    const raw = await resp.text();
-    let json = null; try { json = raw ? JSON.parse(raw) : null; } catch(_){}
-    if (!resp.ok || !json) throw new Error(`HTTP ${resp.status}`);
-    return json;
-  }
-
-  function targetRow(){
-    return (typeof desiredRow === 'function' && desiredRow() != null)
-      ? desiredRow()
-      : (typeof getRowCalcForUser_bm === 'function' ? getRowCalcForUser_bm() : null);
-  }
-
-  /* ---------- Polling ---------- */
-  async function pollOnce(runId){
-    if (runId !== _chartRunId) return { done:true };
-
-    const reqRow = targetRow();
-
-    if (_chartAbort) { try{ _chartAbort.abort(); }catch(_){ } }
-    const controller = new AbortController();
-    _chartAbort = controller;
-
-    try{
-      const res = await apiFrontChartData_bm(reqRow, controller.signal);
-      if (runId !== _chartRunId) return { done:true };
-
-      // не показываем ответ, если он старее требуемого row
-      if (res?.row && reqRow && Number(res.row) < Number(reqRow)) {
-        renderChartSafe([], 'WAITING');
-        const waitOld = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
-        return { done:false, wait: waitOld };
-      }
-
-      const serverRow = Number(res?.row);
-      if (Number.isFinite(serverRow) && (reqRow == null || serverRow > reqRow)) {
-        setRowCalcForUser_bm(serverRow);
-      }
-
-      if (!res?.ready){
-        const status = res?.status || 'WAITING';
-        renderChartSafe([], status); // никакой истории до READY
-        const wait = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
-        return { done:false, wait };
-      }
-
-      // READY
-      const data = Array.isArray(res?.data) ? res.data : [];
-      renderChartSafe(data, 'READY');
-      if (!(reqRow && Number(res.row || 0) < Number(reqRow))) {
-        try {
-          const uid = (typeof currentUserId_bm === 'function') ? currentUserId_bm() : 'anon';
-          localStorage.setItem(`bm:chart:data:${String(uid)}`, JSON.stringify({ row: res.row, data, updated_at: res.updated_at }));
-        } catch(_){}
-      }
-      return { done:true };
-
-    } catch(err){
-      if (err?.name === 'AbortError') return { done:true };
-      if (runId !== _chartRunId) return { done:true };
-      return { done:false, wait: 1000 };
-    }
-  }
-
-  async function pollLoop(runId){
-    if (runId !== _chartRunId) return;
-    clearTimeout(_chartTimer);
-    const r = await pollOnce(runId);
-    if (r.done || runId !== _chartRunId) return;
-    _chartTimer = setTimeout(()=>pollLoop(runId), r.wait);
-  }
-
-  /* ---------- Public start ---------- */
-  window.startChartFlow_bm_bm = function(){
-    _chartRunId += 1;
-    const runId = _chartRunId;
-    _chartStatus = 'INIT';
-    _chartLastSig = ''; // обнуляем сигнатуру при новом запуске
-
-    injectKBJUStylesOnce();
-    ensureKBJUHost();
-
-    // показываем кэш только если он не старее требуемого row
-    const target = targetRow();
-    try{
-      const uid = (typeof currentUserId_bm === 'function') ? currentUserId_bm() : 'anon';
-      const raw = localStorage.getItem(`bm:chart:data:${String(uid)}`);
-      const cached = raw ? JSON.parse(raw) : null;
-      if (cached?.data && !(target && Number(cached.row || 0) < Number(target))) {
-        renderChartSafe(cached.data, 'READY');
-      }
-    } catch(_){}
-
-    clearTimeout(_chartTimer);
-    if (_chartAbort){ try{ _chartAbort.abort(); }catch(_){ } _chartAbort = null; }
-
-    pollLoop(runId);
-  };
-
-  document.addEventListener('visibilitychange', ()=>{
-    if (document.visibilityState === 'hidden'){
-      clearTimeout(_chartTimer);
-      if (_chartAbort){ try{ _chartAbort.abort(); }catch(_){ } _chartAbort = null; }
-    } else {
-      window.startChartFlow_bm_bm();
-    }
-  });
-
-  // можно оставить автозапуск — с анти-дребезгом он не будет «дёргать» график
-  window.startChartFlow_bm_bm();
-})();
 
 
 
