@@ -2002,7 +2002,7 @@ function handleSaveClick_bm(e){
 })();
   
 /* ============================================================
- *  BLOCK E1 — Analytics Macros (poll + cache)
+ *  BLOCK E1 — Analytics Macros (poll + cache) + DEBUG
  * ============================================================ */
 (function macrosAnalyticsInit(){
   const tg = window.Telegram?.WebApp;
@@ -2015,13 +2015,20 @@ function handleSaveClick_bm(e){
   function saveMacrosCache_bm(obj, uid){ try { localStorage.setItem(macrosKey_bm(uid ?? currentUserId_bm()), JSON.stringify(obj)); } catch(_){} }
   function loadMacrosCache_bm(uid){ try { const raw = localStorage.getItem(macrosKey_bm(uid ?? currentUserId_bm())); return raw ? JSON.parse(raw) : null; } catch(_) { return null; } }
 
-  function fmtInt(v){ return (v==null || isNaN(v)) ? '—' : String(Math.round(Number(v))); }
+  function fmtNum(v){ 
+    if (v == null || v === '' || (typeof v === 'number' && isNaN(v))) return '—';
+    if (typeof v === 'string') return v; // для "Не известно"
+    const num = Number(v);
+    // Для соотношений (< 10) показываем 2 знака
+    return num < 10 ? num.toFixed(2) : String(Math.round(num));
+  }
+
   function renderSkeleton(){
     const el = host(); if (!el) return;
     el.innerHTML = `
       <div class="field">
         <div class="macros-grid" id="macros-cards">
-          <div class="macro-card"><div class="m-label">ИМТ</div><div class="m-value" id="BMI">—</div><div class="m-unit">кг/м2</div></div>
+          <div class="macro-card"><div class="m-label">ИМТ</div><div class="m-value" id="BMI">—</div><div class="m-unit">кг/м²</div></div>
           <div class="macro-card"><div class="m-label">Масса жира</div><div class="m-value" id="fat_mass">—</div><div class="m-unit">кг</div></div>
           <div class="macro-card"><div class="m-label">Талия к ягодицам</div><div class="m-value" id="waist_hips_ratio">—</div><div class="m-unit">отношение</div></div>
           <div class="macro-card"><div class="m-label">Плечи к талии</div><div class="m-value" id="shoulders_waist_ratio">—</div><div class="m-unit">отношение</div></div>
@@ -2029,34 +2036,33 @@ function handleSaveClick_bm(e){
         <div class="macro-hint" id="macros-hint">После сохранения появятся расчёты.</div>
       </div>`;
   }
-  function renderValues(macros, opts){
-  const o = opts || {};
-  const set = (id, val) => { 
-    const el = document.getElementById(id); 
-    if (el) {
-      // Для fat_mass может быть строка "Не известно"
-      if (typeof val === 'string') {
-        el.textContent = val;
-      } else {
-        el.textContent = fmtInt(val);
-      }
-    }
-  };
-  
-  // ✅ Правильные ID, соответствующие renderSkeleton
-  set('BMI', macros?.BMI);
-  set('fat_mass', macros?.fat_mass);
-  set('waist_hips_ratio', macros?.waist_hips_ratio);
-  set('shoulders_waist_ratio', macros?.shoulders_waist_ratio);
 
-  const hint = document.getElementById('macros-hint');
-  if (!hint) return;
-  if (o.status === 'READY'){ hint.textContent = 'Ваши метрики'; }
-  else if (o.status === 'PARTIAL'){ hint.textContent = 'Обновляем… часть значений уже готова.'; }
-  else if (o.status === 'WAITING'){ hint.textContent = 'Считаем…'; }
-  else if (o.status === 'NO_ROW'){ hint.textContent = 'Сначала заполните анкету и сохраните.'; }
-  else { hint.textContent = '—'; }
-}
+  function renderValues(macros, opts){
+    console.log('🎨 renderValues called with:', { macros, opts });
+    
+    const o = opts || {};
+    const set = (id, val) => { 
+      const el = document.getElementById(id);
+      console.log(`   Setting ${id}:`, val, '→ element exists:', !!el);
+      if (el) {
+        el.textContent = fmtNum(val);
+      }
+    };
+    
+    // ✅ Правильные ID
+    set('BMI', macros?.BMI);
+    set('fat_mass', macros?.fat_mass);
+    set('waist_hips_ratio', macros?.waist_hips_ratio);
+    set('shoulders_waist_ratio', macros?.shoulders_waist_ratio);
+
+    const hint = document.getElementById('macros-hint');
+    if (!hint) return;
+    if (o.status === 'READY'){ hint.textContent = 'Ваши метрики'; }
+    else if (o.status === 'PARTIAL'){ hint.textContent = 'Обновляем… часть значений уже готова.'; }
+    else if (o.status === 'WAITING'){ hint.textContent = 'Считаем…'; }
+    else if (o.status === 'NO_ROW'){ hint.textContent = 'Сначала заполните анкету и сохраните.'; }
+    else { hint.textContent = '—'; }
+  }
 
   let _macrosTimer = 0;
   let _macrosRunId = 0;
@@ -2065,19 +2071,26 @@ function handleSaveClick_bm(e){
   const STATUS_RANK = { INIT:0, NO_ROW:1, WAITING:2, PARTIAL:3, READY:4 };
 
   function renderValuesSafe(macros, nextStatus){
+    console.log('🔒 renderValuesSafe:', { macros, nextStatus, currentStatus: _macrosStatus });
     const cur = STATUS_RANK[_macrosStatus] ?? 0;
     const nxt = STATUS_RANK[nextStatus] ?? 0;
-    if (nxt < cur) return;
+    if (nxt < cur) {
+      console.log('   ⚠️ Skipped: new status rank lower');
+      return;
+    }
     renderValues(macros, { status: nextStatus });
     _macrosStatus = nextStatus;
   }
 
   async function apiFrontMacros_bm(requestedRow, signal){
     const payload = {
-      action: 'front_macros',
+      action: 'front_metrics', // ✅ ИСПРАВЛЕНО! было 'front_macros'
       init_data: String(tg?.initData || ''),
       row: Number(requestedRow || 0) || undefined
     };
+    
+    console.log('📡 API call:', { action: payload.action, row: payload.row });
+    
     const resp = await fetch(BACKEND, {
       method:'POST',
       headers:{ 'Content-Type':'text/plain;charset=UTF-8' },
@@ -2086,8 +2099,16 @@ function handleSaveClick_bm(e){
       signal
     });
     const raw = await resp.text();
-    let json = null; try { json = raw ? JSON.parse(raw) : null; } catch(_){}
+    console.log('📡 Response raw:', raw.substring(0, 500));
+    
+    let json = null; 
+    try { json = raw ? JSON.parse(raw) : null; } catch(e){
+      console.error('❌ JSON parse error:', e);
+    }
+    
     if (!resp.ok || !json) throw new Error(`HTTP ${resp.status}`);
+    
+    console.log('📡 Response parsed:', json);
     return json;
   }
 
@@ -2099,12 +2120,23 @@ function handleSaveClick_bm(e){
         ? desiredRow()
         : getRowCalcForUser_bm();
 
+    console.log('🔄 pollOnce: reqRow=', reqRow);
+
     if (_macrosAbort) { try{ _macrosAbort.abort(); }catch(_){ } }
     const controller = new AbortController();
     _macrosAbort = controller;
 
     try{
       const res = await apiFrontMacros_bm(reqRow, controller.signal);
+      
+      console.log('✅ Poll result:', {
+        row: res?.row,
+        status: res?.status,
+        ready: res?.ready,
+        metrics: res?.metrics,
+        macros: res?.macros
+      });
+      
       if (res?.row && reqRow && Number(res.row) < Number(reqRow)) {
         const wait = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
         return { done:false, wait };
@@ -2116,18 +2148,22 @@ function handleSaveClick_bm(e){
         setRowCalcForUser_bm(serverRow);
       }
 
-      renderValuesSafe(res?.macros || {}, res?.status || 'WAITING');
+      // ✅ ИСПРАВЛЕНО! Проверяем и res.metrics, и res.macros
+      const metricsData = res?.metrics || res?.macros || {};
+      console.log('📊 Using metrics:', metricsData);
+      
+      renderValuesSafe(metricsData, res?.status || 'WAITING');
 
       if (res?.ready){
-        // не кэшируем, если внезапно старее (на всякий)
         if (!(reqRow && Number(res.row || 0) < Number(reqRow))) {
-          saveMacrosCache_bm({ row: res.row, macros: res.macros, updated_at: res.updated_at });
+          saveMacrosCache_bm({ row: res.row, macros: metricsData, updated_at: res.updated_at });
         }
         return { done:true };
       }
       const wait = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
       return { done:false, wait };
     } catch(err){
+      console.error('❌ Poll error:', err);
       if (err?.name === 'AbortError') return { done:true };
       if (runId !== _macrosRunId) return { done:true };
       return { done:false, wait: 1000 };
@@ -2143,19 +2179,21 @@ function handleSaveClick_bm(e){
   }
 
   window.startMacrosFlow_bm_bm = function forceStart(){
+    console.log('🚀 Starting macros flow');
     _macrosRunId += 1;
     const runId = _macrosRunId;
     _macrosStatus = 'INIT';
 
     renderSkeleton();
 
-    // ✅ Показываем кэш только если он не старее desiredRow()
     const target =
       (typeof desiredRow === 'function' && desiredRow() != null)
         ? desiredRow()
         : getRowCalcForUser_bm();
 
     const cached = loadMacrosCache_bm();
+    console.log('💾 Cache loaded:', { cached, target });
+    
     if (cached?.macros && !(target && Number(cached.row || 0) < Number(target))) {
       renderValuesSafe(cached.macros, 'READY');
     }
@@ -2175,6 +2213,7 @@ function handleSaveClick_bm(e){
     }
   });
 
+  console.log('📦 Macros module initialized');
   window.startMacrosFlow_bm_bm();
 })();
 
