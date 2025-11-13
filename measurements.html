@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0003'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0002'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -1698,10 +1698,11 @@ function handleSaveClick_bm(e){
 
       try{
         const uid = (typeof currentUserId_bm === 'function') ? currentUserId_bm() : 'anon';
-        if (b.metrics){
-          const metricsRow = Number(b.metrics.row || b.row || 0);
-          if (b.metrics.ready && b.metrics.metrics && !(reqRow && metricsRow < Number(reqRow))) {
-            const seed = { row: b.metrics.row || b.row || null, metrics: b.metrics.metrics, updated_at: b.metrics.updated_at };
+        if (b.macros){
+          const macrosRow = Number(b.macros.row || b.row || 0);
+          // ✅ не кладём старее reqRow
+          if (b.macros.ready && b.macros.macros && !(reqRow && macrosRow < Number(reqRow))) {
+            const seed = { row: b.macros.row || b.row || null, macros: b.macros.macros, updated_at: b.macros.updated_at };
             localStorage.setItem('bm:macros:vals:' + String(uid), JSON.stringify(seed));
           }
           try { window.startMacrosFlow_bm_bm(); } catch(_){}
@@ -2016,47 +2017,34 @@ function handleSaveClick_bm(e){
 
   function fmtInt(v){ return (v==null || isNaN(v)) ? '—' : String(Math.round(Number(v))); }
   function renderSkeleton(){
-  const el = host(); if (!el) return;
-  el.innerHTML = `
-    <div class="field">
-      <div class="macros-grid" id="macros-cards">
-        <div class="macro-card"><div class="m-label">ИМТ</div><div class="m-value" id="m_bmi">—</div><div class="m-unit"></div></div>
-        <div class="macro-card"><div class="m-label">Масса жира</div><div class="m-value" id="m_fatmass">—</div><div class="m-unit">кг</div></div>
-        <div class="macro-card"><div class="m-label">Талия/Бёдра</div><div class="m-value" id="m_whr">—</div><div class="m-unit"></div></div>
-        <div class="macro-card"><div class="m-label">Плечи/Талия</div><div class="m-value" id="m_swr">—</div><div class="m-unit"></div></div>
-      </div>
-      <div class="macro-hint" id="macros-hint">После сохранения появятся расчёты.</div>
-    </div>`;
-}
-  function renderValues(metrics, opts){
-  const o = opts || {};
-  const set = (id, val) => { 
-    const el = document.getElementById(id); 
-    if (!el) return;
-    if (val === 'Не известно') {
-      el.textContent = '—';
-      return;
-    }
-    if (val == null || isNaN(val)) {
-      el.textContent = '—';
-      return;
-    }
-    el.textContent = String(Number(val).toFixed(1));
-  };
-  
-  set('m_bmi',     metrics?.BMI);
-  set('m_fatmass', metrics?.fat_mass);
-  set('m_whr',     metrics?.waist_hips_ratio);
-  set('m_swr',     metrics?.shoulders_waist_ratio);
+    const el = host(); if (!el) return;
+    el.innerHTML = `
+      <div class="field">
+        <div class="macros-grid" id="macros-cards">
+          <div class="macro-card"><div class="m-label">Калории</div><div class="m-value" id="m_kcal">—</div><div class="m-unit">ккал</div></div>
+          <div class="macro-card"><div class="m-label">Белки</div><div class="m-value" id="m_protein">—</div><div class="m-unit">г</div></div>
+          <div class="macro-card"><div class="m-label">Жиры</div><div class="m-value" id="m_fat">—</div><div class="m-unit">г</div></div>
+          <div class="macro-card"><div class="m-label">Углеводы</div><div class="m-value" id="m_carbs">—</div><div class="m-unit">г</div></div>
+        </div>
+        <div class="macro-hint" id="macros-hint">После сохранения появятся расчёты.</div>
+      </div>`;
+  }
+  function renderValues(macros, opts){
+    const o = opts || {};
+    const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = fmtInt(val); };
+    set('m_kcal',   macros?.kcal);
+    set('m_protein',macros?.protein_g);
+    set('m_fat',    macros?.fat_g);
+    set('m_carbs',  macros?.carbs_g);
 
-  const hint = document.getElementById('macros-hint');
-  if (!hint) return;
-  if (o.status === 'READY'){ hint.textContent = 'Ваши показатели'; }
-  else if (o.status === 'PARTIAL'){ hint.textContent = 'Обновляем… часть значений уже готова.'; }
-  else if (o.status === 'WAITING'){ hint.textContent = 'Считаем…'; }
-  else if (o.status === 'NO_ROW'){ hint.textContent = 'Сначала заполните анкету и сохраните.'; }
-  else { hint.textContent = '—'; }
-}
+    const hint = document.getElementById('macros-hint');
+    if (!hint) return;
+    if (o.status === 'READY'){ hint.textContent = 'Ваша норма в день'; }
+    else if (o.status === 'PARTIAL'){ hint.textContent = 'Обновляем… часть значений уже готова.'; }
+    else if (o.status === 'WAITING'){ hint.textContent = 'Считаем…'; }
+    else if (o.status === 'NO_ROW'){ hint.textContent = 'Сначала заполните анкету и сохраните.'; }
+    else { hint.textContent = '—'; }
+  }
 
   let _macrosTimer = 0;
   let _macrosRunId = 0;
@@ -2072,12 +2060,12 @@ function handleSaveClick_bm(e){
     _macrosStatus = nextStatus;
   }
 
-    async function apiFrontMetrics_bm(requestedRow, signal){
-      const payload = {
-        action: 'front_metrics',
-        init_data: String(tg?.initData || ''),
-        row: Number(requestedRow || 0) || undefined
-      };
+  async function apiFrontMacros_bm(requestedRow, signal){
+    const payload = {
+      action: 'front_macros',
+      init_data: String(tg?.initData || ''),
+      row: Number(requestedRow || 0) || undefined
+    };
     const resp = await fetch(BACKEND, {
       method:'POST',
       headers:{ 'Content-Type':'text/plain;charset=UTF-8' },
@@ -2104,30 +2092,29 @@ function handleSaveClick_bm(e){
     _macrosAbort = controller;
 
     try{
-      const res = await apiFrontMetrics_bm(reqRow, controller.signal);
+      const res = await apiFrontMacros_bm(reqRow, controller.signal);
       if (res?.row && reqRow && Number(res.row) < Number(reqRow)) {
         const wait = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
         return { done:false, wait };
       }
       if (runId !== _macrosRunId) return { done:true };
-    
+
       const serverRow = Number(res?.row);
       if (Number.isFinite(serverRow) && (reqRow == null || serverRow > reqRow)) {
         setRowCalcForUser_bm(serverRow);
       }
-    
-      renderValuesSafe(res?.metrics || {}, res?.status || 'WAITING');
-    
+
+      renderValuesSafe(res?.macros || {}, res?.status || 'WAITING');
+
       if (res?.ready){
+        // не кэшируем, если внезапно старее (на всякий)
         if (!(reqRow && Number(res.row || 0) < Number(reqRow))) {
-          saveMacrosCache_bm({ row: res.row, metrics: res.metrics, updated_at: res.updated_at });
+          saveMacrosCache_bm({ row: res.row, macros: res.macros, updated_at: res.updated_at });
         }
         return { done:true };
       }
       const wait = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
       return { done:false, wait };
-
-    
     } catch(err){
       if (err?.name === 'AbortError') return { done:true };
       if (runId !== _macrosRunId) return { done:true };
@@ -2157,8 +2144,8 @@ function handleSaveClick_bm(e){
         : getRowCalcForUser_bm();
 
     const cached = loadMacrosCache_bm();
-    if (cached?.metrics && !(target && Number(cached.row || 0) < Number(target))) {
-      renderValuesSafe(cached.metrics, 'READY');
+    if (cached?.macros && !(target && Number(cached.row || 0) < Number(target))) {
+      renderValuesSafe(cached.macros, 'READY');
     }
 
     clearTimeout(_macrosTimer);
