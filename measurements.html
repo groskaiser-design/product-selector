@@ -2592,381 +2592,786 @@ function handleSaveClick_bm(e){
 //============================================================
 
 (function(){
-        const LABELS = { fat:'% Жира', neck:'Шея', shoulders:'Плечи', chest:'Грудь', waist:'Талия', hips:'Ягодицы', thigh:'Бедро', calf:'Икра', bicep:'Бицепс' };
-        const ORDER = ['fat','neck','shoulders','chest','waist','hips','thigh','calf','bicep'];
+  // Метки параметров на русском
+  const LABELS = {
+    fat: '% Жира',
+    neck: 'Шея',
+    shoulders: 'Плечи',
+    chest: 'Грудь',
+    waist: 'Талия',
+    hips: 'Ягодицы',
+    thigh: 'Бедро',
+    calf: 'Икра',
+    bicep: 'Бицепс'
+  };
+  
+  // Порядок отображения параметров
+  const ORDER = ['fat', 'neck', 'shoulders', 'chest', 'waist', 'hips', 'thigh', 'calf', 'bicep'];
 
-        /* -------- JSON helpers -------- */
-        function parseJSONFromTemplate(id){
-          const el = document.getElementById(id);
-          if (!el || el.tagName !== 'TEMPLATE') return null;
-          let raw = '';
-          if (el.content && typeof el.content.textContent === 'string') raw = el.content.textContent; else raw = el.textContent || '';
-          raw = raw.trim();
-          if (!raw || (raw[0] !== '{' && raw[0] !== '[')) return null;
-          try { return JSON.parse(raw); } catch (e) {
-            function softSanitizeJSON(txt){
-              let s = String(txt);
-              for(;;){ const i = s.indexOf('/*'); if(i === -1) break; const j = s.indexOf('*/', i+2); s = (j === -1) ? (s.slice(0,i) + s.slice(i+2)) : (s.slice(0,i) + s.slice(j+2)); }
-              s = s.split('\n').map(line => { const idx = line.indexOf('//'); return (idx > 0 && line[idx-1] === ':') ? line : (idx !== -1 ? line.slice(0, idx) : line); }).join('\n');
-              s = s.split('“').join('"').split('”').join('"').split('‘').join("'").split('’').join("'");
-              let out = '';
-              for(let i=0;i<s.length;i++){
-                const ch = s[i];
-                if(ch === ','){
-                  let k=i+1; while(k<s.length && (s[k]===' '||s[k]==='\t'||s[k]==='\r'||s[k]==='\n')) k++;
-                  if(k<s.length && (s[k] === '}' || s[k] === ']')){ continue; }
-                }
-                out += ch;
-              }
-              s = out;
-              let res = '';
-              for(let i=0;i<s.length;){
-                const p = s.indexOf('"delta"', i);
-                if(p === -1){ res += s.slice(i); break; }
-                res += s.slice(i, p + 7);
-                let c = p + 7; while(c < s.length && s[c] !== ':') c++;
-                if(c >= s.length){ i = c; break; }
-                res += s.slice(p + 7, c + 1);
-                let k = c + 1; while(k<s.length && (s[k]===' '||s[k]==='\t'||s[k]==='\r'||s[k]==='\n')) k++;
-                if(k<s.length && (s[k] === ',' || s[k] === '}')){ res += ' null'; i = k; }
-                else { i = k; }
-              }
-              return res;
-            }
-            try { return JSON.parse(softSanitizeJSON(raw)); } catch (e2) { return null; }
-          }
-        }
-
-        function toRows(json){
-          var rows=[]; if(!json) return rows;
-          for(var i=0;i<ORDER.length;i++){
-            var key = ORDER[i];
-            var it = json[key];
-            if(!it) continue;
-            var unit = it.unit || (key==='fat' ? '%' : 'см');
-            var planRaw = (it.plan != null ? it.plan : it.target);
-            var factRaw = (it.fact != null ? it.fact : it.actual);
-            var plan = Number(planRaw);
-            var fact = Number(factRaw);
-            if(!isFinite(plan) || !isFinite(fact)) continue;
-            var delta = (it.hasOwnProperty('delta') && isFinite(Number(it.delta))) ? Number(it.delta) : null;
-            rows.push({ key: key, label: (LABELS[key]||key), unit: unit, target: plan, actual: fact, delta: delta });
-          }
-          return rows;
-        }
-
-        /* -------------------- Рендер списка -------------------- */
-        function render(el, initialData){
-          var state = { data: initialData };
-          var rowsEl = el.querySelector('#rows');
-          var scroller = el.querySelector('#scroller');
-          var hint = el.querySelector('#scrollHint');
-          if(!rowsEl || !scroller){ return { setData: function(_){} }; }
-
-          // Track last scroll direction to orient the arrow correctly
-          var lastScrollTop = scroller.scrollTop || 0;
-          var lastDirUp = false;
-
-          function buildDomains(list){
-            var cmMax = 0; for(var i=0;i<list.length;i++){ var d=list[i]; var u=(d.unit||'').trim(); if(u!=='%') cmMax=Math.max(cmMax, (d.target||0), (d.actual||0)); }
-            return { '%':100, 'см':cmMax||1, 'cm':cmMax||1 };
-          }
-
-          function draw(){
-            var data = state.data || []; var maxByUnit = buildDomains(data); rowsEl.innerHTML='';
-            for(var i=0;i<data.length;i++){
-              var d = data[i]; var delta = (isFinite(d.delta) ? d.delta : null); var unitMax = maxByUnit[(d.unit||'').trim()] || 1;
-              var wp = Math.max(0, Math.min(100, ((d.target||0)/unitMax)*100));
-              var wf = Math.max(0, Math.min(100, ((d.actual||0)/unitMax)*100));
-
-              var row = document.createElement('div'); row.className='row';
-              var top = document.createElement('div'); top.className='top';
-              top.innerHTML = '<span class="name">'+(d.key==='fat' ? (LABELS[d.key]||d.label) : (d.label+' ('+d.unit+')'))+'</span>'+
-                '<span class="vals">'+
-                  '<span class="kv"><span class="lab">Факт:</span> <b class="val">'+round(d.actual,1)+'</b></span>'+
-                  '<span class="dot">•</span>'+
-                  '<span class="kv"><span class="lab">План:</span> <b class="val">'+round(d.target,1)+'</b></span>'+
-                  '<span class="dot">•</span>'+
-                  '<span class="kv"><span class="lab">∆:</span> <b class="val">'+fmtDeltaNoUnit(delta)+(isFinite(delta)?(delta>0?' ▲':(delta<0?' ▼':'')):'')+'</b></span>'+
-                '</span>';
-
-              var g = document.createElement('div'); g.className='gauge';
-              var plan = document.createElement('div'); plan.className='plan'; plan.style.setProperty('--wp', wp+'%');
-              var fact = document.createElement('div'); fact.className='fact'; fact.style.setProperty('--wf', wf+'%');
-
-              if (isFinite(delta)) {
-                if (d.key === 'fat' || d.key === 'waist') { if (d.actual > d.target) fact.classList.add('red'); }
-                else { if (d.actual < d.target) fact.classList.add('orange'); }
-              } else { fact.classList.add('neutral'); }
-
-              g.appendChild(plan); g.appendChild(fact); row.appendChild(top); row.appendChild(g);
-              rowsEl.appendChild(row);
-            }
-            limitToRows(5);
-            updateHint();
-          }
-
-          function limitToRows(n){
-            var items = rowsEl.children; var rows=[]; for(var i=0;i<items.length;i++){ if(items[i].classList && items[i].classList.contains('row')) rows.push(items[i]); }
-            if(!rows.length) return; var csList = getComputedStyle(rowsEl); var maxH = parseFloat(csList.paddingTop) + parseFloat(csList.paddingBottom);
-            for(var i=0;i<Math.min(n,rows.length);i++){ var r=rows[i]; var cs=getComputedStyle(r); maxH += r.offsetHeight + parseFloat(cs.marginTop||0) + parseFloat(cs.marginBottom||0); }
-            maxH += 2; scroller.style.maxHeight = Math.ceil(maxH) + 'px';
-          }
-
-          function updateHint(){
-            if(!hint) return;
-            var hasMore = (scroller.scrollHeight - scroller.clientHeight) > 2;
-            hint.classList.toggle('hidden', !hasMore);
-            if(!hasMore) return;
-
-            // compute direction
-            var st = scroller.scrollTop;
-            if (Math.abs(st - lastScrollTop) > 0.5) {
-              lastDirUp = st < lastScrollTop; // true when scrolling up
-            }
-            lastScrollTop = st;
-
-            var nearTop = st <= 1;
-            var nearBottom = Math.ceil(st + scroller.clientHeight) >= scroller.scrollHeight - 2;
-
-            // Decide arrow direction:
-            // - at top -> point down
-            // - at bottom -> point up
-            // - otherwise -> follow last scroll direction
-            var showUp = false;
-            if (nearTop && !nearBottom) showUp = false;
-            else if (nearBottom && !nearTop) showUp = true;
-            else showUp = lastDirUp;
-
-            var svg = hint.querySelector('svg');
-            if(svg){ svg.classList.toggle('up', showUp); }
-          }
-
-          function fmt(n,d){ return d.unit==='%' ? (round(n,1)+'%') : (round(n,1)+' '+d.unit); }
-          function fmtDelta(n,d){ if(!isFinite(n)) return '—'; var s=n>0?'+':''; return d.unit==='%'? (s+round(n,1)+' п.п.') : (s+round(n,1)+' '+d.unit); }
-          function fmtDeltaNoUnit(n){ if(!isFinite(n)) return '—'; var s=n>0?'+':''; return s+round(n,1); }
-          function round(n,p){ var m=Math.pow(10, (p||1)); return Math.round(n*m)/m; }
-
-          draw();
-          scroller.addEventListener('scroll', updateHint, { passive:true });
-          window.addEventListener('resize', function(){ limitToRows(5); updateHint(); }, { passive:true });
-
-          return { setData:function(payload){ state.data = Array.isArray(payload) ? payload : toRows(payload); draw(); } };
-        }
-
-        // Инициализация базовых данных
-        var container = document.getElementById('pfHApp');
-        var params = new URLSearchParams(location.search);
-        var caseName = (params.get('case')||'').toLowerCase();
-
-        var input = null;
-        if(typeof window !== 'undefined' && window.PLAN_FACT_JSON){ input = window.PLAN_FACT_JSON; }
-        else if(caseName === 'missing'){ input = parseJSONFromTemplate('pfData_missingDelta'); }
-        else if(caseName === 'extreme'){ input = parseJSONFromTemplate('pfData_extreme'); }
-        else if(caseName === 'minimal'){ input = parseJSONFromTemplate('pfData_minimal'); }
-        else if(caseName === 'empty'){ input = parseJSONFromTemplate('pfData_empty'); }
-        else if(caseName === 'malformed'){ input = parseJSONFromTemplate('pfData_malformed'); }
-        else { input = parseJSONFromTemplate('pfData'); }
-        if (input == null) { input = {}; }
-
-        var api = render(container, toRows(input||{}));
-        if(typeof window!== 'undefined'){
-          window.PlanFactChart = { mount:function(el, json){ return render(el, toRows(json)); }, setData:function(json){ api && api.setData(json); } };
-        }
-
-        /* ==================== Временная шкала (серии дат) ==================== */
-        (function initTimeline(){
-          function parseJSONFromTemplateIfExists(id){ var el=document.getElementById(id); if(!el) return null; return parseJSONFromTemplate(id); }
-          function normalizeSeries(input){
-            if(!input) return { dates:[], rows:[] };
-            var seriesMap = null;
-            if (input.series && typeof input.series === 'object' && !Array.isArray(input.series)) {
-              seriesMap = input.series;
-            } else if (Array.isArray(input) && input.length && input[0] && typeof input[0] === 'object' && ('date' in input[0])) {
-              seriesMap = {}; for (var i=0;i<input.length;i++){ var it=input[i]; if(!it) continue; var k=String(it.date||i); seriesMap[k] = it.data || it.snapshot || {}; }
-            } else {
-              return { dates:['—'], rows:[ toRows(input) ] };
-            }
-            var dates = Object.keys(seriesMap);
-            dates.sort(function(a,b){ var da=new Date(a), db=new Date(b); if(isFinite(da.getTime()) && isFinite(db.getTime())) return da-db; return (a>b?1:-1); });
-            var rows = []; for(var j=0;j<dates.length;j++){ rows.push( toRows(seriesMap[dates[j]]||{}) ); }
-            return { dates:dates, rows:rows };
-          }
-          function formatDateRu(s){ var d=new Date(s); if(!isFinite(d.getTime())) return s; try{ return d.toLocaleDateString('ru-RU',{year:'numeric',month:'short',day:'2-digit'}); }catch(_){ return s; } }
-
-          function setupTimeline(norm, api){
-            const tl = document.getElementById('timeline');
-            const wheel = document.getElementById('dateWheel');
-            const maskEl = tl ? tl.querySelector('.wheel-mask') : null;
-            if(!tl || !wheel) return;
-
-            const n = (norm && Array.isArray(norm.rows)) ? norm.rows.length : 0;
-            if(n <= 1){ tl.hidden = true; return; }
-
-            tl.hidden = false; wheel.innerHTML = '';
-            const items = new Array(n);
-
-            function syncMask(){
-              if(!maskEl) return;
-              const el = items[Math.max(0, active)] || items[0];
-              if(!el) return;
-              const rect = el.getBoundingClientRect();
-              const wr = wheel.getBoundingClientRect();
-              const pr = tl.getBoundingClientRect();
-              const padX = 8, padY = 8;
-              const scale = 1.5; // шире чипа на 50%
-              const w = Math.round(rect.width * scale + padX*2);
-              const h = Math.round(rect.height + padY*2);
-              // Прибиваем подложку к центру области колеса
-              const centerX = wr.left + wr.width/2;
-              const left = Math.round(centerX - w/2 - pr.left);
-              const top  = Math.round((wr.top - pr.top) + (wr.height - h)/2);
-              maskEl.style.setProperty('--mask-left', left + 'px');
-              maskEl.style.setProperty('--mask-top',  top  + 'px');
-              maskEl.style.setProperty('--mask-w',    w    + 'px');
-              maskEl.style.setProperty('--mask-h',    h    + 'px');
-            }
-            for(let i=0;i<n;i++){
-              const label = formatDateRu(norm.dates[i]||String(i));
-              const btn = document.createElement('button');
-              btn.type = 'button';
-              btn.className = 'item';
-              btn.setAttribute('role','option');
-              btn.setAttribute('aria-selected','false');
-              btn.dataset.idx = String(i);
-              btn.textContent = label;
-              btn.addEventListener('click', function(){ centerTo(Number(this.dataset.idx), true, 'smooth'); });
-              wheel.appendChild(btn);
-              items[i] = btn;
-            }
-
-            function ensureSpacers(){
-              const olds = wheel.querySelectorAll('.spacer'); olds.forEach(x=>x.remove());
-              const left = document.createElement('div'); left.className='spacer'; left.setAttribute('aria-hidden','true');
-              const right = document.createElement('div'); right.className='spacer'; right.setAttribute('aria-hidden','true');
-              wheel.prepend(left); wheel.appendChild(right); resizeSpacers();
-            }
-            function resizeSpacers(){ const edge = Math.max(0, Math.floor(wheel.clientWidth/2)); wheel.style.setProperty('--edge', edge+'px'); }
-            ensureSpacers();
-
-            let active = -1, rafId = 0, snapTimer = 0;
-            function setAria(){ for(let k=0;k<items.length;k++){ if(!items[k]) continue; items[k].setAttribute('aria-selected', String(k===active)); items[k].setAttribute('tabindex', k===active? '0':'-1'); } }
-            function activate(i, announce){
-              if(i === active || i < 0 || i >= n) return;
-              if(items[active]){ items[active].classList.remove('active'); items[active].setAttribute('aria-selected','false'); }
-              active = i;
-              if(items[active]){ items[active].classList.add('active'); items[active].setAttribute('aria-selected','true'); }
-              setAria();
-              api && api.setData(norm.rows[i]||[]);
-              syncMask();
-            }
-            function centerTo(i, announce, behavior){
-              i = Math.max(0, Math.min(n-1, i)); const el = items[i]; if(!el) return;
-              const target = el.offsetLeft + el.offsetWidth/2 - wheel.clientWidth/2;
-              wheel.scrollTo({ left: Math.max(0, target), behavior: (behavior||'auto') });
-              activate(i, announce);
-              syncMask();
-            }
-            function onScroll(){
-              if(rafId) cancelAnimationFrame(rafId);
-              rafId = requestAnimationFrame(function(){
-                const center = wheel.scrollLeft + wheel.clientWidth/2;
-                let best = -1, bestDist = 1e12;
-                for(let k=0;k<n;k++){
-                  const el = items[k]; const c = el.offsetLeft + el.offsetWidth/2; const d = Math.abs(c - center);
-                  if(d < bestDist){ bestDist = d; best = k; }
-                }
-                const changed = best !== active;
-                activate(best, changed);
-                syncMask();
-                if(snapTimer) clearTimeout(snapTimer);
-                snapTimer = setTimeout(function(){
-                  const el = items[active]; if(!el) return;
-                  const target = el.offsetLeft + el.offsetWidth/2 - wheel.clientWidth/2;
-                  const curCenter = wheel.scrollLeft + wheel.clientWidth/2;
-                  if(Math.abs(curCenter - (el.offsetLeft + el.offsetWidth/2)) > 3){
-                    wheel.scrollTo({ left: Math.max(0, target), behavior: 'auto' });
-                  }
-                }, 140);
-              });
-            }
-
-            wheel.addEventListener('scroll', onScroll, { passive:true });
-            wheel.addEventListener('wheel', function(e){ if(Math.abs(e.deltaY) > Math.abs(e.deltaX)){ e.preventDefault(); wheel.scrollLeft += e.deltaY; } }, { passive:false });
-            wheel.addEventListener('keydown', function(e){ if(e.key==='ArrowLeft'){ e.preventDefault(); centerTo(active-1, true, 'smooth'); } else if(e.key==='ArrowRight'){ e.preventDefault(); centerTo(active+1, true, 'smooth'); } });
-            window.addEventListener('resize', function(){ resizeSpacers(); centerTo(active, false, 'auto'); syncMask(); }, { passive:true });
-
-            centerTo(n-1, false, 'auto');
-            syncMask();
-          }
-
-          function pickSeriesInput(){
-            let seriesInput = parseJSONFromTemplateIfExists('pfSeries_demo');
-            if (typeof window !== 'undefined' && window.PLAN_FACT_SERIES) { seriesInput = window.PLAN_FACT_SERIES; }
-            else if (typeof window !== 'undefined' && window.PLAN_FACT_JSON && (window.PLAN_FACT_JSON.series || Array.isArray(window.PLAN_FACT_JSON))) { seriesInput = window.PLAN_FACT_JSON; }
-            return seriesInput;
-          }
-
-          const seriesInput = pickSeriesInput();
-          const norm = normalizeSeries(seriesInput||{});
-          if (norm.rows.length>1){ const last = norm.rows[(norm.rows.length-1)|0] || []; api && api.setData(last); setupTimeline(norm, api); }
-          else { const tl=document.getElementById('timeline'); if(tl) tl.hidden=true; }
-
-          if (typeof window !== 'undefined' && window.PlanFactChart){
-            window.PlanFactChart.setSeries = function(json){
-              const nrm = normalizeSeries(json||{});
-              if(api){ const l = nrm.rows[(nrm.rows.length-1)|0] || []; api.setData(l); }
-              setupTimeline(nrm, api);
-            };
-          }
-        })();
-      })();
-
-//!-- HAPTIC for timeline: bind to .TabList.no-scrollbar -->
-
-(function () {
-  var root = document.getElementById('dateWheel') || document.body;
-  var scroller = document.querySelector('div.TabList.no-scrollbar') || root;
-
-  // если не нашли — выходим тихо (ничего не ломаем)
-  if (!scroller) return;
-
-  var touching = false, lastTick = 0, stopTimer = 0;
-  var TICK_EVERY = 180;   // не чаще ~0.18s
-  var STOP_DELAY = 160;   // «тычок» после паузы
-
-  function tick(){
-    // лёгкий «тик» во время прокрутки (iOS пропускает только если это внутри жеста)
-    window.Telegram?.WebApp?.HapticFeedback?.selectionChanged?.();
-    // console.log('[HB] tick');
-  }
-  function bump(){
-    // отчётливый «тычок» когда отпустили/остановилось
-    var h = window.Telegram?.WebApp?.HapticFeedback;
-    if (h?.impactOccurred) h.impactOccurred('medium');
-    else h?.notificationOccurred?.('success');
-    // console.log('[HB] bump');
+  /* ==================== JSON helpers ==================== */
+  
+  /**
+   * Парсинг JSON из <template> элемента
+   */
+  function parseJSONFromTemplate(id){
+    const el = document.getElementById(id);
+    if (!el || el.tagName !== 'TEMPLATE') return null;
+    
+    let raw = '';
+    if (el.content && typeof el.content.textContent === 'string') {
+      raw = el.content.textContent;
+    } else {
+      raw = el.textContent || '';
+    }
+    
+    raw = raw.trim();
+    if (!raw || (raw[0] !== '{' && raw[0] !== '[')) return null;
+    
+    try {
+      return JSON.parse(raw);
+    } catch (e) {
+      // Попытка "мягкой" санитизации JSON (удаление комментариев, висячих запятых)
+      return softParseJSON(raw);
+    }
   }
 
-  // гейт на реальный touch-жест
-  root.addEventListener('touchstart', function(){ touching = true;  clearTimeout(stopTimer); }, {passive:true});
-  root.addEventListener('touchend',   function(){ touching = false;                            }, {passive:true});
-  root.addEventListener('touchcancel',function(){ touching = false;                            }, {passive:true});
+  /**
+   * Мягкая санитизация и парсинг JSON с ошибками
+   */
+  function softParseJSON(txt){
+    try {
+      let s = String(txt);
+      
+      // Удаление /* */ комментариев
+      for(;;){
+        const i = s.indexOf('/*');
+        if(i === -1) break;
+        const j = s.indexOf('*/', i+2);
+        s = (j === -1) ? (s.slice(0,i) + s.slice(i+2)) : (s.slice(0,i) + s.slice(j+2));
+      }
+      
+      // Удаление // комментариев (но не после двоеточия)
+      s = s.split('\n').map(line => {
+        const idx = line.indexOf('//');
+        return (idx > 0 && line[idx-1] === ':') ? line : (idx !== -1 ? line.slice(0, idx) : line);
+      }).join('\n');
+      
+      // Замена кавычек-ёлочек
+      s = s.split('"').join('"').split('"').join('"').split(''').join("'").split(''').join("'");
+      
+      // Удаление висячих запятых
+      let out = '';
+      for(let i=0; i<s.length; i++){
+        const ch = s[i];
+        if(ch === ','){
+          let k=i+1;
+          while(k<s.length && (s[k]===' '||s[k]==='\t'||s[k]==='\r'||s[k]==='\n')) k++;
+          if(k<s.length && (s[k] === '}' || s[k] === ']')) continue;
+        }
+        out += ch;
+      }
+      s = out;
+      
+      // Фикс пустых delta
+      let res = '';
+      for(let i=0; i<s.length;){
+        const p = s.indexOf('"delta"', i);
+        if(p === -1){ res += s.slice(i); break; }
+        res += s.slice(i, p + 7);
+        let c = p + 7;
+        while(c < s.length && s[c] !== ':') c++;
+        if(c >= s.length){ i = c; break; }
+        res += s.slice(p + 7, c + 1);
+        let k = c + 1;
+        while(k<s.length && (s[k]===' '||s[k]==='\t'||s[k]==='\r'||s[k]==='\n')) k++;
+        if(k<s.length && (s[k] === ',' || s[k] === '}')){
+          res += ' null';
+          i = k;
+        } else {
+          i = k;
+        }
+      }
+      
+      return JSON.parse(res);
+    } catch (e2) {
+      return null;
+    }
+  }
 
-  // редкие «тики» + «тычок» на стопе
-  scroller.addEventListener('scroll', function(){
-    if (!touching) return;                                // только во время жеста
-    var now = (performance && performance.now) ? performance.now() : Date.now();
-    if (now - lastTick >= TICK_EVERY) { lastTick = now; tick(); }
-    clearTimeout(stopTimer);
-    stopTimer = setTimeout(bump, STOP_DELAY);
-  }, {passive:true});
+  /**
+   * Преобразование JSON объекта в массив строк для рендера
+   */
+  function toRows(json){
+    var rows = [];
+    if(!json) return rows;
+    
+    for(var i=0; i<ORDER.length; i++){
+      var key = ORDER[i];
+      var it = json[key];
+      if(!it) continue;
+      
+      var unit = it.unit || (key==='fat' ? '%' : 'см');
+      var planRaw = (it.plan != null ? it.plan : it.target);
+      var factRaw = (it.fact != null ? it.fact : it.actual);
+      var plan = Number(planRaw);
+      var fact = Number(factRaw);
+      
+      if(!isFinite(plan) || !isFinite(fact)) continue;
+      
+      var delta = (it.hasOwnProperty('delta') && isFinite(Number(it.delta))) ? Number(it.delta) : null;
+      
+      rows.push({
+        key: key,
+        label: (LABELS[key] || key),
+        unit: unit,
+        target: plan,
+        actual: fact,
+        delta: delta
+      });
+    }
+    
+    return rows;
+  }
 
-  // быстрый «тик» по явному тапу на дату
-  root.addEventListener('click', function(e){
-    if (e.target.closest && e.target.closest('.item')) tick();
-  }, {passive:true});
+  /* ==================== Рендер списка ==================== */
+  
+  /**
+   * Основная функция рендера графика
+   */
+  function render(el, initialData){
+    var state = { data: initialData };
+    var rowsEl = el.querySelector('#rows');
+    var scroller = el.querySelector('#scroller');
+    var hint = el.querySelector('#scrollHint');
+    
+    if(!rowsEl || !scroller){
+      return { setData: function(_){} };
+    }
+
+    // Отслеживание направления скролла для стрелки
+    var lastScrollTop = scroller.scrollTop || 0;
+    var lastDirUp = false;
+
+    /**
+     * Построение доменов (максимальных значений) для каждой единицы измерения
+     */
+    function buildDomains(list){
+      var cmMax = 0;
+      for(var i=0; i<list.length; i++){
+        var d = list[i];
+        var u = (d.unit||'').trim();
+        if(u !== '%'){
+          cmMax = Math.max(cmMax, (d.target||0), (d.actual||0));
+        }
+      }
+      return { '%': 100, 'см': cmMax||1, 'cm': cmMax||1 };
+    }
+
+    /**
+     * Отрисовка всех строк графика
+     */
+    function draw(){
+      var data = state.data || [];
+      var maxByUnit = buildDomains(data);
+      rowsEl.innerHTML = '';
+      
+      for(var i=0; i<data.length; i++){
+        var d = data[i];
+        var delta = (isFinite(d.delta) ? d.delta : null);
+        var unitMax = maxByUnit[(d.unit||'').trim()] || 1;
+        
+        // Процент ширины для плана и факта
+        var wp = Math.max(0, Math.min(100, ((d.target||0)/unitMax)*100));
+        var wf = Math.max(0, Math.min(100, ((d.actual||0)/unitMax)*100));
+
+        // Создание элемента строки
+        var row = document.createElement('div');
+        row.className = 'row';
+        
+        // Верхняя часть: название + значения
+        var top = document.createElement('div');
+        top.className = 'top';
+        top.innerHTML = 
+          '<span class="name">' + (d.key==='fat' ? (LABELS[d.key]||d.label) : (d.label+' ('+d.unit+')')) + '</span>' +
+          '<span class="vals">' +
+            '<span class="kv"><span class="lab">Факт:</span> <b class="val">' + round(d.actual,1) + '</b></span>' +
+            '<span class="dot">•</span>' +
+            '<span class="kv"><span class="lab">План:</span> <b class="val">' + round(d.target,1) + '</b></span>' +
+            '<span class="dot">•</span>' +
+            '<span class="kv"><span class="lab">∆:</span> <b class="val">' + fmtDeltaNoUnit(delta) + (isFinite(delta) ? (delta>0 ? ' ▲' : (delta<0 ? ' ▼' : '')) : '') + '</b></span>' +
+          '</span>';
+
+        // Gauge бары
+        var g = document.createElement('div');
+        g.className = 'gauge';
+        
+        var plan = document.createElement('div');
+        plan.className = 'plan';
+        plan.style.setProperty('--wp', wp+'%');
+        
+        var fact = document.createElement('div');
+        fact.className = 'fact';
+        fact.style.setProperty('--wf', wf+'%');
+
+        // Цветовая индикация
+        if (isFinite(delta)) {
+          if (d.key === 'fat' || d.key === 'waist') {
+            // Для жира и талии: больше факта = плохо (красный)
+            if (d.actual > d.target) fact.classList.add('red');
+          } else {
+            // Для остальных: меньше факта = не достигнуто (оранжевый)
+            if (d.actual < d.target) fact.classList.add('orange');
+          }
+        } else {
+          fact.classList.add('neutral');
+        }
+
+        g.appendChild(plan);
+        g.appendChild(fact);
+        row.appendChild(top);
+        row.appendChild(g);
+        rowsEl.appendChild(row);
+      }
+      
+      limitToRows(5);
+      updateHint();
+    }
+
+    /**
+     * Ограничение высоты скроллера до N строк
+     */
+    function limitToRows(n){
+      var items = rowsEl.children;
+      var rows = [];
+      for(var i=0; i<items.length; i++){
+        if(items[i].classList && items[i].classList.contains('row')) rows.push(items[i]);
+      }
+      if(!rows.length) return;
+      
+      var csList = getComputedStyle(rowsEl);
+      var maxH = parseFloat(csList.paddingTop) + parseFloat(csList.paddingBottom);
+      
+      for(var i=0; i<Math.min(n, rows.length); i++){
+        var r = rows[i];
+        var cs = getComputedStyle(r);
+        maxH += r.offsetHeight + parseFloat(cs.marginTop||0) + parseFloat(cs.marginBottom||0);
+      }
+      
+      maxH += 2;
+      scroller.style.maxHeight = Math.ceil(maxH) + 'px';
+    }
+
+    /**
+     * Обновление подсказки-стрелки
+     */
+    function updateHint(){
+      if(!hint) return;
+      
+      var hasMore = (scroller.scrollHeight - scroller.clientHeight) > 2;
+      hint.classList.toggle('hidden', !hasMore);
+      if(!hasMore) return;
+
+      // Определение направления
+      var st = scroller.scrollTop;
+      if (Math.abs(st - lastScrollTop) > 0.5) {
+        lastDirUp = st < lastScrollTop;
+      }
+      lastScrollTop = st;
+
+      var nearTop = st <= 1;
+      var nearBottom = Math.ceil(st + scroller.clientHeight) >= scroller.scrollHeight - 2;
+
+      // Логика направления стрелки
+      var showUp = false;
+      if (nearTop && !nearBottom) showUp = false;
+      else if (nearBottom && !nearTop) showUp = true;
+      else showUp = lastDirUp;
+
+      var svg = hint.querySelector('svg');
+      if(svg) svg.classList.toggle('up', showUp);
+    }
+
+    // Вспомогательные функции форматирования
+    function round(n, d){
+      var m = Math.pow(10, d||0);
+      return Math.round(n*m)/m;
+    }
+    
+    function fmtDeltaNoUnit(n){
+      if(!isFinite(n)) return '—';
+      var s = n>0 ? '+' : '';
+      return s + round(n, 1);
+    }
+
+    // Инициализация
+    draw();
+    scroller.addEventListener('scroll', updateHint, { passive: true });
+    window.addEventListener('resize', function(){
+      limitToRows(5);
+      updateHint();
+    }, { passive: true });
+
+    return {
+      setData: function(payload){
+        state.data = Array.isArray(payload) ? payload : toRows(payload);
+        draw();
+      }
+    };
+  }
+
+  /* ==================== Инициализация ==================== */
+  
+  var container = document.getElementById('pfHApp');
+  if (!container) {
+    console.error('PlanFactChart: контейнер #pfHApp не найден');
+    return;
+  }
+
+  // Получение данных из window.PLAN_FACT_JSON или из <template>
+  var input = null;
+  
+  if(typeof window !== 'undefined' && window.PLAN_FACT_JSON){
+    input = window.PLAN_FACT_JSON;
+  } else {
+    // Попытка загрузить из template
+    input = parseJSONFromTemplate('pfData');
+  }
+  
+  if (input == null) {
+    input = {};
+  }
+
+  var api = render(container, toRows(input||{}));
+
+  // Экспорт API в window
+  if(typeof window !== 'undefined'){
+    window.PlanFactChart = {
+      /**
+       * Монтирование графика в произвольный элемент
+       */
+      mount: function(el, json){
+        return render(el, toRows(json));
+      },
+      
+      /**
+       * Обновление данных текущего графика
+       */
+      setData: function(json){
+        api && api.setData(json);
+      }
+    };
+  }
+
+  /* ==================== Timeline (серии дат) ==================== */
+  
+  (function initTimeline(){
+    
+    function parseJSONFromTemplateIfExists(id){
+      var el = document.getElementById(id);
+      if(!el) return null;
+      return parseJSONFromTemplate(id);
+    }
+
+    /**
+     * Нормализация входных данных серий
+     */
+    function normalizeSeries(input){
+      if(!input) return { dates: [], rows: [] };
+      
+      var seriesMap = null;
+      
+      // Формат: { series: { date: { metric: {...} } } }
+      if (input.series && typeof input.series === 'object' && !Array.isArray(input.series)) {
+        seriesMap = input.series;
+      }
+      // Формат: [ { date: "...", data: {...} } ]
+      else if (Array.isArray(input) && input.length && input[0] && typeof input[0] === 'object' && ('date' in input[0])) {
+        seriesMap = {};
+        for (var i=0; i<input.length; i++){
+          var it = input[i];
+          if(!it) continue;
+          var k = String(it.date || i);
+          seriesMap[k] = it.data || it.snapshot || {};
+        }
+      }
+      // Одиночный снимок
+      else {
+        return { dates: ['—'], rows: [ toRows(input) ] };
+      }
+      
+      // Сортировка дат
+      var dates = Object.keys(seriesMap);
+      dates.sort(function(a, b){
+        var da = new Date(a), db = new Date(b);
+        if(isFinite(da.getTime()) && isFinite(db.getTime())) return da - db;
+        return (a > b ? 1 : -1);
+      });
+      
+      var rows = [];
+      for(var j=0; j<dates.length; j++){
+        rows.push(toRows(seriesMap[dates[j]] || {}));
+      }
+      
+      return { dates: dates, rows: rows };
+    }
+
+    /**
+     * Форматирование даты на русском
+     */
+    function formatDateRu(s){
+      var d = new Date(s);
+      if(!isFinite(d.getTime())) return s;
+      try {
+        return d.toLocaleDateString('ru-RU', {year:'numeric', month:'short', day:'2-digit'});
+      } catch(_) {
+        return s;
+      }
+    }
+
+    /**
+     * Настройка timeline (горизонтальное колесо дат)
+     */
+    function setupTimeline(norm, api){
+      const tl = document.getElementById('timeline');
+      const wheel = document.getElementById('dateWheel');
+      const maskEl = tl ? tl.querySelector('.wheel-mask') : null;
+      
+      if(!tl || !wheel) return;
+
+      const n = (norm && Array.isArray(norm.rows)) ? norm.rows.length : 0;
+      if(n <= 1){
+        tl.hidden = true;
+        return;
+      }
+
+      tl.hidden = false;
+      wheel.innerHTML = '';
+      const items = new Array(n);
+
+      /**
+       * Синхронизация маски под активной датой
+       */
+      function syncMask(){
+        if(!maskEl) return;
+        const el = items[Math.max(0, active)] || items[0];
+        if(!el) return;
+        
+        const rect = el.getBoundingClientRect();
+        const wr = wheel.getBoundingClientRect();
+        const pr = tl.getBoundingClientRect();
+        
+        const padX = 8, padY = 8;
+        const scale = 1.5;
+        const w = Math.round(rect.width * scale + padX*2);
+        const h = Math.round(rect.height + padY*2);
+        
+        const centerX = wr.left + wr.width/2;
+        const left = Math.round(centerX - w/2 - pr.left);
+        const top = Math.round((wr.top - pr.top) + (wr.height - h)/2);
+        
+        maskEl.style.setProperty('--mask-left', left + 'px');
+        maskEl.style.setProperty('--mask-top', top + 'px');
+        maskEl.style.setProperty('--mask-w', w + 'px');
+        maskEl.style.setProperty('--mask-h', h + 'px');
+      }
+
+      // Создание кнопок дат
+      for(let i=0; i<n; i++){
+        const label = formatDateRu(norm.dates[i] || String(i));
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'item';
+        btn.setAttribute('role', 'option');
+        btn.setAttribute('aria-selected', 'false');
+        btn.dataset.idx = String(i);
+        btn.textContent = label;
+        btn.addEventListener('click', function(){
+          centerTo(Number(this.dataset.idx), true, 'smooth');
+        });
+        wheel.appendChild(btn);
+        items[i] = btn;
+      }
+
+      /**
+       * Добавление спейсеров по краям
+       */
+      function ensureSpacers(){
+        const olds = wheel.querySelectorAll('.spacer');
+        olds.forEach(x => x.remove());
+        
+        const left = document.createElement('div');
+        left.className = 'spacer';
+        left.setAttribute('aria-hidden', 'true');
+        
+        const right = document.createElement('div');
+        right.className = 'spacer';
+        right.setAttribute('aria-hidden', 'true');
+        
+        wheel.prepend(left);
+        wheel.appendChild(right);
+        resizeSpacers();
+      }
+      
+      function resizeSpacers(){
+        const edge = Math.max(0, Math.floor(wheel.clientWidth/2));
+        wheel.style.setProperty('--edge', edge+'px');
+      }
+      
+      ensureSpacers();
+
+      let active = -1, rafId = 0, snapTimer = 0;
+
+      function setAria(){
+        for(let k=0; k<items.length; k++){
+          if(!items[k]) continue;
+          items[k].setAttribute('aria-selected', String(k===active));
+          items[k].setAttribute('tabindex', k===active ? '0' : '-1');
+        }
+      }
+
+      /**
+       * Активация даты
+       */
+      function activate(i, announce){
+        if(i === active || i < 0 || i >= n) return;
+        
+        if(items[active]){
+          items[active].classList.remove('active');
+          items[active].setAttribute('aria-selected', 'false');
+        }
+        
+        active = i;
+        
+        if(items[active]){
+          items[active].classList.add('active');
+          items[active].setAttribute('aria-selected', 'true');
+        }
+        
+        setAria();
+        api && api.setData(norm.rows[i] || []);
+        syncMask();
+      }
+
+      /**
+       * Центрирование на дате
+       */
+      function centerTo(i, announce, behavior){
+        i = Math.max(0, Math.min(n-1, i));
+        const el = items[i];
+        if(!el) return;
+        
+        const target = el.offsetLeft + el.offsetWidth/2 - wheel.clientWidth/2;
+        wheel.scrollTo({ left: Math.max(0, target), behavior: (behavior || 'auto') });
+        activate(i, announce);
+        syncMask();
+      }
+
+      /**
+       * Обработка скролла колеса
+       */
+      function onScroll(){
+        if(rafId) cancelAnimationFrame(rafId);
+        rafId = requestAnimationFrame(function(){
+          const center = wheel.scrollLeft + wheel.clientWidth/2;
+          let best = -1, bestDist = 1e12;
+          
+          for(let k=0; k<n; k++){
+            const el = items[k];
+            const c = el.offsetLeft + el.offsetWidth/2;
+            const d = Math.abs(c - center);
+            if(d < bestDist){
+              bestDist = d;
+              best = k;
+            }
+          }
+          
+          const changed = best !== active;
+          activate(best, changed);
+          syncMask();
+          
+          if(snapTimer) clearTimeout(snapTimer);
+          snapTimer = setTimeout(function(){
+            const el = items[active];
+            if(!el) return;
+            const target = el.offsetLeft + el.offsetWidth/2 - wheel.clientWidth/2;
+            const curCenter = wheel.scrollLeft + wheel.clientWidth/2;
+            if(Math.abs(curCenter - (el.offsetLeft + el.offsetWidth/2)) > 3){
+              wheel.scrollTo({ left: Math.max(0, target), behavior: 'auto' });
+            }
+          }, 140);
+        });
+      }
+
+      wheel.addEventListener('scroll', onScroll, { passive: true });
+      
+      // Поддержка вертикального скролла мышью
+      wheel.addEventListener('wheel', function(e){
+        if(Math.abs(e.deltaY) > Math.abs(e.deltaX)){
+          e.preventDefault();
+          wheel.scrollLeft += e.deltaY;
+        }
+      }, { passive: false });
+      
+      // Клавиатурная навигация
+      wheel.addEventListener('keydown', function(e){
+        if(e.key === 'ArrowLeft'){
+          e.preventDefault();
+          centerTo(active - 1, true, 'smooth');
+        } else if(e.key === 'ArrowRight'){
+          e.preventDefault();
+          centerTo(active + 1, true, 'smooth');
+        }
+      });
+      
+      window.addEventListener('resize', function(){
+        resizeSpacers();
+        centerTo(active, false, 'auto');
+        syncMask();
+      }, { passive: true });
+
+      // Показываем последнюю дату
+      centerTo(n - 1, false, 'auto');
+      syncMask();
+    }
+
+    /**
+     * Выбор источника данных серий
+     */
+    function pickSeriesInput(){
+      let seriesInput = parseJSONFromTemplateIfExists('pfSeries_demo');
+      
+      if (typeof window !== 'undefined' && window.PLAN_FACT_SERIES) {
+        seriesInput = window.PLAN_FACT_SERIES;
+      } else if (typeof window !== 'undefined' && window.PLAN_FACT_JSON && (window.PLAN_FACT_JSON.series || Array.isArray(window.PLAN_FACT_JSON))) {
+        seriesInput = window.PLAN_FACT_JSON;
+      }
+      
+      return seriesInput;
+    }
+
+    const seriesInput = pickSeriesInput();
+    const norm = normalizeSeries(seriesInput || {});
+    
+    if (norm.rows.length > 1){
+      const last = norm.rows[(norm.rows.length - 1) | 0] || [];
+      api && api.setData(last);
+      setupTimeline(norm, api);
+    } else {
+      const tl = document.getElementById('timeline');
+      if(tl) tl.hidden = true;
+    }
+
+    // Экспорт метода setSeries
+    if (typeof window !== 'undefined' && window.PlanFactChart){
+      window.PlanFactChart.setSeries = function(json){
+        const nrm = normalizeSeries(json || {});
+        if(api){
+          const l = nrm.rows[(nrm.rows.length - 1) | 0] || [];
+          api.setData(l);
+        }
+        setupTimeline(nrm, api);
+      };
+    }
+  })();
+
+  /* ==================== Haptic Feedback для Telegram WebApp ==================== */
+  
+  (function initHaptic(){
+    var root = document.getElementById('dateWheel') || document.body;
+    var scroller = document.querySelector('div.TabList.no-scrollbar') || root;
+
+    if (!scroller) return;
+
+    var touching = false, lastTick = 0, stopTimer = 0;
+    var TICK_EVERY = 180;
+    var STOP_DELAY = 160;
+
+    function tick(){
+      window.Telegram?.WebApp?.HapticFeedback?.selectionChanged?.();
+    }
+    
+    function bump(){
+      var h = window.Telegram?.WebApp?.HapticFeedback;
+      if (h?.impactOccurred) h.impactOccurred('medium');
+      else h?.notificationOccurred?.('success');
+    }
+
+    root.addEventListener('touchstart', function(){
+      touching = true;
+      clearTimeout(stopTimer);
+    }, { passive: true });
+    
+    root.addEventListener('touchend', function(){
+      touching = false;
+    }, { passive: true });
+    
+    root.addEventListener('touchcancel', function(){
+      touching = false;
+    }, { passive: true });
+
+    scroller.addEventListener('scroll', function(){
+      if (!touching) return;
+      var now = (performance && performance.now) ? performance.now() : Date.now();
+      if (now - lastTick >= TICK_EVERY) {
+        lastTick = now;
+        tick();
+      }
+      clearTimeout(stopTimer);
+      stopTimer = setTimeout(bump, STOP_DELAY);
+    }, { passive: true });
+
+    root.addEventListener('click', function(e){
+      if (e.target.closest && e.target.closest('.item')) tick();
+    }, { passive: true });
+  })();
+
 })();
+
+/* ==================== ТЕСТОВЫЕ ДАННЫЕ (заглушка) ==================== */
+
+// Одиночный снимок (для разработки)
+window.PLAN_FACT_JSON = {
+  "fat": { "unit": "%", "plan": 18, "fact": 23, "delta": -5 },
+  "neck": { "unit": "см", "plan": 39, "fact": 42, "delta": -3 },
+  "shoulders": { "unit": "см", "plan": 140, "fact": 127, "delta": 13 },
+  "chest": { "unit": "см", "plan": 115, "fact": 115, "delta": 0 },
+  "waist": { "unit": "см", "plan": 89, "fact": 91, "delta": -2 },
+  "hips": { "unit": "см", "plan": 102, "fact": 100, "delta": 2 },
+  "thigh": { "unit": "см", "plan": 62, "fact": 58, "delta": 4 },
+  "calf": { "unit": "см", "plan": 44, "fact": 35, "delta": 9 },
+  "bicep": { "unit": "см", "plan": 44, "fact": 41, "delta": 3 }
+};
+
+// Серии дат (раскомментируйте для тестирования timeline)
+
+window.PLAN_FACT_SERIES = {
+  "series": {
+    "2025-10-18": {
+      "fat": { "unit": "%", "plan": 15, "fact": 24, "delta": -9 },
+      "neck": { "unit": "см", "plan": 40.6, "fact": 42, "delta": -1.4 },
+      "shoulders": { "unit": "см", "plan": 135.4, "fact": 125, "delta": 10.4 },
+      "chest": { "unit": "см", "plan": 115.5, "fact": 115, "delta": 0.5 },
+      "waist": { "unit": "см", "plan": 90.2, "fact": 95, "delta": -4.8 },
+      "hips": { "unit": "см", "plan": 103.7, "fact": 100, "delta": 3.7 },
+      "thigh": { "unit": "см", "plan": 62.8, "fact": 58, "delta": 4.8 },
+      "calf": { "unit": "см", "plan": 40.5, "fact": 35, "delta": 5.5 },
+      "bicep": { "unit": "см", "plan": 43.3, "fact": 42, "delta": 1.3 }
+    },
+    "2025-11-14": {
+      "fat": { "unit": "%", "plan": 15, "fact": 23.8, "delta": -8.8 },
+      "neck": { "unit": "см", "plan": 40.6, "fact": 42, "delta": -1.4 },
+      "shoulders": { "unit": "см", "plan": 135.4, "fact": 127, "delta": 8.4 },
+      "chest": { "unit": "см", "plan": 115.5, "fact": 115, "delta": 0.5 },
+      "waist": { "unit": "см", "plan": 90.2, "fact": 91, "delta": -0.8 },
+      "hips": { "unit": "см", "plan": 103.7, "fact": 100, "delta": 3.7 },
+      "thigh": { "unit": "см", "plan": 62.8, "fact": 58, "delta": 4.8 },
+      "calf": { "unit": "см", "plan": 40.5, "fact": 35, "delta": 5.5 },
+      "bicep": { "unit": "см", "plan": 43.3, "fact": 42, "delta": 1.3 }
+    }
+  }
+};
+
+
 
 
 /* ============================================================
