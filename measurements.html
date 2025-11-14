@@ -1650,6 +1650,7 @@ function handleSaveClick_bm(e){
     const uid = (typeof currentUserId_bm === 'function') ? currentUserId_bm() : 'anon';
     localStorage.removeItem('bm:macros:vals:' + String(uid));
     localStorage.removeItem('bm:chart:data:' + String(uid));
+    localStorage.removeItem('bm:comment:html:' + String(uid));
   } catch(_){}
 
   const saveTask = saveMeasurementsToDB_bm(values, saveId);
@@ -1684,7 +1685,21 @@ function handleSaveClick_bm(e){
         saveInputsCache_bm({ row: rowCalc || null, inputs: values, updated_at: new Date().toISOString() }, uid);
       } catch(_){}
 
-      void waitForFreshData_bm(rowCalc).catch(()=>{});
+      waitForFreshData_bm(rowCalc)
+  .then(b => {
+    if (b && b.chart && b.chart.ready && b.chart.data) {
+      const uid = (typeof currentUserId_bm === 'function') ? currentUserId_bm() : 'anon';
+      const seed = { 
+        row: b.chart.row || b.row || null, 
+        data: b.chart.data, 
+        updated_at: b.chart.updated_at 
+      };
+      localStorage.setItem('bm:chart:data:' + uid, JSON.stringify(seed));
+      window.startChartFlow_bm_bm();
+    }
+  })
+  .catch(()=>{});
+      
     })
     .catch(async (err)=>{
       const msg = String((err && err.message) || err || '');
@@ -2658,11 +2673,18 @@ function handleSaveClick_bm(e){
     });
     
     // Показываем кэш если актуален (не старее target)
-    if (cached?.data && !(target && Number(cached.row || 0) < Number(target))) {
-      renderChart(cached);
-    } else {
-      console.log('⏳ Chart: ждём данные с бэкенда...');
-    }
+if (cached?.data && !(target && Number(cached.row || 0) < Number(target))) {
+  renderChart(cached);
+} else {
+  console.log('⏳ Chart: ждём данные с бэкенда...');
+  // Очищаем график
+  window.PLAN_FACT_SERIES = null;
+  if (window.PlanFactChart && typeof window.PlanFactChart.setSeries === 'function') {
+    try {
+      window.PlanFactChart.setSeries(null);
+    } catch(_){}
+  }
+}
     
     // Polling НЕ НУЖЕН! Данные придут через bootstrap
   };
