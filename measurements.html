@@ -2072,7 +2072,8 @@ function handleSaveClick_bm(e){
         if (b.chart){
           const chartRow = Number(b.chart.row || b.row || 0);
           // ✅ не кладём старее reqRow
-          if (b.chart.ready && Array.isArray(b.chart.data) && !(reqRow && chartRow < Number(reqRow))) {
+          //if (b.chart.ready && Array.isArray(b.chart.data) && !(reqRow && chartRow < Number(reqRow))) {
+          if (b.chart.ready && b.chart.data && !(reqRow && chartRow < Number(reqRow))) {  
             const seed = { row: b.chart.row || b.row || null, data: b.chart.data, updated_at: b.chart.updated_at };
             localStorage.setItem('bm:chart:data:' + String(uid), JSON.stringify(seed));
           }
@@ -2778,7 +2779,7 @@ function handleSaveClick_bm(e){
     return;
   }
 
-  // ВСЕ 9 ПАРАМЕТРОВ для каждой даты
+  /*// ВСЕ 9 ПАРАМЕТРОВ для каждой даты
   window.PLAN_FACT_SERIES = {
     "series": {
       "2025-10-01": {
@@ -2815,7 +2816,7 @@ function handleSaveClick_bm(e){
         "bicep": { "unit": "см", "plan": 44, "fact": 40, "delta": 4 }
       }
     }
-  };
+  };*/
 
   var api = render(container, []);
 
@@ -3064,7 +3065,108 @@ function handleSaveClick_bm(e){
       api && api.setData(json);
     };
   }
-
+})();
+/* ============================================================
+ *  BLOCK E2.5 — Chart Flow (график замеры) тянем данные из бэка
+ * ============================================================ */
+(function chartFlowInit(){
+  const tg = window.Telegram?.WebApp;
+  
+  /* ---------- Кэш графика ---------- */
+  const CHART_KEY_PREFIX = 'bm:chart:data:';
+  
+  function currentUserId_bm(){ 
+    try { return window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'anon'; } 
+    catch(_){ return 'anon'; } 
+  }
+  
+  function chartKey_bm(uid){ 
+    return CHART_KEY_PREFIX + String(uid ?? currentUserId_bm()); 
+  }
+  
+  function saveChartCache_bm(obj, uid){ 
+    try { 
+      localStorage.setItem(chartKey_bm(uid ?? currentUserId_bm()), JSON.stringify(obj)); 
+    } catch(_){} 
+  }
+  
+  function loadChartCache_bm(uid){ 
+    try { 
+      const raw = localStorage.getItem(chartKey_bm(uid ?? currentUserId_bm())); 
+      return raw ? JSON.parse(raw) : null; 
+    } catch(_) { 
+      return null; 
+    } 
+  }
+  
+  /* ---------- Целевой row ---------- */
+  function targetRow(){
+    return (typeof desiredRow === 'function' && desiredRow() != null)
+      ? desiredRow()
+      : ((typeof getRowCalcForUser_bm === 'function') ? getRowCalcForUser_bm() : null);
+  }
+  
+  /* ---------- Рендеринг графика ---------- */
+  function renderChart(chartData){
+    if (!chartData || !chartData.data) {
+      console.log('⚠️ Chart: нет данных для отображения');
+      return;
+    }
+    
+    console.log('📊 Chart: отображение данных', {
+      row: chartData.row,
+      dataKeys: chartData.data ? Object.keys(chartData.data) : [],
+      updated_at: chartData.updated_at
+    });
+    
+    // Устанавливаем данные в глобальную переменную
+    window.PLAN_FACT_SERIES = chartData.data;
+    
+    // Обновляем график через API если доступен
+    if (window.PlanFactChart && typeof window.PlanFactChart.setSeries === 'function') {
+      try {
+        window.PlanFactChart.setSeries(chartData.data);
+        console.log('✅ Chart: данные обновлены через API');
+      } catch(err) {
+        console.error('❌ Chart: ошибка обновления через API:', err);
+      }
+    }
+  }
+  
+  /* ---------- Public start ---------- */
+  window.startChartFlow_bm_bm = function(){
+    console.log('🚀 Chart: запуск flow');
+    
+    const target = targetRow();
+    const cached = loadChartCache_bm();
+    
+    console.log('💾 Chart: кэш загружен', { 
+      cached: !!cached, 
+      cachedRow: cached?.row,
+      target 
+    });
+    
+    // Показываем кэш если актуален (не старее target)
+    if (cached?.data && !(target && Number(cached.row || 0) < Number(target))) {
+      renderChart(cached);
+    } else {
+      console.log('⏳ Chart: ждём данные с бэкенда...');
+    }
+    
+    // Polling НЕ НУЖЕН! Данные придут через bootstrap
+  };
+  
+  /* ---------- Visibility change ---------- */
+  document.addEventListener('visibilitychange', ()=>{
+    if (document.visibilityState === 'visible'){
+      // При возврате на страницу - проверяем кэш
+      window.startChartFlow_bm_bm();
+    }
+  });
+  
+  /* ---------- Initial start ---------- */
+  console.log('📦 Chart flow module initialized');
+  window.startChartFlow_bm_bm();
 })();
 
 
