@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0005'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0001'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -2535,44 +2535,56 @@ waitForFreshData_bm(confirmed, 20000, 60000)
  *  BLOCK E2.4 — Chart data flow (poll + cache, как макросы)
  * ============================================================ */
 (function chartDataFlowInit(){
+  console.log('%c[E2.4] init', 'color:#4af');
+
   const tg = window.Telegram?.WebApp;
   const BACKEND = (typeof BACKEND_URL_bm !== 'undefined' && BACKEND_URL_bm) ? BACKEND_URL_bm : '';
 
   const CHART_KEY_PREFIX = 'bm:chart:data:';
 
-  // --- Ключи кэша (такие же, как в E2.5) ---
   function currentUserId_bm(){ 
-    try { return window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'anon'; } 
-    catch(_){ return 'anon'; } 
+    try { return window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'anon'; }
+    catch(_){ return 'anon'; }
   }
-  function chartKey_bm(uid){ 
-    return CHART_KEY_PREFIX + String(uid ?? currentUserId_bm()); 
+  function chartKey_bm(uid){
+    return CHART_KEY_PREFIX + String(uid ?? currentUserId_bm());
   }
   function saveChartCache_bm(obj, uid){
-    try { 
-      localStorage.setItem(chartKey_bm(uid ?? currentUserId_bm()), JSON.stringify(obj)); 
-    } catch(_){}
+    try {
+      console.log('%c[E2.4] save cache','color:#4af', obj);
+      localStorage.setItem(chartKey_bm(uid ?? currentUserId_bm()), JSON.stringify(obj));
+    } catch(err){
+      console.warn('[E2.4] cache save error', err);
+    }
   }
   function loadChartCache_bm(uid){
     try {
       const raw = localStorage.getItem(chartKey_bm(uid ?? currentUserId_bm()));
-      return raw ? JSON.parse(raw) : null;
-    } catch(_){ return null; }
+      const obj = raw ? JSON.parse(raw) : null;
+      console.log('%c[E2.4] load cache','color:#4af', obj);
+      return obj;
+    } catch(err){
+      console.warn('[E2.4] cache load error', err);
+      return null;
+    }
   }
 
-  // --- Целевой row: как в макросах ---
   function targetRow(){
-    if (typeof desiredRow === 'function' && desiredRow() != null) {
-      return desiredRow();
+    try {
+      const dr = (typeof desiredRow === 'function') ? desiredRow() : null;
+      const gr = (typeof getRowCalcForUser_bm === 'function') ? getRowCalcForUser_bm() : null;
+      const use = dr ?? gr;
+      console.log('%c[E2.4] targetRow','color:#4af', { desired:dr, rowCalc:gr, use });
+      return use;
+    } catch(err){
+      console.warn('[E2.4] targetRow error', err);
+      return null;
     }
-    if (typeof getRowCalcForUser_bm === 'function') {
-      return getRowCalcForUser_bm();
-    }
-    return null;
   }
 
-  // --- Внутреннее API: front_bootstrap, только ради chart ---
   async function apiFrontChart_bm(requestedRow, signal){
+    console.log('%c[E2.4] request to backend','color:#4af', { requestedRow });
+
     const payload = {
       action: 'front_bootstrap',
       init_data: String(tg?.initData || ''),
@@ -2590,12 +2602,13 @@ waitForFreshData_bm(confirmed, 20000, 60000)
     });
 
     const raw = await resp.text();
+
     let json = null;
     try { json = raw ? JSON.parse(raw) : null; } catch(_){}
+    
+    console.log('%c[E2.4] backend response','color:#4af', { json });
 
-    if (!resp.ok || !json) {
-      throw new Error(`HTTP ${resp.status}`);
-    }
+    if (!resp.ok || !json) throw new Error(`HTTP ${resp.status}`);
     return json;
   }
 
@@ -2608,9 +2621,7 @@ waitForFreshData_bm(confirmed, 20000, 60000)
 
     const reqRow = targetRow();
 
-    if (_chartAbort) {
-      try { _chartAbort.abort(); } catch(_){}
-    }
+    if (_chartAbort) try { _chartAbort.abort(); } catch(_){}
     const controller = new AbortController();
     _chartAbort = controller;
 
@@ -2622,25 +2633,28 @@ waitForFreshData_bm(confirmed, 20000, 60000)
       const chartBlk  = res?.chart || {};
       const chartReady = !!chartBlk.ready && !!chartBlk.data;
 
-      // Если сервер отдал row старее, чем мы ждём — просто ждём дальше
+      console.log('%c[E2.4] pollOnce','color:#4af', {
+        reqRow, serverRow, chartReady, chartBlk
+      });
+
       if (reqRow && serverRow && serverRow < Number(reqRow)) {
-        const waitOld = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
-        console.log('⏳ Chart E2.4: получили старый row, ждём новый', { serverRow, reqRow });
-        return { done:false, wait: waitOld };
+        console.log('%c[E2.4] old row, waiting','color:#f80', { reqRow, serverRow });
+        return { done:false, wait: 500 };
       }
 
-      // Если сервер знает более свежий row — обновим локальный rowCalc
       if (Number.isFinite(serverRow) && (reqRow == null || serverRow > reqRow)) {
-        try { setRowCalcForUser_bm(serverRow); } catch(_){}
+        try { 
+          setRowCalcForUser_bm(serverRow); 
+          console.log('%c[E2.4] rowCalc updated','color:#4af', serverRow);
+        } catch(_){}
       }
 
       if (chartReady) {
-        const uid = (typeof currentUserId_bm === 'function') ? currentUserId_bm() : 'anon';
+        const uid = currentUserId_bm();
         const chartRow = Number(chartBlk.row || serverRow || 0);
 
-        // Защита: не кладём старее целевого row
         if (reqRow && chartRow && chartRow < Number(reqRow)) {
-          console.log('⚠️ Chart E2.4: chartRow < reqRow, не пишем в кэш', { chartRow, reqRow });
+          console.log('%c[E2.4] chartRow < reqRow — skip cache','color:#f00', { chartRow, reqRow });
           return { done:false, wait: 500 };
         }
 
@@ -2649,177 +2663,149 @@ waitForFreshData_bm(confirmed, 20000, 60000)
           data: chartBlk.data,
           updated_at: chartBlk.updated_at || res.updated_at || new Date().toISOString()
         };
-        saveChartCache_bm(seed, uid);
-        console.log('✅ Chart E2.4: новые данные сохранены в кэш', seed);
 
-        // Триггерим перерисовку (view-модуль E2.5)
+        saveChartCache_bm(seed, uid);
+
+        console.log('%c[E2.4] call view refresh','color:#4af');
         try { window.startChartFlow_bm_bm && window.startChartFlow_bm_bm(); } catch(_){}
 
         return { done:true };
       }
 
-      // Ещё не готово — подождём
-      const wait = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
-      console.log('⏳ Chart E2.4: ещё не ready, статус:', { row: serverRow, wait });
-      return { done:false, wait };
+      return { done:false, wait: 500 };
 
     } catch(err){
-      if (err?.name === 'AbortError') {
-        return { done:true };
-      }
-      console.error('❌ Chart E2.4 poll error:', err);
-      if (runId !== _chartRunId) return { done:true };
+      if (err?.name === 'AbortError') return { done:true };
+      console.error('[E2.4] poll error:', err);
       return { done:false, wait: 1000 };
     }
   }
 
   async function pollLoop(runId){
-    if (runId !== _chartRunId) return;
     clearTimeout(_chartTimer);
     const r = await pollOnce(runId);
     if (r.done || runId !== _chartRunId) return;
     _chartTimer = setTimeout(() => pollLoop(runId), r.wait);
   }
 
-  // --- Публичный старт потока данных графика ---
   window.startChartDataFlow_bm_bm = function(){
-    console.log('🚀 Chart E2.4: старт data-flow');
+    console.log('%c[E2.4] START DATA FLOW','color:#0f0');
+
     _chartRunId += 1;
     const runId = _chartRunId;
 
     clearTimeout(_chartTimer);
-    if (_chartAbort) { try { _chartAbort.abort(); } catch(_){ } _chartAbort = null; }
+    if (_chartAbort) try { _chartAbort.abort(); } catch(_){}
 
-    // Покажем уже закэшированное (view сам решит, актуально или нет)
     try { window.startChartFlow_bm_bm && window.startChartFlow_bm_bm(); } catch(_){}
 
     pollLoop(runId);
   };
 
-  // При возвращении на вкладку — перезапускаем data-flow
   document.addEventListener('visibilitychange', ()=>{
     if (document.visibilityState === 'hidden'){
       clearTimeout(_chartTimer);
-      if (_chartAbort){ try{ _chartAbort.abort(); }catch(_){ } _chartAbort = null; }
+      if (_chartAbort) try { _chartAbort.abort(); } catch(_){}
     } else {
       window.startChartDataFlow_bm_bm && window.startChartDataFlow_bm_bm();
     }
   });
 
-  console.log('📦 Chart E2.4 module initialized');
-  // Первый запуск при загрузке страницы
+  console.log('%c[E2.4] initialized','color:#4af');
   window.startChartDataFlow_bm_bm && window.startChartDataFlow_bm_bm();
 })();
 
+
 /* ============================================================
- *  BLOCK E2.5 — Chart Flow (график замеры) тянем данные из бэка
+ *  BLOCK E2.5 — Chart Flow (view)
  * ============================================================ */
 (function chartFlowInit(){
-  const tg = window.Telegram?.WebApp;
-  
-  /* ---------- Кэш графика ---------- */
+  console.log('%c[E2.5] init', 'color:#c4f');
+
   const CHART_KEY_PREFIX = 'bm:chart:data:';
-  
+
   function currentUserId_bm(){ 
-    try { return window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'anon'; } 
-    catch(_){ return 'anon'; } 
+    try { return window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'anon'; }
+    catch(_){ return 'anon'; }
   }
-  
-  function chartKey_bm(uid){ 
-    return CHART_KEY_PREFIX + String(uid ?? currentUserId_bm()); 
+  function chartKey_bm(uid){
+    return CHART_KEY_PREFIX + String(uid ?? currentUserId_bm());
   }
-  
-  function saveChartCache_bm(obj, uid){ 
-    try { 
-      localStorage.setItem(chartKey_bm(uid ?? currentUserId_bm()), JSON.stringify(obj)); 
-    } catch(_){} 
+  function loadChartCache_bm(uid){
+    try {
+      const raw = localStorage.getItem(chartKey_bm(uid ?? currentUserId_bm()));
+      const obj = raw ? JSON.parse(raw) : null;
+      console.log('%c[E2.5] load cache','color:#c4f', obj);
+      return obj;
+    } catch(err){
+      console.warn('[E2.5] cache load error', err);
+      return null;
+    }
   }
-  
-  function loadChartCache_bm(uid){ 
-    try { 
-      const raw = localStorage.getItem(chartKey_bm(uid ?? currentUserId_bm())); 
-      return raw ? JSON.parse(raw) : null; 
-    } catch(_) { 
-      return null; 
-    } 
-  }
-  
-  /* ---------- Целевой row ---------- */
+
   function targetRow(){
-    return (typeof desiredRow === 'function' && desiredRow() != null)
-      ? desiredRow()
-      : ((typeof getRowCalcForUser_bm === 'function') ? getRowCalcForUser_bm() : null);
+    try {
+      const dr = (typeof desiredRow === 'function') ? desiredRow() : null;
+      const gr = (typeof getRowCalcForUser_bm === 'function') ? getRowCalcForUser_bm() : null;
+      const use = dr ?? gr;
+      console.log('%c[E2.5] targetRow','color:#c4f', { dr, gr, use });
+      return use;
+    } catch(err){
+      console.warn('[E2.5] targetRow error', err);
+      return null;
+    }
   }
-  
-  /* ---------- Рендеринг графика ---------- */
+
   function renderChart(chartData){
+    console.log('%c[E2.5] renderChart','color:#c4f', chartData);
+
     if (!chartData || !chartData.data) {
-      console.log('⚠️ Chart: нет данных для отображения');
+      console.log('%c[E2.5] no data','color:#f00');
       return;
     }
-    
-    console.log('📊 Chart: отображение данных', {
-      row: chartData.row,
-      dataKeys: chartData.data ? Object.keys(chartData.data) : [],
-      updated_at: chartData.updated_at
-    });
-    
-    // Устанавливаем данные в глобальную переменную
+
     window.PLAN_FACT_SERIES = chartData.data;
-    
-    // Обновляем график через API если доступен
+
     if (window.PlanFactChart && typeof window.PlanFactChart.setSeries === 'function') {
       try {
         window.PlanFactChart.setSeries(chartData.data);
-        console.log('✅ Chart: данные обновлены через API');
-      } catch(err) {
-        console.error('❌ Chart: ошибка обновления через API:', err);
+        console.log('%c[E2.5] setSeries OK','color:#0f0');
+      } catch(err){
+        console.error('[E2.5] setSeries error', err);
       }
     }
   }
-  
-  /* ---------- Public start ---------- */
+
   window.startChartFlow_bm_bm = function(){
-    console.log('🚀 Chart: запуск flow');
-    
+    console.log('%c[E2.5] START VIEW FLOW','color:#0f0');
+
     const target = targetRow();
     const cached = loadChartCache_bm();
-    
-    console.log('💾 Chart: кэш загружен', { 
-      cached: !!cached, 
-      cachedRow: cached?.row,
-      target 
-    });
-    
-    // Показываем кэш если актуален (не старее target)
-if (cached?.data && !(target && Number(cached.row || 0) < Number(target))) {
-  renderChart(cached);
-} else {
-  console.log('⏳ Chart: ждём данные с бэкенда...');
-  // Очищаем график
-  window.PLAN_FACT_SERIES = null;
-  if (window.PlanFactChart && typeof window.PlanFactChart.setSeries === 'function') {
-    try {
-      window.PlanFactChart.setSeries(null);
-    } catch(_){}
-  }
-}
-    
-    // Polling НЕ НУЖЕН! Данные придут через bootstrap
+
+    console.log('%c[E2.5] cached vs target','color:#c4f', { cached, target });
+
+    if (cached?.data && !(target && Number(cached.row||0) < Number(target))) {
+      renderChart(cached);
+    } else {
+      console.log('%c[E2.5] waiting fresh chart...','color:#f80');
+
+      window.PLAN_FACT_SERIES = null;
+      if (window.PlanFactChart && typeof window.PlanFactChart.setSeries === 'function') {
+        try { window.PlanFactChart.setSeries(null); } catch(_){}
+      }
+    }
   };
-  
-  /* ---------- Visibility change ---------- */
+
   document.addEventListener('visibilitychange', ()=>{
     if (document.visibilityState === 'visible'){
-      // При возврате на страницу - проверяем кэш
       window.startChartFlow_bm_bm();
     }
   });
-  
-  /* ---------- Initial start ---------- */
-  console.log('📦 Chart flow module initialized');
+
+  console.log('%c[E2.5] initialized','color:#c4f');
   window.startChartFlow_bm_bm();
 })();
+
   
 //============================================================
 //  BLOCK E2 — ЗАМЕРЫ ПЛАН ФАКТ ДЕЛЬТА
