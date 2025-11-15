@@ -351,7 +351,6 @@ window.addEventListener('pageshow', (e)=>{
 
   <!-- Админская "Скорость работы" (добавляется динамически для конкретного user_id) -->
   <div id="admin-section-anchor"></div>
-
 </div>
 
 
@@ -360,48 +359,121 @@ window.addEventListener('pageshow', (e)=>{
 <script>
 /* ============================================================
  *  BLOCK 0: TMA boot + admin detect
+ *  Инициализация Telegram WebApp и определение админа
  * ============================================================ */
-(function initTMA(){
+/**
+ * Инициализация Telegram Mini App:
+ * - готовим WebApp
+ * - разворачиваем на весь экран
+ * - задаём цвет заголовка
+ * - отключаем вертикальные свайпы (жест сворачивания)
+ * - настраиваем кнопку "Назад" (возврат на router.html)
+ */
+(function initTMA() {
   const tg = window.Telegram?.WebApp;
-  if (!tg) return;
+  if (!tg) return; // Если не в окружении Telegram — тихо выходим
+  // Базовая инициализация WebApp
   try {
     tg.ready();
     tg.expand();
     tg.setHeaderColor('secondary_bg_color');
     // Отключаем вертикальные свайпы для сворачивания мини-приложения
     tg.disableVerticalSwipes?.();
-  } catch(_){}
+  } catch (_) {
+    // Ошибки Telegram SDK не ломают приложение
+  }
+  // Настройка системной кнопки "Назад" в Telegram
   try {
-    tg.BackButton?.offClick?.();
+    tg.BackButton?.offClick?.(); // Сбрасываем возможные старые обработчики
     tg.BackButton?.show();
-    tg.BackButton?.onClick(()=>{ try{ window.location.href='router.html'; }catch(_){ } });
-  } catch(_){}
+    tg.BackButton?.onClick(() => {
+      try {
+        window.location.href = 'router.html';
+      } catch (_) {
+        // В крайнем случае просто игнорируем
+      }
+    });
+  } catch (_) {
+    // Если BackButton недоступна — тихо игнорируем
+  }
 })();
-  
-function isAdmin(){
-  try{ return Number(window.Telegram?.WebApp?.initDataUnsafe?.user?.id) === 196047220; }catch(_){ return false; }
+/**
+ * Проверка, является ли текущий пользователь админом
+ * @returns {boolean} true, если Telegram user.id совпадает с ID администратора
+ */
+function isAdmin() {
+  try {
+    const userId = Number(window.Telegram?.WebApp?.initDataUnsafe?.user?.id);
+    return userId === 196047220;
+  } catch (_) {
+    return false;
+  }
 }
+
 
 /* ============================================================
  *  BLOCK A: UI utils
+ *  Вспомогательные утилиты для UI: высота строки, паддинги, clamp, парсинг чисел
  * ============================================================ */
-const ROW_VAR = getComputedStyle(document.documentElement).getPropertyValue('--row').trim();
-const rowH = ROW_VAR.endsWith('px') ? parseFloat(ROW_VAR) : (parseFloat(ROW_VAR) || 36);
-const pad = 4;
-const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
 
-/** Универсальная нормализация чисел из бэка/локального стейта */
-function numOrNull(v){
+// Читаем CSS-переменную --row с корневого элемента (обычно высота одной строки графика, например "40px")
+const ROW_VAR = getComputedStyle(document.documentElement)
+  .getPropertyValue('--row')
+  .trim();
+
+// Превращаем значение --row в число (в пикселях).
+// Если оно оканчивается на "px" → парсим как float.
+// Если там, например, просто "40" или значение невалидно → пытаемся взять число, иначе используем дефолт 36.
+const rowH = ROW_VAR.endsWith('px')
+  ? parseFloat(ROW_VAR)
+  : (parseFloat(ROW_VAR) || 36);
+
+// Базовый внутренний отступ/паддинг (4 пикселя) — используется при расчёте высот, позиционирования и т.п.
+const pad = 4;
+
+// Универсальная функция "зажима" значения v в диапазон [a, b].
+// Если v меньше a → вернём a; если больше b → вернём b; иначе само v.
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+
+/**
+ * Универсальная нормализация чисел из бэка/локального стейта.
+ *
+ * Принимает что угодно (number | string | null | undefined) и возвращает:
+ *  - число (JS Number), если его корректно удалось распарсить;
+ *  - null, если значение пустое/невалидное.
+ *
+ * Особенности:
+ *  - поддерживает строки c запятой вместо точки ("12,5");
+ *  - обрабатывает строку "null" как отсутствие значения;
+ *  - отбрасывает бесконечности и нечисловые значения.
+ */
+function numOrNull(v) {
+  // 1) Если значение отсутствует (null/undefined) → считаем, что данных нет
   if (v == null) return null;
-  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
-  if (typeof v === 'string'){
-    const s = v.trim();
+
+  // 2) Если это число:
+  if (typeof v === 'number') {
+    //    - возвращаем его, только если оно конечно (не Infinity / -Infinity / NaN)
+    return Number.isFinite(v) ? v : null;
+  }
+
+  // 3) Если это строка:
+  if (typeof v === 'string') {
+    const s = v.trim(); // убираем пробелы по краям
+    //    - пустая строка или "null" (в любом регистре) → считаем отсутствием значения
     if (!s || /^null$/i.test(s)) return null;
+
+    //    - заменяем запятую на точку и пытаемся привести к Number
     const n = Number(s.replace(',', '.'));
+
+    //    - возвращаем только если получилось конечное число
     return Number.isFinite(n) ? n : null;
   }
+
+  // 4) Всё остальное (объекты, массивы, boolean и т.п.) → нечисловое, возвращаем null
   return null;
 }
+
 
   
 /* ============================================================
