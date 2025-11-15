@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0004'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0005'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -1559,6 +1559,7 @@ function handleSaveClick_bm(e) {
     try { startFrontDataFlow_bm(); } catch(_){}
     try { window.startFrontDataFlow_bm_bm(); } catch(_){}
     try { window.startMacrosFlow_bm_bm(); } catch(_){}
+    try { window.startChartDataFlow_bm_bm && window.startChartDataFlow_bm_bm(); } catch(_){}
     try { window.startChartFlow_bm_bm(); } catch(_){}
   }, 0);
   // 9) Мгновенная обратная связь пользователю
@@ -2531,6 +2532,186 @@ waitForFreshData_bm(confirmed, 20000, 60000)
 })();
 
 /* ============================================================
+ *  BLOCK E2.4 — Chart data flow (poll + cache, как макросы)
+ * ============================================================ */
+(function chartDataFlowInit(){
+  const tg = window.Telegram?.WebApp;
+  const BACKEND = (typeof BACKEND_URL_bm !== 'undefined' && BACKEND_URL_bm) ? BACKEND_URL_bm : '';
+
+  const CHART_KEY_PREFIX = 'bm:chart:data:';
+
+  // --- Ключи кэша (такие же, как в E2.5) ---
+  function currentUserId_bm(){ 
+    try { return window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'anon'; } 
+    catch(_){ return 'anon'; } 
+  }
+  function chartKey_bm(uid){ 
+    return CHART_KEY_PREFIX + String(uid ?? currentUserId_bm()); 
+  }
+  function saveChartCache_bm(obj, uid){
+    try { 
+      localStorage.setItem(chartKey_bm(uid ?? currentUserId_bm()), JSON.stringify(obj)); 
+    } catch(_){}
+  }
+  function loadChartCache_bm(uid){
+    try {
+      const raw = localStorage.getItem(chartKey_bm(uid ?? currentUserId_bm()));
+      return raw ? JSON.parse(raw) : null;
+    } catch(_){ return null; }
+  }
+
+  // --- Целевой row: как в макросах ---
+  function targetRow(){
+    if (typeof desiredRow === 'function' && desiredRow() != null) {
+      return desiredRow();
+    }
+    if (typeof getRowCalcForUser_bm === 'function') {
+      return getRowCalcForUser_bm();
+    }
+    return null;
+  }
+
+  // --- Внутреннее API: front_bootstrap, только ради chart ---
+  async function apiFrontChart_bm(requestedRow, signal){
+    const payload = {
+      action: 'front_bootstrap',
+      init_data: String(tg?.initData || ''),
+      row: Number(requestedRow || 0) || undefined
+    };
+
+    const resp = await fetch(BACKEND, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+      body: JSON.stringify(payload),
+      cache: 'no-store',
+      credentials: 'omit',
+      mode: 'cors',
+      signal
+    });
+
+    const raw = await resp.text();
+    let json = null;
+    try { json = raw ? JSON.parse(raw) : null; } catch(_){}
+
+    if (!resp.ok || !json) {
+      throw new Error(`HTTP ${resp.status}`);
+    }
+    return json;
+  }
+
+  let _chartTimer = 0;
+  let _chartRunId = 0;
+  let _chartAbort = null;
+
+  async function pollOnce(runId){
+    if (runId !== _chartRunId) return { done:true };
+
+    const reqRow = targetRow();
+
+    if (_chartAbort) {
+      try { _chartAbort.abort(); } catch(_){}
+    }
+    const controller = new AbortController();
+    _chartAbort = controller;
+
+    try {
+      const res = await apiFrontChart_bm(reqRow, controller.signal);
+      if (runId !== _chartRunId) return { done:true };
+
+      const serverRow = Number(res?.row || 0);
+      const chartBlk  = res?.chart || {};
+      const chartReady = !!chartBlk.ready && !!chartBlk.data;
+
+      // Если сервер отдал row старее, чем мы ждём — просто ждём дальше
+      if (reqRow && serverRow && serverRow < Number(reqRow)) {
+        const waitOld = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
+        console.log('⏳ Chart E2.4: получили старый row, ждём новый', { serverRow, reqRow });
+        return { done:false, wait: waitOld };
+      }
+
+      // Если сервер знает более свежий row — обновим локальный rowCalc
+      if (Number.isFinite(serverRow) && (reqRow == null || serverRow > reqRow)) {
+        try { setRowCalcForUser_bm(serverRow); } catch(_){}
+      }
+
+      if (chartReady) {
+        const uid = (typeof currentUserId_bm === 'function') ? currentUserId_bm() : 'anon';
+        const chartRow = Number(chartBlk.row || serverRow || 0);
+
+        // Защита: не кладём старее целевого row
+        if (reqRow && chartRow && chartRow < Number(reqRow)) {
+          console.log('⚠️ Chart E2.4: chartRow < reqRow, не пишем в кэш', { chartRow, reqRow });
+          return { done:false, wait: 500 };
+        }
+
+        const seed = {
+          row: chartRow || null,
+          data: chartBlk.data,
+          updated_at: chartBlk.updated_at || res.updated_at || new Date().toISOString()
+        };
+        saveChartCache_bm(seed, uid);
+        console.log('✅ Chart E2.4: новые данные сохранены в кэш', seed);
+
+        // Триггерим перерисовку (view-модуль E2.5)
+        try { window.startChartFlow_bm_bm && window.startChartFlow_bm_bm(); } catch(_){}
+
+        return { done:true };
+      }
+
+      // Ещё не готово — подождём
+      const wait = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
+      console.log('⏳ Chart E2.4: ещё не ready, статус:', { row: serverRow, wait });
+      return { done:false, wait };
+
+    } catch(err){
+      if (err?.name === 'AbortError') {
+        return { done:true };
+      }
+      console.error('❌ Chart E2.4 poll error:', err);
+      if (runId !== _chartRunId) return { done:true };
+      return { done:false, wait: 1000 };
+    }
+  }
+
+  async function pollLoop(runId){
+    if (runId !== _chartRunId) return;
+    clearTimeout(_chartTimer);
+    const r = await pollOnce(runId);
+    if (r.done || runId !== _chartRunId) return;
+    _chartTimer = setTimeout(() => pollLoop(runId), r.wait);
+  }
+
+  // --- Публичный старт потока данных графика ---
+  window.startChartDataFlow_bm_bm = function(){
+    console.log('🚀 Chart E2.4: старт data-flow');
+    _chartRunId += 1;
+    const runId = _chartRunId;
+
+    clearTimeout(_chartTimer);
+    if (_chartAbort) { try { _chartAbort.abort(); } catch(_){ } _chartAbort = null; }
+
+    // Покажем уже закэшированное (view сам решит, актуально или нет)
+    try { window.startChartFlow_bm_bm && window.startChartFlow_bm_bm(); } catch(_){}
+
+    pollLoop(runId);
+  };
+
+  // При возвращении на вкладку — перезапускаем data-flow
+  document.addEventListener('visibilitychange', ()=>{
+    if (document.visibilityState === 'hidden'){
+      clearTimeout(_chartTimer);
+      if (_chartAbort){ try{ _chartAbort.abort(); }catch(_){ } _chartAbort = null; }
+    } else {
+      window.startChartDataFlow_bm_bm && window.startChartDataFlow_bm_bm();
+    }
+  });
+
+  console.log('📦 Chart E2.4 module initialized');
+  // Первый запуск при загрузке страницы
+  window.startChartDataFlow_bm_bm && window.startChartDataFlow_bm_bm();
+})();
+
+/* ============================================================
  *  BLOCK E2.5 — Chart Flow (график замеры) тянем данные из бэка
  * ============================================================ */
 (function chartFlowInit(){
@@ -3022,6 +3203,8 @@ function updateHint(){
         setAria();
         api && api.setData(norm.rows[i]||[]);
         syncMask();
+        // <<< ДОБАВИТЬ ЭТУ СТРОКУ >>>
+        window._pf_active_date = norm.dates[i];
       }
       
       function centerTo(i, announce, behavior){
@@ -3115,16 +3298,25 @@ function updateHint(){
       window.PlanFactChart = window.PlanFactChart || {};
 
       // Главный метод: получает "сырые" данные (series) и полностью обновляет график + таймлайн
-      window.PlanFactChart.setSeries = function(json){
-        const nrm = normalizeSeries(json || {});
-
-        if (api) {
+      // Попробуем вернуть пользователя туда, где он был
+      let idx = -1;
+      if (window._pf_active_date && Array.isArray(nrm.dates)) {
+        idx = nrm.dates.indexOf(window._pf_active_date);
+      }
+      
+      // 1) Обновляем график сразу правильной датой
+      if (api) {
+        if (idx >= 0) {
+          api.setData(nrm.rows[idx] || []);
+        } else {
           const last = nrm.rows[(nrm.rows.length - 1) | 0] || [];
           api.setData(last);
         }
+      }
+      
+      // 2) Перестраиваем timeline с нужным индексом
+      setupTimeline(nrm, api, idx);
 
-        setupTimeline(nrm, api);
-      };
 
       // Дополнительный метод: если нужно напрямую подать уже подготовленный массив строк
       window.PlanFactChart.setData = function(json){
