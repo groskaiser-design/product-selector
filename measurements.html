@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0003'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0004'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -1585,20 +1585,28 @@ function handleSaveClick_bm(e) {
         );
       } catch(_){}
       // Ждём, пока свежие данные для графика точно доедут (fast=20с, slow=60с по умолчанию)
-      waitForFreshData_bm(rowCalc)
-        .then(b => {
-          if (b && b.chart && b.chart.ready && b.chart.data) {
-            const uid = (typeof currentUserId_bm === 'function') ? currentUserId_bm() : 'anon';
-            const seed = {
-              row: b.chart.row || b.row || null,
-              data: b.chart.data,
-              updated_at: b.chart.updated_at
-            };
-            localStorage.setItem('bm:chart:data:' + uid, JSON.stringify(seed));
-            window.startChartFlow_bm_bm();
-          }
-        })
-        .catch(() => {});
+waitForFreshData_bm(rowCalc)
+  .then(b => {
+    if (b && b.chart && b.chart.ready && b.chart.data) {
+      const uid = (typeof currentUserId_bm === 'function') ? currentUserId_bm() : 'anon';
+      const chartRow = Number(b.chart.row || b.row || 0);
+
+      // ✅ НЕ кладём в кэш график, если он старее только что сохранённого rowCalc
+      if (rowCalc && chartRow && chartRow < Number(rowCalc)) {
+        console.log('⚠️ Chart: получили старый row из waitForFreshData, игнорируем', { chartRow, rowCalc });
+        return;
+      }
+      const seed = { 
+        row: chartRow || null, 
+        data: b.chart.data, 
+        updated_at: b.chart.updated_at 
+      };
+      localStorage.setItem('bm:chart:data:' + uid, JSON.stringify(seed));
+      console.log('✅ Chart: данные сохранены после waitForFreshData');
+      try { window.startChartFlow_bm_bm(); } catch(_){}
+    }
+  })
+  .catch(()=>{});
     })
     // 11) Обработка ошибок сохранения
     .catch(async (err) => {
@@ -1617,21 +1625,31 @@ function handleSaveClick_bm(e) {
           try { window.startMacrosFlow_bm_bm(); } catch(_){}
           try { window.startChartFlow_bm_bm(); } catch(_){}
           // Ждём свежий график (здесь fast=20с, slow=60с явно заданы)
-          waitForFreshData_bm(confirmed, 20000, 60000)
-            .then(b => {
-              if (b && b.chart && b.chart.ready && b.chart.data) {
-                const uid = (typeof currentUserId_bm === 'function') ? currentUserId_bm() : 'anon';
-                const seed = {
-                  row: b.chart.row || b.row || null,
-                  data: b.chart.data,
-                  updated_at: b.chart.updated_at
-                };
-                localStorage.setItem('bm:chart:data:' + uid, JSON.stringify(seed));
-                console.log('✅ Chart: данные сохранены после waitForFreshData (timeout recovery)');
-                try { window.startChartFlow_bm_bm(); } catch(_){}
-              }
-            })
-            .catch(() => {});
+waitForFreshData_bm(confirmed, 20000, 60000)
+  .then(b => {
+    if (b && b.chart && b.chart.ready && b.chart.data) {
+      const uid = (typeof currentUserId_bm === 'function') ? currentUserId_bm() : 'anon';
+      const chartRow = Number(b.chart.row || b.row || 0);
+
+      // ✅ То же правило при recovery после таймаута:
+      // не кладём в кэш, если row графика старее подтверждённого confirmed
+      if (confirmed && chartRow && chartRow < Number(confirmed)) {
+        console.log('⚠️ Chart (timeout): получили старый row, игнорируем', { chartRow, confirmed });
+        return;
+      }
+
+      const seed = { 
+        row: chartRow || null, 
+        data: b.chart.data, 
+        updated_at: b.chart.updated_at 
+      };
+      localStorage.setItem('bm:chart:data:' + uid, JSON.stringify(seed));
+      console.log('✅ Chart: данные сохранены после waitForFreshData (timeout recovery)');
+      try { window.startChartFlow_bm_bm(); } catch(_){}
+    }
+  })
+  .catch(()=>{});
+
           return;
         }
         // Если подтвердить сохранение не удалось
@@ -3212,101 +3230,7 @@ PageLaunch→UpdateComment: ${comment} s`;
       hapticSelect(); // updateCycleVisibility();
       return;
     }
-
-    //const item = e.target.closest?.('.choice-item');
-    //if (item){
-    //  const list = item.closest?.('.choice-list'); if (!list) return;
-    //  if (list.dataset.type === 'single'){
-    //    list.querySelectorAll('.choice-item').forEach(i=>{ i.classList.remove('selected'); i.setAttribute('aria-checked','false'); });
-    //    item.classList.add('selected'); item.setAttribute('aria-checked','true'); hapticSelect();
-    //    if (list.dataset.field === 'pregnancy_lactation') updateCycleVisibility();
-    //  } else if (list.dataset.type === 'multiple'){
-    //    const nowSel = item.classList.toggle('selected'); item.setAttribute('aria-checked', nowSel ? 'true':'false'); hapticSelect();
-    //    if (list.dataset.field === 'chronic_conditions'){
-    //      if (item.dataset.value === 'none' && nowSel){
-    //        list.querySelectorAll('.choice-item').forEach(i=>{ if(i!==item){ i.classList.remove('selected'); i.setAttribute('aria-checked','false'); } });
-    //      } else if (item.dataset.value !== 'none' && nowSel){
-    //        const noneItem = list.querySelector('.choice-item[data-value="none"]'); if (noneItem){ noneItem.classList.remove('selected'); noneItem.setAttribute('aria-checked','false'); }
-    //       }
-    //     }
-    //   }
-    //  return;
-    // }
-
-
-    //    const chk = e.target.closest?.('#bf-none-wrap');
-    //    if (chk){
-    //  const input = chk.querySelector('input');
-    //  input.checked = !input.checked;
-    //  chk.classList.toggle('checked', input.checked);
-    //  try {
-    //    const optFat = document.querySelector('#opt_fat'); if (optFat) optFat.checked = input.checked;
-    //    const fatField = document.querySelector('.field[data-key="fat"]');
-    //    const duo = fatField?.querySelector?.('.duo');
-    //    if (duo) duo.classList.toggle('disabled', input.checked);
-    //    const w = wheels?.fat; if (w?.setDisabled) w.setDisabled(input.checked, /*programmatic*/true);
-
-    //  } catch(_){}
-    //  updateBodyCompVisibility();
-    //  updateSaveButton(); // ← ДОБАВИТЬ для немедленной реакции
-    //  hapticSelect();
-    // }
     }, {passive:true});
-
-  /*window.updateCycleVisibility = function(){
-    const isFemale = document.querySelector('.binary-btn.active[data-value="female"]');
-    const isMale   = document.querySelector('.binary-btn.active[data-value="male"]');
-    const secPreg  = document.getElementById('sec-preg');
-    const secCycle = document.getElementById('sec-cycle');
-    if (!secPreg || !secCycle) return;
-    if (isMale){
-      secPreg.style.display='none'; secCycle.style.display='none';
-      secPreg.querySelectorAll('.choice-item.selected').forEach(i=>i.classList.remove('selected'));
-      secCycle.querySelectorAll('.choice-item.selected').forEach(i=>i.classList.remove('selected'));
-      return;
-    }
-  
-    secPreg.style.display = isFemale ? '' : 'none';
-    const preg = document.querySelector('.choice-list[data-field="pregnancy_lactation"] .choice-item.selected')?.dataset.value || null;
-    const showCycle = !!isFemale && preg === 'none';
-    secCycle.style.display = showCycle ? '' : 'none';
-    if (!showCycle){ secCycle.querySelectorAll('.choice-item.selected').forEach(i=>i.classList.remove('selected')); }
-  };
-
-  window.updateBodyCompVisibility = function(){
-    const sec  = document.getElementById('sec-bodycomp');
-    if (!sec) return;
-    const bf = document.getElementById('bf-none');
-    const sys = document.getElementById('opt_fat');
-    const show = (bf && bf.checked) || (sys && sys.checked);
-    sec.style.display = show ? '' : 'none';
-    if (!show){ sec.querySelectorAll('.choice-item.selected').forEach(i=>i.classList.remove('selected')); }
-  };
-
-  requestAnimationFrame(()=>{ updateCycleVisibility(); updateBodyCompVisibility(); });
-*/
-  
- // function ensureFatOptlineStyled(){
- //   const fatField = document.querySelector('.field[data-key="fat"]');
- //   if (!fatField) return;
- //   const optline = fatField.querySelector('.optline');
- //   if (!optline) return;
- //   if (!optline.querySelector('#bf-none-wrap')){
- //     const wrap = document.createElement('label');
- //     wrap.className = 'check';
- //     wrap.id = 'bf-none-wrap';
- //     wrap.innerHTML = '<input type="checkbox" id="bf-none" hidden />'
- //       + '<span class="check-square" aria-hidden="true"></span>'
- //       + '<span class="check-label">нет данных</span>';
- //     optline.appendChild(wrap);
- //     const sys = document.getElementById('opt_fat');
- //    const duo = fatField.querySelector('.duo');
- //    if (sys){ wrap.querySelector('#bf-none').checked = !!sys.checked; }
- //     if (duo){ duo.classList.toggle('disabled', wrap.querySelector('#bf-none').checked); }
- //   }
- // }
- // requestAnimationFrame(ensureFatOptlineStyled);
- //})();
  })();
 
 
