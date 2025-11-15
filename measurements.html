@@ -474,322 +474,495 @@ function numOrNull(v) {
   return null;
 }
 
-
-  
 /* ============================================================
  *  BLOCK A1: Wheels + ensureWheel
+ *  Колёса для ввода чисел (целая + дробная часть) и их инициализация
  * ============================================================ */
-function buildWheel(fieldEl, initial){
-  const min = +fieldEl.dataset.min;
-  const max = +fieldEl.dataset.max;
-  const minInt = Math.floor(min);
-  const maxInt = Math.floor(max);
-  const intRange = maxInt - minInt;
-  const key = fieldEl.dataset.key;
-  const onlyInt = fieldEl.dataset.onlyInt === '1' || fieldEl.dataset.onlyInt === 'true';
+/**
+ * Строит колесо для одного поля замеров.
+ *
+ * @param {HTMLElement} fieldEl - контейнер поля с разметкой вида:
+ *    <div data-key="weight" data-min="40" data-max="200" data-only-int="0">
+ *      <div class="duo">
+ *        <div class="col-int"></div>
+ *        <div class="col-frac"></div>
+ *      </div>
+ *    </div>
+ * @param {number} [initial] - начальное значение (если не передано, берётся середина диапазона)
+ * @returns {object} api - управление колесом
+ *    - setValue(v)
+ *    - value (getter)
+ *    - getModelValue()
+ *    - setDisabled(dis, programmatic?)
+ *    - destroy()
+ */
+function buildWheel(fieldEl, initial) {
+  // 1. Читаем конфигурацию поля из data-атрибутов
+  const min      = +fieldEl.dataset.min;             // минимальное значение
+  const max      = +fieldEl.dataset.max;             // максимальное значение
+  const minInt   = Math.floor(min);                  // минимальное целое
+  const maxInt   = Math.floor(max);                  // максимальное целое
+  const intRange = maxInt - minInt;                  // диапазон целых значений
+  const key      = fieldEl.dataset.key;              // ключ поля (weight, height, fat, …)
+  const onlyInt  = fieldEl.dataset.onlyInt === '1' || fieldEl.dataset.onlyInt === 'true';
 
-  const intCol = fieldEl.querySelector('.col-int');
-  const fracCol = fieldEl.querySelector('.col-frac');
-  const duo = fieldEl.querySelector('.duo');
+  // 2. Находим нужные элементы внутри поля
+  const intCol  = fieldEl.querySelector('.col-int');   // колонка целых
+  const fracCol = fieldEl.querySelector('.col-frac');  // колонка десятых
+  const duo     = fieldEl.querySelector('.duo');       // общий контейнер (для disabled и aria)
 
-  const opt = t => { const d=document.createElement('div'); d.className='option'; d.textContent=t; return d; };
-  function fillCol(col, from, to){
-    const frag=document.createDocumentFragment();
-    for(let i=0;i<pad;i++) frag.appendChild(opt(''));
-    for(let i=from;i<=to;i++) frag.appendChild(opt(i));
-    for(let i=0;i<pad;i++) frag.appendChild(opt(''));
-    col.innerHTML=''; col.appendChild(frag);
+  // 3. Хелпер для создания одной текстовой опции (одной «строчки» в колесе)
+  const opt = t => { const d = document.createElement('div'); d.className = 'option'; d.textContent = t; return d; };
+
+  // 4. Заполняем колонку значениями с «пустыми» паддингами сверху/снизу
+  function fillCol(col, from, to) {
+    const frag = document.createDocumentFragment();
+    for (let i = 0; i < pad; i++) frag.appendChild(opt(''));   // верхний паддинг
+    for (let i = from; i <= to; i++) frag.appendChild(opt(i)); // сами значения
+    for (let i = 0; i < pad; i++) frag.appendChild(opt(''));   // нижний паддинг
+    col.innerHTML = ''; 
+    col.appendChild(frag);
   }
-  fillCol(intCol, minInt, maxInt);
-  fillCol(fracCol, 0, onlyInt ? 0 : 9);
+  fillCol(intCol,  minInt, maxInt);               // целая часть: от minInt до maxInt
+  fillCol(fracCol, 0,      onlyInt ? 0 : 9);      // дробная часть: 0–9 или только 0, если onlyInt
 
+  // 5. Функция вычисляет ближайший индекс значения по текущему scrollTop в колонке
   const nearestIndex = col =>
-    Math.round((col.scrollTop + (col.clientHeight - rowH)/2)/rowH) - pad;
+    Math.round((col.scrollTop + (col.clientHeight - rowH) / 2) / rowH) - pad;
 
+  // 6. Подсветка активной строки + виброотклик (по колонке)
   const lastActiveIdx = new WeakMap();
-  function markActive(col){
-    const idx = nearestIndex(col) + pad;
-    const prev = lastActiveIdx.get(col);
+  function markActive(col) {
+    const idx  = nearestIndex(col) + pad;           // сдвиг с учётом паддинга
+    const prev = lastActiveIdx.get(col);           // предыдущий активный индекс
+
+    // Если пользователь крутит колесо руками (не программно) и индекс сменился, даём тактильный отклик
     if (typeof prev === 'number' && prev !== idx && !isProgrammatic) {
-      try { window.Telegram?.WebApp?.HapticFeedback?.selectionChanged?.(); } catch(_){}
+      try { window.Telegram?.WebApp?.HapticFeedback?.selectionChanged?.(); } catch (_) {}
     }
+
+    // Снимаем active с предыдущего, если он был
     if (typeof prev === 'number' && col.children[prev]) col.children[prev].classList.remove('active');
+
+    // Вешаем active на текущий (если существует)
     const el = col.children[idx];
     if (el) el.classList.add('active');
+
     lastActiveIdx.set(col, idx);
   }
 
+  // 7. Мгновенно устанавливаем scroll к нужному индексу (без анимации), центрируя строку
   const setScrollInstant = (col, idx) => {
-    const ch = col.clientHeight || rowH * 5;
-    const top = (idx + pad) * rowH - (ch - rowH)/2;
+    const ch  = col.clientHeight || rowH * 5; // если высота ещё не посчитана — считаем 5 строк
+    const top = (idx + pad) * rowH - (ch - rowH) / 2;
     col.scrollTop = top;
-    requestAnimationFrame(()=> markActive(col));
+    requestAnimationFrame(() => markActive(col));
   };
 
-  function withNoSnap(fn){
-    const prevInt = intCol.style.scrollSnapType;
+  // 8. Временно выключаем scroll-snap, чтобы программное позиционирование не дёргалось
+  function withNoSnap(fn) {
+    const prevInt  = intCol.style.scrollSnapType;
     const prevFrac = fracCol.style.scrollSnapType;
-    intCol.style.scrollSnapType = 'none';
+    intCol.style.scrollSnapType  = 'none';
     fracCol.style.scrollSnapType = 'none';
     try { fn(); }
     finally {
-      requestAnimationFrame(()=>{
-        intCol.style.scrollSnapType = prevInt || '';
+      requestAnimationFrame(() => {
+        intCol.style.scrollSnapType  = prevInt  || '';
         fracCol.style.scrollSnapType = prevFrac || '';
-        markActive(intCol); markActive(fracCol);
+        markActive(intCol);
+        markActive(fracCol);
       });
     }
   }
 
-  let isProgrammatic = false;
-  let rafInt = 0, rafFrac = 0;
-  let snapTimer=null;
+  // 9. Внутреннее состояние
+  let isProgrammatic   = false;           // флаг: сейчас двигаем колесо программно (чтобы не триггерить лишние реакции)
+  let rafInt           = 0, rafFrac = 0;  // ID requestAnimationFrame для throttling scroll-событий
+  let snapTimer        = null;            // таймер отложенного снаппинга
   const supportsScrollEnd = ('onscrollend' in window);
-  let disabled = false;
+  let disabled         = false;           // флаг блокировки колеса
 
-  // Модельное значение — держим здесь, даже если визуально не выставляли
+  // Модельное значение — хранится независимо от того, где сейчас стоит визуальный скролл
   let modelValue = (typeof initial === 'number')
     ? clamp(+initial, min, max)
-    : clamp(min + (max - min) / 2, min, max);
+    : clamp(min + (max - min) / 2, min, max);   // по умолчанию середина диапазона
 
-  function applyFracLock(iVal){
+  // 10. Лочим дробную колонку, если нужно (onlyInt или выбран максимум)
+  function applyFracLock(iVal) {
     if (disabled) return;
     const lock = onlyInt || (iVal === maxInt);
     fracCol.style.pointerEvents = lock ? 'none' : 'auto';
-    fracCol.style.opacity = lock ? 0.5 : 1;
+    fracCol.style.opacity       = lock ? 0.5   : 1;
   }
 
-  function dispatchChange(){
-    const v = api.value;
+  // 11. Уведомляем систему об изменении значения (одно событие на оба колеса)
+  function dispatchChange() {
+    const v = api.value;  // текущее визуальное значение
     document.dispatchEvent(new CustomEvent('wheelchange', {
-      detail:{ key, value: v, programmatic: isProgrammatic }
+      detail: { key, value: v, programmatic: isProgrammatic }
     }));
   }
 
-  function setValue(v){
-    const clamped = clamp(+v, min, max);
+  // 12. Программно задать значение колеса
+  function setValue(v) {
+    const clamped = clamp(+v, min, max);                                 // зажимаем в диапазоне
     const rounded = onlyInt ? Math.round(clamped) : Math.round(clamped * 10) / 10;
-    modelValue = rounded;
+    modelValue    = rounded;
 
-    const iVal = Math.trunc(rounded);
-    let f = onlyInt ? 0 : Math.round((rounded - iVal) * 10);
-    if (iVal === maxInt) f = 0;
-    const iIdx = iVal - minInt;
+    const iVal = Math.trunc(rounded);                                    // целая часть
+    let f      = onlyInt ? 0 : Math.round((rounded - iVal) * 10);        // дробная часть (0–9)
+    if (iVal === maxInt) f = 0;                                          // на максимуме всегда .0
+    const iIdx = iVal - minInt;                                          // индекс в целевой колонке
 
     const prev = isProgrammatic; isProgrammatic = true;
-    withNoSnap(()=>{
-      setScrollInstant(intCol, iIdx);
+    withNoSnap(() => {
+      setScrollInstant(intCol,  iIdx);
       setScrollInstant(fracCol, f);
     });
     applyFracLock(iVal);
-    markActive(intCol); markActive(fracCol);
-    requestAnimationFrame(()=>{ isProgrammatic = prev; dispatchChange(); });
+    markActive(intCol);
+    markActive(fracCol);
+
+    requestAnimationFrame(() => { isProgrammatic = prev; dispatchChange(); });
   }
 
-  function snapNow(){
+  // 13. Притянуть колонки к ближайшим значениям (снаппинг) после окончания скролла
+  function snapNow() {
     if (isProgrammatic) return;
-    let iIdx = clamp(nearestIndex(intCol), 0, intRange);
-    let f = onlyInt ? 0 : clamp(nearestIndex(fracCol), 0, 9);
-    const iVal = minInt + iIdx;
-    if (iVal === maxInt) f = 0;
 
-    modelValue = onlyInt ? (iVal) : +(iVal + f/10).toFixed(1);
+    let iIdx = clamp(nearestIndex(intCol),  0, intRange);
+    let f    = onlyInt ? 0 : clamp(nearestIndex(fracCol), 0, 9);
+
+    const iVal = minInt + iIdx;
+    if (iVal === maxInt) f = 0; // на максимуме обнуляем дробную часть
+
+    modelValue = onlyInt ? iVal : +(iVal + f / 10).toFixed(1);
 
     const prev = isProgrammatic; isProgrammatic = true;
-    setScrollInstant(intCol, iIdx);
+    setScrollInstant(intCol,  iIdx);
     setScrollInstant(fracCol, f);
     applyFracLock(iVal);
-    markActive(intCol); markActive(fracCol);
-    requestAnimationFrame(()=>{ isProgrammatic = prev; dispatchChange(); });
+    markActive(intCol);
+    markActive(fracCol);
+    requestAnimationFrame(() => { isProgrammatic = prev; dispatchChange(); });
   }
 
-  function onScrollInt(){
+  // 14. Обработчики scroll для колонок (обновляем подсветку и планируем снаппинг)
+  function onScrollInt() {
     if (isProgrammatic) return;
     if (rafInt) cancelAnimationFrame(rafInt);
-    rafInt = requestAnimationFrame(()=>markActive(intCol));
+    rafInt = requestAnimationFrame(() => markActive(intCol));
     scheduleSnap();
   }
-  function onScrollFrac(){
+  function onScrollFrac() {
     if (isProgrammatic || onlyInt) return;
     if (rafFrac) cancelAnimationFrame(rafFrac);
-    rafFrac = requestAnimationFrame(()=>markActive(fracCol));
+    rafFrac = requestAnimationFrame(() => markActive(fracCol));
     scheduleSnap();
   }
 
-  function scheduleSnap(){
+  // 15. Планируем отложенный снаппинг (через 80 мс после последнего скролла)
+  function scheduleSnap() {
     clearTimeout(snapTimer);
     snapTimer = setTimeout(snapNow, 80);
   }
 
-  intCol.addEventListener('scroll', onScrollInt, {passive:true});
-  fracCol.addEventListener('scroll', onScrollFrac, {passive:true});
-  if (supportsScrollEnd){
-    intCol.addEventListener('scrollend', snapNow, {passive:true});
-    if (!onlyInt) fracCol.addEventListener('scrollend', snapNow, {passive:true});
+  // 16. Подписываемся на scroll события
+  intCol.addEventListener('scroll', onScrollInt,  { passive: true });
+  fracCol.addEventListener('scroll', onScrollFrac, { passive: true });
+  if (supportsScrollEnd) {
+    intCol.addEventListener('scrollend', snapNow, { passive: true });
+    if (!onlyInt) fracCol.addEventListener('scrollend', snapNow, { passive: true });
   }
 
-  function setDisabled(dis, programmatic=false){
+  // 17. Включение/выключение колеса
+  function setDisabled(dis, programmatic = false) {
     const prev = isProgrammatic; if (programmatic) isProgrammatic = true;
     disabled = dis;
+
     duo.classList.toggle('disabled', dis);
     duo.setAttribute('aria-disabled', String(dis));
-    [intCol, fracCol].forEach(c=>c.style.pointerEvents = dis ? 'none' : 'auto');
-    if (!dis){
+    [intCol, fracCol].forEach(c => c.style.pointerEvents = dis ? 'none' : 'auto');
+
+    // При включении снова корректно настраиваем блокировку дробной части
+    if (!dis) {
       const iIdx = clamp(nearestIndex(intCol), 0, intRange);
       const iVal = minInt + iIdx;
       applyFracLock(iVal);
     }
+
     dispatchChange();
     isProgrammatic = prev;
   }
 
-  // ⚠️ КРИТИЧНО: не выставляем визуальное значение, если поле скрыто (аккордеон свернут),
-  // чтобы не перетирать данные, пришедшие из бэка.
-  const initVal = (typeof initial==='number') ? initial : (min + (max - min) / 2);
+  // 18. Начальное значение: не трогаем скрытые колёса (аккордеон свернут),
+  //     чтобы не перетёреть данные, которые ещё не пришли с бэка.
+  const initVal = (typeof initial === 'number') ? initial : (min + (max - min) / 2);
   if (fieldEl.offsetParent !== null) {
     setValue(initVal);
   }
 
+  // 19. Внешний API для работы с колесом
   const api = {
+    // Программно установить значение
     setValue,
-    get value(){
-      const iIdx = clamp(nearestIndex(intCol), 0, intRange);
-      let f = onlyInt ? 0 : clamp(nearestIndex(fracCol), 0, 9);
+
+    // Текущее визуальное значение (считается по позиции скролла)
+    get value() {
+      const iIdx = clamp(nearestIndex(intCol),  0, intRange);
+      let f      = onlyInt ? 0 : clamp(nearestIndex(fracCol), 0, 9);
       const iVal = minInt + iIdx;
       if (iVal === maxInt) f = 0;
-      return onlyInt ? iVal : +(iVal + f/10).toFixed(1);
+      return onlyInt ? iVal : +(iVal + f / 10).toFixed(1);
     },
-    getModelValue(){ return modelValue; },
+
+    // Модельное значение (последнее зафиксированное программно/снаппингом)
+    getModelValue() { return modelValue; },
+
+    // Выключение/включение
     setDisabled,
-    destroy(){
+
+    // Полная очистка: снимаем обработчики и таймеры
+    destroy() {
       clearTimeout(snapTimer);
       intCol.removeEventListener('scroll', onScrollInt);
       fracCol.removeEventListener('scroll', onScrollFrac);
-      if (supportsScrollEnd){
+      if (supportsScrollEnd) {
         intCol.removeEventListener('scrollend', snapNow);
         if (!onlyInt) fracCol.removeEventListener('scrollend', snapNow);
       }
     }
   };
+
   return api;
 }
-const wheels = {};
-const wheelMap = new WeakMap();
-function ensureWheel(fieldEl, cfg){
+
+// Глобальные реестры колёс
+const wheels   = {};            // по ключу (weight, height, …) → wheel API
+const wheelMap = new WeakMap(); // по DOM-элементу fieldEl → wheel API
+
+/**
+ * Гарантирует, что для данного поля уже есть/будет только одно колесо.
+ *
+ * @param {HTMLElement} fieldEl - контейнер поля
+ * @param {object} cfg - конфиг: { key, initial, optional }
+ * @returns {object} wheel API
+ */
+function ensureWheel(fieldEl, cfg) {
+  // 1. Если колесо для этого DOM-узла уже было создано — просто возвращаем его
   let w = wheelMap.get(fieldEl);
   if (w) return w;
 
-  const pend = (window.__pendingInputs || {});
+  // 2. Читаем «отложенные» значения, которые могли прийти из бэка до рендера колеса
+  const pend    = (window.__pendingInputs || {});
   const hasPend = Object.prototype.hasOwnProperty.call(pend, cfg.key);
   const pendVal = hasPend ? pend[cfg.key] : undefined;
-  const parsed  = numOrNull(pendVal);
-  const initVal = (parsed != null) ? parsed : cfg.initial;
+  const parsed  = numOrNull(pendVal);                         // нормализуем число или null
+  const initVal = (parsed != null) ? parsed : cfg.initial;    // если число есть — используем его, иначе дефолт
 
+  // 3. Создаём wheel и регистрируем его
   w = buildWheel(fieldEl, initVal);
   wheelMap.set(fieldEl, w);
   wheels[cfg.key] = w;
 
-  if (cfg.optional){
-    let cb = fieldEl.querySelector('#opt_'+cfg.key);
-    if (!cb){
+  // 4. Если поле опциональное — добавляем/подключаем чекбокс "нет данных"
+  if (cfg.optional) {
+    let cb = fieldEl.querySelector('#opt_' + cfg.key);
+
+    // Если чекбокса ещё нет в DOM — создаём его
+    if (!cb) {
       const opt = document.createElement('div');
       opt.className = 'optline';
-      opt.innerHTML = `<label style="display:flex;align-items:center;gap:8px;opacity:.95">
+      opt.innerHTML = `
+        <label style="display:flex;align-items:center;gap:8px;opacity:.95">
           <input type="checkbox" id="opt_${cfg.key}"> нет данных
         </label>`;
       fieldEl.appendChild(opt);
       cb = opt.querySelector('input');
     }
-    if (!cb._bound){
-      cb.addEventListener('change', ()=>{ w.setDisabled(cb.checked); }, {passive:true});
+
+    // Подписываемся на изменение чекбокса (делаем это один раз)
+    if (!cb._bound) {
+      cb.addEventListener('change', () => { w.setDisabled(cb.checked); }, { passive: true });
       cb._bound = true;
     }
-    if (hasPend && pendVal == null){
+
+    // Если в pending для этого поля было явно "нет значения" (null),
+    // сразу ставим чекбокс и программно отключаем колесо
+    if (hasPend && pendVal == null) {
       cb.checked = true;
-      w.setDisabled(true, /*programmatic*/true);
+      w.setDisabled(true, /* programmatic */ true);
     }
   }
 
-  if (hasPend && parsed != null){
+  // 5. Если мы успешно применили pending-значение (parsed != null) —
+  //    очищаем его, чтобы не переиспользовать.
+  if (hasPend && parsed != null) {
     delete pend[cfg.key];
   }
+
   return w;
 }
 
 /* ============================================================
  *  BLOCK B: Fields + render + hard init
+ *  Описание полей замеров, генерация HTML и первичная инициализация колёс
  * ============================================================ */
+
+/**
+ * Описание всех полей замеров:
+ * - key      — внутренний ключ (для бэка, кэша, колёс)
+ * - label    — подпись в UI
+ * - unit     — единицы измерения (кг, см, % и т.п.)
+ * - min/max  — допустимый диапазон ввода
+ * - initial  — дефолтное значение до прихода данных из бэка
+ * - optional — опциональное поле (появляется чекбокс "нет данных")
+ */
 const FIELDS = [
-  
-  { key:'weight', label:'Вес', unit:'кг', min:40, max:250, initial:70.0 },
-  { key:'height', label:'Рост', unit:'см', min:120, max:230, initial:175.0 },
-  { key:'fat',    label:'% жира', unit:'%', min:3,  max:60,  initial:18.0, optional:true },
-  
-  { key:'neck',   label:'Шея', unit:'см', min:20, max:70, initial:38 },
-  { key:'shoulders',label:'Плечи обхват', unit:'см', min:60, max:180, initial:90.0 },
-  { key:'chest',  label:'Грудь', unit:'см', min:60, max:160, initial:100 },
-  { key:'waist',  label:'Талия', unit:'см', min:40, max:160, initial:70 },
+  { key:'weight',   label:'Вес',                    unit:'кг', min:40,  max:250, initial:70.0 },
+  { key:'height',   label:'Рост',                   unit:'см', min:120, max:230, initial:175.0 },
+  { key:'fat',      label:'% жира',                 unit:'%', min:3,   max:60,  initial:18.0, optional:true },
 
-  { key:'bicep_l_rel', label:'Бицепс левый (расслаб.)', unit:'см', min:15, max:70, initial:31 },
-  { key:'bicep_r_rel', label:'Бицепс правый (расслаб.)', unit:'см', min:15, max:70, initial:31 },
-  { key:'bicep_l_flex',label:'Бицепс левый (напряж.)',  unit:'см', min:15, max:70, initial:31 },
-  { key:'bicep_r_flex',label:'Бицепс правый (напряж.)', unit:'см', min:15, max:70, initial:31 },
+  { key:'neck',     label:'Шея',                    unit:'см', min:20,  max:70,  initial:38 },
+  { key:'shoulders',label:'Плечи обхват',           unit:'см', min:60,  max:180, initial:90.0 },
+  { key:'chest',    label:'Грудь',                  unit:'см', min:60,  max:160, initial:100 },
+  { key:'waist',    label:'Талия',                  unit:'см', min:40,  max:160, initial:70 },
 
-  { key:'thigh_l', label:'Бедро левое', unit:'см', min:30, max:100, initial:50 },
-  { key:'thigh_r', label:'Бедро правое', unit:'см', min:30, max:100, initial:50 },
+  { key:'bicep_l_rel',  label:'Бицепс левый (расслаб.)', unit:'см', min:15, max:70, initial:31 },
+  { key:'bicep_r_rel',  label:'Бицепс правый (расслаб.)', unit:'см', min:15, max:70, initial:31 },
+  { key:'bicep_l_flex', label:'Бицепс левый (напряж.)',   unit:'см', min:15, max:70, initial:31 },
+  { key:'bicep_r_flex', label:'Бицепс правый (напряж.)',  unit:'см', min:15, max:70, initial:31 },
 
-  { key:'calf_l',  label:'Икра левая', unit:'см', min:25, max:70, initial:35 },
-  { key:'calf_r',  label:'Икра правая', unit:'см', min:25, max:70, initial:35 },
+  { key:'thigh_l',  label:'Бедро левое',            unit:'см', min:30,  max:100, initial:50 },
+  { key:'thigh_r',  label:'Бедро правое',           unit:'см', min:30,  max:100, initial:50 },
 
-  { key:'hips',    label:'Ягодицы', unit:'см', min:70, max:160, initial:90 },
-  { key:'wrist',   label:'Обхват запястья', unit:'см', min:10, max:30, initial:17 },
-  { key:'knee',    label:'Обхват колена',   unit:'см', min:25, max:60, initial:36 },
-  { key:'ankle',   label:'Обхват лодыжки',  unit:'см', min:15, max:35, initial:22 },
+  { key:'calf_l',   label:'Икра левая',             unit:'см', min:25,  max:70,  initial:35 },
+  { key:'calf_r',   label:'Икра правая',            unit:'см', min:25,  max:70,  initial:35 },
+
+  { key:'hips',     label:'Ягодицы',                unit:'см', min:70,  max:160, initial:90 },
+  { key:'wrist',    label:'Обхват запястья',        unit:'см', min:10,  max:30,  initial:17 },
+  { key:'knee',     label:'Обхват колена',          unit:'см', min:25,  max:60,  initial:36 },
+  { key:'ankle',    label:'Обхват лодыжки',         unit:'см', min:15,  max:35,  initial:22 },
 ];
-const CFG = Object.fromEntries(FIELDS.map(f=>[f.key, f]));
+
+/**
+ * Быстрый доступ к конфигу поля по key:
+ *  CFG['weight'] → объект описания поля weight
+ */
+const CFG = Object.fromEntries(FIELDS.map(f => [f.key, f]));
+
+/**
+ * Контейнер для всех полей замеров (см. HTML: <div id="fields"></div>)
+ */
 const fieldsWrap = document.getElementById('fields');
+
+/**
+ * Хеш-таблица "ключ поля → DOM-элемент этого поля"
+ *  fieldByKey['waist'] → <div class="field" data-key="waist">...</div>
+ */
 const fieldByKey = Object.create(null);
+
+/**
+ * Глобальный объект для "отложенных" значений (которые пришли с бэка до инициализации колёс).
+ * Используется в ensureWheel / buildWheel.
+ */
 window.__pendingInputs = window.__pendingInputs || {};
-for (const cfg of FIELDS){
+
+/**
+ * Генерация HTML-разметки для каждого поля замеров.
+ * На каждом шаге:
+ *  - создаём <div class="field"> с нужными data-атрибутами;
+ *  - вставляем шапку с label + unit;
+ *  - вставляем контейнер дуо-колёс (целая и дробная часть);
+ *  - добавляем текст-подсказку (help);
+ *  - сохраняем ссылку в fieldByKey и добавляем поле в DOM.
+ */
+for (const cfg of FIELDS) {
+  // 1) Корневой контейнер поля
   const f = document.createElement('div');
-  f.className = 'field';
+  f.className   = 'field';
   f.dataset.key = cfg.key;
   f.dataset.min = cfg.min;
   f.dataset.max = cfg.max;
   if (cfg.onlyInt) f.dataset.onlyInt = '1';
+
+  // 2) Основная разметка поля: заголовок + единицы + контейнер для колёс
   f.innerHTML = `
-    <div class="row"><div class="label">${cfg.label}</div><div class="unit">${cfg.unit}</div></div>
-    <div class="duo"><div class="col col-int"></div><div class="sep">,</div><div class="col col-frac"></div></div>
+    <div class="row">
+      <div class="label">${cfg.label}</div>
+      <div class="unit">${cfg.unit}</div>
+    </div>
+    <div class="duo">
+      <div class="col col-int"></div>
+      <div class="sep">,</div>
+      <div class="col col-frac"></div>
+    </div>
   `;
-  const h = document.createElement('div');
+
+  // 3) Блок подсказки под полем (как вводить: только целые, целые + десятые и т.п.)
+  const h  = document.createElement('div');
   h.className = 'help';
-  h.textContent = cfg.onlyInt ? 'целые годы' :
-                  (cfg.unit==='кг' ? 'кг: целые и десятые' :
-                  cfg.unit==='см' ? 'см: целые и десятые (1 десятая = 1 мм)' :
-                  'проценты: целые и десятые');
+  h.textContent = cfg.onlyInt
+    ? 'целые годы'
+    : (cfg.unit === 'кг'
+        ? 'кг: целые и десятые'
+        : cfg.unit === 'см'
+          ? 'см: целые и десятые (1 десятая = 1 мм)'
+          : 'проценты: целые и десятые');
+
   f.appendChild(h);
+
+  // 4) Добавляем поле в DOM и сохраняем ссылку по key
   fieldsWrap.appendChild(f);
   fieldByKey[cfg.key] = f;
 }
-function ensureAllWheelsOnce(){
+
+/**
+ * Жёсткая инициализация всех колёс для всех полей (однократно).
+ * - создаёт колёса через ensureWheel();
+ * - меряет время инициализации и складывает метрику в window.__wheelsInitMs;
+ * - ставит флаг window.__wheelsInitDone, чтобы не инициализировать повторно;
+ * - для админа дополнительно пишет метрику "от запуска страницы до инициализации колёс"
+ *   в window.__pageLaunchToWheelsInit и обновляет debug UI (updatePerfUI).
+ */
+function ensureAllWheelsOnce() {
+  // Если уже инициализировали — больше ничего не делаем
   if (window.__wheelsInitDone) return;
+
+  // Старт таймера
   const t0 = performance?.now ? performance.now() : Date.now();
-  for (const cfg of FIELDS){
+
+  // Пробегаем по всем полям, создаём колесо для каждого
+  for (const cfg of FIELDS) {
     const el = fieldByKey[cfg.key];
     if (el) ensureWheel(el, cfg);
   }
-  const t1 = performance?.now ? performance.now() : Date.now();
-  window.__wheelsInitMs = +(t1 - t0).toFixed(1);
-  window.__wheelsInitDone = true;
-  if (isAdmin() && typeof window.__pageLaunchToUpdateWheel !== 'number') {
 
+  // Конец таймера + округление до 0.1 мс
+  const t1 = performance?.now ? performance.now() : Date.now();
+  window.__wheelsInitMs   = +(t1 - t0).toFixed(1);
+  window.__wheelsInitDone = true;
+
+  // Для админа: метрика "время от старта страницы до готовности колёс"
+  if (isAdmin() && typeof window.__pageLaunchToUpdateWheel !== 'number') {
     window.__pageLaunchToWheelsInit = performance.now() - window.__pageLoadTime;
     if (typeof window.updatePerfUI === 'function') window.updatePerfUI();
   }
-  try { if (typeof updatePerfUI === 'function') updatePerfUI(); } catch(_){}
+
+  // На всякий случай пробуем обновить UI метрик, если такой хук есть глобально
+  try { if (typeof updatePerfUI === 'function') updatePerfUI(); } catch (_) {}
 }
+
+// Сразу при загрузке страницы инициализируем все колёса
 ensureAllWheelsOnce();
+
+/**
+ * Публичный хук: принудительная переинициализация всех колёс снаружи (если вдруг потребуется).
+ */
 window.forceInitAllWheels = ensureAllWheelsOnce;
+
+
 
 /* ===========================
  * BLOCK C — SAVE (Apps Script)
