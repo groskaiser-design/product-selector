@@ -161,7 +161,7 @@ window.addEventListener('pageshow', (e)=>{
 .macros-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;padding:0;}/* сетка 2×2 для карточек с показателями */
 .macro-card{border:1px solid rgba(255,255,255,.24);border-radius:14px;background:rgba(255,255,255,.12);padding:12px;text-align:center;backdrop-filter:none;-webkit-backdrop-filter:none;}/* отдельная карточка показателя: фон, рамка, скругление, без стеклянного эффекта */
 .macro-card .m-label{font-size:var(--small-font);opacity:.9;margin-bottom:6px;font-weight:700;}/* подпись метрики (ИМТ, масса жира и т.д.) */
-.macro-card .m-value{font-size:24px;font-weight:900;line-height:1;}/* главное число в карточке */
+.macro-card .m-value{font-size:24;font-weight:900;line-height:1;}/* главное число в карточке */
 .macro-card .m-unit{font-size:var(--small-font);opacity:.85;margin-top:2px;}/* единицы измерения под числом */
 .macro-hint{margin:6px 0 0;text-align:center;font-size:var(--small-font);opacity:.8;}/* строка-подсказка под плиткой (до расчётов / после) */
 .kbju7-card{background:rgba(255,255,255,.12) !important;border:1px solid rgba(255,255,255,.24) !important;border-radius:14px !important;-webkit-backdrop-filter:none !important;backdrop-filter:none !important;box-shadow:none !important;}/* отдельная карточка KBJU: выравниваем стиль под macro-card, убираем тень и стекло */
@@ -213,7 +213,7 @@ window.addEventListener('pageshow', (e)=>{
 #pfHApp .wheel .spacer{flex:0 0 var(--edge,0px);height:1px;padding:0;margin:0;border:0;background:transparent;}/* отступы по краям */
 #pfHApp .wheel-mask{pointer-events:none;position:absolute;inset:0;}
 #pfHApp .wheel-mask::before{content:"";position:absolute;left:var(--mask-left,50%);top:var(--mask-top,50%);width:var(--mask-w,min(70%,260px));height:var(--mask-h,44px);border-radius:16px;border:1.5px solid rgba(255,255,255,.35);background:rgba(255,255,255,.08);box-shadow:inset 0 -1px 0 rgba(255,255,255,.16),0 8px 24px rgba(27,35,78,.12);box-sizing:border-box;}/* рамка-линза поверх колеса */
-  
+
 
 /* ============================================
    AI-комментарий
@@ -2892,14 +2892,13 @@ waitForFreshData_bm(confirmed, 20000, 60000)
       return { '%':100, 'см':cmMax||1, 'cm':cmMax||1 };
     }
 
-function draw(){
+    function draw(){
       var data = state.data || [];
       var maxByUnit = buildDomains(data);
       rowsEl.innerHTML = '';
       
       for(var i=0; i<data.length; i++){
         var d = data[i];
-
         var delta = (isFinite(d.delta) ? d.delta : null);
         var unitMax = maxByUnit[(d.unit||'').trim()] || 1;
         var wp = Math.max(0, Math.min(100, ((d.target||0)/unitMax)*100));
@@ -3117,9 +3116,7 @@ function updateHint(){
       if(!tl || !wheel) return;
 
       const n = (norm && Array.isArray(norm.rows)) ? norm.rows.length : 0;
-      // прячем таймлайн только если вообще нет замеров
-      if (n <= 0) { tl.hidden = true; return; }
-
+      if(n <= 1){ tl.hidden = true; return; }
 
       tl.hidden = false;
       wheel.innerHTML = '';
@@ -3206,18 +3203,9 @@ function updateHint(){
         setAria();
         api && api.setData(norm.rows[i]||[]);
         syncMask();
+        // <<< ДОБАВИТЬ ЭТУ СТРОКУ >>>
         window._pf_active_date = norm.dates[i];
-      
-        // Хаптика при смене активной даты (скролл/клик/стрелки)
-        if (announce) {
-          try {
-            window.Telegram?.WebApp?.HapticFeedback?.selectionChanged?.();
-          } catch (_) {
-            // молча игнорируем, если хаптика недоступна
-          }
-        }
       }
-
       
       function centerTo(i, announce, behavior){
         i = Math.max(0, Math.min(n-1, i));
@@ -3304,29 +3292,22 @@ function updateHint(){
     let _tlNorm = null;
 
     function applySeries(seriesInput){
-      const prevNorm = _tlNorm;
       const norm = normalizeSeries(seriesInput || {});
       _tlNorm = norm;
 
-      // первая инициализация — всегда строим колесо, если есть хотя бы один замер
+      // первая инициализация — строим колесо, как раньше
       if (!_tlInited) {
-        if (norm.rows.length > 0){
+        if (norm.rows.length > 1){
           const last = norm.rows[(norm.rows.length-1)|0] || [];
           api && api.setData(last);
           setupTimeline(norm, api);
         } else {
           const tl = document.getElementById('timeline');
           if (tl) tl.hidden = true;
-          api && api.setData([]);
+          api && api.setData(norm.rows[0] || []);
         }
         _tlInited = true;
         return;
-      }
-      // если список дат изменился (например, добавили новый замер) — пересобираем таймлайн
-      const prevDates = (prevNorm && Array.isArray(prevNorm.dates)) ? prevNorm.dates.join('|') : '';
-      const newDates  = (norm && Array.isArray(norm.dates))       ? norm.dates.join('|')       : '';
-      if (prevDates !== newDates) {
-        setupTimeline(norm, api);
       }
 
       // дальше таймлайн уже есть — только обновляем данные под нужную дату
