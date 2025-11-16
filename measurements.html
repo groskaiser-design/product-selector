@@ -2753,57 +2753,61 @@ waitForFreshData_bm(confirmed, 20000, 60000)
   }
 
   function renderChart(chartData){
-  console.log('%c[E2.5] renderChart','color:#c4f', chartData);
+    console.log('%c[E2.5] renderChart','color:#c4f', chartData);
 
-  if (!chartData || !chartData.data) {
-    console.log('%c[E2.5] no data','color:#f00');
-    return;
-  }
-
-  window.PLAN_FACT_SERIES = chartData.data;
-
-  if (window.PlanFactChart) {
-    try {
-      if (typeof window.PlanFactChart.setSeries === 'function') {
-        // если когда-нибудь появится setSeries — поддержим
-        window.PlanFactChart.setSeries(chartData.data);
-      } else if (typeof window.PlanFactChart.setData === 'function') {
-        // текущий реальный API виджета
-        window.PlanFactChart.setData(chartData.data);
+    // нет данных – очищаем виджет
+    if (!chartData || !chartData.data) {
+      window.PLAN_FACT_SERIES = null;
+      if (window.PlanFactChart) {
+        try {
+          if (typeof window.PlanFactChart.setSeries === 'function') {
+            window.PlanFactChart.setSeries(null);
+          } else if (typeof window.PlanFactChart.setData === 'function') {
+            window.PlanFactChart.setData([]); // пустой список строк
+          }
+        } catch(err){
+          console.error('[E2.5] clear chart error', err);
+        }
       }
-      console.log('%c[E2.5] update chart OK','color:#0f0');
-    } catch(err){
-      console.error('[E2.5] chart update error', err);
+      return;
     }
-  }
-}
 
-window.startChartFlow_bm_bm = function(){
-  console.log('%c[E2.5] START VIEW FLOW','color:#0f0');
+    // полноценная серия (в формате PLAN_FACT_SERIES / chartBlk.data)
+    window.PLAN_FACT_SERIES = chartData.data;
 
-  const target = targetRow();
-  const cached = loadChartCache_bm();
-
-  console.log('%c[E2.5] cached vs target','color:#c4f', { cached, target });
-
-  if (cached?.data && !(target && Number(cached.row||0) < Number(target))) {
-    renderChart(cached);
-  } else {
-    console.log('%c[E2.5] waiting fresh chart...','color:#f80');
-
-    window.PLAN_FACT_SERIES = null;
     if (window.PlanFactChart) {
       try {
         if (typeof window.PlanFactChart.setSeries === 'function') {
-          window.PlanFactChart.setSeries(null);
+          // основной путь: передаём всю серию, блок E2 сам пересоберёт шкалу и строки
+          window.PlanFactChart.setSeries(chartData.data);
         } else if (typeof window.PlanFactChart.setData === 'function') {
-          window.PlanFactChart.setData(null);     // чистим виджет через реальный API
+          // fallback на старое поведение: просто отрисуем последний снапшот,
+          // если setSeries по какой-то причине недоступен
+          window.PlanFactChart.setData(chartData.data);
         }
-      } catch(_){}
+        console.log('%c[E2.5] update chart OK','color:#0f0');
+      } catch(err){
+        console.error('[E2.5] chart update error', err);
+      }
     }
   }
-};
 
+  window.startChartFlow_bm_bm = function(){
+    console.log('%c[E2.5] START VIEW FLOW','color:#0f0');
+
+    const target = targetRow();
+    const cached = loadChartCache_bm();
+
+    console.log('%c[E2.5] cached vs target','color:#c4f', { cached, target });
+
+    // как у макросов: показываем только кэш, который не старее desiredRow/rowCalc
+    if (cached?.data && !(target && Number(cached.row||0) < Number(target))) {
+      renderChart(cached);
+    } else {
+      console.log('%c[E2.5] waiting fresh chart...','color:#f80');
+      renderChart(null); // стандартизованный сброс
+    }
+  };
 
   document.addEventListener('visibilitychange', ()=>{
     if (document.visibilityState === 'visible'){
@@ -2814,6 +2818,7 @@ window.startChartFlow_bm_bm = function(){
   console.log('%c[E2.5] initialized','color:#c4f');
   window.startChartFlow_bm_bm();
 })();
+
 
   
 //============================================================
@@ -3276,20 +3281,38 @@ function updateHint(){
       return seriesInput;
     }
 
-    const seriesInput = pickSeriesInput();
-    const norm = normalizeSeries(seriesInput||{});
-    
-    if (norm.rows.length > 1){
-      const last = norm.rows[(norm.rows.length-1)|0] || [];
-      api && api.setData(last);
-      setupTimeline(norm, api);
-    } else {
-      const tl = document.getElementById('timeline');
-      if(tl) tl.hidden = true;
+    // =====================================================
+    // Инициализация и публичный API PlanFactChart
+    // =====================================================
+    if (typeof window.PlanFactChart !== 'object') window.PlanFactChart = {};
+
+    function applySeries(seriesInput){
+      const norm = normalizeSeries(seriesInput || {});
+
+      if (norm.rows.length > 1){
+        const last = norm.rows[(norm.rows.length-1)|0] || [];
+        api && api.setData(last);
+        setupTimeline(norm, api);
+      } else {
+        // одна дата или вообще нет данных — просто рисуем то, что есть,
+        // таймлайн прячем
+        const tl = document.getElementById('timeline');
+        if (tl) tl.hidden = true;
+        api && api.setData(norm.rows[0] || []);
+      }
     }
 
-    // Дополнительный метод: если нужно напрямую подать уже подготовленный массив строк
-    if (typeof window.PlanFactChart !== 'object') window.PlanFactChart = {};
+    // начальная инициализация из глобальных данных
+    const initialSeries = pickSeriesInput();
+    applySeries(initialSeries || {});
+
+    // публичный метод: полная серия измерений (формат как у PLAN_FACT_SERIES / chartBlk.data)
+    window.PlanFactChart.setSeries = function(seriesInput){
+      window.PLAN_FACT_SERIES = seriesInput || null;
+      applySeries(seriesInput || {});
+    };
+
+    // публичный метод: подать уже подготовленный массив строк для текущей даты
     window.PlanFactChart.setData = function(json){
       api && api.setData(json);
     };
