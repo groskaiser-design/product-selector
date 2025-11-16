@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0001'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0002'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -214,7 +214,6 @@ window.addEventListener('pageshow', (e)=>{
 #pfHApp .wheel-mask{pointer-events:none;position:absolute;inset:0;}
 #pfHApp .wheel-mask::before{content:"";position:absolute;left:var(--mask-left,50%);top:var(--mask-top,50%);width:var(--mask-w,min(70%,260px));height:var(--mask-h,44px);border-radius:16px;border:1.5px solid rgba(255,255,255,.35);background:rgba(255,255,255,.08);box-shadow:inset 0 -1px 0 rgba(255,255,255,.16),0 8px 24px rgba(27,35,78,.12);box-sizing:border-box;}/* рамка-линза поверх колеса */
 
-.chart-hint {margin-top: 8px;font-size: 13px; opacity: .8;} /* стили подписи подсказки графика */
 
 /* ============================================
    AI-комментарий
@@ -303,9 +302,8 @@ window.addEventListener('pageshow', (e)=>{
 
     <!-- Блок с графиком план/факт/дельта по замерам тела -->
     <div class="field" id="pf-chart-field">
-      <div id="pfHApp" role="region" aria-label="План, факт, дельта">
-      <div id="chart-hint" class="chart-hint">После сохранения появятся показатели...</div>
-        
+      <div id="pfHApp" role="region" aria-label="План против факта">
+
         <!-- ВЕРТИКАЛЬНЫЙ СПИСОК ЗАМЕРОВ (скроллится только он) -->
         <div class="scroller" id="scroller">
           <div class="list" id="rows"></div>
@@ -346,7 +344,7 @@ window.addEventListener('pageshow', (e)=>{
 
     <div class="section-content" id="ai-comment">
       <div class="field">
-        <div class="help">Заполните анкету, ИИ сделает анализ...</div>
+        <div class="help">Заполните анкету, ИИ сделает анализ.</div>
       </div>
     </div>
   </section>
@@ -3068,24 +3066,6 @@ function updateHint(){
 
   /* ==================== Временная шкала (серии дат) ==================== */
   (function initTimeline(){
-      function chartHintEl(){
-        try { return document.getElementById('chart-hint'); }
-        catch(_) { return null; }
-      }
-  
-      function setChartHintVisible(show){
-        const el = chartHintEl();
-        if (!el) return;
-        if (show){
-          el.textContent = 'После сохранения появятся показатели...';
-          el.style.display = '';
-        } else {
-          el.textContent = '';
-          el.style.display = 'none';
-        }
-      }
-
-    
     function normalizeSeries(input){
       if(!input) return { dates:[], rows:[] };
       var seriesMap = null;
@@ -3306,42 +3286,31 @@ function updateHint(){
     // =====================================================
     if (typeof window.PlanFactChart !== 'object') window.PlanFactChart = {};
 
-    if (typeof window.PlanFactChart !== 'object') window.PlanFactChart = {};
-
+    // флаг: таймлайн уже построен
     let _tlInited = false;
+    // последняя нормализованная серия (dates/rows)
     let _tlNorm = null;
 
     function applySeries(seriesInput){
       const norm = normalizeSeries(seriesInput || {});
       _tlNorm = norm;
 
-      // есть ли вообще строки для графика
-      const hasRows = Array.isArray(norm.rows) && norm.rows.length > 0;
-
-      // если строк нет — показываем хинт «После сохранения появятся расчёты»
-      // если есть — прячем хинт
-      setChartHintVisible(!hasRows);
-
-      // ПЕРВАЯ инициализация — строим таймлайн как раньше
+      // первая инициализация — строим колесо, как раньше
       if (!_tlInited) {
-        if (hasRows && norm.rows.length > 1){
+        if (norm.rows.length > 1){
           const last = norm.rows[(norm.rows.length-1)|0] || [];
           api && api.setData(last);
           setupTimeline(norm, api);
-        } else if (hasRows) {
-          const tl = document.getElementById('timeline');
-          if (tl) tl.hidden = true;
-          api && api.setData(norm.rows[0] || []);
         } else {
           const tl = document.getElementById('timeline');
           if (tl) tl.hidden = true;
-          api && api.setData([]);
+          api && api.setData(norm.rows[0] || []);
         }
         _tlInited = true;
         return;
       }
 
-      // Дальше таймлайн уже есть — просто обновляем данные под нужную дату
+      // дальше таймлайн уже есть — только обновляем данные под нужную дату
       const dates = Array.isArray(norm.dates) ? norm.dates : [];
       const rows  = Array.isArray(norm.rows)  ? norm.rows  : [];
 
@@ -3352,22 +3321,24 @@ function updateHint(){
         return;
       }
 
+      // пытаемся сохранить выбранную пользователем дату
       let idx = 0;
       if (window._pf_active_date) {
         const found = dates.indexOf(window._pf_active_date);
         if (found >= 0) {
           idx = found;
         } else {
+          // если активной даты больше нет — берём последнюю
           idx = dates.length - 1;
         }
       } else {
+        // если активная дата не известна — по умолчанию последняя
         idx = dates.length - 1;
       }
 
       const rowsForDate = rows[idx] || [];
       api && api.setData(rowsForDate);
     }
-
 
     // начальная инициализация из глобальных данных
     const initialSeries = pickSeriesInput();
