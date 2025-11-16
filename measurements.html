@@ -2582,34 +2582,21 @@ waitForFreshData_bm(confirmed, 20000, 60000)
     }
   }
 
+  // ✅ Используем общий bootstrap-API, как waitForFreshData_bm / EAI
   async function apiFrontChart_bm(requestedRow, signal){
     console.log('%c[E2.4] request to backend','color:#4af', { requestedRow });
 
-    const payload = {
-      action: 'front_bootstrap',
-      init_data: String(tg?.initData || ''),
-      row: Number(requestedRow || 0) || undefined
-    };
+    const api = (window && typeof window.apiFrontBootstrap_bm_bm_eai_bm === 'function')
+      ? window.apiFrontBootstrap_bm_bm_eai_bm
+      : (typeof apiFrontBootstrap_bm_eai_bm === 'function' ? apiFrontBootstrap_bm_eai_bm : null);
 
-    const resp = await fetch(BACKEND, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
-      body: JSON.stringify(payload),
-      cache: 'no-store',
-      credentials: 'omit',
-      mode: 'cors',
-      signal
-    });
+    if (!api) {
+      throw new Error('front_bootstrap API is not available');
+    }
 
-    const raw = await resp.text();
-
-    let json = null;
-    try { json = raw ? JSON.parse(raw) : null; } catch(_){}
-    
-    console.log('%c[E2.4] backend response','color:#4af', { json });
-
-    if (!resp.ok || !json) throw new Error(`HTTP ${resp.status}`);
-    return json;
+    const res = await api(requestedRow, signal);
+    console.log('%c[E2.4] backend response','color:#4af', { res });
+    return res;
   }
 
   let _chartTimer = 0;
@@ -2629,17 +2616,19 @@ waitForFreshData_bm(confirmed, 20000, 60000)
       const res = await apiFrontChart_bm(reqRow, controller.signal);
       if (runId !== _chartRunId) return { done:true };
 
-      const serverRow = Number(res?.row || 0);
-      const chartBlk  = res?.chart || {};
+      const serverRow  = Number(res?.row || 0);
+      const chartBlk   = res?.chart || {};
       const chartReady = !!chartBlk.ready && !!chartBlk.data;
 
       console.log('%c[E2.4] pollOnce','color:#4af', {
         reqRow, serverRow, chartReady, chartBlk
       });
 
+      // ✅ защита от старых row, как в макросах
       if (reqRow && serverRow && serverRow < Number(reqRow)) {
         console.log('%c[E2.4] old row, waiting','color:#f80', { reqRow, serverRow });
-        return { done:false, wait: 500 };
+        const wait = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
+        return { done:false, wait };
       }
 
       if (Number.isFinite(serverRow) && (reqRow == null || serverRow > reqRow)) {
@@ -2653,9 +2642,11 @@ waitForFreshData_bm(confirmed, 20000, 60000)
         const uid = currentUserId_bm();
         const chartRow = Number(chartBlk.row || serverRow || 0);
 
+        // ✅ не кладём в кэш график, если он старее desiredRow — аналог макросов
         if (reqRow && chartRow && chartRow < Number(reqRow)) {
           console.log('%c[E2.4] chartRow < reqRow — skip cache','color:#f00', { chartRow, reqRow });
-          return { done:false, wait: 500 };
+          const wait = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
+          return { done:false, wait };
         }
 
         const seed = {
@@ -2672,10 +2663,13 @@ waitForFreshData_bm(confirmed, 20000, 60000)
         return { done:true };
       }
 
-      return { done:false, wait: 500 };
+      // ⬅ если chart ещё не ready — ждём retry_after_ms, как в макросах
+      const wait = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
+      return { done:false, wait };
 
     } catch(err){
       if (err?.name === 'AbortError') return { done:true };
+      if (runId !== _chartRunId) return { done:true };
       console.error('[E2.4] poll error:', err);
       return { done:false, wait: 1000 };
     }
@@ -2697,6 +2691,7 @@ waitForFreshData_bm(confirmed, 20000, 60000)
     clearTimeout(_chartTimer);
     if (_chartAbort) try { _chartAbort.abort(); } catch(_){}
 
+    // сначала отрисуем то, что есть в кэше (или очистим график), как в макросах
     try { window.startChartFlow_bm_bm && window.startChartFlow_bm_bm(); } catch(_){}
 
     pollLoop(runId);
@@ -2714,6 +2709,7 @@ waitForFreshData_bm(confirmed, 20000, 60000)
   console.log('%c[E2.4] initialized','color:#4af');
   window.startChartDataFlow_bm_bm && window.startChartDataFlow_bm_bm();
 })();
+
 
 
 /* ============================================================
