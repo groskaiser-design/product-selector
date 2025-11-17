@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0004'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0005'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -2539,7 +2539,7 @@ waitForFreshData_bm(confirmed, 20000, 60000)
  *  - кэширование последнего готового chart в localStorage,
  *  - уведомление view-блока (E2.5 + PlanFactChart), что данные обновились.
  *
- * Требования, которые здесь поддерживаются:
+ * Требования:
  *  1) Если данных нет → E2.5+E2 рисуют пустой график и “пустую” дату (сегодня).
  *  2) После сохранения анкеты (desiredRow > row в кэше) старые данные в кэш не пишутся,
  *     startChartFlow_bm_bm() покажет пустое состояние.
@@ -2648,7 +2648,12 @@ waitForFreshData_bm(confirmed, 20000, 60000)
 
       const serverRow  = Number(res?.row || 0);
       const chartBlk   = res?.chart || {};
-      const chartReady = !!chartBlk.ready && !!chartBlk.data; // chartBlk.data может быть пустой серией, но truthy
+
+      // ВАЖНО: считаем chart "готовым", если backend сказал ready === true,
+      // даже если в data пусто или её нет. В таком случае view-слой покажет
+      // placeholder (пустой график + одна дата сегодня), а мы не будем
+      // бесконечно крутить poll.
+      const chartReady = !!chartBlk.ready;
 
       console.log('%c[E2.4] pollOnce','color:#4af', {
         reqRow, serverRow, chartReady, chartBlk
@@ -2659,20 +2664,21 @@ waitForFreshData_bm(confirmed, 20000, 60000)
       //    просто ждём и НЕ трогаем кэш.
       if (reqRow && serverRow && serverRow < Number(reqRow)) {
         console.log('%c[E2.4] old row, waiting','color:#f80', { reqRow, serverRow });
-        const wait = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
-        return { done:false, wait };
+        const waitOld = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
+        return { done:false, wait: waitOld };
       }
 
-      // Если backend "ушёл вперёд" по row относительно нашей локальной оценки —
-      // обновляем rowCalc для пользователя.
-      if (Number.isFinite(serverRow) && (reqRow == null || serverRow > reqRow)) {
+      // Если backend уже знает row >= reqRow — обновляем rowCalc для пользователя.
+      // Используем >=, чтобы не зависнуть в ситуации, когда desiredRow > локального rowCalc,
+      // а backend возвращает ровно этот desiredRow.
+      if (Number.isFinite(serverRow) && (reqRow == null || serverRow >= Number(reqRow))) {
         try { 
           setRowCalcForUser_bm(serverRow); 
           console.log('%c[E2.4] rowCalc updated','color:#4af', serverRow);
         } catch(_){}
       }
 
-      // Если chart уже готов (даже если внутри него "нет замеров" — это решает view-слой)
+      // Если chart уже готов (в том числе к "пустому" состоянию)
       if (chartReady) {
         const uid = currentUserId_bm();
         const chartRow = Number(chartBlk.row || serverRow || 0);
@@ -2683,13 +2689,13 @@ waitForFreshData_bm(confirmed, 20000, 60000)
         //    - пользователь не увидит "скачок назад" при анализе.
         if (reqRow && chartRow && chartRow < Number(reqRow)) {
           console.log('%c[E2.4] chartRow < reqRow — skip cache','color:#f00', { chartRow, reqRow });
-          const wait = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
-          return { done:false, wait };
+          const waitSkip = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
+          return { done:false, wait: waitSkip };
         }
 
         // Объект, который кладём в localStorage:
-        //  - row      — row этого снапшота (для E2.5: проверка свежести),
-        //  - data     — полная серия для PlanFactChart (dates/rows),
+        //  - row        — row этого снапшота (для E2.5: проверка свежести),
+        //  - data       — полная серия для PlanFactChart (dates/rows) либо null/{} для "пустого" состояния,
         //  - updated_at — метка времени обновления (для дебага / потенциального UI).
         const seed = {
           row: chartRow || null,
@@ -2856,12 +2862,14 @@ waitForFreshData_bm(confirmed, 20000, 60000)
   function renderChart(chartData){
     console.log('%c[E2.5] renderChart','color:#c4f', chartData);
 
-    // 1) Нет данных или они явно сброшены → показываем "пустое" состояние:
+    const hasSeries = !!(chartData && chartData.data);
+
+    // 1) Нет данных или явно пустая серия → показываем "пустое" состояние:
     //    - PLAN_FACT_SERIES = null,
     //    - PlanFactChart.setSeries({}) → normalizeSeries вернёт:
     //        { dates:[сегодня], rows:[[]] }
     //      то есть одна дата (сегодня) и пустые строки замеров.
-    if (!chartData || !chartData.data) {
+    if (!hasSeries) {
       window.PLAN_FACT_SERIES = null;
 
       if (window.PlanFactChart) {
@@ -2918,17 +2926,27 @@ waitForFreshData_bm(confirmed, 20000, 60000)
 
     // Показываем только тот кэш, который:
     //  - существует,
-    //  - и не старее targetRow (desiredRow/rowCalc).
+    //  - не старее targetRow (desiredRow/rowCalc),
+    //  - и имеет валидный row.
     //
     // Сценарии:
     //  - Нет кэша вообще → renderChart(null) → пустой график + одна дата (сегодня).
+    //  - Кэш без row / с нечисловым row → считаем недостоверным → пустое состояние.
     //  - Кэш старше desiredRow (после сохранения анкеты) → тоже renderChart(null),
     //    чтобы старые данные не показывались.
     //  - Кэш свежий → renderChart(cached) → полноценная серия с последней датой.
-    if (cached?.data && !(target && Number(cached.row || 0) < Number(target))) {
+    const cachedRow = Number(cached?.row ?? NaN);
+    const hasValidRow = Number.isFinite(cachedRow);
+    const hasTarget = target != null && target !== undefined && target !== '';
+
+    const isFreshEnough =
+      hasValidRow &&
+      (!hasTarget || cachedRow >= Number(target));
+
+    if (cached && isFreshEnough) {
       renderChart(cached);
     } else {
-      console.log('%c[E2.5] waiting fresh chart...','color:#f80');
+      console.log('%c[E2.5] no fresh cache, waiting fresh chart...','color:#f80');
       renderChart(null); // стандартизованный сброс в "пустое" состояние
     }
   };
@@ -2947,6 +2965,7 @@ waitForFreshData_bm(confirmed, 20000, 60000)
   //  - далее E2.4 начнёт опрос backend и при обновлении кэша снова вызовет этот метод.
   window.startChartFlow_bm_bm();
 })();
+
 
 
 //============================================================
@@ -3425,7 +3444,32 @@ function updateHint(){
     // последняя нормализованная серия (dates/rows)
     let _tlNorm = null;
 
-      function applySeries(seriesInput){
+    function applySeries(seriesInput){
+      // Специальная ветка: "пустая" серия = режим обнуления.
+      // Это то, что вызывает E2.5 через PlanFactChart.setSeries({}):
+      //  - старые даты и данные должны исчезнуть,
+      //  - должен появиться placeholder: одна дата (сегодня) и пустые строки.
+      const isEmpty =
+        seriesInput == null ||
+        (typeof seriesInput === 'object' && !Array.isArray(seriesInput) && Object.keys(seriesInput).length === 0);
+
+      if (isEmpty) {
+        // Форсируем placeholder: одна дата (сегодня) и пустые строки.
+        const norm = normalizeSeries(null); // вернёт { dates:[сегодня], rows:[[]] }
+        _tlNorm = norm;
+        _tlInited = false; // считаем, что таймлайн нужно пересобрать "с нуля"
+
+        const tl = document.getElementById('timeline');
+        if (tl) tl.hidden = false;
+
+        // Перестраиваем колесо только с placeholder-датой.
+        setupTimeline(norm, api);
+        // Внутри setupTimeline → centerTo(0, false, 'auto') → activate(0,false)
+        // → api.setData([]) — список замеров очищен, график пустой.
+        return;
+      }
+
+      // Обычная логика для непустой серии (данные из БД)
       const prevNorm = _tlNorm;
       const norm = normalizeSeries(seriesInput || {});
       _tlNorm = norm;
@@ -3435,7 +3479,7 @@ function updateHint(){
         if (norm.rows.length > 0){
           const last = norm.rows[(norm.rows.length-1)|0] || [];
           api && api.setData(last);
-          setupTimeline(norm, api);
+          setupTimeline(norm, api); // внутри станет активной последняя дата
         } else {
           const tl = document.getElementById('timeline');
           if (tl) tl.hidden = true;
@@ -3452,7 +3496,7 @@ function updateHint(){
         setupTimeline(norm, api);
       }
 
- // дальше таймлайн уже есть — только обновляем данные под нужную дату
+      // дальше таймлайн уже есть — только обновляем данные под нужную дату
       const dates = Array.isArray(norm.dates) ? norm.dates : [];
       const rows  = Array.isArray(norm.rows)  ? norm.rows  : [];
 
@@ -3481,6 +3525,7 @@ function updateHint(){
       const rowsForDate = rows[idx] || [];
       api && api.setData(rowsForDate);
     }
+
 
     // начальная инициализация из глобальных данных
     const initialSeries = pickSeriesInput();
