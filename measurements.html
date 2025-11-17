@@ -3116,7 +3116,8 @@ function updateHint(){
       if(!tl || !wheel) return;
 
       const n = (norm && Array.isArray(norm.rows)) ? norm.rows.length : 0;
-      if(n <= 1){ tl.hidden = true; return; }
+      // прячем таймлайн только если вообще нет замеров
+      if (n <= 0) { tl.hidden = true; return; }
 
       tl.hidden = false;
       wheel.innerHTML = '';
@@ -3291,24 +3292,33 @@ function updateHint(){
     // последняя нормализованная серия (dates/rows)
     let _tlNorm = null;
 
-    function applySeries(seriesInput){
+      function applySeries(seriesInput){
+      const prevNorm = _tlNorm;
       const norm = normalizeSeries(seriesInput || {});
       _tlNorm = norm;
 
-      // первая инициализация — строим колесо, как раньше
+      // первая инициализация — всегда строим колесо, если есть хотя бы один замер
       if (!_tlInited) {
-        if (norm.rows.length > 1){
+        if (norm.rows.length > 0){
           const last = norm.rows[(norm.rows.length-1)|0] || [];
           api && api.setData(last);
           setupTimeline(norm, api);
         } else {
           const tl = document.getElementById('timeline');
           if (tl) tl.hidden = true;
-          api && api.setData(norm.rows[0] || []);
+          api && api.setData([]);
         }
         _tlInited = true;
         return;
       }
+
+      // если список дат изменился (например, добавили новый замер) — пересобираем таймлайн
+      const prevDates = (prevNorm && Array.isArray(prevNorm.dates)) ? prevNorm.dates.join('|') : '';
+      const newDates  = (norm && Array.isArray(norm.dates))       ? norm.dates.join('|')       : '';
+      if (prevDates !== newDates) {
+        setupTimeline(norm, api);
+      }
+
 
       // дальше таймлайн уже есть — только обновляем данные под нужную дату
       const dates = Array.isArray(norm.dates) ? norm.dates : [];
