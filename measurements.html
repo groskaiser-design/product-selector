@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0006'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0007'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -1552,13 +1552,26 @@ function handleSaveClick_bm(e) {
   try { tg?.HapticFeedback?.impactOccurred?.('light'); } catch(_){}
   // 4) Собираем все значения: анкета + колёса
   const values = { ...collectSurveyValues(), ...collectWheelValues() };
-  // 5) Сбрасываем кэш макросов, графика и AI-комментария
+
+  // 5) Сбрасываем кэш макросов, графика и AI-комментария + жёстко сбрасываем UI графика
   try {
     const uid = currentUserId_bm();
+
+    // чистим кэш под реальным userId
     localStorage.removeItem('bm:macros:vals:'  + String(uid));
     localStorage.removeItem('bm:chart:data:'   + String(uid));
     localStorage.removeItem('bm:comment:html:' + String(uid));
+
+    // мгновенный визуальный сброс графика и колеса дат
+    if (window.PlanFactChart && typeof window.PlanFactChart.setSeries === 'function') {
+      window.PLAN_FACT_SERIES = null;
+      window.PlanFactChart.setSeries({});
+    } else if (window.PlanFactChart && typeof window.PlanFactChart.setData === 'function') {
+      window.PLAN_FACT_SERIES = null;
+      window.PlanFactChart.setData([]);
+    }
   } catch(_){}
+  
   // 6) Запускаем запрос на сохранение
   const saveTask = saveMeasurementsToDB_bm(values, saveId);
   // 7) UI: сворачиваем анкету, скроллим вверх
@@ -2324,6 +2337,15 @@ waitForFreshData_bm(confirmed, 20000, 60000)
   window.startFrontDataFlow_bm_bm();
 })();
   
+  // Глобальный идентификатор пользователя для всех модулей (макросы, график, комментарий)
+function currentUserId_bm() {
+  try {
+    return window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'anon';
+  } catch (_) {
+    return 'anon';
+  }
+}
+
 /* ============================================================
  *  BLOCK E1 — Analytics Macros (poll + cache) + DEBUG
  * ============================================================ */
@@ -2927,39 +2949,38 @@ waitForFreshData_bm(confirmed, 20000, 60000)
   //  - вызывается E2.4 при старте потока данных,
   //  - вызывается при смене visibility → "подтянуть" актуальное состояние из кэша.
   window.startChartFlow_bm_bm = function(){
-    console.log('%c[E2.5] START VIEW FLOW','color:#0f0');
+  console.log('%c[E2.5] START VIEW FLOW','color:#0f0');
 
-    const target = targetRow();
-    const cached = loadChartCache_bm();
+  // 0) Жёсткий визуальный сброс — симметрия с renderSkeleton() у макросов.
+  //    Даже если кэш оказался "подозрительно свежим", сначала показываем пустое состояние.
+  renderChart(null);
 
-    console.log('%c[E2.5] cached vs target','color:#c4f', { cached, target });
+  const target = targetRow();
+  const cached = loadChartCache_bm();
 
-    // Показываем только тот кэш, который:
-    //  - существует,
-    //  - не старее targetRow (desiredRow/rowCalc),
-    //  - и имеет валидный row.
-    //
-    // Сценарии:
-    //  - Нет кэша вообще → renderChart(null) → пустой график + одна дата (сегодня).
-    //  - Кэш без row / с нечисловым row → считаем недостоверным → пустое состояние.
-    //  - Кэш старше desiredRow (после сохранения анкеты) → тоже renderChart(null),
-    //    чтобы старые данные не показывались.
-    //  - Кэш свежий → renderChart(cached) → полноценная серия с последней датой.
-    const cachedRow = Number(cached?.row ?? NaN);
-    const hasValidRow = Number.isFinite(cachedRow);
-    const hasTarget = target != null && target !== undefined && target !== '';
+  console.log('%c[E2.5] cached vs target','color:#c4f', { cached, target });
 
-    const isFreshEnough =
-      hasValidRow &&
-      (!hasTarget || cachedRow >= Number(target));
+  // Показываем только тот кэш, который:
+  //  - существует,
+  //  - не старее targetRow (desiredRow/rowCalc),
+  //  - и имеет валидный row.
+  const cachedRow = Number(cached?.row ?? NaN);
+  const hasValidRow = Number.isFinite(cachedRow);
+  const hasTarget = target != null && target !== undefined && target !== '';
 
-    if (cached && isFreshEnough) {
-      renderChart(cached);
-    } else {
-      console.log('%c[E2.5] no fresh cache, waiting fresh chart...','color:#f80');
-      renderChart(null); // стандартизованный сброс в "пустое" состояние
-    }
-  };
+  const isFreshEnough =
+    hasValidRow &&
+    (!hasTarget || cachedRow >= Number(target));
+
+  if (cached && isFreshEnough) {
+    // Поверх пустого состояния рисуем актуальную серию
+    renderChart(cached);
+  } else {
+    console.log('%c[E2.5] no fresh cache, stay empty...','color:#f80');
+    // Остаёмся в очищенном состоянии до прихода свежих данных из E2.4
+  }
+};
+
 
   // При возврате вкладки в visible просто перечитываем кэш и обновляем view.
   document.addEventListener('visibilitychange', ()=>{
