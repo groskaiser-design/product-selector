@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0007'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0008'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -3376,20 +3376,32 @@ function updateHint(){
         items[active].classList.add('active');
         items[active].setAttribute('aria-selected', 'true');
       }
-      setAria();
-      api && api.setData(norm.rows[i]||[]);
-      syncMask();
-      window._pf_active_date = norm.dates[i];
-    
-      // Хаптика при смене активной даты (скролл/клик/стрелки)
-      if (announce) {
-        try {
-          window.Telegram?.WebApp?.HapticFeedback?.selectionChanged?.();
-        } catch (_) {
-          // молча игнорируем, если хаптика недоступна
+        setAria();
+        api && api.setData(norm.rows[i]||[]);
+        syncMask();
+        window._pf_active_date = norm.dates[i];
+      
+        if (announce) {
+          // Пользователь явно выбрал дату (клик/скролл/стрелки)
+          window._pf_user_selected = true;
+        }
+      
+        console.log('[PF] activate', {
+          index: i,
+          date: window._pf_active_date,
+          announce,
+          userSelected: !!window._pf_user_selected
+        });
+        
+        // Хаптика при смене активной даты (скролл/клик/стрелки)
+        if (announce) {
+          try {
+            window.Telegram?.WebApp?.HapticFeedback?.selectionChanged?.();
+          } catch (_) {
+            // молча игнорируем, если хаптика недоступна
+          }
         }
       }
-    }
       
       function centerTo(i, announce, behavior){
         i = Math.max(0, Math.min(n-1, i));
@@ -3446,13 +3458,37 @@ function updateHint(){
       });
       window.addEventListener('resize', function(){
         resizeSpacers();
+        console.log('[PF] timeline resize, recenter to active', { activeIndex: active });
         centerTo(active, false, 'auto');
         syncMask();
       }, { passive:true });
-
-      centerTo(n-1, false, 'auto');
+      
+      // Выбираем, какая дата должна стать активной при инициализации таймлайна:
+      //  - если пользователь уже выбирал дату и она есть в новом наборе — используем её;
+      //  - иначе (нет выбора или даты нет) — берём последнюю.
+      let initialIdx = n - 1;
+      try {
+        const dates = Array.isArray(norm.dates) ? norm.dates : [];
+        if (dates.length && window._pf_user_selected && window._pf_active_date) {
+          const found = dates.indexOf(window._pf_active_date);
+          if (found >= 0) {
+            initialIdx = found;
+          }
+        }
+      } catch (_){}
+      
+      console.log('[PF] setupTimeline init', {
+        datesCount: n,
+        initialIdx,
+        userSelected: !!window._pf_user_selected,
+        activeDate: window._pf_active_date
+      });
+      
+      // Программная активация (announce = false) — не считается "выбором пользователя".
+      centerTo(initialIdx, false, 'auto');
       syncMask();
-    }
+      }
+
 
     function pickSeriesInput(){
       let seriesInput = null;
@@ -3485,20 +3521,31 @@ function updateHint(){
         (typeof seriesInput === 'object' && !Array.isArray(seriesInput) && Object.keys(seriesInput).length === 0);
 
       if (isEmpty) {
+        console.log('[PF] applySeries: EMPTY series, reset timeline', {
+          tlInited: _tlInited,
+          hadNorm: !!_tlNorm
+        });
+      
         // Форсируем placeholder: одна дата (сегодня) и пустые строки.
         const norm = normalizeSeries(null); // вернёт { dates:[сегодня], rows:[[]] }
         _tlNorm = norm;
         _tlInited = false; // считаем, что таймлайн нужно пересобрать "с нуля"
-
+      
+        // Сбрасываем выбор пользователя: дальше фронт сам поставит последнюю дату
+        // после прихода реальной серии.
+        window._pf_user_selected = false;
+        window._pf_active_date   = null;
+      
         const tl = document.getElementById('timeline');
         if (tl) tl.hidden = false;
-
+      
         // Перестраиваем колесо только с placeholder-датой.
         setupTimeline(norm, api);
         // Внутри setupTimeline → centerTo(0, false, 'auto') → activate(0,false)
         // → api.setData([]) — список замеров очищен, график пустой.
         return;
       }
+
 
       // Обычная логика для непустой серии (данные из БД)
       const prevNorm = _tlNorm;
@@ -3548,14 +3595,20 @@ function updateHint(){
           // если активной даты больше нет — берём последнюю
           idx = dates.length - 1;
         }
-      } else {
-        // если активная дата не известна — по умолчанию последняя
-        idx = dates.length - 1;
-      }
-
-      const rowsForDate = rows[idx] || [];
-      api && api.setData(rowsForDate);
-    }
+        } else {
+          // если активная дата не известна — по умолчанию последняя
+          idx = dates.length - 1;
+        }
+        
+        console.log('[PF] applySeries: setData for index', {
+          idx,
+          date: dates[idx],
+          userSelected: !!window._pf_user_selected,
+          activeDate: window._pf_active_date
+        });
+        
+        const rowsForDate = rows[idx] || [];
+        api && api.setData(rowsForDate);
 
 
     // начальная инициализация из глобальных данных
