@@ -50,51 +50,43 @@
     input, select, textarea { font-size: 16px; }
 
     :root{
-      --bg: linear-gradient(135deg,#667eea 0%,#764ba2 100%);
-      --userBubble: rgba(251,191,36,.25);
-      --userBorder: rgba(251,191,36,.4);
-      --aiBubble: rgba(255,255,255,.18);
-      --aiBorder: rgba(255,255,255,.28);
-      --inputBg: rgba(255,255,255,.12);
-      --inputBorder: rgba(255,255,255,.24);
-      --shadow: 0 8px 28px rgba(0,0,0,.18);
-      --okA:#fbbf24; --okB:#f59e0b;
+     :root {
+    /* Твои переменные... */
+    --bg: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    /* ...остальные переменные */
+}
 
-      /* ==== Ключевые переменные для стабилизации ==== */
-      --vh: 100svh;    /* стабильная высота экрана (по умолчанию) */
-      --kb: 0px;       /* высота перекрытия клавиатурой (JS выставит) */
-      --input-h: 56px; /* реальная высота панели ввода (JS измерит) */
-      --maxw: 560px;   /* макс. ширина контейнера */
-    }
+html {
+    background-color: #667eea; /* Цвет, близкий к фону, чтобы не было белых "дыр" */
+    height: 100%;
+    overflow: hidden; /* Запрещаем скролл самой страницы */
+}
 
-    *{ box-sizing:border-box; margin:0; padding:0; }
-    html,body{ height:100%; }
-    html{ background:transparent; }
-    body{
-      min-height: var(--vh);
-      background:transparent; color:#fff;
-      font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;
-      position:relative; isolation:isolate; display:flex; flex-direction:column;
-      overscroll-behavior-y: contain;
-    }
-    @supports (min-height: 100dvh){
-      body{ min-height: 100dvh; }
-    }
+body {
+    position: fixed; /* ГЛАВНЫЙ ФИКС: Страница больше не может "уехать" вверх */
+    inset: 0;        /* Растягиваем на весь экран */
+    width: 100%;
+    height: 100%; 
+    margin: 0;
+    padding: 0;
+    background: var(--bg); /* Фон теперь здесь */
+    display: flex;
+    flex-direction: column;
+    overscroll-behavior: none; /* Отключаем "резиновый" эффект iOS */
+}
 
-    body::before{
-      content:""; position:fixed; inset:0; background:var(--bg);
-      z-index:0; pointer-events:none; transform:translateZ(0);
-    }
+
 
     /* Контейнер на всю высоту экрана */
 .container {
-  display: flex;
-  flex-direction: column;
-  height: 100vh;      /* Фоллбэк */
-  height: 100dvh;     /* Динамическая высота (учитывает адресную строку и клавиатуру) */
-  max-width: var(--maxw);
-  margin: 0 auto;
-  overflow: hidden;   /* Чтобы скроллился только чат, а не вся страница */
+    /* Занимает всё пространство внутри фиксированного body */
+    width: 100%;
+    height: 100%; 
+    max-width: var(--maxw);
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    position: relative;
 }
 
     .header{
@@ -113,15 +105,17 @@
 
 /* Область чата растягивается и скроллится внутри */
 .chat-area {
-  flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: 16px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  /* Убираем padding-bottom с calc(), он больше не нужен */
-  -webkit-overflow-scrolling: touch;
+    flex: 1; /* Растягивается на всё свободное место */
+    overflow-y: auto; /* Скроллится ТОЛЬКО этот блок */
+    overflow-x: hidden;
+    padding: 16px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    -webkit-overflow-scrolling: touch; /* Плавный скролл на iOS */
+    
+    /* Убираем все сложные calc! */
+    padding-bottom: 10px; 
 }
 
       /* ключ: даём место под инпут + клавиатуру */
@@ -158,14 +152,15 @@
 
 /* Инпут теперь просто лежит внизу потока, а не фиксирован */
 .input-area {
-  position: relative; /* Убираем fixed */
-  width: 100%;
-  background: transparent; /* Или задай фон, если нужно перекрытие */
-  z-index: 5;
-  padding: 12px 14px;
-  /* Учитываем безопасную зону снизу для iPhone без кнопки */
-  padding-bottom: max(env(safe-area-inset-bottom), 12px);
-  flex-shrink: 0; /* Запрещаем сжатие панели ввода */
+    /* УБИРАЕМ position: fixed */
+    position: relative; 
+    width: 100%;
+    background: transparent;
+    z-index: 5;
+    padding: 12px 14px;
+    /* Отступ под "челку" снизу */
+    padding-bottom: max(env(safe-area-inset-bottom), 12px);
+    flex-shrink: 0; /* Не даем инпуту сплющиваться */
 }
     .input-wrapper{ display:flex; gap:10px; align-items:flex-end; }
     .input-field{
@@ -312,22 +307,28 @@
 
 
   /* ====== 0.1) iOS/Telegram стабилизация высоты и клавиатуры ====== */
- (function initKeyboardStabilizer(){
+(function initKeyboardStabilizer(){
+    // Просто скроллим чат вниз, когда меняется размер экрана (клавиатура)
     const chat = document.getElementById('chatArea');
+    const input = document.getElementById('messageInput');
     
-    // Просто скроллим вниз при любом изменении размера окна (выход клавиатуры)
-    const scrollToBottom = () => {
-        if(chat) chat.scrollTop = chat.scrollHeight;
+    function scrollToBottom() {
+        if (!chat) return;
+        chat.scrollTop = chat.scrollHeight;
     }
 
+    // iOS меняет window.innerHeight при открытии клавиатуры
     window.visualViewport.addEventListener('resize', scrollToBottom);
-    window.addEventListener('resize', scrollToBottom);
     
-    // Для надежности при фокусе
-    const input = document.getElementById('messageInput');
-    input?.addEventListener('focus', () => setTimeout(scrollToBottom, 100));
+    // Дополнительная страховка при фокусе
+    if (input) {
+        input.addEventListener('focus', () => {
+            // Небольшая задержка, чтобы клавиатура успела выехать
+            setTimeout(scrollToBottom, 300);
+        });
+    }
 })();
-
+    
   /* ====== 1) Конфиг фронта ====== */
   const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbz1fXF1OKxoku0ZbbSSu2uxnlndaiilEjWh3mR1GFoaOtM8eWoggAjwoDOVLetR3H7C/exec'; // ← ЗАМЕНИ при необходимости
   const REQUEST_TIMEOUT_MS = 45000;
