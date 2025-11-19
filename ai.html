@@ -1,9 +1,9 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta name="viewport" 
-      content="width=device-width, initial-scale=1, maximum-scale=1, 
-               user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content" />
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1,
+                 user-scalable=no, viewport-fit=cover, interactive-widget=overlays-content" />
   <meta charset="UTF-8" />
   <title>AI Чат</title>
 
@@ -12,7 +12,7 @@
   // Фиксируем момент загрузки
   window.__pageLoadTime = (window.performance && performance.now) ? performance.now() : Date.now();
   // ↑ Меняй при каждом релизе
-  const APP_HTML_VERSION = 'v2025-0006';
+  const APP_HTML_VERSION = 'v2025-0005';
 
   if (!window.__vc_done) {
     window.__vc_done = true;
@@ -50,44 +50,50 @@
     input, select, textarea { font-size: 16px; }
 
     :root{
-     :root {
-    /* Твои переменные... */
-    --bg: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    /* ...остальные переменные */
-}
+      --bg: linear-gradient(135deg,#667eea 0%,#764ba2 100%);
+      --userBubble: rgba(251,191,36,.25);
+      --userBorder: rgba(251,191,36,.4);
+      --aiBubble: rgba(255,255,255,.18);
+      --aiBorder: rgba(255,255,255,.28);
+      --inputBg: rgba(255,255,255,.12);
+      --inputBorder: rgba(255,255,255,.24);
+      --shadow: 0 8px 28px rgba(0,0,0,.18);
+      --okA:#fbbf24; --okB:#f59e0b;
 
-html {
-    background-color: #667eea; /* Цвет, близкий к фону, чтобы не было белых "дыр" */
-    height: 100%;
-    overflow: hidden; /* Запрещаем скролл самой страницы */
-}
+      /* ==== Ключевые переменные для стабилизации ==== */
+      --vh: 100svh;    /* стабильная высота экрана (по умолчанию) */
+      --kb: 0px;       /* высота перекрытия клавиатурой (JS выставит) */
+      --input-h: 56px; /* реальная высота панели ввода (JS измерит) */
+      --maxw: 560px;   /* макс. ширина контейнера */
+    }
 
-body {
-    position: fixed; /* ГЛАВНЫЙ ФИКС: Страница больше не может "уехать" вверх */
-    inset: 0;        /* Растягиваем на весь экран */
-    width: 100%;
-    height: 100%; 
-    margin: 0;
-    padding: 0;
-    background: var(--bg); /* Фон теперь здесь */
-    display: flex;
-    flex-direction: column;
-    overscroll-behavior: none; /* Отключаем "резиновый" эффект iOS */
-}
+    *{ box-sizing:border-box; margin:0; padding:0; }
+    html,body{ height:100%; }
+    html{ background:transparent; }
+    body{
+      min-height: var(--vh);
+      background:transparent; color:#fff;
+      font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;
+      position:relative; isolation:isolate; display:flex; flex-direction:column;
+      overscroll-behavior-y: contain;
+    }
+    @supports (min-height: 100dvh){
+      body{ min-height: 100dvh; }
+    }
 
+    body::before{
+      content:""; position:fixed; inset:0; background:var(--bg);
+      z-index:0; pointer-events:none; transform:translateZ(0);
+    }
 
-
-    /* Контейнер на всю высоту экрана */
-.container {
-    /* Занимает всё пространство внутри фиксированного body */
-    width: 100%;
-    height: 100%; 
-    max-width: var(--maxw);
-    margin: 0 auto;
-    display: flex;
-    flex-direction: column;
-    position: relative;
-}
+    .container{
+      position:relative; z-index:1; width:100%;
+      max-width: var(--maxw); margin:0 auto; display:flex; flex-direction:column;
+      min-height: var(--vh);
+    }
+    @supports (min-height: 100dvh){
+      .container{ min-height: 100dvh; }
+    }
 
     .header{
       padding:14px 16px; display:flex; align-items:center; justify-content:center;
@@ -103,20 +109,10 @@ body {
     }
     .clear-btn:active{ transform:scale(.96); background:rgba(239,68,68,.3); }
 
-/* Область чата растягивается и скроллится внутри */
-.chat-area {
-    flex: 1; /* Растягивается на всё свободное место */
-    overflow-y: auto; /* Скроллится ТОЛЬКО этот блок */
-    overflow-x: hidden;
-    padding: 16px 14px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    -webkit-overflow-scrolling: touch; /* Плавный скролл на iOS */
-    
-    /* Убираем все сложные calc! */
-    padding-bottom: 10px; 
-}
+    .chat-area{
+      flex:1; overflow-y:auto; overflow-x:hidden; padding:16px 14px;
+      display:flex; flex-direction:column; gap:12px;
+      -webkit-overflow-scrolling:touch; scrollbar-width:thin; scrollbar-color:rgba(255,255,255,.3) transparent;
 
       /* ключ: даём место под инпут + клавиатуру */
       padding-bottom: calc(16px + env(safe-area-inset-bottom) + var(--input-h) + var(--kb));
@@ -150,18 +146,14 @@ body {
     .typing-dot:nth-child(3){ animation-delay:.4s; }
     @keyframes typing{ 0%,60%,100%{ transform:translateY(0); opacity:.7; } 30%{ transform:translateY(-10px); opacity:1; } }
 
-/* Инпут теперь просто лежит внизу потока, а не фиксирован */
-.input-area {
-    /* УБИРАЕМ position: fixed */
-    position: relative; 
-    width: 100%;
-    background: transparent;
-    z-index: 5;
-    padding: 12px 14px;
-    /* Отступ под "челку" снизу */
-    padding-bottom: max(env(safe-area-inset-bottom), 12px);
-    flex-shrink: 0; /* Не даем инпуту сплющиваться */
-}
+    /* ==== инпут-панель: фиксируем к вьюпорту и центрируем по max-width ==== */
+    .input-area{
+      position: fixed; left: 50%; transform: translateX(-50%) translateZ(0);
+      bottom: 0; width: min(100%, var(--maxw)); padding:12px 14px;
+      padding-bottom: max(env(safe-area-inset-bottom), 8px);
+      background: transparent; will-change: transform;
+      z-index: 5;
+    }
     .input-wrapper{ display:flex; gap:10px; align-items:flex-end; }
     .input-field{
       flex:1; min-height:44px; max-height:120px; padding:12px 16px; border:1px solid var(--inputBorder);
@@ -307,28 +299,52 @@ body {
 
 
   /* ====== 0.1) iOS/Telegram стабилизация высоты и клавиатуры ====== */
-(function initKeyboardStabilizer(){
-    // Просто скроллим чат вниз, когда меняется размер экрана (клавиатура)
+  (function initKeyboardStabilizer(){
+    const tg   = window.Telegram && window.Telegram.WebApp;
+    const vv   = window.visualViewport;
+    const root = document.documentElement;
     const chat = document.getElementById('chatArea');
+    const inputArea = document.querySelector('.input-area');
     const input = document.getElementById('messageInput');
-    
-    function scrollToBottom() {
-        if (!chat) return;
-        chat.scrollTop = chat.scrollHeight;
+    const setVar = (n,v)=> root.style.setProperty(n, v);
+
+    function measureInput(){
+      const h = (inputArea && inputArea.offsetHeight) || 56;
+      setVar('--input-h', h + 'px');
+    }
+    function update(){
+      // 1) стабильная высота экрана
+      let vh = window.innerHeight;
+      if (tg && tg.viewportStableHeight) vh = tg.viewportStableHeight;
+      setVar('--vh', Math.round(vh) + 'px');
+
+      // 2) высота перекрытия клавиатурой
+      let kb = 0;
+      if (vv) {
+        const occluded = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+        kb = Math.round(occluded);
+      }
+      setVar('--kb', kb + 'px');
+
+      // 3) докрутить чат вниз без «мягкой» анимации
+      if (chat) chat.scrollTop = chat.scrollHeight;
     }
 
-    // iOS меняет window.innerHeight при открытии клавиатуры
-    window.visualViewport.addEventListener('resize', scrollToBottom);
-    
-    // Дополнительная страховка при фокусе
-    if (input) {
-        input.addEventListener('focus', () => {
-            // Небольшая задержка, чтобы клавиатура успела выехать
-            setTimeout(scrollToBottom, 300);
-        });
+    measureInput();
+    update();
+
+    if (tg && tg.onEvent){
+      tg.onEvent('viewportChanged', (e)=>{ if (e && e.isStateStable) { measureInput(); update(); } });
     }
-})();
-    
+    if (vv){
+      vv.addEventListener('resize', ()=> { measureInput(); update(); });
+      vv.addEventListener('scroll',  ()=> { update(); });
+    }
+    window.addEventListener('orientationchange', ()=> setTimeout(()=>{ measureInput(); update(); }, 300));
+    window.addEventListener('resize', ()=> { measureInput(); update(); });
+    input && input.addEventListener('focus', ()=> setTimeout(()=> update(), 250));
+  })();
+
   /* ====== 1) Конфиг фронта ====== */
   const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbz1fXF1OKxoku0ZbbSSu2uxnlndaiilEjWh3mR1GFoaOtM8eWoggAjwoDOVLetR3H7C/exec'; // ← ЗАМЕНИ при необходимости
   const REQUEST_TIMEOUT_MS = 45000;
