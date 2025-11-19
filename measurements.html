@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0005'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0006'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -3073,9 +3073,9 @@ function updateHint(){
 
   var api = render(container, []);
 
-/* ==================== Временная шкала (V4: SAFETY BUFFER) ==================== */
+/* ==================== Временная шкала (V6: FORCE NOWRAP) ==================== */
   (function initTimeline(){
-    // Внутреннее состояние
+    // Состояние
     let _dates = []; 
     let _rows = [];  
     let _domItems = []; 
@@ -3085,6 +3085,15 @@ function updateHint(){
     const tl = document.getElementById('timeline');
     const wheel = document.getElementById('dateWheel');
     const maskEl = tl ? tl.querySelector('.wheel-mask') : null;
+
+    // --- 0. ЖЕСТКИЙ ФИКС КОНТЕЙНЕРА ---
+    // Гарантируем, что элементы выстроятся в одну линию и не будут переноситься
+    if (wheel) {
+      wheel.style.display = 'flex';
+      wheel.style.flexWrap = 'nowrap';
+      wheel.style.flexDirection = 'row';
+      wheel.style.alignItems = 'center';
+    }
 
     // --- 1. Утилиты ---
     function formatDateRu(s){
@@ -3107,61 +3116,49 @@ function updateHint(){
       return { dates, rows };
     }
 
-    // --- 2. Визуал (Активный класс + Маска) ---
+    // --- 2. Визуал ---
     function updateVisuals() {
-      // Если контейнер скрыт (ширина 0), выходим, но аккуратно
-      if (!wheel.clientWidth && !window.innerWidth) return; 
-      if (!_domItems.length) return;
-
-      // Считаем центр. Используем clientWidth, если он есть, иначе fallback на окно
+      // Берем ширину контейнера или окна, если скрыто
       const contW = wheel.clientWidth || window.innerWidth;
+      if (!contW || !_domItems.length) return;
+
       const center = wheel.scrollLeft + contW / 2;
-      
       let bestIdx = 0;
       let minDst = Infinity;
 
       _domItems.forEach((btn, i) => {
-        // Центр элемента: смещение слева + половина его ширины
+        // btn.offsetLeft - это расстояние от левого края прокручиваемой ленты
         const btnCenter = btn.offsetLeft + btn.offsetWidth / 2; 
         const dst = Math.abs(btnCenter - center);
         if (dst < minDst) { minDst = dst; bestIdx = i; }
       });
 
-      // Обновляем классы
       _domItems.forEach((btn, i) => {
         const isActive = (i === bestIdx);
         if (btn.classList.contains('active') !== isActive) {
            btn.classList.toggle('active', isActive);
            if (isActive) {
              window._pf_active_date = _dates[i]; 
-             // Если скроллит пользователь - обновляем данные
              if (api) api.setData(_rows[i] || []);
              try { window.Telegram?.WebApp?.HapticFeedback?.selectionChanged(); } catch(_){}
            }
         }
       });
 
-      // Двигаем маску (линзу)
+      // Маска
       if (maskEl && _domItems[bestIdx]) {
         const el = _domItems[bestIdx];
-        // Fallback размеры для скрытых элементов
         const elW = el.offsetWidth || 60; 
         const elH = el.offsetHeight || 30;
-        
         const maskW = Math.round(elW * 1.3 + 16); 
         const maskH = Math.round(elH + 8);
         
-        // Позиционирование маски
-        // Если wheel скрыт, getBoundingClientRect вернет 0, маска может быть кривой,
-        // но при появлении (resize/scroll) она исправится.
         if (wheel.clientWidth > 0) {
            const wr = wheel.getBoundingClientRect();
            const pr = tl.getBoundingClientRect();
-           // Центр колеса относительно timeline
            const centerX = (wr.left + wr.width/2) - pr.left;
            const left = centerX - maskW/2;
            const top = (wr.top - pr.top) + (wr.height - maskH)/2;
-           
            maskEl.style.setProperty('--mask-left', `${left}px`);
            maskEl.style.setProperty('--mask-top', `${top}px`);
         }
@@ -3170,58 +3167,62 @@ function updateHint(){
       }
     }
 
-    // --- 3. Скролл к индексу ---
+    // --- 3. Скролл ---
     function scrollToIdx(idx, smooth) {
       if (!_domItems[idx]) return;
       const el = _domItems[idx];
       const contW = wheel.clientWidth || window.innerWidth; 
       const elW = el.offsetWidth || 80; 
       
-      // Целевая позиция скролла чтобы элемент был по центру
       const target = el.offsetLeft - (contW / 2) + (elW / 2);
       
-      wheel.scrollTo({ 
-        left: target, 
-        behavior: smooth ? 'smooth' : 'auto' 
-      });
-
-      // Если скролл мгновенный, форсируем обновление визуала
+      wheel.scrollTo({ left: target, behavior: smooth ? 'smooth' : 'auto' });
       if (!smooth) requestAnimationFrame(updateVisuals);
     }
 
-    // --- 4. Построение DOM (ФИКС: ЗАПАС ХОДА) ---
+    // --- 4. DOM (ФИКС: NO-WRAP + PIXEL WIDTH) ---
     function buildDOM(dates) {
       wheel.innerHTML = '';
       _domItems = [];
       
-      // ГЛАВНЫЙ ФИКС: Вместо JS-вычислений используем CSS calc.
-      // 50% + 60px. 
-      // 50% гарантирует центровку.
-      // +60px гарантирует, что даже если браузер округлит, места хватит с запасом.
+      // 1. Считаем половину экрана
+      const halfScreen = Math.floor((wheel.clientWidth || window.innerWidth) / 2);
+      
+      // 2. Стиль распорки:
+      // flex-shrink: 0 -> ЗАПРЕТИТЬ сжатие
+      // width/min-width -> Задать жесткий размер
+      // display: block -> Убедиться, что это блок
       const spacerStyle = `
-        flex: 0 0 calc(50% + 60px); 
-        min-width: calc(50% + 60px); 
-        width: calc(50% + 60px); 
-        box-sizing: border-box;
+        display: block;
+        flex: 0 0 ${halfScreen}px; 
+        min-width: ${halfScreen}px; 
+        width: ${halfScreen}px;
+        height: 1px;
         pointer-events: none;
       `;
       
       const leftSpacer = document.createElement('div');
       leftSpacer.style.cssText = spacerStyle;
+      // Неразрывный пробел на всякий случай
+      leftSpacer.innerHTML = '&nbsp;';
       wheel.appendChild(leftSpacer);
 
       dates.forEach((d, i) => {
         const btn = document.createElement('div');
         btn.className = 'item';
         btn.textContent = formatDateRu(d);
-        // Клик - плавный скролл
         btn.onclick = () => scrollToIdx(i, true);
+        
+        // Гарантируем, что сами элементы тоже не сожмутся
+        btn.style.flexShrink = '0';
+        
         wheel.appendChild(btn);
         _domItems.push(btn);
       });
 
       const rightSpacer = document.createElement('div');
       rightSpacer.style.cssText = spacerStyle;
+      rightSpacer.innerHTML = '&nbsp;';
       wheel.appendChild(rightSpacer);
     }
 
@@ -3236,6 +3237,13 @@ function updateHint(){
     }, { passive: true });
     
     window.addEventListener('resize', () => {
+      const spacers = wheel.querySelectorAll('div[style*="flex: 0 0"]');
+      const newHalf = Math.floor((wheel.clientWidth || window.innerWidth) / 2);
+      spacers.forEach(sp => {
+          sp.style.minWidth = newHalf + 'px';
+          sp.style.width = newHalf + 'px';
+          sp.style.flexBasis = newHalf + 'px';
+      });
       requestAnimationFrame(updateVisuals);
     }, { passive: true });
 
@@ -3249,7 +3257,6 @@ function updateHint(){
       _dates = norm.dates;
       _rows = norm.rows;
 
-      // Нет дат? Прячем
       if (!_dates.length) {
         if (tl) tl.hidden = true;
         if (api) api.setData([]);
@@ -3257,30 +3264,26 @@ function updateHint(){
       }
       if (tl) tl.hidden = false;
 
-      // Строим DOM только если даты изменились
       const newDatesStr = _dates.join('|');
       if (newDatesStr !== _lastDatesStr) {
         buildDOM(_dates);
         _lastDatesStr = newDatesStr;
       }
 
-      // Логика выбора: пытаемся сохранить, иначе берем последнюю
       let targetIdx = -1;
       if (window._pf_active_date) targetIdx = _dates.indexOf(window._pf_active_date);
       if (targetIdx === -1) targetIdx = _dates.length - 1;
 
-      // ПРИНУДИТЕЛЬНОЕ ОБНОВЛЕНИЕ (Фикс пропажи графика)
+      // Заливаем данные сразу
       if (api && _rows[targetIdx]) {
         api.setData(_rows[targetIdx]);
       }
       
       window._pf_active_date = _dates[targetIdx];
       
-      // Принудительно ставим класс active (для надежности)
       _domItems.forEach(el => el.classList.remove('active'));
       if (_domItems[targetIdx]) _domItems[targetIdx].classList.add('active');
 
-      // Мгновенный скролл (без анимации) на позицию
       scrollToIdx(targetIdx, false);
     };
 
@@ -3288,7 +3291,6 @@ function updateHint(){
       if(api) api.setData(json); 
     };
 
-    // Инициализация при старте
     const initial = window.PLAN_FACT_SERIES || window.PLAN_FACT_JSON;
     if (initial) window.PlanFactChart.setSeries(initial);
     
