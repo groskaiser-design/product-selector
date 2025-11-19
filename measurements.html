@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0002'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0003'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -1542,15 +1542,24 @@ function handleSaveClick_bm(e) {
   try { tg?.HapticFeedback?.impactOccurred?.('light'); } catch(_){}
   // 4) Собираем все значения: анкета + колёса
   const values = { ...collectSurveyValues(), ...collectWheelValues() };
-  // 5) Сбрасываем кэш макросов, графика и AI-комментария
+
+    // 5) Сбрасываем кэш макросов, графика и AI-комментария
   try {
     const uid = (typeof currentUserId_bm === 'function') ? currentUserId_bm() : 'anon';
     localStorage.removeItem('bm:macros:vals:'  + String(uid));
     localStorage.removeItem('bm:chart:data:'   + String(uid));
     localStorage.removeItem('bm:comment:html:' + String(uid));
   } catch(_){}
+
+  // 👉 после сохранения анкеты забываем выбранную дату — следующий график станет на последнюю
+  try {
+    window._pf_active_date = null;
+  } catch(_){}
+
   // 6) Запускаем запрос на сохранение
   const saveTask = saveMeasurementsToDB_bm(values, saveId);
+
+  
   // 7) UI: сворачиваем анкету, скроллим вверх
   collapseAccordionSafe();
   requestAnimationFrame(() => requestAnimationFrame(scrollTopNoJump));
@@ -3309,17 +3318,27 @@ function updateHint(){
       // первая инициализация — всегда строим колесо, если есть хотя бы один замер
       if (!_tlInited) {
         if (norm.rows.length > 0){
-          const last = norm.rows[(norm.rows.length-1)|0] || [];
-          api && api.setData(last);
+          const lastIdx = (norm.rows.length - 1) | 0;
+          const lastRow = norm.rows[lastIdx] || [];
+          api && api.setData(lastRow);
           setupTimeline(norm, api);
+    
+          // 👉 фиксируем активную дату: последняя из списка
+          if (Array.isArray(norm.dates) && norm.dates.length) {
+            window._pf_active_date = norm.dates[lastIdx];
+          } else {
+            window._pf_active_date = null;
+          }
         } else {
           const tl = document.getElementById('timeline');
           if (tl) tl.hidden = true;
           api && api.setData([]);
+          window._pf_active_date = null; // нет замеров — активной даты тоже нет
         }
         _tlInited = true;
         return;
       }
+
 
       // если список дат изменился (например, добавили новый замер) — пересобираем таймлайн
       const prevDates = (prevNorm && Array.isArray(prevNorm.dates)) ? prevNorm.dates.join('|') : '';
