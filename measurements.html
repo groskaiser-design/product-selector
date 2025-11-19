@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0012'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0002'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -1514,16 +1514,6 @@ function updateSaveButton() {
   }, { passive: true });
   setInterval(updateSaveButton, 1000);
 })();
-
-// Глобальный идентификатор пользователя для всех кэшей (макросы, график, комментарии)
-function currentUserId_bm() {
-  try {
-    return window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'anon';
-  } catch (_) {
-    return 'anon';
-  }
-}
-
 /* === КНОПКА СОХРАНЕНИЯ: сохраняем весь пакет === */
 function handleSaveClick_bm(e) {
   if (e && e.preventDefault) { try { e.preventDefault(); } catch(_){ } }
@@ -1552,26 +1542,13 @@ function handleSaveClick_bm(e) {
   try { tg?.HapticFeedback?.impactOccurred?.('light'); } catch(_){}
   // 4) Собираем все значения: анкета + колёса
   const values = { ...collectSurveyValues(), ...collectWheelValues() };
-
-  // 5) Сбрасываем кэш макросов, графика и AI-комментария + жёстко сбрасываем UI графика
+  // 5) Сбрасываем кэш макросов, графика и AI-комментария
   try {
-    const uid = currentUserId_bm();
-
-    // чистим кэш под реальным userId
+    const uid = (typeof currentUserId_bm === 'function') ? currentUserId_bm() : 'anon';
     localStorage.removeItem('bm:macros:vals:'  + String(uid));
     localStorage.removeItem('bm:chart:data:'   + String(uid));
     localStorage.removeItem('bm:comment:html:' + String(uid));
-
-    // мгновенный визуальный сброс графика и колеса дат
-    if (window.PlanFactChart && typeof window.PlanFactChart.setSeries === 'function') {
-      window.PLAN_FACT_SERIES = null;
-      window.PlanFactChart.setSeries({});
-    } else if (window.PlanFactChart && typeof window.PlanFactChart.setData === 'function') {
-      window.PLAN_FACT_SERIES = null;
-      window.PlanFactChart.setData([]);
-    }
   } catch(_){}
-  
   // 6) Запускаем запрос на сохранение
   const saveTask = saveMeasurementsToDB_bm(values, saveId);
   // 7) UI: сворачиваем анкету, скроллим вверх
@@ -2337,15 +2314,6 @@ waitForFreshData_bm(confirmed, 20000, 60000)
   window.startFrontDataFlow_bm_bm();
 })();
   
-  // Глобальный идентификатор пользователя для всех модулей (макросы, график, комментарий)
-function currentUserId_bm() {
-  try {
-    return window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'anon';
-  } catch (_) {
-    return 'anon';
-  }
-}
-
 /* ============================================================
  *  BLOCK E1 — Analytics Macros (poll + cache) + DEBUG
  * ============================================================ */
@@ -2565,21 +2533,6 @@ function currentUserId_bm() {
 
 /* ============================================================
  *  BLOCK E2.4 — Chart data flow (poll + cache, как макросы)
- *
- * Отвечает за:
- *  - опрос backend по текущему targetRow (desiredRow / rowCalc),
- *  - кэширование последнего готового chart в localStorage,
- *  - уведомление view-блока (E2.5 + PlanFactChart), что данные обновились.
- *
- * Требования:
- *  1) Если данных нет → E2.5+E2 рисуют пустой график и “пустую” дату (сегодня).
- *  2) После сохранения анкеты (desiredRow > row в кэше) старые данные в кэш не пишутся,
- *     startChartFlow_bm_bm() покажет пустое состояние.
- *  3) Как только приходят данные из БД → в кэш кладём только актуальный chart,
- *     E2.5 вызывает PlanFactChart.setSeries(...), E2 ставит фокус на последнюю дату.
- *  5) При прокрутке колеса дат пользователь анализирует график, и его выбор
- *     не сбивается: мы никогда не кладём в кэш график старее targetRow и
- *     не вызываем view для устаревшей серии.
  * ============================================================ */
 (function chartDataFlowInit(){
   console.log('%c[E2.4] init', 'color:#4af');
@@ -2589,17 +2542,13 @@ function currentUserId_bm() {
 
   const CHART_KEY_PREFIX = 'bm:chart:data:';
 
-  // Идентификатор текущего пользователя (для разделения кэша по userId)
   function currentUserId_bm(){ 
     try { return window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'anon'; }
     catch(_){ return 'anon'; }
   }
-
   function chartKey_bm(uid){
     return CHART_KEY_PREFIX + String(uid ?? currentUserId_bm());
   }
-
-  // Сохранение кэша графика (последняя готовая серия + row)
   function saveChartCache_bm(obj, uid){
     try {
       console.log('%c[E2.4] save cache','color:#4af', obj);
@@ -2608,8 +2557,6 @@ function currentUserId_bm() {
       console.warn('[E2.4] cache save error', err);
     }
   }
-
-  // Чтение кэша (сейчас используется в основном для дебага / возможных расширений)
   function loadChartCache_bm(uid){
     try {
       const raw = localStorage.getItem(chartKey_bm(uid ?? currentUserId_bm()));
@@ -2622,9 +2569,6 @@ function currentUserId_bm() {
     }
   }
 
-  // Минимально допустимый row для графика:
-  //  - во время ожидания нового снапшота после сохранения анкеты — desiredRow();
-  //  - в обычной работе — getRowCalcForUser_bm() (последний известный row пользователя).
   function targetRow(){
     try {
       const dr = (typeof desiredRow === 'function') ? desiredRow() : null;
@@ -2638,7 +2582,7 @@ function currentUserId_bm() {
     }
   }
 
-  // ✅ Общий front_bootstrap API, как в waitForFreshData_bm / EAI
+  // ✅ Используем общий bootstrap-API, как waitForFreshData_bm / EAI
   async function apiFrontChart_bm(requestedRow, signal){
     console.log('%c[E2.4] request to backend','color:#4af', { requestedRow });
 
@@ -2655,22 +2599,16 @@ function currentUserId_bm() {
     return res;
   }
 
-  // Состояние текущего цикла опроса
-  let _chartTimer = 0;     // таймер между poll-запросами
-  let _chartRunId = 0;     // идентификатор актуального "запуска" потока
-  let _chartAbort = null;  // AbortController для текущего запроса
+  let _chartTimer = 0;
+  let _chartRunId = 0;
+  let _chartAbort = null;
 
-  // Один шаг опроса backend
   async function pollOnce(runId){
-    // Если за время ожидания стартовал новый поток — этот считаем устаревшим
     if (runId !== _chartRunId) return { done:true };
 
     const reqRow = targetRow();
 
-    // Отменяем предыдущий запрос (если ещё не завершился)
-    if (_chartAbort) {
-      try { _chartAbort.abort(); } catch(_){}
-    }
+    if (_chartAbort) try { _chartAbort.abort(); } catch(_){}
     const controller = new AbortController();
     _chartAbort = controller;
 
@@ -2680,55 +2618,37 @@ function currentUserId_bm() {
 
       const serverRow  = Number(res?.row || 0);
       const chartBlk   = res?.chart || {};
-
-      // ВАЖНО: считаем chart "готовым", если backend сказал ready === true,
-      // даже если в data пусто или её нет. В таком случае view-слой покажет
-      // placeholder (пустой график + одна дата сегодня), а мы не будем
-      // бесконечно крутить poll.
-      const chartReady = !!chartBlk.ready;
+      const chartReady = !!chartBlk.ready && !!chartBlk.data;
 
       console.log('%c[E2.4] pollOnce','color:#4af', {
         reqRow, serverRow, chartReady, chartBlk
       });
 
-      // ✅ Защита от старых row (как в макросах):
-      //    если backend ещё не дошёл до нужного нам row (desiredRow/rowCalc),
-      //    просто ждём и НЕ трогаем кэш.
+      // ✅ защита от старых row, как в макросах
       if (reqRow && serverRow && serverRow < Number(reqRow)) {
         console.log('%c[E2.4] old row, waiting','color:#f80', { reqRow, serverRow });
-        const waitOld = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
-        return { done:false, wait: waitOld };
+        const wait = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
+        return { done:false, wait };
       }
 
-      // Если backend уже знает row >= reqRow — обновляем rowCalc для пользователя.
-      // Используем >=, чтобы не зависнуть в ситуации, когда desiredRow > локального rowCalc,
-      // а backend возвращает ровно этот desiredRow.
-      if (Number.isFinite(serverRow) && (reqRow == null || serverRow >= Number(reqRow))) {
+      if (Number.isFinite(serverRow) && (reqRow == null || serverRow > reqRow)) {
         try { 
           setRowCalcForUser_bm(serverRow); 
           console.log('%c[E2.4] rowCalc updated','color:#4af', serverRow);
         } catch(_){}
       }
 
-      // Если chart уже готов (в том числе к "пустому" состоянию)
       if (chartReady) {
         const uid = currentUserId_bm();
         const chartRow = Number(chartBlk.row || serverRow || 0);
 
-        // ✅ Не кладём в кэш график, если он старее targetRow (desiredRow/rowCalc).
-        //    Это гарантирует:
-        //    - после сохранения анкеты старые данные НЕ всплывут,
-        //    - пользователь не увидит "скачок назад" при анализе.
+        // ✅ не кладём в кэш график, если он старее desiredRow — аналог макросов
         if (reqRow && chartRow && chartRow < Number(reqRow)) {
           console.log('%c[E2.4] chartRow < reqRow — skip cache','color:#f00', { chartRow, reqRow });
-          const waitSkip = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
-          return { done:false, wait: waitSkip };
+          const wait = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
+          return { done:false, wait };
         }
 
-        // Объект, который кладём в localStorage:
-        //  - row        — row этого снапшота (для E2.5: проверка свежести),
-        //  - data       — полная серия для PlanFactChart (dates/rows) либо null/{} для "пустого" состояния,
-        //  - updated_at — метка времени обновления (для дебага / потенциального UI).
         const seed = {
           row: chartRow || null,
           data: chartBlk.data,
@@ -2738,34 +2658,23 @@ function currentUserId_bm() {
         saveChartCache_bm(seed, uid);
 
         console.log('%c[E2.4] call view refresh','color:#4af');
-        try {
-          // E2.5: читает кэш, сравнивает row с targetRow и
-          // либо показывает серию, либо пустое состояние.
-          window.startChartFlow_bm_bm && window.startChartFlow_bm_bm();
-        } catch(_){}
+        try { window.startChartFlow_bm_bm && window.startChartFlow_bm_bm(); } catch(_){}
 
-        // На этом цикл можно завершить; если нужно "живое обновление",
-        // перезапуск startChartDataFlow_bm_bm можно вызвать извне.
         return { done:true };
       }
 
-      // ⬅ Если chart ещё не ready — ждём retry_after_ms (как в макросах)
+      // ⬅ если chart ещё не ready — ждём retry_after_ms, как в макросах
       const wait = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
       return { done:false, wait };
 
     } catch(err){
-      // Нормальная отмена — просто выходим
       if (err?.name === 'AbortError') return { done:true };
       if (runId !== _chartRunId) return { done:true };
-
       console.error('[E2.4] poll error:', err);
-
-      // На ошибке делаем паузу и пробуем ещё раз
       return { done:false, wait: 1000 };
     }
   }
 
-  // Циклический опрос backend с задержками
   async function pollLoop(runId){
     clearTimeout(_chartTimer);
     const r = await pollOnce(runId);
@@ -2773,11 +2682,6 @@ function currentUserId_bm() {
     _chartTimer = setTimeout(() => pollLoop(runId), r.wait);
   }
 
-  // Публичный старт потока данных для графика
-  // Вызывается:
-  //  - при инициализации страницы,
-  //  - при возврате вкладки из hidden,
-  //  - после сохранения анкеты (где обновлён desiredRow).
   window.startChartDataFlow_bm_bm = function(){
     console.log('%c[E2.4] START DATA FLOW','color:#0f0');
 
@@ -2785,83 +2689,44 @@ function currentUserId_bm() {
     const runId = _chartRunId;
 
     clearTimeout(_chartTimer);
-    if (_chartAbort) {
-      try { _chartAbort.abort(); } catch(_){}
-    }
+    if (_chartAbort) try { _chartAbort.abort(); } catch(_){}
 
-    // Сначала даём view-слою (E2.5) возможность:
-    //  - прочитать текущий кэш,
-    //  - сравнить его row с targetRow,
-    //  - либо показать последнюю серию, либо "обнулить" график и даты.
-    try {
-      window.startChartFlow_bm_bm && window.startChartFlow_bm_bm();
-    } catch(_){}
+    // сначала отрисуем то, что есть в кэше (или очистим график), как в макросах
+    try { window.startChartFlow_bm_bm && window.startChartFlow_bm_bm(); } catch(_){}
 
-    // Затем запускаем опрос backend до тех пор, пока не придёт
-    // подходящий по row и готовый chart.
     pollLoop(runId);
   };
 
-  // Пауза опроса, когда вкладка скрыта, и перезапуск при возврате
   document.addEventListener('visibilitychange', ()=>{
     if (document.visibilityState === 'hidden'){
       clearTimeout(_chartTimer);
-      if (_chartAbort) {
-        try { _chartAbort.abort(); } catch(_){}
-      }
+      if (_chartAbort) try { _chartAbort.abort(); } catch(_){}
     } else {
       window.startChartDataFlow_bm_bm && window.startChartDataFlow_bm_bm();
     }
   });
 
   console.log('%c[E2.4] initialized','color:#4af');
-
-  // Автостарт при загрузке:
-  //  - E2.5 покажет либо кэш, либо пустое состояние,
-  //  - затем начнётся опрос backend.
   window.startChartDataFlow_bm_bm && window.startChartDataFlow_bm_bm();
 })();
 
 
+
 /* ============================================================
  *  BLOCK E2.5 — Chart Flow (view)
- *
- * Отвечает за:
- *  - чтение кэша графика из localStorage,
- *  - проверку свежести кэша относительно targetRow (desiredRow / rowCalc),
- *  - перевод состояния в одно из двух:
- *      • есть актуальные данные → показать серию,
- *      • нет актуальных данных → показать "пустой" график и одну дату (сегодня).
- *
- * Связка с требованиями:
- *  1) Если данных нет → передаём в PlanFactChart пустую серию ({}),
- *     normalizeSeries отдаёт одну дату (сегодня) и пустые rows.
- *  2) После сохранения анкеты (desiredRow > cached.row) старый кэш НЕ показываем,
- *     вызываем renderChart(null) → пустое состояние.
- *  3) Как только E2.4 положит новую серию в кэш, startChartFlow_bm_bm()
- *     увидит её и передаст в PlanFactChart.setSeries(chartBlk.data), E2
- *     сфокусируется на последней дате.
- *  4) Одна дата → одна кнопка, несколько дат → несколько кнопок (делает E2).
- *  5) При скролле колеса дат выбор пользователя хранится в window._pf_active_date;
- *     мы показываем только серии не старее targetRow и не заставляем PlanFactChart
- *     откатываться на старый row.
  * ============================================================ */
 (function chartFlowInit(){
   console.log('%c[E2.5] init', 'color:#c4f');
 
   const CHART_KEY_PREFIX = 'bm:chart:data:';
 
-  // Идентификатор пользователя для пространства ключей кэша
   function currentUserId_bm(){ 
     try { return window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'anon'; }
     catch(_){ return 'anon'; }
   }
-
   function chartKey_bm(uid){
     return CHART_KEY_PREFIX + String(uid ?? currentUserId_bm());
   }
-
-  // Чтение кэша графика из localStorage
   function loadChartCache_bm(uid){
     try {
       const raw = localStorage.getItem(chartKey_bm(uid ?? currentUserId_bm()));
@@ -2874,9 +2739,6 @@ function currentUserId_bm() {
     }
   }
 
-  // Минимально допустимый row для отображения:
-  //  - desiredRow() во время ожидания нового снапшота после сохранения,
-  //  - getRowCalcForUser_bm() в обычной работе.
   function targetRow(){
     try {
       const dr = (typeof desiredRow === 'function') ? desiredRow() : null;
@@ -2890,28 +2752,18 @@ function currentUserId_bm() {
     }
   }
 
-  // Отрисовка графика/таймлайна через PlanFactChart
   function renderChart(chartData){
     console.log('%c[E2.5] renderChart','color:#c4f', chartData);
 
-    const hasSeries = !!(chartData && chartData.data);
-
-    // 1) Нет данных или явно пустая серия → показываем "пустое" состояние:
-    //    - PLAN_FACT_SERIES = null,
-    //    - PlanFactChart.setSeries({}) → normalizeSeries вернёт:
-    //        { dates:[сегодня], rows:[[]] }
-    //      то есть одна дата (сегодня) и пустые строки замеров.
-    if (!hasSeries) {
+    // нет данных – очищаем виджет
+    if (!chartData || !chartData.data) {
       window.PLAN_FACT_SERIES = null;
-
       if (window.PlanFactChart) {
         try {
           if (typeof window.PlanFactChart.setSeries === 'function') {
-            // Пустая серия → E2 сам соберёт placeholder "сегодня без замеров"
-            window.PlanFactChart.setSeries({});
+            window.PlanFactChart.setSeries(null);
           } else if (typeof window.PlanFactChart.setData === 'function') {
-            // Fallback: просто очищаем строки замеров
-            window.PlanFactChart.setData([]);
+            window.PlanFactChart.setData([]); // пустой список строк
           }
         } catch(err){
           console.error('[E2.5] clear chart error', err);
@@ -2920,22 +2772,17 @@ function currentUserId_bm() {
       return;
     }
 
-    // 2) Есть полноценная серия (в формате PLAN_FACT_SERIES / chartBlk.data):
-    //    её нужно передать в PlanFactChart, где:
-    //      - normalizeSeries соберёт список дат и rows,
-    //      - setupTimeline построит колесо,
-    //      - активной датой станет либо сохранённая, либо последняя.
+    // полноценная серия (в формате PLAN_FACT_SERIES / chartBlk.data)
     window.PLAN_FACT_SERIES = chartData.data;
 
     if (window.PlanFactChart) {
       try {
         if (typeof window.PlanFactChart.setSeries === 'function') {
-          // Основной путь: передаём всю серию,
-          // блок E2 сам пересоберёт шкалу и строки.
+          // основной путь: передаём всю серию, блок E2 сам пересоберёт шкалу и строки
           window.PlanFactChart.setSeries(chartData.data);
         } else if (typeof window.PlanFactChart.setData === 'function') {
-          // Fallback на старое поведение: просто отрисуем готовый список строк,
-          // если setSeries по какой-то причине недоступен.
+          // fallback на старое поведение: просто отрисуем последний снапшот,
+          // если setSeries по какой-то причине недоступен
           window.PlanFactChart.setData(chartData.data);
         }
         console.log('%c[E2.5] update chart OK','color:#0f0');
@@ -2945,54 +2792,23 @@ function currentUserId_bm() {
     }
   }
 
-  // Публичный вход в view-поток:
-  //  - вызывается E2.4 при старте потока данных,
-  //  - вызывается при смене visibility → "подтянуть" актуальное состояние из кэша.
-window.startChartFlow_bm_bm = function(){
-  console.log('%c[E2.5] START VIEW FLOW','color:#0f0');
+  window.startChartFlow_bm_bm = function(){
+    console.log('%c[E2.5] START VIEW FLOW','color:#0f0');
 
-  // Сохраняем выбор пользователя ДО сброса
-  const savedUserSelected = window._pf_user_selected;
-  const savedActiveDate = window._pf_active_date;
+    const target = targetRow();
+    const cached = loadChartCache_bm();
 
-  // 0) Жёсткий визуальный сброс — симметрия с renderSkeleton() у макросов.
-  //    Даже если кэш оказался "подозрительно свежим", сначала показываем пустое состояние.
-  renderChart(null);
+    console.log('%c[E2.5] cached vs target','color:#c4f', { cached, target });
 
-  // Восстанавливаем выбор пользователя ПОСЛЕ сброса
-  if (savedUserSelected && savedActiveDate) {
-    window._pf_user_selected = savedUserSelected;
-    window._pf_active_date = savedActiveDate;
-  }
+    // как у макросов: показываем только кэш, который не старее desiredRow/rowCalc
+    if (cached?.data && !(target && Number(cached.row||0) < Number(target))) {
+      renderChart(cached);
+    } else {
+      console.log('%c[E2.5] waiting fresh chart...','color:#f80');
+      renderChart(null); // стандартизованный сброс
+    }
+  };
 
-  const target = targetRow();
-  const cached = loadChartCache_bm();
-
-  console.log('%c[E2.5] cached vs target','color:#c4f', { cached, target });
-
-  // Показываем только тот кэш, который:
-  //  - существует,
-  //  - не старее targetRow (desiredRow/rowCalc),
-  //  - и имеет валидный row.
-  const cachedRow = Number(cached?.row ?? NaN);
-  const hasValidRow = Number.isFinite(cachedRow);
-  const hasTarget = target != null && target !== undefined && target !== '';
-
-  const isFreshEnough =
-    hasValidRow &&
-    (!hasTarget || cachedRow >= Number(target));
-
-  if (cached && isFreshEnough) {
-    // Поверх пустого состояния рисуем актуальную серию
-    renderChart(cached);
-  } else {
-    console.log('%c[E2.5] no fresh cache, stay empty...','color:#f80');
-    // Остаёмся в очищенном состоянии до прихода свежих данных из E2.4
-  }
-};
-
-
-  // При возврате вкладки в visible просто перечитываем кэш и обновляем view.
   document.addEventListener('visibilitychange', ()=>{
     if (document.visibilityState === 'visible'){
       window.startChartFlow_bm_bm();
@@ -3000,15 +2816,11 @@ window.startChartFlow_bm_bm = function(){
   });
 
   console.log('%c[E2.5] initialized','color:#c4f');
-
-  // Первый запуск:
-  //  - сразу рисуем либо кэш, либо пустой график с датой сегодня,
-  //  - далее E2.4 начнёт опрос backend и при обновлении кэша снова вызовет этот метод.
   window.startChartFlow_bm_bm();
 })();
 
 
-
+  
 //============================================================
 //  BLOCK E2 — ЗАМЕРЫ ПЛАН ФАКТ ДЕЛЬТА
 //============================================================
@@ -3211,76 +3023,79 @@ function updateHint(){
     return;
   }
 
+  /*// ВСЕ 9 ПАРАМЕТРОВ для каждой даты
+  window.PLAN_FACT_SERIES = {
+    "series": {
+      "2025-10-01": {
+        "fat": { "unit": "%", "plan": 18, "fact": 20, "delta": -2 },
+        "neck": { "unit": "см", "plan": 39, "fact": 39, "delta": 0 },
+        "shoulders": { "unit": "см", "plan": 140, "fact": 124, "delta": 16 },
+        "chest": { "unit": "см", "plan": 115, "fact": 112, "delta": 3 },
+        "waist": { "unit": "см", "plan": 89, "fact": 88, "delta": 1 },
+        "hips": { "unit": "см", "plan": 102, "fact": 97, "delta": 5 },
+        "thigh": { "unit": "см", "plan": 62, "fact": 55, "delta": 7 },
+        "calf": { "unit": "см", "plan": 44, "fact": 32, "delta": 12 },
+        "bicep": { "unit": "см", "plan": 44, "fact": 38, "delta": 6 }
+      },
+      "2025-11-01": {
+        "fat": { "unit": "%", "plan": 18, "fact": 21, "delta": -3 },
+        "neck": { "unit": "см", "plan": 39, "fact": 40, "delta": -1 },
+        "shoulders": { "unit": "см", "plan": 140, "fact": 125, "delta": 15 },
+        "chest": { "unit": "см", "plan": 115, "fact": 113, "delta": 2 },
+        "waist": { "unit": "см", "plan": 89, "fact": 89, "delta": 0 },
+        "hips": { "unit": "см", "plan": 102, "fact": 98, "delta": 4 },
+        "thigh": { "unit": "см", "plan": 62, "fact": 56, "delta": 6 },
+        "calf": { "unit": "см", "plan": 44, "fact": 33, "delta": 11 },
+        "bicep": { "unit": "см", "plan": 44, "fact": 39, "delta": 5 }
+      },
+      "2025-12-01": {
+        "fat": { "unit": "%", "plan": 18, "fact": 22, "delta": -4 },
+        "neck": { "unit": "см", "plan": 39, "fact": 41, "delta": -2 },
+        "shoulders": { "unit": "см", "plan": 140, "fact": 126, "delta": 14 },
+        "chest": { "unit": "см", "plan": 115, "fact": 114, "delta": 1 },
+        "waist": { "unit": "см", "plan": 89, "fact": 90, "delta": -1 },
+        "hips": { "unit": "см", "plan": 102, "fact": 99, "delta": 3 },
+        "thigh": { "unit": "см", "plan": 62, "fact": 57, "delta": 5 },
+        "calf": { "unit": "см", "plan": 44, "fact": 34, "delta": 10 },
+        "bicep": { "unit": "см", "plan": 44, "fact": 40, "delta": 4 }
+      }
+    }
+  };*/
+
   var api = render(container, []);
 
   /* ==================== Временная шкала (серии дат) ==================== */
   (function initTimeline(){
     function normalizeSeries(input){
-      // Вспомогательная: "сегодня" в формате YYYY-MM-DD
-      function getTodayKey(){
-        var d = new Date();
-        var y = d.getFullYear();
-        var m = String(d.getMonth()+1).padStart(2,'0');
-        var dd = String(d.getDate()).padStart(2,'0');
-        return y + '-' + m + '-' + dd;
-      }
-
-      // 1) Совсем нет данных (null/undefined) →
-      //    показываем одну дату (сегодня) и пустые строки замеров.
-      if (!input) {
-        var today = getTodayKey();
-        return { dates:[today], rows:[[]] };
-      }
-
+      if(!input) return { dates:[], rows:[] };
       var seriesMap = null;
-
-      // 2) Формат: { series: { "2025-01-01": {...}, ... } }
+      
       if (input.series && typeof input.series === 'object' && !Array.isArray(input.series)) {
         seriesMap = input.series;
-
-      // 3) Формат: [{ date: "...", data: {...} }, ...]
       } else if (Array.isArray(input) && input.length && input[0] && typeof input[0] === 'object' && ('date' in input[0])) {
         seriesMap = {};
         for (var i=0; i<input.length; i++){
           var it = input[i];
           if(!it) continue;
-          var k = String(it.date || i);
+          var k = String(it.date||i);
           seriesMap[k] = it.data || it.snapshot || {};
         }
-
       } else {
-        // 4) Объект есть, но пустой → "нет замеров":
-        //    одна дата (сегодня), пустые строки.
-        if (typeof input === 'object' && !Array.isArray(input) && Object.keys(input).length === 0) {
-          var todayEmpty = getTodayKey();
-          return { dates:[todayEmpty], rows:[[]] };
-        }
-
-        // 5) Одиночный снапшот без поля date →
-        //    одна "псевдодата" '—' и реальные строки замеров.
-        //    (этот кейс нужен, если где-то напрямую прокидывают один json замеров)
         return { dates:['—'], rows:[ toRows(input) ] };
       }
-
+      
       var dates = Object.keys(seriesMap);
       dates.sort(function(a,b){
         var da = new Date(a), db = new Date(b);
         if(isFinite(da.getTime()) && isFinite(db.getTime())) return da - db;
         return (a > b ? 1 : -1);
       });
-
+      
       var rows = [];
       for(var j=0; j<dates.length; j++){
         rows.push(toRows(seriesMap[dates[j]]||{}));
       }
-
-      // 6) На всякий случай: если seriesMap пустой →
-      //    одна дата (сегодня) и пустые строки.
-      if (!dates.length) {
-        var todayFallback = getTodayKey();
-        return { dates:[todayFallback], rows:[[]] };
-      }
-
+      
       return { dates: dates, rows: rows };
     }
     
@@ -3365,7 +3180,7 @@ function updateHint(){
       
       ensureSpacers();
 
-     let active = -1, rafId = 0, snapTimer = 0, ignoreScroll = false;
+      let active = -1, rafId = 0, snapTimer = 0;
       
       function setAria(){
         for(let k=0; k<items.length; k++){
@@ -3386,49 +3201,33 @@ function updateHint(){
         items[active].classList.add('active');
         items[active].setAttribute('aria-selected', 'true');
       }
-        setAria();
-        // Используем _tlNorm вместо замыкания norm — так данные всегда актуальны
-        var currentNorm = _tlNorm || norm;
-        api && api.setData(currentNorm.rows[i]||[]);
-        syncMask();
-        window._pf_active_date = currentNorm.dates[i];
-      
-        if (announce) {
-          // Пользователь явно выбрал дату (клик/скролл/стрелки)
-          window._pf_user_selected = true;
-        }
-      
-        console.log('[PF] activate', {
-          index: i,
-          date: window._pf_active_date,
-          announce,
-          userSelected: !!window._pf_user_selected
-        });
-        
-        // Хаптика при смене активной даты (скролл/клик/стрелки)
-        if (announce) {
-          try {
-            window.Telegram?.WebApp?.HapticFeedback?.selectionChanged?.();
-          } catch (_) {
-            // молча игнорируем, если хаптика недоступна
-          }
+      setAria();
+      api && api.setData(norm.rows[i]||[]);
+      syncMask();
+      window._pf_active_date = norm.dates[i];
+    
+      // Хаптика при смене активной даты (скролл/клик/стрелки)
+      if (announce) {
+        try {
+          window.Telegram?.WebApp?.HapticFeedback?.selectionChanged?.();
+        } catch (_) {
+          // молча игнорируем, если хаптика недоступна
         }
       }
+    }
+
       
       function centerTo(i, announce, behavior){
         i = Math.max(0, Math.min(n-1, i));
         const el = items[i];
         if(!el) return;
         const target = el.offsetLeft + el.offsetWidth/2 - wheel.clientWidth/2;
-        ignoreScroll = true;
         wheel.scrollTo({ left: Math.max(0, target), behavior: (behavior||'auto') });
         activate(i, announce);
         syncMask();
-        setTimeout(() => { ignoreScroll = false; }, 150);
       }
       
       function onScroll(){
-        if(ignoreScroll) return;
         if(rafId) cancelAnimationFrame(rafId);
         rafId = requestAnimationFrame(function(){
           const center = wheel.scrollLeft + wheel.clientWidth/2;
@@ -3439,10 +3238,8 @@ function updateHint(){
             const d = Math.abs(c - center);
             if(d < bestDist){ bestDist = d; best = k; }
           }
-         const changed = best !== active;
-          if (changed) {
-            activate(best, true);
-          }
+          const changed = best !== active;
+          activate(best, changed);
           syncMask();
           if(snapTimer) clearTimeout(snapTimer);
           snapTimer = setTimeout(function(){
@@ -3475,37 +3272,13 @@ function updateHint(){
       });
       window.addEventListener('resize', function(){
         resizeSpacers();
-        console.log('[PF] timeline resize, recenter to active', { activeIndex: active });
         centerTo(active, false, 'auto');
         syncMask();
       }, { passive:true });
-      
-      // Выбираем, какая дата должна стать активной при инициализации таймлайна:
-      //  - если пользователь уже выбирал дату и она есть в новом наборе — используем её;
-      //  - иначе (нет выбора или даты нет) — берём последнюю.
-      let initialIdx = n - 1;
-      try {
-        const dates = Array.isArray(norm.dates) ? norm.dates : [];
-        if (dates.length && window._pf_user_selected && window._pf_active_date) {
-          const found = dates.indexOf(window._pf_active_date);
-          if (found >= 0) {
-            initialIdx = found;
-          }
-        }
-      } catch (_){}
-      
-      console.log('[PF] setupTimeline init', {
-        datesCount: n,
-        initialIdx,
-        userSelected: !!window._pf_user_selected,
-        activeDate: window._pf_active_date
-      });
-      
-      // Программная активация (announce = false) — не считается "выбором пользователя".
-      centerTo(initialIdx, false, 'auto');
-      syncMask();
-      }
 
+      centerTo(n-1, false, 'auto');
+      syncMask();
+    }
 
     function pickSeriesInput(){
       let seriesInput = null;
@@ -3528,46 +3301,19 @@ function updateHint(){
     // последняя нормализованная серия (dates/rows)
     let _tlNorm = null;
 
-function applySeries(seriesInput){
-      var isEmpty =
-        seriesInput == null ||
-        (typeof seriesInput === 'object' && !Array.isArray(seriesInput) && Object.keys(seriesInput).length === 0);
-
-      if (isEmpty) {
-        console.log('[PF] applySeries: EMPTY series', {
-          tlInited: _tlInited,
-          hadNorm: !!_tlNorm,
-          userSelected: window._pf_user_selected,
-          activeDate: window._pf_active_date
-        });
-      
-        if (_tlInited) {
-          api && api.setData([]);
-          return;
-        }
-        
-        var emptyNorm = normalizeSeries(null);
-        _tlNorm = emptyNorm;
-        
-        var tl = document.getElementById('timeline');
-        if (tl) tl.hidden = false;
-        
-        setupTimeline(emptyNorm, api);
-        _tlInited = true;
-        return;
-      }
-
-      var prevNorm = _tlNorm;
-      var norm = normalizeSeries(seriesInput || {});
+      function applySeries(seriesInput){
+      const prevNorm = _tlNorm;
+      const norm = normalizeSeries(seriesInput || {});
       _tlNorm = norm;
 
+      // первая инициализация — всегда строим колесо, если есть хотя бы один замер
       if (!_tlInited) {
         if (norm.rows.length > 0){
-          var last = norm.rows[(norm.rows.length-1)|0] || [];
+          const last = norm.rows[(norm.rows.length-1)|0] || [];
           api && api.setData(last);
           setupTimeline(norm, api);
         } else {
-          var tl = document.getElementById('timeline');
+          const tl = document.getElementById('timeline');
           if (tl) tl.hidden = true;
           api && api.setData([]);
         }
@@ -3575,40 +3321,40 @@ function applySeries(seriesInput){
         return;
       }
 
-      var prevDates = (prevNorm && Array.isArray(prevNorm.dates)) ? prevNorm.dates.join('|') : '';
-      var newDates  = (norm && Array.isArray(norm.dates)) ? norm.dates.join('|') : '';
-      
-      // Перестраиваем таймлайн только если изменился список дат
+      // если список дат изменился (например, добавили новый замер) — пересобираем таймлайн
+      const prevDates = (prevNorm && Array.isArray(prevNorm.dates)) ? prevNorm.dates.join('|') : '';
+      const newDates  = (norm && Array.isArray(norm.dates))       ? norm.dates.join('|')       : '';
       if (prevDates !== newDates) {
         setupTimeline(norm, api);
       }
 
-      var dates = Array.isArray(norm.dates) ? norm.dates : [];
-      var rows  = Array.isArray(norm.rows)  ? norm.rows  : [];
+ // дальше таймлайн уже есть — только обновляем данные под нужную дату
+      const dates = Array.isArray(norm.dates) ? norm.dates : [];
+      const rows  = Array.isArray(norm.rows)  ? norm.rows  : [];
 
       if (!dates.length || !rows.length) {
-        var tl = document.getElementById('timeline');
+        const tl = document.getElementById('timeline');
         if (tl) tl.hidden = true;
         api && api.setData([]);
         return;
       }
 
-      var idx = dates.length - 1;
+      // пытаемся сохранить выбранную пользователем дату
+      let idx = 0;
       if (window._pf_active_date) {
-        var found = dates.indexOf(window._pf_active_date);
+        const found = dates.indexOf(window._pf_active_date);
         if (found >= 0) {
           idx = found;
+        } else {
+          // если активной даты больше нет — берём последнюю
+          idx = dates.length - 1;
         }
+      } else {
+        // если активная дата не известна — по умолчанию последняя
+        idx = dates.length - 1;
       }
-        
-      console.log('[PF] applySeries: setData for index', {
-        idx: idx,
-        date: dates[idx],
-        userSelected: !!window._pf_user_selected,
-        activeDate: window._pf_active_date
-      });
-        
-      var rowsForDate = rows[idx] || [];
+
+      const rowsForDate = rows[idx] || [];
       api && api.setData(rowsForDate);
     }
 
