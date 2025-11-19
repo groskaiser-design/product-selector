@@ -3073,15 +3073,15 @@ function updateHint(){
 
   var api = render(container, []);
 
-/* ==================== Временная шкала (LITE / FIXED V2) ==================== */
+/* ==================== Временная шкала (V3: PIXEL PERFECT) ==================== */
   (function initTimeline(){
-    // Внутреннее состояние
+    // Состояние
     let _dates = []; 
     let _rows = [];  
     let _domItems = []; 
     let _lastDatesStr = '';
 
-    // Элементы DOM
+    // Элементы
     const tl = document.getElementById('timeline');
     const wheel = document.getElementById('dateWheel');
     const maskEl = tl ? tl.querySelector('.wheel-mask') : null;
@@ -3096,30 +3096,23 @@ function updateHint(){
     function normalizeSeries(input){
       if(!input) return { dates:[], rows:[] };
       let seriesMap = null;
-      
-      if (input.series && !Array.isArray(input.series)) {
-        seriesMap = input.series;
-      } 
+      if (input.series && !Array.isArray(input.series)) { seriesMap = input.series; } 
       else if (Array.isArray(input) && input.length && input[0]?.date) {
         seriesMap = {};
         input.forEach((it, i) => { seriesMap[it.date||i] = it.data || it.snapshot || {}; });
-      } 
-      else {
-        return { dates:['—'], rows:[ toRows(input) ] };
-      }
-      
+      } else { return { dates:['—'], rows:[ toRows(input) ] }; }
       const dates = Object.keys(seriesMap).sort((a,b) => new Date(a) - new Date(b));
       const rows = dates.map(d => toRows(seriesMap[d]||{}));
       return { dates, rows };
     }
 
-    // --- 2. Визуальное обновление (Маска + Active класс) ---
+    // --- 2. Визуал (Маска + Active) ---
     function updateVisuals() {
-      // Если секция скрыта (при сохранении), размеры будут 0. Выходим, чтобы не ломать логику.
-      if (!wheel.clientWidth) return; 
+      // Защита от скрытого элемента
+      if (!wheel.clientWidth && !window.innerWidth) return; 
       if (!_domItems.length) return;
 
-      const center = wheel.scrollLeft + wheel.clientWidth / 2;
+      const center = wheel.scrollLeft + (wheel.clientWidth || window.innerWidth) / 2;
       let bestIdx = 0;
       let minDst = Infinity;
 
@@ -3129,22 +3122,14 @@ function updateHint(){
         if (dst < minDst) { minDst = dst; bestIdx = i; }
       });
 
-      // Обновляем классы active и маску
       _domItems.forEach((btn, i) => {
         const isActive = (i === bestIdx);
         if (btn.classList.contains('active') !== isActive) {
            btn.classList.toggle('active', isActive);
            if (isActive) {
-             // Обновляем глобальный маркер, но НЕ перерисовываем данные здесь,
-             // чтобы избежать конфликтов при инерционном скролле.
              window._pf_active_date = _dates[i]; 
-             
-             // Если это действие пользователя (скролл), обновляем данные
-             // (проверка на isTrusted или флаг programmatic была бы лучше, но упростим:
-             //  просто обновляем данные, если они отличаются)
-             // ВАЖНО: При сохранении мы обновим данные принудительно в setSeries.
+             // Если скроллит юзер - обновляем данные
              if (api) api.setData(_rows[i] || []);
-             
              try { window.Telegram?.WebApp?.HapticFeedback?.selectionChanged(); } catch(_){}
            }
         }
@@ -3153,18 +3138,32 @@ function updateHint(){
       // Двигаем маску
       if (maskEl && _domItems[bestIdx]) {
         const el = _domItems[bestIdx];
-        const wr = wheel.getBoundingClientRect();
-        const pr = tl.getBoundingClientRect();
+        // Получаем размеры даже если элемент скрыт (через fallback ширину)
+        const elW = el.offsetWidth || 60;
+        const elH = el.offsetHeight || 30;
         
-        const maskW = Math.round(el.offsetWidth * 1.3 + 16); 
-        const maskH = Math.round(el.offsetHeight + 8);
+        // Размеры маски
+        const maskW = Math.round(elW * 1.3 + 16); 
+        const maskH = Math.round(elH + 8);
         
-        const centerX = (wr.left + wr.width/2) - pr.left; 
-        const left = centerX - maskW/2;
-        const top = (wr.top - pr.top) + (wr.height - maskH)/2;
-
-        maskEl.style.setProperty('--mask-left', `${left}px`);
-        maskEl.style.setProperty('--mask-top', `${top}px`);
+        // Считаем центр относительно контейнера (безопасно для скрытых элементов)
+        const contW = wheel.clientWidth || window.innerWidth; 
+        // Центр колеса = половина ширины контейнера
+        // Центр элемента = el.offsetLeft + elW/2
+        // Смещение маски = (ПоложениеЭлемента - Скролл) - ПоловинаМаски
+        // Но маска абсолютна внутри .timeline, а не внутри скролла.
+        
+        // Простой пересчет через getBoundingClientRect самый надежный для видимых элементов
+        if (wheel.clientWidth > 0) {
+           const wr = wheel.getBoundingClientRect();
+           const pr = tl.getBoundingClientRect();
+           const centerX = (wr.left + wr.width/2) - pr.left;
+           const left = centerX - maskW/2;
+           const top = (wr.top - pr.top) + (wr.height - maskH)/2;
+           
+           maskEl.style.setProperty('--mask-left', `${left}px`);
+           maskEl.style.setProperty('--mask-top', `${top}px`);
+        }
         maskEl.style.setProperty('--mask-w', `${maskW}px`);
         maskEl.style.setProperty('--mask-h', `${maskH}px`);
       }
@@ -3173,36 +3172,28 @@ function updateHint(){
     // --- 3. Скролл к индексу ---
     function scrollToIdx(idx, smooth) {
       if (!_domItems[idx]) return;
-      // Если элемент скрыт (display:none), offsetLeft будет 0.
-      // Но мы все равно пытаемся скроллить, браузер запомнит позицию.
-      
       const el = _domItems[idx];
-      // Расчет центра с защитой от нулевой ширины
       const contW = wheel.clientWidth || window.innerWidth; 
-      const elW = el.offsetWidth || 80; // фоллбэк ширина
+      const elW = el.offsetWidth || 80; 
       
       const target = el.offsetLeft - (contW / 2) + (elW / 2);
       
-      wheel.scrollTo({ 
-        left: target, 
-        behavior: smooth ? 'smooth' : 'auto' 
-      });
-
-      if (!smooth) {
-        // Форсируем обновление классов вручную, если скролл мгновенный
-        // (но только если элементы видимы)
-        requestAnimationFrame(updateVisuals);
-      }
+      wheel.scrollTo({ left: target, behavior: smooth ? 'smooth' : 'auto' });
+      if (!smooth) requestAnimationFrame(updateVisuals);
     }
 
-    // --- 4. Построение DOM ---
+    // --- 4. Построение DOM (ФИКС РАСПОРОК) ---
     function buildDOM(dates) {
       wheel.innerHTML = '';
       _domItems = [];
       
-      // ФИКС №1: Жесткие стили для распорки
-      // min-width: 50% гарантирует, что она не схлопнется
-      const spacerStyle = "flex: 0 0 50%; min-width: 50%; width: 50%; box-sizing: border-box;";
+      // РАСЧЕТ ШИРИНЫ В ПИКСЕЛЯХ
+      // Берем половину ширины контейнера или (если он скрыт) половину ширины экрана.
+      // Вычитаем пару пикселей для страховки от дробных значений.
+      const halfW = Math.floor((wheel.clientWidth || window.innerWidth) / 2);
+      
+      // Жесткий стиль в пикселях. Flex-shrink: 0 запрещает сжатие.
+      const spacerStyle = `flex: 0 0 ${halfW}px; min-width: ${halfW}px; width: ${halfW}px; box-sizing: border-box;`;
       
       const leftSpacer = document.createElement('div');
       leftSpacer.style.cssText = spacerStyle;
@@ -3233,16 +3224,23 @@ function updateHint(){
     }, { passive: true });
     
     window.addEventListener('resize', () => {
+      // При повороте экрана пересчитываем ширину распорок
+      // Т.к. DOM уже построен, просто обновим ширину первой и последней ноды
+      const spacers = wheel.querySelectorAll('div[style*="flex: 0 0"]');
+      const newHalf = Math.floor((wheel.clientWidth || window.innerWidth) / 2);
+      spacers.forEach(sp => {
+          sp.style.flexBasis = newHalf + 'px';
+          sp.style.minWidth = newHalf + 'px';
+          sp.style.width = newHalf + 'px';
+      });
       requestAnimationFrame(updateVisuals);
     }, { passive: true });
-
 
     // ================= PUBLIC API =================
     if (typeof window.PlanFactChart !== 'object') window.PlanFactChart = {};
 
     window.PlanFactChart.setSeries = function(seriesInput) {
       window.PLAN_FACT_SERIES = seriesInput;
-      
       const norm = normalizeSeries(seriesInput);
       _dates = norm.dates;
       _rows = norm.rows;
@@ -3260,30 +3258,22 @@ function updateHint(){
         _lastDatesStr = newDatesStr;
       }
 
-      // Логика выбора даты
       let targetIdx = -1;
-      if (window._pf_active_date) {
-        targetIdx = _dates.indexOf(window._pf_active_date);
-      }
-      if (targetIdx === -1) {
-        targetIdx = _dates.length - 1;
-      }
+      if (window._pf_active_date) targetIdx = _dates.indexOf(window._pf_active_date);
+      if (targetIdx === -1) targetIdx = _dates.length - 1;
 
-      // ФИКС №2: Принудительная заливка данных
-      // Мы не ждем scroll-события, потому что при скрытом графике (collapsed)
-      // updateVisuals не сработает корректно. Мы просто вставляем данные.
+      // ПРИНУДИТЕЛЬНОЕ ОБНОВЛЕНИЕ ДАННЫХ (ФИКС "ИСЧЕЗНОВЕНИЯ")
       if (api && _rows[targetIdx]) {
         api.setData(_rows[targetIdx]);
       }
       
-      // Обновляем window._pf_active_date, чтобы он был актуален
       window._pf_active_date = _dates[targetIdx];
-
-      // Ставим активный класс кнопке принудительно (на случай если updateVisuals не сработает из-за скрытости)
+      
+      // Принудительная подсветка (на случай скрытого скролла)
       _domItems.forEach(el => el.classList.remove('active'));
       if (_domItems[targetIdx]) _domItems[targetIdx].classList.add('active');
 
-      // И наконец, скроллим колесо на место
+      // Мгновенный скролл на место
       scrollToIdx(targetIdx, false);
     };
 
@@ -3293,7 +3283,6 @@ function updateHint(){
 
     const initial = window.PLAN_FACT_SERIES || window.PLAN_FACT_JSON;
     if (initial) window.PlanFactChart.setSeries(initial);
-    
   })();
 })();
 
