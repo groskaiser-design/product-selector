@@ -1,9 +1,9 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta name="viewport"
-        content="width=device-width, initial-scale=1, maximum-scale=1,
-                 user-scalable=no, viewport-fit=cover, interactive-widget=overlays-content" />
+  <meta name="viewport" 
+      content="width=device-width, initial-scale=1, maximum-scale=1, 
+               user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content" />
   <meta charset="UTF-8" />
   <title>AI Чат</title>
 
@@ -12,7 +12,7 @@
   // Фиксируем момент загрузки
   window.__pageLoadTime = (window.performance && performance.now) ? performance.now() : Date.now();
   // ↑ Меняй при каждом релизе
-  const APP_HTML_VERSION = 'v2025-0005';
+  const APP_HTML_VERSION = 'v2025-0006';
 
   if (!window.__vc_done) {
     window.__vc_done = true;
@@ -86,14 +86,16 @@
       z-index:0; pointer-events:none; transform:translateZ(0);
     }
 
-    .container{
-      position:relative; z-index:1; width:100%;
-      max-width: var(--maxw); margin:0 auto; display:flex; flex-direction:column;
-      min-height: var(--vh);
-    }
-    @supports (min-height: 100dvh){
-      .container{ min-height: 100dvh; }
-    }
+    /* Контейнер на всю высоту экрана */
+.container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;      /* Фоллбэк */
+  height: 100dvh;     /* Динамическая высота (учитывает адресную строку и клавиатуру) */
+  max-width: var(--maxw);
+  margin: 0 auto;
+  overflow: hidden;   /* Чтобы скроллился только чат, а не вся страница */
+}
 
     .header{
       padding:14px 16px; display:flex; align-items:center; justify-content:center;
@@ -109,10 +111,18 @@
     }
     .clear-btn:active{ transform:scale(.96); background:rgba(239,68,68,.3); }
 
-    .chat-area{
-      flex:1; overflow-y:auto; overflow-x:hidden; padding:16px 14px;
-      display:flex; flex-direction:column; gap:12px;
-      -webkit-overflow-scrolling:touch; scrollbar-width:thin; scrollbar-color:rgba(255,255,255,.3) transparent;
+/* Область чата растягивается и скроллится внутри */
+.chat-area {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 16px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  /* Убираем padding-bottom с calc(), он больше не нужен */
+  -webkit-overflow-scrolling: touch;
+}
 
       /* ключ: даём место под инпут + клавиатуру */
       padding-bottom: calc(16px + env(safe-area-inset-bottom) + var(--input-h) + var(--kb));
@@ -146,14 +156,17 @@
     .typing-dot:nth-child(3){ animation-delay:.4s; }
     @keyframes typing{ 0%,60%,100%{ transform:translateY(0); opacity:.7; } 30%{ transform:translateY(-10px); opacity:1; } }
 
-    /* ==== инпут-панель: фиксируем к вьюпорту и центрируем по max-width ==== */
-    .input-area{
-      position: fixed; left: 50%; transform: translateX(-50%) translateZ(0);
-      bottom: 0; width: min(100%, var(--maxw)); padding:12px 14px;
-      padding-bottom: max(env(safe-area-inset-bottom), 8px);
-      background: transparent; will-change: transform;
-      z-index: 5;
-    }
+/* Инпут теперь просто лежит внизу потока, а не фиксирован */
+.input-area {
+  position: relative; /* Убираем fixed */
+  width: 100%;
+  background: transparent; /* Или задай фон, если нужно перекрытие */
+  z-index: 5;
+  padding: 12px 14px;
+  /* Учитываем безопасную зону снизу для iPhone без кнопки */
+  padding-bottom: max(env(safe-area-inset-bottom), 12px);
+  flex-shrink: 0; /* Запрещаем сжатие панели ввода */
+}
     .input-wrapper{ display:flex; gap:10px; align-items:flex-end; }
     .input-field{
       flex:1; min-height:44px; max-height:120px; padding:12px 16px; border:1px solid var(--inputBorder);
@@ -299,51 +312,21 @@
 
 
   /* ====== 0.1) iOS/Telegram стабилизация высоты и клавиатуры ====== */
-  (function initKeyboardStabilizer(){
-    const tg   = window.Telegram && window.Telegram.WebApp;
-    const vv   = window.visualViewport;
-    const root = document.documentElement;
+ (function initKeyboardStabilizer(){
     const chat = document.getElementById('chatArea');
-    const inputArea = document.querySelector('.input-area');
+    
+    // Просто скроллим вниз при любом изменении размера окна (выход клавиатуры)
+    const scrollToBottom = () => {
+        if(chat) chat.scrollTop = chat.scrollHeight;
+    }
+
+    window.visualViewport.addEventListener('resize', scrollToBottom);
+    window.addEventListener('resize', scrollToBottom);
+    
+    // Для надежности при фокусе
     const input = document.getElementById('messageInput');
-    const setVar = (n,v)=> root.style.setProperty(n, v);
-
-    function measureInput(){
-      const h = (inputArea && inputArea.offsetHeight) || 56;
-      setVar('--input-h', h + 'px');
-    }
-    function update(){
-      // 1) стабильная высота экрана
-      let vh = window.innerHeight;
-      if (tg && tg.viewportStableHeight) vh = tg.viewportStableHeight;
-      setVar('--vh', Math.round(vh) + 'px');
-
-      // 2) высота перекрытия клавиатурой
-      let kb = 0;
-      if (vv) {
-        const occluded = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-        kb = Math.round(occluded);
-      }
-      setVar('--kb', kb + 'px');
-
-      // 3) докрутить чат вниз без «мягкой» анимации
-      if (chat) chat.scrollTop = chat.scrollHeight;
-    }
-
-    measureInput();
-    update();
-
-    if (tg && tg.onEvent){
-      tg.onEvent('viewportChanged', (e)=>{ if (e && e.isStateStable) { measureInput(); update(); } });
-    }
-    if (vv){
-      vv.addEventListener('resize', ()=> { measureInput(); update(); });
-      vv.addEventListener('scroll',  ()=> { update(); });
-    }
-    window.addEventListener('orientationchange', ()=> setTimeout(()=>{ measureInput(); update(); }, 300));
-    window.addEventListener('resize', ()=> { measureInput(); update(); });
-    input && input.addEventListener('focus', ()=> setTimeout(()=> update(), 250));
-  })();
+    input?.addEventListener('focus', () => setTimeout(scrollToBottom, 100));
+})();
 
   /* ====== 1) Конфиг фронта ====== */
   const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbz1fXF1OKxoku0ZbbSSu2uxnlndaiilEjWh3mR1GFoaOtM8eWoggAjwoDOVLetR3H7C/exec'; // ← ЗАМЕНИ при необходимости
