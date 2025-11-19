@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0002'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0004'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -1549,8 +1549,15 @@ function handleSaveClick_bm(e) {
     localStorage.removeItem('bm:chart:data:'   + String(uid));
     localStorage.removeItem('bm:comment:html:' + String(uid));
   } catch(_){}
-  // 6) Запускаем запрос на сохранение
+  
+  // 👉 Маркер: после этого сохранения график один раз должен показать последнюю дату
+  try {
+    window._pf_forceLastDateOnce = true;
+  } catch(_){}
+  
+    // 6) Запускаем запрос на сохранение
   const saveTask = saveMeasurementsToDB_bm(values, saveId);
+
   // 7) UI: сворачиваем анкету, скроллим вверх
   collapseAccordionSafe();
   requestAnimationFrame(() => requestAnimationFrame(scrollTopNoJump));
@@ -3295,9 +3302,15 @@ function updateHint(){
     // Инициализация и публичный API PlanFactChart
     // =====================================================
     if (typeof window.PlanFactChart !== 'object') window.PlanFactChart = {};
-
+    
+    // одноразовый флаг: после сохранения анкеты один раз показать последнюю дату
+    if (typeof window._pf_forceLastDateOnce === 'undefined') {
+      window._pf_forceLastDateOnce = false;
+    }
+    
     // флаг: таймлайн уже построен
     let _tlInited = false;
+
     // последняя нормализованная серия (dates/rows)
     let _tlNorm = null;
 
@@ -3339,9 +3352,18 @@ function updateHint(){
         return;
       }
 
-      // пытаемся сохранить выбранную пользователем дату
+      // выбираем, какую дату показать
       let idx = 0;
-      if (window._pf_active_date) {
+      
+      // 1) После сохранения/обновления анкеты – ОДИН РАЗ принудительно показываем последнюю дату
+      if (window._pf_forceLastDateOnce) {
+        idx = dates.length - 1;
+        window._pf_active_date = dates[idx];    // фиксируем активную дату
+        window._pf_forceLastDateOnce = false;   // флаг одноразовый
+      }
+      
+      // 2) В обычном режиме – остаёмся на той дате, которую выбрал пользователь
+      else if (window._pf_active_date) {
         const found = dates.indexOf(window._pf_active_date);
         if (found >= 0) {
           idx = found;
@@ -3349,13 +3371,17 @@ function updateHint(){
           // если активной даты больше нет — берём последнюю
           idx = dates.length - 1;
         }
-      } else {
-        // если активная дата не известна — по умолчанию последняя
-        idx = dates.length - 1;
       }
-
+      
+      // 3) Если активная дата ещё ни разу не устанавливалась – по умолчанию последняя
+      else {
+        idx = dates.length - 1;
+        window._pf_active_date = dates[idx];
+      }
+      
       const rowsForDate = rows[idx] || [];
       api && api.setData(rowsForDate);
+
     }
 
     // начальная инициализация из глобальных данных
