@@ -1549,12 +1549,6 @@ function handleSaveClick_bm(e) {
     localStorage.removeItem('bm:chart:data:'   + String(uid));
     localStorage.removeItem('bm:comment:html:' + String(uid));
   } catch(_){}
-  // 5.1) Сбрасываем выбор пользователя в таймлайне, чтобы показать свежий результат
-  try {
-    if (typeof window.resetTimelineSelection_bm === 'function') {
-      window.resetTimelineSelection_bm();
-    }
-  } catch(_){}
   // 6) Запускаем запрос на сохранение
   const saveTask = saveMeasurementsToDB_bm(values, saveId);
   // 7) UI: сворачиваем анкету, скроллим вверх
@@ -3115,24 +3109,7 @@ function updateHint(){
       }
     }
 
-    // =====================================================
-    // СОСТОЯНИЕ ТАЙМЛАЙНА
-    // =====================================================
-    
-    // Дата, выбранная пользователем (null = не выбирал)
-    let _userSelectedDate = null;
-    
-    // Флаг: пользователь взаимодействовал с таймлайном
-    let _userInteracted = false;
-
-    // Публичный метод для сброса выбора (после сохранения анкеты)
-    window.resetTimelineSelection_bm = function(){
-      _userSelectedDate = null;
-      _userInteracted = false;
-      console.log('%c[Timeline] Selection reset', 'color:#f80');
-    };
-
-    function setupTimeline(norm, api, initialIdx){
+    function setupTimeline(norm, api){
       const tl = document.getElementById('timeline');
       const wheel = document.getElementById('dateWheel');
       const maskEl = tl ? tl.querySelector('.wheel-mask') : null;
@@ -3176,11 +3153,7 @@ function updateHint(){
         btn.dataset.idx = String(i);
         btn.textContent = label;
         btn.addEventListener('click', function(){
-          const idx = Number(this.dataset.idx);
-          // Пользователь кликнул — запоминаем выбор
-          _userInteracted = true;
-          _userSelectedDate = norm.dates[idx] || null;
-          centerTo(idx, true, 'smooth');
+          centerTo(Number(this.dataset.idx), true, 'smooth');
         });
         wheel.appendChild(btn);
         items[i] = btn;
@@ -3209,9 +3182,6 @@ function updateHint(){
 
       let active = -1, rafId = 0, snapTimer = 0;
       
-      // Флаг программного скролла (не от пользователя)
-      let _programmaticScroll = false;
-      
       function setAria(){
         for(let k=0; k<items.length; k++){
           if(!items[k]) continue;
@@ -3220,7 +3190,7 @@ function updateHint(){
         }
       }
       
-      function activate(i, announce, isUserAction){
+      function activate(i, announce){
       if(i === active || i < 0 || i >= n) return;
       if(items[active]){
         items[active].classList.remove('active');
@@ -3235,12 +3205,6 @@ function updateHint(){
       api && api.setData(norm.rows[i]||[]);
       syncMask();
       window._pf_active_date = norm.dates[i];
-      
-      // Если действие пользователя — запоминаем
-      if (isUserAction) {
-        _userInteracted = true;
-        _userSelectedDate = norm.dates[i];
-      }
     
       // Хаптика при смене активной даты (скролл/клик/стрелки)
       if (announce) {
@@ -3259,7 +3223,7 @@ function updateHint(){
         if(!el) return;
         const target = el.offsetLeft + el.offsetWidth/2 - wheel.clientWidth/2;
         wheel.scrollTo({ left: Math.max(0, target), behavior: (behavior||'auto') });
-        activate(i, announce, false);
+        activate(i, announce);
         syncMask();
       }
       
@@ -3275,16 +3239,7 @@ function updateHint(){
             if(d < bestDist){ bestDist = d; best = k; }
           }
           const changed = best !== active;
-          
-          // Определяем, это пользователь скроллит или программа
-          const isUserAction = !_programmaticScroll && changed;
-          
-          if (isUserAction && changed) {
-            _userInteracted = true;
-            _userSelectedDate = norm.dates[best] || null;
-          }
-          
-          activate(best, changed, isUserAction);
+          activate(best, changed);
           syncMask();
           if(snapTimer) clearTimeout(snapTimer);
           snapTimer = setTimeout(function(){
@@ -3293,9 +3248,7 @@ function updateHint(){
             const target = el.offsetLeft + el.offsetWidth/2 - wheel.clientWidth/2;
             const curCenter = wheel.scrollLeft + wheel.clientWidth/2;
             if(Math.abs(curCenter - (el.offsetLeft + el.offsetWidth/2)) > 3){
-              _programmaticScroll = true;
               wheel.scrollTo({ left: Math.max(0, target), behavior: 'auto' });
-              setTimeout(() => { _programmaticScroll = false; }, 100);
             }
           }, 140);
         });
@@ -3305,27 +3258,16 @@ function updateHint(){
       wheel.addEventListener('wheel', function(e){
         if(Math.abs(e.deltaY) > Math.abs(e.deltaX)){
           e.preventDefault();
-          _userInteracted = true;
           wheel.scrollLeft += e.deltaY;
         }
       }, { passive:false });
       wheel.addEventListener('keydown', function(e){
         if(e.key === 'ArrowLeft'){
           e.preventDefault();
-          const newIdx = active-1;
-          if (newIdx >= 0) {
-            _userInteracted = true;
-            _userSelectedDate = norm.dates[newIdx] || null;
-          }
-          centerTo(newIdx, true, 'smooth');
+          centerTo(active-1, true, 'smooth');
         } else if(e.key === 'ArrowRight'){
           e.preventDefault();
-          const newIdx = active+1;
-          if (newIdx < n) {
-            _userInteracted = true;
-            _userSelectedDate = norm.dates[newIdx] || null;
-          }
-          centerTo(newIdx, true, 'smooth');
+          centerTo(active+1, true, 'smooth');
         }
       });
       window.addEventListener('resize', function(){
@@ -3334,18 +3276,7 @@ function updateHint(){
         syncMask();
       }, { passive:true });
 
-      // Начальная позиция
-      const startIdx = (typeof initialIdx === 'number' && initialIdx >= 0 && initialIdx < n) 
-        ? initialIdx 
-        : n-1;
-      
-      console.log('%c[Timeline] Setup: startIdx=%d, total=%d', 'color:#4af', startIdx, n);
-      
-      // Программный скролл при инициализации
-      _programmaticScroll = true;
-      centerTo(startIdx, false, 'auto');
-      setTimeout(() => { _programmaticScroll = false; }, 200);
-      
+      centerTo(n-1, false, 'auto');
       syncMask();
     }
 
@@ -3375,32 +3306,12 @@ function updateHint(){
       const norm = normalizeSeries(seriesInput || {});
       _tlNorm = norm;
 
-      const dates = Array.isArray(norm.dates) ? norm.dates : [];
-      const rows  = Array.isArray(norm.rows)  ? norm.rows  : [];
-
-      // Определяем целевой индекс
-      let targetIdx = dates.length - 1;
-      
-      if (_userInteracted && _userSelectedDate) {
-        // Пользователь выбирал — ищем его дату
-        const found = dates.indexOf(_userSelectedDate);
-        if (found >= 0) {
-          targetIdx = found;
-          console.log('%c[Timeline] Restore user date: %s (idx=%d)', 'color:#0f0', _userSelectedDate, targetIdx);
-        } else {
-          // Дата не найдена — показываем последнюю
-          console.log('%c[Timeline] User date not found, showing last', 'color:#f80');
-          targetIdx = dates.length - 1;
-          _userSelectedDate = dates[targetIdx] || null;
-        }
-      } else {
-        console.log('%c[Timeline] No user selection, showing last (idx=%d)', 'color:#4af', targetIdx);
-      }
-
       // первая инициализация — всегда строим колесо, если есть хотя бы один замер
       if (!_tlInited) {
         if (norm.rows.length > 0){
-          setupTimeline(norm, api, targetIdx);
+          const last = norm.rows[(norm.rows.length-1)|0] || [];
+          api && api.setData(last);
+          setupTimeline(norm, api);
         } else {
           const tl = document.getElementById('timeline');
           if (tl) tl.hidden = true;
@@ -3414,12 +3325,13 @@ function updateHint(){
       const prevDates = (prevNorm && Array.isArray(prevNorm.dates)) ? prevNorm.dates.join('|') : '';
       const newDates  = (norm && Array.isArray(norm.dates))       ? norm.dates.join('|')       : '';
       if (prevDates !== newDates) {
-        console.log('%c[Timeline] Dates changed, rebuilding', 'color:#ff0');
-        setupTimeline(norm, api, targetIdx);
-        return;
+        setupTimeline(norm, api);
       }
 
-      // дальше таймлайн уже есть — только обновляем данные под нужную дату
+ // дальше таймлайн уже есть — только обновляем данные под нужную дату
+      const dates = Array.isArray(norm.dates) ? norm.dates : [];
+      const rows  = Array.isArray(norm.rows)  ? norm.rows  : [];
+
       if (!dates.length || !rows.length) {
         const tl = document.getElementById('timeline');
         if (tl) tl.hidden = true;
@@ -3427,9 +3339,23 @@ function updateHint(){
         return;
       }
 
-      const rowsForDate = rows[targetIdx] || [];
+      // пытаемся сохранить выбранную пользователем дату
+      let idx = 0;
+      if (window._pf_active_date) {
+        const found = dates.indexOf(window._pf_active_date);
+        if (found >= 0) {
+          idx = found;
+        } else {
+          // если активной даты больше нет — берём последнюю
+          idx = dates.length - 1;
+        }
+      } else {
+        // если активная дата не известна — по умолчанию последняя
+        idx = dates.length - 1;
+      }
+
+      const rowsForDate = rows[idx] || [];
       api && api.setData(rowsForDate);
-      window._pf_active_date = dates[targetIdx];
     }
 
     // начальная инициализация из глобальных данных
