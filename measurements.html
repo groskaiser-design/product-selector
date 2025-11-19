@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0006'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0007'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -1531,9 +1531,15 @@ function handleSaveClick_bm(e) {
   }
   const tg = window.Telegram?.WebApp;
   const prevRowCalc = getRowCalcForUser_bm();
-  // 🔒 Предполагаем, что новый row будет минимум prevRowCalc + 1
-  const minNewRow = (Number(prevRowCalc) || 0) + 1;
-  try { lockDesiredRow(minNewRow, 60000); } catch(_){}
+  
+  // 🔒 FIX: Для новых пользователей (prevRowCalc == null) не лочим "row 1", 
+  // чтобы не блокировать отображение, если бэк вернет NO_ROW во время сохранения.
+  // Лочим только если у нас реально был предыдущий row.
+  if (prevRowCalc) {
+      const minNewRow = (Number(prevRowCalc) || 0) + 1;
+      try { lockDesiredRow(minNewRow, 60000); } catch(_){}
+  }
+
   const saveId = genSaveId_bm();
   // 3) Флаг процесса сохранения + кулдаун + UI
   SAVE_IN_PROGRESS = true;
@@ -1563,17 +1569,21 @@ function handleSaveClick_bm(e) {
   // 7) UI: сворачиваем анкету, скроллим вверх
   collapseAccordionSafe();
   requestAnimationFrame(() => requestAnimationFrame(scrollTopNoJump));
+  
   // 8) Запускаем потоки обновления фронта (AI, макросы, график)
+  // FIX: Задержка чуть больше, чтобы дать saveTask шанс выполниться
   setTimeout(() => {
     try { startFrontDataFlow_bm(); } catch(_){}
     try { window.startFrontDataFlow_bm_bm(); } catch(_){}
     try { window.startMacrosFlow_bm_bm(); } catch(_){}
     try { window.startChartDataFlow_bm_bm && window.startChartDataFlow_bm_bm(); } catch(_){}
     try { window.startChartFlow_bm_bm(); } catch(_){}
-  }, 0);
+  }, 50);
+
   // 9) Мгновенная обратная связь пользователю
   try { tg?.HapticFeedback?.notificationOccurred?.('success'); } catch(_){}
   showPopup('Готово', 'Данные отправлены. Обновляем…', 'success');
+  
   // 10) Обработка успешного сохранения
   saveTask
     .then(async (res) => {
@@ -1581,8 +1591,10 @@ function handleSaveClick_bm(e) {
       if (Number.isFinite(rowCalc)) setRowCalcForUser_bm(rowCalc);
       const ts = res?.ts_iso ? Date.parse(res.ts_iso) : Date.now();
       setLastMeasurementTime_bm(ts);
+      
       // 🔒 Перелочим уже на фактический row (ещё на 10 секунд)
-      try { lockDesiredRow(Number(rowCalc) || minNewRow, 10000); } catch(_){}
+      try { lockDesiredRow(Number(rowCalc), 10000); } catch(_){}
+      
       // Обновляем макросы и график
       try { window.startMacrosFlow_bm_bm(); } catch(_){}
       try { window.startChartFlow_bm_bm(); } catch(_){}
@@ -1594,29 +1606,30 @@ function handleSaveClick_bm(e) {
           uid
         );
       } catch(_){}
+      
       // Ждём, пока свежие данные для графика точно доедут (fast=20с, slow=60с по умолчанию)
-waitForFreshData_bm(rowCalc)
-  .then(b => {
-    if (b && b.chart && b.chart.ready && b.chart.data) {
-      const uid = (typeof currentUserId_bm === 'function') ? currentUserId_bm() : 'anon';
-      const chartRow = Number(b.chart.row || b.row || 0);
+      waitForFreshData_bm(rowCalc)
+      .then(b => {
+        if (b && b.chart && b.chart.ready && b.chart.data) {
+          const uid = (typeof currentUserId_bm === 'function') ? currentUserId_bm() : 'anon';
+          const chartRow = Number(b.chart.row || b.row || 0);
 
-      // ✅ НЕ кладём в кэш график, если он старее только что сохранённого rowCalc
-      if (rowCalc && chartRow && chartRow < Number(rowCalc)) {
-        console.log('⚠️ Chart: получили старый row из waitForFreshData, игнорируем', { chartRow, rowCalc });
-        return;
-      }
-      const seed = { 
-        row: chartRow || null, 
-        data: b.chart.data, 
-        updated_at: b.chart.updated_at 
-      };
-      localStorage.setItem('bm:chart:data:' + uid, JSON.stringify(seed));
-      console.log('✅ Chart: данные сохранены после waitForFreshData');
-      try { window.startChartFlow_bm_bm(); } catch(_){}
-    }
-  })
-  .catch(()=>{});
+          // ✅ НЕ кладём в кэш график, если он старее только что сохранённого rowCalc
+          if (rowCalc && chartRow && chartRow < Number(rowCalc)) {
+            console.log('⚠️ Chart: получили старый row из waitForFreshData, игнорируем', { chartRow, rowCalc });
+            return;
+          }
+          const seed = { 
+            row: chartRow || null, 
+            data: b.chart.data, 
+            updated_at: b.chart.updated_at 
+          };
+          localStorage.setItem('bm:chart:data:' + uid, JSON.stringify(seed));
+          console.log('✅ Chart: данные сохранены после waitForFreshData');
+          try { window.startChartFlow_bm_bm(); } catch(_){}
+        }
+      })
+      .catch(()=>{});
     })
     // 11) Обработка ошибок сохранения
     .catch(async (err) => {
@@ -1630,35 +1643,32 @@ waitForFreshData_bm(rowCalc)
           setRowCalcForUser_bm(Number(confirmed));
           setLastMeasurementTime_bm(Date.now());
           setUnlockTime_bm(Date.now() + 4000);
-          // 🔒 Удержим новый row ещё на 10 секунд
-          try { lockDesiredRow(Number(confirmed) || minNewRow, 10000); } catch(_){}
+          
+          try { lockDesiredRow(Number(confirmed), 10000); } catch(_){}
           try { window.startMacrosFlow_bm_bm(); } catch(_){}
           try { window.startChartFlow_bm_bm(); } catch(_){}
-          // Ждём свежий график (здесь fast=20с, slow=60с явно заданы)
-waitForFreshData_bm(confirmed, 20000, 60000)
-  .then(b => {
-    if (b && b.chart && b.chart.ready && b.chart.data) {
-      const uid = (typeof currentUserId_bm === 'function') ? currentUserId_bm() : 'anon';
-      const chartRow = Number(b.chart.row || b.row || 0);
+          
+          // Ждём свежий график
+          waitForFreshData_bm(confirmed, 20000, 60000)
+          .then(b => {
+            if (b && b.chart && b.chart.ready && b.chart.data) {
+              const uid = (typeof currentUserId_bm === 'function') ? currentUserId_bm() : 'anon';
+              const chartRow = Number(b.chart.row || b.row || 0);
 
-      // ✅ То же правило при recovery после таймаута:
-      // не кладём в кэш, если row графика старее подтверждённого confirmed
-      if (confirmed && chartRow && chartRow < Number(confirmed)) {
-        console.log('⚠️ Chart (timeout): получили старый row, игнорируем', { chartRow, confirmed });
-        return;
-      }
+              if (confirmed && chartRow && chartRow < Number(confirmed)) {
+                return;
+              }
 
-      const seed = { 
-        row: chartRow || null, 
-        data: b.chart.data, 
-        updated_at: b.chart.updated_at 
-      };
-      localStorage.setItem('bm:chart:data:' + uid, JSON.stringify(seed));
-      console.log('✅ Chart: данные сохранены после waitForFreshData (timeout recovery)');
-      try { window.startChartFlow_bm_bm(); } catch(_){}
-    }
-  })
-  .catch(()=>{});
+              const seed = { 
+                row: chartRow || null, 
+                data: b.chart.data, 
+                updated_at: b.chart.updated_at 
+              };
+              localStorage.setItem('bm:chart:data:' + uid, JSON.stringify(seed));
+              try { window.startChartFlow_bm_bm(); } catch(_){}
+            }
+          })
+          .catch(()=>{});
 
           return;
         }
