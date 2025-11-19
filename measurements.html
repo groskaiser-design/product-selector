@@ -1631,62 +1631,18 @@ function handleSaveClick_bm(e) {
       })
       .catch(()=>{});
     })
-    // 11) Обработка ошибок сохранения
+    // 11) Обработка ошибок сохранения (ДЕБАГ-ВЕРСИЯ)
     .catch(async (err) => {
       const msg = String((err && err.message) || err || '');
-      // --- Таймаут / сетевые проблемы ---
-      if ((err && err.code === 408) || /timeout|network/i.test(msg)) {
-        // Пробуем понять, не сохранил ли бэк всё-таки данные
-        const confirmed = await confirmSavedAfterTimeout_bm(prevRowCalc).catch(() => null);
-        if (confirmed != null) {
-          // Да, новая строка появилась
-          setRowCalcForUser_bm(Number(confirmed));
-          setLastMeasurementTime_bm(Date.now());
-          setUnlockTime_bm(Date.now() + 4000);
-          
-          try { lockDesiredRow(Number(confirmed), 10000); } catch(_){}
-          try { window.startMacrosFlow_bm_bm(); } catch(_){}
-          try { window.startChartFlow_bm_bm(); } catch(_){}
-          
-          // Ждём свежий график
-          waitForFreshData_bm(confirmed, 20000, 60000)
-          .then(b => {
-            if (b && b.chart && b.chart.ready && b.chart.data) {
-              const uid = (typeof currentUserId_bm === 'function') ? currentUserId_bm() : 'anon';
-              const chartRow = Number(b.chart.row || b.row || 0);
+      console.error('Save Error:', err); // Пишем в консоль (если смотришь через дебаггер)
 
-              if (confirmed && chartRow && chartRow < Number(confirmed)) {
-                return;
-              }
+      // Ставим небольшую задержку на кнопку
+      setUnlockTime_bm(Date.now() + 3000);
 
-              const seed = { 
-                row: chartRow || null, 
-                data: b.chart.data, 
-                updated_at: b.chart.updated_at 
-              };
-              localStorage.setItem('bm:chart:data:' + uid, JSON.stringify(seed));
-              try { window.startChartFlow_bm_bm(); } catch(_){}
-            }
-          })
-          .catch(()=>{});
-
-          return;
-        }
-        // Если подтвердить сохранение не удалось
-        setUnlockTime_bm(Date.now() + 2000);
-        showPopup('Не подтверждено', 'Сервер не успел ответить. Проверьте «Последний замер».', 'error');
-        try { startFrontDataFlow_bm(); } catch(_){}
-        return;
-      }
-      // --- Rate limit (слишком часто жмут кнопку) ---
-      if ((err && err.code === 429) || /too\s*many\s*requests|rate[-_\s]*limit|слишком\s+часто|429/i.test(msg)) {
-        setUnlockTime_bm(Date.now() + 4000);
-        showPopup('Too many requests', 'Не нужно так часто нажимать эту кнопку', 'error');
-        return;
-      }
-      // --- Любая другая ошибка ---
-      setUnlockTime_bm(Date.now() + 2000);
-      showPopup('Не сохранено', 'Произошла ошибка при сохранении. Попробуйте позже.', 'error');
+      // ГЛАВНОЕ: Выводим реальный текст ошибки пользователю
+      // Если это "Missing init_data" — значит, проблема в авторизации (тест не в ТГ).
+      // Если "ScriptError" — проблема в Google Script (деплой).
+      showPopup('Ошибка сервера (DEBUG)', msg, 'error');
     })
     // 12) В любом случае после then/catch возвращаем кнопку и флаг в норму
     .finally(() => {
@@ -1704,6 +1660,7 @@ function handleSaveClick_bm(e) {
   var newBtn = btn.cloneNode(true);
   btn.parentNode.replaceChild(newBtn, btn);
   newBtn.addEventListener('click', handleSaveClick_bm, false);
+  
 })();
 
 /* ============================================================
