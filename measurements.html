@@ -3500,214 +3500,467 @@ function updateHint(){
     console.log('%c[E3.1] Controller initialized and listening','color:#c9c');
 })();
   
+<!-- ============================================================
+ * ФИНАЛЬНЫЙ КОД БЛОКА E3 — График динамики веса
+ * Самодостаточный HTML-компонент, включающий CSS и JavaScript.
+ * ------------------------------------------------------------ -->
+<style>
+/* Weight Chart Styles - все классы с префиксом wc- для изоляции */
+.wc-root {
+  --wc-font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial, sans-serif;
+  
+  /* Настройки графика */
+  --wc-text-color: #ffffff;
+  --wc-text-size: 11px;
+  --wc-point-color: #f59e0b; /* Оранжевый */
+  --wc-line-color: #ffffff;
+  --wc-line-width: 2.5;
+  --wc-height: 220px;
+  --wc-y-axis-width: 32px;
+  
+  /* Цвета */
+  --wc-muted: rgba(255, 255, 255, 0.72);
+  --wc-grid-color: rgba(255, 255, 255, 0.12);
+  
+  /* Фон */
+  --wc-grad-from: #7B6EF6; /* Фиолетовый */
+  --wc-grad-to: #6F7FF0; /* Синий */
+  --wc-shadow: 0 8px 24px rgba(27, 35, 78, 0.3);
+
+  display: flex;
+  flex-direction: column;
+  height: var(--wc-height);
+  padding: 0 0 8px 0; /* Отступ снизу для осей X */
+  background: linear-gradient(135deg, var(--wc-grad-from), var(--wc-grad-to));
+  border-radius: 12px;
+  box-shadow: var(--wc-shadow);
+  color: var(--wc-text-color);
+  font-family: var(--wc-font-family);
+  position: relative;
+  overflow: hidden;
+}
+
+.wc-title {
+  font-size: 16px;
+  font-weight: 600;
+  padding: 12px 16px 8px;
+  margin: 0;
+}
+
+.wc-chart-area {
+  display: flex;
+  flex: 1;
+  overflow-x: hidden;
+  position: relative;
+}
+
+.wc-y-axis {
+  width: var(--wc-y-axis-width);
+  flex-shrink: 0;
+  position: relative;
+  height: 100%;
+}
+
+.wc-y-label {
+  position: absolute;
+  right: 4px;
+  font-size: var(--wc-text-size);
+  color: var(--wc-muted);
+  transform: translateY(-50%); /* Центрирование по вертикали */
+  z-index: 10;
+}
+
+.wc-scroll {
+  flex-grow: 1;
+  overflow-x: auto;
+  overflow-y: hidden;
+  height: 100%;
+  position: relative;
+  -ms-overflow-style: none; /* IE and Edge */
+  scrollbar-width: none; /* Firefox */
+}
+
+.wc-scroll::-webkit-scrollbar {
+  display: none; /* Chrome, Safari and Opera */
+}
+
+.wc-inner {
+  display: flex;
+  min-width: 100%; 
+  height: 100%;
+  position: relative;
+}
+
+.wc-chart-svg {
+  flex-shrink: 0;
+  width: auto;
+  height: 100%;
+  min-width: 100%; 
+  overflow: visible;
+}
+
+.wc-grid-line {
+  stroke: var(--wc-grid-color);
+  stroke-width: 1;
+  stroke-dasharray: 4, 4;
+}
+
+.wc-path {
+  fill: none;
+  stroke: var(--wc-line-color);
+  stroke-width: var(--wc-line-width);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.wc-point {
+  fill: var(--wc-point-color);
+  stroke: var(--wc-line-color);
+  stroke-width: 2;
+  cursor: pointer;
+  transition: transform 0.1s ease;
+}
+
+.wc-point:hover {
+  transform: scale(1.5);
+}
+
+.wc-x-label {
+  font-size: var(--wc-text-size);
+  fill: var(--wc-muted);
+  text-anchor: middle;
+}
+
+/* Тултип */
+.wc-tooltip {
+  position: absolute;
+  padding: 8px 12px;
+  background-color: rgba(0, 0, 0, 0.8);
+  border-radius: 8px;
+  color: #fff;
+  font-size: var(--wc-text-size);
+  font-weight: 500;
+  pointer-events: none;
+  opacity: 0;
+  /* Для всплытия над точкой: сдвигаем на высоту тултипа + отступ */
+  transform: translate(-50%, -100%) translateY(-10px); 
+  transition: opacity 0.2s, transform 0.2s;
+  white-space: nowrap;
+  z-index: 20;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.wc-tooltip.wc-visible {
+  opacity: 1;
+  transform: translate(-50%, -100%) translateY(-20px);
+}
+
+.wc-tooltip-date {
+  display: block;
+  font-weight: 400;
+  color: var(--wc-muted);
+  margin-bottom: 2px;
+}
+
+/* Заглушка "Нет данных" */
+.wc-no-data {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-size: 14px;
+  color: var(--wc-muted);
+  background-color: rgba(0, 0, 0, 0.1);
+  border-radius: 12px;
+  z-index: 5;
+}
+</style>
+
+<!-- ==================== HTML СТРУКТУРА ==================== -->
+<div id="weight-chart-field">
+    <div class="wc-root">
+      <h3 class="wc-title">Динамика веса (кг)</h3>
+      
+      <div class="wc-chart-area">
+        <!-- Ось Y (метки генерируются JS) -->
+        <div id="wcYAxis" class="wc-y-axis"></div>
+        
+        <!-- Область прокрутки X -->
+        <div id="wcScroll" class="wc-scroll">
+          <div id="wcInner" class="wc-inner">
+            <!-- SVG, в который рисуется график -->
+            <svg id="wcChart" class="wc-chart-svg"></svg>
+            
+            <!-- Сообщение об отсутствии данных -->
+            <div id="wcNoData" class="wc-no-data" style="display: none;">Нет данных для отображения</div>
+          </div>
+        </div>
+        
+        <!-- Тултип -->
+        <div id="wcTooltip" class="wc-tooltip">
+          <span id="wcTooltipDate" class="wc-tooltip-date"></span>
+          <span id="wcTooltipValue" class="wc-tooltip-value"></span>
+        </div>
+      </div>
+    </div>
+</div>
+
+
 /* ============================================================
- *  BLOCK E3 График динамика веса
+ * BLOCK E3 — График динамика веса
+ * Инкапсулированный модуль WeightChart
  * ============================================================ */
-  // Логика графика теперь инкапсулирована в самовызывающейся функции
-  var WeightChart = (function() {
+var WeightChart = (function() {
     // Внутренние переменные и настройки
     const CHART_PADDING_TOP = 15;
     const CHART_HEIGHT = 220;
     const X_AXIS_HEIGHT = 20;
-    const Y_AXIS_WIDTH = 32;
-    const MAX_CHART_AREA_HEIGHT = CHART_HEIGHT - CHART_PADDING_TOP - X_AXIS_HEIGHT;
+    // Максимальная высота области для рисования линии (исключая отступы и X-ось)
+    const MAX_CHART_AREA_HEIGHT = CHART_HEIGHT - CHART_PADDING_TOP - X_AXIS_HEIGHT; 
     // Форматирование даты
     const DATE_FORMATTER = new Intl.DateTimeFormat('ru-RU', { month: 'short', day: 'numeric' });
     const defaultData = { series: {} };
 
-    let chart, yAxis, scroll, tooltip, tooltipDate, tooltipValue, noDataElement;
+    // Элементы DOM (будут инициализированы в init)
+    let chart, yAxis, scroll, inner, tooltip, tooltipDate, tooltipValue, noDataElement;
 
+    // Извлекает и форматирует точки данных
     function getDataPoints(data) {
-      if (!data || !data.series) return [];
-      return Object.keys(data.series)
-        .map(date => ({
-          date: date,
-          weight: data.series[date].weight_kg 
-        }))
-        .filter(d => typeof d.weight === 'number')
-        .sort((a, b) => new Date(a.date) - new Date(b.date)); // Сортируем по дате
+        if (!data || !data.series) return [];
+        return Object.keys(data.series)
+            .map(date => ({
+                date: date,
+                weight: data.series[date].weight_kg
+            }))
+            .filter(d => typeof d.weight === 'number' && d.weight > 0) // Исключаем нечисла и нули
+            .sort((a, b) => new Date(a.date) - new Date(b.date)); // Сортируем по дате
     }
 
+    // Основная функция отрисовки графика
     function draw(data) {
-      const points = getDataPoints(data);
-      const hasData = points.length > 0;
+        const points = getDataPoints(data);
+        const hasData = points.length > 0;
 
-      // Управление отображением заглушки
-      noDataElement = document.querySelector('.wc-no-data');
-      if (noDataElement) {
-        noDataElement.style.display = hasData ? 'none' : 'flex';
-      }
-      
-      const wcInner = document.querySelector('.wc-inner');
-      if (wcInner) {
-        wcInner.style.display = hasData ? 'flex' : 'none'; // Показать/скрыть wc-inner
-      }
-
-      if (!hasData) {
-        if (chart) chart.innerHTML = '';
-        if (yAxis) yAxis.innerHTML = '';
-        return;
-      }
-
-      // 1. Расчеты масштаба
-      const weights = points.map(p => p.weight);
-      const minWeight = Math.min(...weights) - 1;
-      const maxWeight = Math.max(...weights) + 1;
-      const weightRange = maxWeight - minWeight;
-
-      const CHART_POINT_WIDTH = 60;
-      const CHART_WIDTH = Math.max(500, points.length * CHART_POINT_WIDTH);
-      chart.setAttribute('width', CHART_WIDTH);
-      chart.setAttribute('height', CHART_HEIGHT);
-      chart.setAttribute('viewBox', `0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`);
-      chart.innerHTML = ''; // Очистка SVG
-      yAxis.innerHTML = ''; // Очистка Y-оси
-      
-      const xStep = CHART_WIDTH / points.length;
-
-      // 2. Построение Y-оси и сетки
-      const yAxisSteps = 4;
-      for (let i = 0; i <= yAxisSteps; i++) {
-        const y = CHART_PADDING_TOP + (MAX_CHART_AREA_HEIGHT / yAxisSteps) * i;
-        const weightValue = maxWeight - (weightRange / yAxisSteps) * i;
-        
-        // Горизонтальная линия сетки (добавляется в SVG)
-        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-        line.setAttribute('x1', 0);
-        line.setAttribute('y1', y);
-        line.setAttribute('x2', CHART_WIDTH);
-        line.setAttribute('y2', y);
-        line.setAttribute('class', 'wc-grid-line');
-        if (i === 0 || i === yAxisSteps) line.style.stroke = 'var(--wc-line-color)';
-        chart.appendChild(line);
-
-        // Подпись Y-оси (добавляется в HTML)
-        const text = document.createElement('div');
-        text.className = 'wc-y-label';
-        text.style.top = `${y - (CHART_PADDING_TOP / 2)}px`;
-        text.textContent = weightValue.toFixed(0);
-        yAxis.appendChild(text);
-      }
-      
-      function getX(index) {
-        return xStep * index + xStep / 2;
-      }
-
-      function getY(weight) {
-        return CHART_PADDING_TOP + MAX_CHART_AREA_HEIGHT * (1 - (weight - minWeight) / weightRange);
-      }
-
-      // 3. Построение X-оси и пути
-      let pathData = '';
-      points.forEach((d, i) => {
-        const cx = getX(i);
-        const cy = getY(d.weight);
-
-        if (i === 0) {
-          pathData += `M ${cx} ${cy}`;
-        } else {
-          pathData += ` L ${cx} ${cy}`;
+        // Управление отображением заглушки
+        if (noDataElement) {
+            noDataElement.style.display = hasData ? 'none' : 'flex';
+        }
+        if (inner) {
+            inner.style.display = hasData ? 'flex' : 'none';
         }
 
-        // Подпись X-оси
-        const dateText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        dateText.setAttribute('x', cx);
-        dateText.setAttribute('y', CHART_HEIGHT - X_AXIS_HEIGHT / 2);
-        dateText.setAttribute('class', 'wc-x-label');
-        dateText.textContent = DATE_FORMATTER.format(new Date(d.date));
-        chart.appendChild(dateText);
-      });
+        if (!hasData) {
+            if (chart) chart.innerHTML = '';
+            if (yAxis) yAxis.innerHTML = '';
+            return;
+        }
 
-      // Путь данных
-      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      path.setAttribute('d', pathData);
-      path.setAttribute('class', 'wc-path');
-      chart.appendChild(path);
-      
-      // 4. Точки данных
-      points.forEach((d, i) => {
-        const cx = getX(i);
-        const cy = getY(d.weight);
+        // 1. Расчеты масштаба и размеров
+        const weights = points.map(p => p.weight);
+        const minVal = Math.min(...weights);
+        const maxVal = Math.max(...weights);
         
-        const point = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-        point.setAttribute('cx', cx);
-        point.setAttribute('cy', cy);
-        point.setAttribute('r', 4);
-        point.setAttribute('class', 'wc-point');
+        // Устанавливаем диапазон Y с отступом (0.5 кг)
+        const minWeight = Math.floor(minVal - 0.5);
+        const maxWeight = Math.ceil(maxVal + 0.5);
+        const weightRange = maxWeight - minWeight;
 
-        point.addEventListener('mouseenter', (e) => showTooltip(e, cx, cy, d.date, d.weight));
-        point.addEventListener('touchstart', (e) => {
-          e.preventDefault(); 
-          showTooltip(e, cx, cy, d.date, d.weight);
-          setTimeout(hideTooltip, 2000); 
-        }, { passive: false });
-        point.addEventListener('mouseleave', hideTooltip);
+        const CHART_POINT_WIDTH = 60;
+        const Y_AXIS_WIDTH = 32; // Ширина элемента wc-y-axis (из CSS)
+        // Если точек мало, используем минимальную ширину контейнера
+        const CHART_WIDTH = Math.max(scroll.clientWidth - Y_AXIS_WIDTH, points.length * CHART_POINT_WIDTH); 
 
-        chart.appendChild(point);
-      });
+        chart.setAttribute('width', CHART_WIDTH);
+        chart.setAttribute('height', CHART_HEIGHT);
+        chart.setAttribute('viewBox', `0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`);
+        chart.innerHTML = ''; // Очистка SVG
+        yAxis.innerHTML = ''; // Очистка Y-оси
+        
+        const xStep = CHART_WIDTH / points.length;
 
-      // Прокрутка к последней точке
-      requestAnimationFrame(() => {
-        scroll.scrollLeft = scroll.scrollWidth;
-      });
+        // 2. Функции преобразования координат
+        function getX(index) {
+            // X-координата центра точки
+            return xStep * index + xStep / 2; 
+        }
+
+        function getY(weight) {
+            // Нормализация: 1 - ((вес - мин) / диапазон)
+            return CHART_PADDING_TOP + MAX_CHART_AREA_HEIGHT * (1 - (weight - minWeight) / weightRange);
+        }
+
+        // 3. Построение Y-оси и сетки
+        const yAxisSteps = 4;
+        for (let i = 0; i <= yAxisSteps; i++) {
+            // Вычисляем значение веса для этой линии сетки
+            const weightValue = minWeight + (weightRange / yAxisSteps) * i;
+            // Получаем координату Y для этого веса
+            const y = getY(weightValue);
+
+            // Горизонтальная линия сетки (добавляется в SVG)
+            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            line.setAttribute('x1', 0);
+            line.setAttribute('y1', y);
+            line.setAttribute('x2', CHART_WIDTH);
+            line.setAttribute('y2', y);
+            line.setAttribute('class', 'wc-grid-line');
+            // Делаем крайние линии сплошными
+            if (i === 0 || i === yAxisSteps) line.style.strokeDasharray = 'none'; // Убираем пунктир для краев
+            chart.appendChild(line);
+
+            // Подпись Y-оси (добавляется в HTML)
+            const text = document.createElement('div');
+            text.className = 'wc-y-label';
+            // Позиционируем метку так, чтобы она была центрирована по линии сетки
+            text.style.top = `${y}px`;
+            // Округляем до 1 знака, если диапазон Y маленький, иначе до целого
+            text.textContent = weightValue.toFixed(weightRange < 5 ? 1 : 0); 
+            yAxis.appendChild(text);
+        }
+        
+
+        // 4. Построение пути и точек
+        let pathData = '';
+        points.forEach((d, i) => {
+            const cx = getX(i);
+            const cy = getY(d.weight);
+
+            // Формирование пути
+            if (i === 0) {
+                pathData += `M ${cx} ${cy}`;
+            } else {
+                pathData += ` L ${cx} ${cy}`;
+            }
+
+            // Подпись X-оси (дата)
+            const dateText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            dateText.setAttribute('x', cx);
+            dateText.setAttribute('y', CHART_HEIGHT - X_AXIS_HEIGHT / 2);
+            dateText.setAttribute('class', 'wc-x-label');
+            dateText.textContent = DATE_FORMATTER.format(new Date(d.date));
+            chart.appendChild(dateText);
+            
+            // Точка данных и интерактивность
+            const point = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            point.setAttribute('cx', cx);
+            point.setAttribute('cy', cy);
+            point.setAttribute('r', 4);
+            point.setAttribute('class', 'wc-point');
+
+            // Обработчики для мыши
+            point.addEventListener('mouseenter', () => showTooltip(cx, cy, d.date, d.weight));
+            point.addEventListener('mouseleave', hideTooltip);
+            
+            // Обработчики для тача (мобильные устройства)
+            point.addEventListener('touchstart', (e) => {
+                e.preventDefault(); // Предотвратить скролл при тапе
+                showTooltip(cx, cy, d.date, d.weight);
+                // Скрываем тултип через 2 секунды
+                setTimeout(hideTooltip, 2000); 
+            }, { passive: false }); 
+
+            chart.appendChild(point);
+        });
+
+        // Путь данных (линия)
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', pathData);
+        path.setAttribute('class', 'wc-path');
+        chart.appendChild(path);
+        
+        // 5. Прокрутка к последней точке
+        requestAnimationFrame(() => {
+            // Прокручиваем контейнер прокрутки (scroll) до конца (scrollWidth)
+            scroll.scrollLeft = scroll.scrollWidth;
+        });
     }
 
-    function showTooltip(e, x, y, date, weight) {
-      tooltipDate.textContent = new Date(date).toLocaleDateString('ru-RU', { year: 'numeric', month: 'long', day: 'numeric' });
-      tooltipValue.textContent = weight.toFixed(1) + ' кг';
-      
-      const scrollLeft = scroll.scrollLeft;
-      const scrollRect = scroll.getBoundingClientRect();
+    // Показ тултипа: x и y - координаты центра точки в SVG
+    function showTooltip(x, y, date, weight) {
+        if (!tooltip || !scroll) return;
+        
+        tooltipDate.textContent = new Date(date).toLocaleDateString('ru-RU', { year: 'numeric', month: 'long', day: 'numeric' });
+        tooltipValue.textContent = weight.toFixed(1) + ' кг';
+        
+        const scrollLeft = scroll.scrollLeft;
+        const scrollRect = scroll.getBoundingClientRect();
+        
+        // Координата X тултипа относительно окна (Viewport):
+        // X-координата в SVG - текущая прокрутка + X-позиция контейнера + ширина Y-оси
+        let finalX = x - scrollLeft + scrollRect.left + Y_AXIS_WIDTH; 
+        
+        // Координата Y тултипа относительно окна (Viewport):
+        // Y-координата в SVG + Y-позиция контейнера
+        let finalY = y + scrollRect.top; 
 
-      // X: X-координата точки в SVG - текущая прокрутка + ширина Y-оси
-      let finalX = x - scrollLeft + Y_AXIS_WIDTH; 
-      // Y: Y-координата точки в SVG относительно верхней границы view
-      let finalY = y + scrollRect.top;
-
-      tooltip.style.left = finalX + 'px';
-      tooltip.style.top = finalY + 'px';
-      tooltip.classList.add('wc-visible');
+        tooltip.style.left = finalX + 'px';
+        tooltip.style.top = finalY + 'px';
+        tooltip.classList.add('wc-visible');
     }
 
     function hideTooltip() {
-      tooltip.classList.remove('wc-visible');
+        if (tooltip) {
+             tooltip.classList.remove('wc-visible');
+        }
     }
 
     // Инициализация элементов при загрузке
     function init(data) {
-      chart = document.getElementById('wcChart');
-      yAxis = document.getElementById('wcYAxis');
-      scroll = document.getElementById('wcScroll');
-      tooltip = document.getElementById('wcTooltip');
-      tooltipDate = document.getElementById('wcTooltipDate');
-      tooltipValue = document.getElementById('wcTooltipValue');
-      noDataElement = document.querySelector('.wc-no-data');
+        // Ищем все элементы DOM по их ID
+        chart = document.getElementById('wcChart');
+        yAxis = document.getElementById('wcYAxis');
+        scroll = document.getElementById('wcScroll');
+        inner = document.getElementById('wcInner');
+        tooltip = document.getElementById('wcTooltip');
+        tooltipDate = document.getElementById('wcTooltipDate');
+        tooltipValue = document.getElementById('wcTooltipValue');
+        noDataElement = document.getElementById('wcNoData'); 
 
-      // Обвешиваем слушателями
-      scroll.addEventListener('scroll', hideTooltip, { passive: true });
-      
-      draw(data || defaultData);
+        // Обвешиваем слушателями: скролл скрывает тултип
+        if (scroll) scroll.addEventListener('scroll', hideTooltip, { passive: true });
+        
+        // Добавляем ресайз: перерисовываем график при изменении размера окна
+        window.addEventListener('resize', () => {
+             // Чтобы избежать передачи старых данных, передаем текущие данные
+             draw(WeightChart.currentData || defaultData);
+        });
+
+        draw(data || defaultData);
     }
 
-    // Публичное API: setData (используется блоком E2.7)
+    // Публичное API: setData (используется блоком E3.1)
     function setData(data) {
-      if (typeof data === 'string') {
-        try {
-          data = JSON.parse(data);
-        } catch (e) {
-          console.error('WeightChart: Invalid JSON data');
-          return;
+        if (typeof data === 'string') {
+            try {
+                data = JSON.parse(data);
+            } catch (e) {
+                console.error('WeightChart: Invalid JSON data passed to setData', e);
+                data = defaultData;
+            }
         }
-      }
-      draw(data);
+        // Сохраняем переданные данные для использования при ресайзе
+        this.currentData = data; 
+        draw(data);
     }
     
     // Возвращаем публичный интерфейс
     return {
-      init: init,
-      setData: setData
+        init: init,
+        setData: setData,
+        currentData: defaultData // Место для хранения текущих данных
     };
-  })();
+})();
+
+// Автоматическая инициализация DOM элементов для графика
+document.addEventListener('DOMContentLoaded', function() {
+    // Вызываем init с текущими (пустыми) данными, чтобы обработать DOM и показать заглушку
+    WeightChart.init(WeightChart.currentData);
+});
+
 
 /* ============================================================
  *  BLOCK P (Admin): «Скорость работы»
