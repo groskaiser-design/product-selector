@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0004'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0005'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -1730,6 +1730,7 @@ function handleSaveClick_bm(e) {
     localStorage.removeItem('bm:chart:data:'   + String(uid));
     localStorage.removeItem('bm:comment:html:' + String(uid));
     localStorage.removeItem('bm:chart_weight:data:' + String(uid));
+   
   } catch(_){}
 
   // 👉 после сохранения анкеты забываем выбранную дату — следующий график станет на последнюю
@@ -1754,6 +1755,7 @@ function handleSaveClick_bm(e) {
     try { window.startChartDataFlow_bm_bm && window.startChartDataFlow_bm_bm(); } catch(_){}
     try { window.startChartFlow_bm_bm(); } catch(_){}
     try { window.startWeightChartFlow_bm_bm(); } catch(_){}
+    try { window.startWeightChartDataFlow_bm_bm && window.startWeightChartDataFlow_bm_bm(); } catch(_){} // ⬅️ ДОБАВЬ
   }, 50);
 
   // 9) Мгновенная обратная связь пользователю
@@ -3516,11 +3518,193 @@ function updateHint(){
   })();
 })();
 
+  /* ============================================================
+ *  BLOCK E3.1 — Weight Chart Data Flow (poll + cache)
+ * ============================================================ */
+(function weightChartDataFlowInit(){
+  console.log('%c[E3.1] Weight chart data flow init','color:#9370db');
+
+  const tg = window.Telegram?.WebApp;
+  const BACKEND = (typeof BACKEND_URL_bm !== 'undefined' && BACKEND_URL_bm) ? BACKEND_URL_bm : '';
+
+  const WEIGHT_CHART_KEY_PREFIX = 'bm:chart_weight:data:';
+
+  function currentUserId_bm(){ 
+    try { return window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'anon'; }
+    catch(_){ return 'anon'; }
+  }
+
+  function weightChartKey_bm(uid){
+    return WEIGHT_CHART_KEY_PREFIX + String(uid ?? currentUserId_bm());
+  }
+
+  function saveWeightChartCache_bm(obj, uid){
+    try {
+      console.log('%c[E3.1] save cache','color:#9370db', obj);
+      localStorage.setItem(weightChartKey_bm(uid ?? currentUserId_bm()), JSON.stringify(obj));
+    } catch(err){
+      console.warn('[E3.1] cache save error', err);
+    }
+  }
+
+  function loadWeightChartCache_bm(uid){
+    try {
+      const raw = localStorage.getItem(weightChartKey_bm(uid ?? currentUserId_bm()));
+      const obj = raw ? JSON.parse(raw) : null;
+      console.log('%c[E3.1] load cache','color:#9370db', obj);
+      return obj;
+    } catch(err){
+      console.warn('[E3.1] cache load error', err);
+      return null;
+    }
+  }
+
+  function targetRow(){
+    try {
+      const dr = (typeof desiredRow === 'function') ? desiredRow() : null;
+      const gr = (typeof getRowCalcForUser_bm === 'function') ? getRowCalcForUser_bm() : null;
+      const use = dr ?? gr;
+      console.log('%c[E3.1] targetRow','color:#9370db', { desired:dr, rowCalc:gr, use });
+      return use;
+    } catch(err){
+      console.warn('[E3.1] targetRow error', err);
+      return null;
+    }
+  }
+
+  // Используем общий bootstrap-API
+  async function apiFrontWeightChart_bm(requestedRow, signal){
+    console.log('%c[E3.1] request to backend','color:#9370db', { requestedRow });
+
+    const api = (window && typeof window.apiFrontBootstrap_bm_bm_eai_bm === 'function')
+      ? window.apiFrontBootstrap_bm_bm_eai_bm
+      : (typeof apiFrontBootstrap_bm_eai_bm === 'function' ? apiFrontBootstrap_bm_eai_bm : null);
+
+    if (!api) {
+      throw new Error('front_bootstrap API is not available');
+    }
+
+    const res = await api(requestedRow, signal);
+    console.log('%c[E3.1] backend response','color:#9370db', { res });
+    return res;
+  }
+
+  let _weightChartTimer = 0;
+  let _weightChartRunId = 0;
+  let _weightChartAbort = null;
+
+  async function pollOnce(runId){
+    if (runId !== _weightChartRunId) return { done:true };
+
+    const reqRow = targetRow();
+
+    if (_weightChartAbort) try { _weightChartAbort.abort(); } catch(_){}
+    const controller = new AbortController();
+    _weightChartAbort = controller;
+
+    try {
+      const res = await apiFrontWeightChart_bm(reqRow, controller.signal);
+      if (runId !== _weightChartRunId) return { done:true };
+
+      const serverRow  = Number(res?.row || 0);
+      const chartWeightBlk = res?.chart_weight || {};
+      const chartWeightReady = !!chartWeightBlk.ready && !!chartWeightBlk.data;
+
+      console.log('%c[E3.1] pollOnce','color:#9370db', {
+        reqRow, serverRow, chartWeightReady, chartWeightBlk
+      });
+
+      // Защита от старых row
+      if (reqRow && serverRow && serverRow < Number(reqRow)) {
+        console.log('%c[E3.1] old row, waiting','color:#f80', { reqRow, serverRow });
+        const wait = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
+        return { done:false, wait };
+      }
+
+      if (Number.isFinite(serverRow) && (reqRow == null || serverRow > reqRow)) {
+        try { 
+          setRowCalcForUser_bm(serverRow); 
+          console.log('%c[E3.1] rowCalc updated','color:#9370db', serverRow);
+        } catch(_){}
+      }
+
+      if (chartWeightReady) {
+        const uid = currentUserId_bm();
+        const chartWeightRow = Number(chartWeightBlk.row || serverRow || 0);
+
+        // Не кладём в кэш график, если он старее desiredRow
+        if (reqRow && chartWeightRow && chartWeightRow < Number(reqRow)) {
+          console.log('%c[E3.1] chartWeightRow < reqRow – skip cache','color:#f00', { chartWeightRow, reqRow });
+          const wait = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
+          return { done:false, wait };
+        }
+
+        const seed = {
+          row: chartWeightRow || null,
+          data: chartWeightBlk.data,
+          updated_at: chartWeightBlk.updated_at || res.updated_at || new Date().toISOString()
+        };
+
+        saveWeightChartCache_bm(seed, uid);
+
+        console.log('%c[E3.1] call view refresh','color:#9370db');
+        try { window.startWeightChartFlow_bm_bm && window.startWeightChartFlow_bm_bm(); } catch(_){}
+
+        return { done:true };
+      }
+
+      // Если chart_weight ещё не ready – ждём retry_after_ms
+      const wait = Math.max(200, Math.min(1000, Number(res?.retry_after_ms) || 500));
+      return { done:false, wait };
+
+    } catch(err){
+      if (err?.name === 'AbortError') return { done:true };
+      if (runId !== _weightChartRunId) return { done:true };
+      console.error('[E3.1] poll error:', err);
+      return { done:false, wait: 1000 };
+    }
+  }
+
+  async function pollLoop(runId){
+    clearTimeout(_weightChartTimer);
+    const r = await pollOnce(runId);
+    if (r.done || runId !== _weightChartRunId) return;
+    _weightChartTimer = setTimeout(() => pollLoop(runId), r.wait);
+  }
+
+  window.startWeightChartDataFlow_bm_bm = function(){
+    console.log('%c[E3.1] START WEIGHT CHART DATA FLOW','color:#0f0');
+
+    _weightChartRunId += 1;
+    const runId = _weightChartRunId;
+
+    clearTimeout(_weightChartTimer);
+    if (_weightChartAbort) try { _weightChartAbort.abort(); } catch(_){}
+
+    // Сначала отрисуем то, что есть в кэше (или очистим график)
+    try { window.startWeightChartFlow_bm_bm && window.startWeightChartFlow_bm_bm(); } catch(_){}
+
+    pollLoop(runId);
+  };
+
+  document.addEventListener('visibilitychange', ()=>{
+    if (document.visibilityState === 'hidden'){
+      clearTimeout(_weightChartTimer);
+      if (_weightChartAbort) try { _weightChartAbort.abort(); } catch(_){}
+    } else {
+      window.startWeightChartDataFlow_bm_bm && window.startWeightChartDataFlow_bm_bm();
+    }
+  });
+
+  console.log('%c[E3.1] initialized','color:#9370db');
+  window.startWeightChartDataFlow_bm_bm && window.startWeightChartDataFlow_bm_bm();
+})();
+  
 /* ============================================================
  *  BLOCK E3.0 — Weight Chart View Flow (динамика веса)
  * ============================================================ */
 (function weightChartViewFlowInit(){
-  console.log('%c[E3] Weight chart flow init','color:#8a2be2');
+  console.log('%c[E3.0] Weight chart view flow init','color:#8a2be2');
 
   var WEIGHT_CHART_KEY_PREFIX = 'bm:chart_weight:data:';
   
@@ -3533,12 +3717,6 @@ function updateHint(){
     return WEIGHT_CHART_KEY_PREFIX + String(uid ?? currentUserId_bm()); 
   }
   
-  function saveWeightChartCache_bm(obj, uid){ 
-    try { 
-      localStorage.setItem(weightChartKey_bm(uid), JSON.stringify(obj)); 
-    } catch(_){} 
-  }
-  
   function loadWeightChartCache_bm(uid){ 
     try { 
       const raw = localStorage.getItem(weightChartKey_bm(uid ?? currentUserId_bm())); 
@@ -3546,8 +3724,6 @@ function updateHint(){
     } catch(_) { return null; } 
   }
 
-  // Конвертируем формат бэка в формат WeightChart
-  // Конвертируем формат бэка в формат WeightChart
   function convertToWeightChartFormat(chartWeightData){
     if (!chartWeightData || !chartWeightData.series) return [];
     
@@ -3567,7 +3743,6 @@ function updateHint(){
           });
         }
       }
-      // Сортируем по дате
       result.sort(function(a, b) {
         var dateA = a.date.split('.').reverse().join('-');
         var dateB = b.date.split('.').reverse().join('-');
@@ -3610,28 +3785,26 @@ function updateHint(){
   }
 
   function renderWeightChart(chartWeightData){
-    console.log('%c[E3] renderWeightChart called','color:#8a2be2', chartWeightData);
+    console.log('%c[E3.0] renderWeightChart called','color:#8a2be2', chartWeightData);
     
     if (!chartWeightData || !chartWeightData.data){
-      console.log('%c[E3] No weight chart data','color:#f80');
-      // Можно показать placeholder или скрыть секцию
+      console.log('%c[E3.0] No weight chart data','color:#f80');
       return;
     }
     
     var formattedData = convertToWeightChartFormat(chartWeightData.data);
-    console.log('%c[E3] Formatted weight data:','color:#8a2be2', formattedData);
+    console.log('%c[E3.0] Formatted weight data:','color:#8a2be2', formattedData);
     
     if (formattedData.length === 0){
-      console.log('%c[E3] Empty formatted data','color:#f80');
+      console.log('%c[E3.0] Empty formatted data','color:#f80');
       return;
     }
     
-    // Вызываем WeightChart API
     if (typeof WeightChart !== 'undefined' && WeightChart.setData){
       WeightChart.setData(formattedData);
-      console.log('%c[E3] WeightChart.setData OK','color:#0f0');
+      console.log('%c[E3.0] WeightChart.setData OK','color:#0f0');
     } else {
-      console.log('%c[E3] WeightChart not available','color:#f00');
+      console.log('%c[E3.0] WeightChart not available','color:#f00');
     }
   }
 
@@ -3641,33 +3814,29 @@ function updateHint(){
       : (typeof getRowCalcForUser_bm === 'function' ? getRowCalcForUser_bm() : null);
   }
 
-  // Публичная функция запуска
   window.startWeightChartFlow_bm_bm = function(){
-    console.log('%c[E3] START WEIGHT CHART FLOW','color:#8a2be2');
+    console.log('%c[E3.0] START WEIGHT CHART VIEW FLOW','color:#8a2be2');
 
     var target = targetRow();
     var cached = loadWeightChartCache_bm();
 
-    console.log('%c[E3] cached vs target','color:#8a2be2', { cached, target });
+    console.log('%c[E3.0] cached vs target','color:#8a2be2', { cached, target });
 
-    // Показываем только кэш, который не старее desiredRow/rowCalc
     if (cached?.data && !(target && Number(cached.row||0) < Number(target))) {
       renderWeightChart(cached);
     } else {
-      console.log('%c[E3] waiting fresh weight chart...','color:#f80');
+      console.log('%c[E3.0] waiting fresh weight chart...','color:#f80');
       renderWeightChart(null);
     }
   };
 
-  // Пересчёт при смене видимости
   document.addEventListener('visibilitychange', function(){
     if (document.visibilityState === 'visible'){
       window.startWeightChartFlow_bm_bm();
     }
   });
 
-  console.log('%c[E3] initialized','color:#8a2be2');
-  // Вызов перенесён после инициализации WeightChart
+  console.log('%c[E3.0] initialized','color:#8a2be2');
 })();
 
   
@@ -3912,9 +4081,9 @@ const WeightChart = (function() {
 // Автоматическая инициализация при загрузке
 document.addEventListener('DOMContentLoaded', function() {
   WeightChart.init();
-  // Запуск flow после инициализации WeightChart
-  if (typeof window.startWeightChartFlow_bm_bm === 'function') {
-    window.startWeightChartFlow_bm_bm();
+  // ⬅️ ИЗМЕНЕНО: запускаем data flow, а не view flow
+  if (typeof window.startWeightChartDataFlow_bm_bm === 'function') {
+    window.startWeightChartDataFlow_bm_bm();
   }
 });
 
