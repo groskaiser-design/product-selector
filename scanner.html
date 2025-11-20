@@ -1,1125 +1,418 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
-<meta charset="UTF-8" />
-<title>КБЖУ — Дневник питания</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <title>FoodTracker AI</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
-<style>
-  html, body, button, [role="button"], .btn {
-    touch-action: manipulation;
-  }
-  input, select, textarea { font-size: 16px; }
-  
-  :root{
-    --bg: linear-gradient(135deg,#667eea 0%,#764ba2 100%);
-    --cardA: rgba(255,255,255,.18);
-    --cardB: rgba(255,255,255,.16);
-    --border: rgba(255,255,255,.28);
-    --shadow: 0 8px 28px rgba(0,0,0,.18);
-    --okA:#fbbf24; --okB:#f59e0b;
-  }
-  *{box-sizing:border-box;margin:0;padding:0}
-  html,body{height:100%}
-  html{background:transparent;}
-  body{
-    min-height:100svh;background:transparent;
-    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;
-    color:#fff;position:relative;isolation:isolate;overflow-x:hidden;
-  }
-  body::before{content:"";position:fixed;inset:0;background:var(--bg);z-index:0;pointer-events:none;}
-  .page{max-width:560px;margin:0 auto;padding:18px 14px 80px;position:relative;z-index:1}
+  <style>
+    :root {
+      --bg: linear-gradient(135deg,#667eea 0%,#764ba2 100%);
+      --text-primary: #fff;
+      --cardA: rgba(255,255,255,.18);
+      --cardB: rgba(255,255,255,.12);
+      --okA: #fbbf24; --okB: #f59e0b;
+      --danger: #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    body {
+      background: var(--bg); color: var(--text-primary);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      min-height: 100vh; padding-bottom: 40px;
+    }
+    
+    /* --- АККОРДЕОНЫ (База) --- */
+    .page { max-width: 560px; margin: 0 auto; padding: 16px; }
+    .section {
+      background: linear-gradient(180deg, var(--cardA), var(--cardB));
+      border: 1px solid rgba(255,255,255,0.2); border-radius: 18px;
+      margin-bottom: 14px; overflow: hidden; backdrop-filter: blur(12px);
+    }
+    .section-h {
+      padding: 16px; display: flex; align-items: center; justify-content: space-between;
+      font-weight: 800; cursor: pointer;
+    }
+    .section.collapsed .section-content { display: none; }
+    .section-content { padding: 0 16px 16px; }
 
-  /* Календарь */
-  .calendar-wrapper{
-    background:linear-gradient(180deg,var(--cardA),var(--cardB));
-    border:1px solid var(--border);border-radius:18px;
-    box-shadow:var(--shadow);backdrop-filter:blur(12px);
-    padding:14px;margin-bottom:14px;overflow:hidden;
-  }
-  .calendar-scroll{
-    display:flex;gap:8px;overflow-x:auto;overflow-y:hidden;
-    scroll-snap-type:x mandatory;
-    -webkit-overflow-scrolling:touch;scrollbar-width:none;
-    padding:4px 0;white-space:nowrap;
-  }
-  .calendar-scroll::-webkit-scrollbar{display:none}
-  .day-item{
-    flex:0 0 56px;display:flex;flex-direction:column;align-items:center;
-    gap:4px;padding:10px 8px;border-radius:12px;
-    background:rgba(255,255,255,.12);scroll-snap-align:center;
-    cursor:pointer;transition:all .2s ease;user-select:none;
-    border:2px solid transparent;
-  }
-  .day-item.selected{
-    background:linear-gradient(135deg,var(--okA),var(--okB));
-    box-shadow:0 4px 12px rgba(251,191,36,.4);
-    transform:scale(1.05);
-  }
-  .day-item.today{
-    background:rgba(255,255,255,.25);
-    border-color:rgba(255,255,255,.5);
-    box-shadow:0 0 20px rgba(255,255,255,.4);
-  }
-  .day-item:hover{
-    background:rgba(255,255,255,.2);
-  }
-  .day-name{font-size:11px;opacity:.85;font-weight:600;text-transform:uppercase;}
-  .day-date{font-size:18px;font-weight:900;}
-  .day-month{font-size:10px;opacity:.75;}
+    /* --- ЧАТ (Встроенный) --- */
+    .chat-area {
+      height: 400px; overflow-y: auto;
+      display: flex; flex-direction: column; gap: 12px;
+      padding-bottom: 10px; scroll-behavior: smooth;
+    }
+    .message { max-width: 85%; animation: fadeUp 0.3s ease; }
+    .message.user { align-self: flex-end; }
+    .message.ai { align-self: flex-start; width: 100%; }
+    
+    @keyframes fadeUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
 
-  /* Виджет КБЖУ */
-  .stats-widget{
-    background:linear-gradient(180deg,var(--cardA),var(--cardB));
-    border:1px solid var(--border);border-radius:18px;
-    box-shadow:var(--shadow);backdrop-filter:blur(12px);
-    padding:16px;margin-bottom:14px;
-  }
-  .stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;}
-  .stat-item{text-align:center;}
-  .stat-label{font-size:11px;opacity:.85;margin-bottom:4px;font-weight:600;}
-  .stat-bar{
-    height:80px;background:rgba(255,255,255,.15);border-radius:8px;
-    position:relative;overflow:hidden;margin-bottom:6px;
-  }
-  .stat-fill{
-    position:absolute;bottom:0;left:0;right:0;
-    background:linear-gradient(180deg,var(--okA),var(--okB));
-    transition:height .3s ease;border-radius:8px 8px 0 0;
-  }
-  .stat-value{font-size:13px;font-weight:900;}
-  .stat-target{font-size:10px;opacity:.7;}
+    .bubble {
+      padding: 10px 14px; border-radius: 14px; font-size: 15px; line-height: 1.4;
+    }
+    .message.user .bubble {
+      background: rgba(251,191,36,0.2); border: 1px solid rgba(251,191,36,0.4);
+      border-bottom-right-radius: 2px;
+    }
+    .message.ai .bubble {
+      background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2);
+      border-bottom-left-radius: 2px; padding: 0; /* Паддинг 0 для виджета */
+    }
 
-  /* Таблица продуктов */
-  .food-table{
-    background:linear-gradient(180deg,var(--cardA),var(--cardB));
-    border:1px solid var(--border);border-radius:18px;
-    box-shadow:var(--shadow);backdrop-filter:blur(12px);
-    overflow:hidden;margin-bottom:14px;
-  }
-  .table-header{
-    display:grid;grid-template-columns:2fr 1fr 1fr 1fr 1fr 1fr 1fr;
-    gap:8px;padding:12px 14px;font-size:11px;font-weight:700;
-    opacity:.9;border-bottom:1px solid rgba(255,255,255,.14);
-  }
-  .table-row{
-    display:grid;grid-template-columns:2fr 1fr 1fr 1fr 1fr 1fr 1fr;
-    gap:8px;padding:12px 14px;font-size:13px;
-    border-bottom:1px solid rgba(255,255,255,.08);
-    cursor:pointer;transition:background .15s ease;
-  }
-  .table-row:hover{background:rgba(255,255,255,.08);}
-  .table-row:last-child{border-bottom:none;}
-  .col-name{font-weight:600;}
-  .col-value{text-align:center;font-variant-numeric:tabular-nums;}
-  .empty-state{padding:40px 20px;text-align:center;opacity:.7;}
-  .empty-state svg{width:48px;height:48px;margin-bottom:12px;opacity:.5;}
+    /* --- ВИДЖЕТ ЕДЫ (Интерактивный чек) --- */
+    .food-widget { width: 100%; }
+    .fw-header {
+      padding: 10px 14px; background: rgba(255,255,255,0.05);
+      border-bottom: 1px solid rgba(255,255,255,0.1); font-weight: 700; font-size: 13px; opacity: 0.8;
+    }
+    .fw-list { padding: 10px 14px; }
+    .fw-item { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 14px; }
+    .fw-item span:last-child { font-weight: 700; opacity: 0.9; }
+    
+    .fw-total {
+      padding: 10px 14px; border-top: 1px solid rgba(255,255,255,0.1);
+      display: flex; justify-content: space-between; font-weight: 900; color: var(--okA);
+    }
+    
+    .fw-actions { padding: 10px; display: flex; gap: 8px; }
+    .btn-save {
+      flex: 1; padding: 10px; border-radius: 10px; border: none;
+      background: linear-gradient(135deg, var(--okA), var(--okB));
+      color: #fff; font-weight: 700; cursor: pointer; transition: transform 0.1s;
+    }
+    .btn-save:active { transform: scale(0.96); }
+    .btn-save.saved { background: #22c55e; pointer-events: none; }
 
-  /* Кнопка камеры */
-  .camera-btn-fixed{
-    position:fixed;bottom:20px;left:50%;transform:translateX(-50%);
-    z-index:100;
-  }
-  .camera-btn{
-    width:64px;height:64px;border-radius:50%;border:0;
-    background:linear-gradient(135deg,var(--okA),var(--okB));
-    box-shadow:0 8px 24px rgba(251,191,36,.5);
-    cursor:pointer;transition:all .2s ease;
-    display:flex;align-items:center;justify-content:center;
-  }
-  .camera-btn:active{transform:scale(.95);}
-  .camera-btn svg{width:32px;height:32px;color:#fff;}
+    /* --- ПАНЕЛЬ ВВОДА --- */
+    .input-bar {
+      margin-top: 12px; display: flex; gap: 8px; align-items: flex-end;
+    }
+    .btn-icon {
+      width: 44px; height: 44px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.3);
+      background: rgba(255,255,255,0.1); color: #fff; font-size: 20px;
+      display: flex; align-items: center; justify-content: center; cursor: pointer;
+    }
+    .text-input {
+      flex: 1; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 12px; padding: 12px; color: #fff; font-size: 16px; resize: none;
+    }
 
-  /* Модальное окно камеры */
-  .camera-modal{
-    position:fixed;inset:0;z-index:200;
-    background:rgba(0,0,0,.95);
-    display:none;flex-direction:column;
-  }
-  .camera-modal.active{display:flex;}
-  .camera-header{
-    padding:14px 16px;display:flex;justify-content:space-between;
-    align-items:center;background:rgba(0,0,0,.5);
-  }
-  .camera-title{font-size:16px;font-weight:700;}
-  .close-btn{
-    background:transparent;border:0;color:#fff;
-    font-size:28px;cursor:pointer;padding:0;width:32px;height:32px;
-  }
-  .camera-container{
-    flex:1;position:relative;display:flex;align-items:center;
-    justify-content:center;background:#000;
-  }
-  video{width:100%;height:100%;object-fit:cover;}
-  canvas{display:none;}
-  
-  /* Прицел выравнивания с гироскопом */
-  .alignment-overlay{
-    position:absolute;inset:0;pointer-events:none;
-    display:flex;align-items:center;justify-content:center;
-  }
-  .alignment-target{
-    position:relative;width:120px;height:120px;
-  }
-  /* Неподвижный зеленый крестик (цель) */
-  .target-cross{
-    position:absolute;left:50%;top:50%;
-    transform:translate(-50%, -50%);
-    width:60px;height:60px;
-  }
-  .target-cross::before,
-  .target-cross::after{
-    content:"";position:absolute;background:#4ade80;
-    box-shadow:0 0 12px rgba(74,222,128,.8);
-  }
-  .target-cross::before{
-    left:50%;top:0;bottom:0;width:3px;
-    transform:translateX(-50%);
-  }
-  .target-cross::after{
-    top:50%;left:0;right:0;height:3px;
-    transform:translateY(-50%);
-  }
-  /* Внешнее кольцо цели */
-  .target-ring{
-    position:absolute;left:50%;top:50%;
-    transform:translate(-50%, -50%);
-    width:80px;height:80px;
-    border:2px solid rgba(74,222,128,.6);
-    border-radius:50%;
-  }
-  /* Подвижный красный/белый крестик (реагирует на наклон) */
-  .moving-cross{
-    position:absolute;left:50%;top:50%;
-    width:40px;height:40px;
-    transition:background .2s ease;
-  }
-  .moving-cross::before,
-  .moving-cross::after{
-    content:"";position:absolute;
-    transition:background .2s ease;
-  }
-  .moving-cross::before{
-    left:50%;top:0;bottom:0;width:4px;
-    transform:translateX(-50%);
-  }
-  .moving-cross::after{
-    top:50%;left:0;right:0;height:4px;
-    transform:translateY(-50%);
-  }
-  /* Красный когда не выровнен */
-  .moving-cross.misaligned::before,
-  .moving-cross.misaligned::after{
-    background:#ef4444;
-    box-shadow:0 0 16px rgba(239,68,68,.9);
-  }
-  /* Зеленый когда выровнен */
-  .moving-cross.aligned::before,
-  .moving-cross.aligned::after{
-    background:#4ade80;
-    box-shadow:0 0 16px rgba(74,222,128,.9);
-  }
-  /* Текст-подсказка */
-  .alignment-hint{
-    position:absolute;bottom:100px;left:50%;
-    transform:translateX(-50%);
-    background:rgba(0,0,0,.7);
-    padding:8px 16px;border-radius:20px;
-    font-size:13px;font-weight:600;
-    white-space:nowrap;
-    opacity:0;
-    transition:opacity .3s ease;
-  }
-  .alignment-hint.show{opacity:1;}
-  .alignment-hint.aligned{color:#4ade80;}
-  .alignment-hint.misaligned{color:#ef4444;}
+    /* --- КАМЕРА (Оверлей) --- */
+    #camera-overlay {
+      position: fixed; inset: 0; z-index: 9999; background: #000;
+      display: none; /* Скрыто по умолчанию */
+    }
+    /* Используем классы из cam.html для внутренностей */
+    .cam-wrap { width: 100%; height: 100%; position: relative; }
+    video { width: 100%; height: 100%; object-fit: cover; }
+    .cam-ui { position: absolute; bottom: 30px; left: 0; right: 0; display: flex; justify-content: center; gap: 20px; }
+    .shutter { width: 70px; height: 70px; border-radius: 50%; background: #fff; border: 4px solid rgba(255,255,255,0.5); }
+    .close-cam { 
+      position: absolute; top: 20px; right: 20px; z-index: 10000;
+      background: rgba(0,0,0,0.5); color: #fff; padding: 8px 16px; border-radius: 20px; font-weight: bold;
+    }
+    
+    /* УРОВЕНЬ (из cam.html simplified) */
+    .level-guide {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      width: 100px; height: 100px; border: 2px dashed rgba(255,255,255,0.5); border-radius: 50%;
+      pointer-events: none;
+    }
+    .level-bubble {
+      position: absolute; width: 20px; height: 20px; background: var(--okA); border-radius: 50%;
+      top: 50%; left: 50%; transform: translate(-50%, -50%); transition: all 0.2s;
+    }
 
-  .camera-controls{
-    padding:20px;display:flex;justify-content:center;
-    gap:20px;background:rgba(0,0,0,.5);
-  }
-  .control-btn{
-    width:72px;height:72px;border-radius:50%;
-    border:4px solid #fff;background:transparent;
-    cursor:pointer;transition:all .2s ease;
-    display:flex;align-items:center;justify-content:center;
-  }
-  .control-btn.capture{
-    background:#fff;
-  }
-  .control-btn:active{transform:scale(.95);}
-  .control-btn svg{width:32px;height:32px;color:#fff;}
-  .control-btn.capture svg{color:#000;}
-
-  /* Модальное окно редактирования */
-  .edit-modal{
-    position:fixed;inset:0;z-index:300;
-    background:rgba(0,0,0,.9);
-    display:none;flex-direction:column;
-    overflow-y:auto;
-  }
-  .edit-modal.active{display:flex;}
-  .edit-content{
-    max-width:560px;width:100%;margin:auto;padding:20px;
-  }
-  .preview-image{
-    width:100%;max-height:300px;object-fit:contain;
-    border-radius:12px;margin-bottom:20px;
-  }
-  .edit-section{
-    background:linear-gradient(180deg,var(--cardA),var(--cardB));
-    border:1px solid var(--border);border-radius:18px;
-    box-shadow:var(--shadow);backdrop-filter:blur(12px);
-    padding:16px;margin-bottom:14px;
-  }
-  .edit-section h3{font-size:14px;margin-bottom:12px;opacity:.9;}
-  .edit-field{margin-bottom:12px;}
-  .edit-field:last-child{margin-bottom:0;}
-  .edit-label{font-size:12px;opacity:.85;margin-bottom:6px;display:block;}
-  .edit-input{
-    width:100%;padding:10px 12px;border-radius:10px;
-    background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.25);
-    color:#fff;font-size:14px;font-family:inherit;
-  }
-  .edit-input:focus{
-    outline:none;border-color:var(--okA);
-    background:rgba(255,255,255,.2);
-  }
-  textarea.edit-input{
-    min-height:80px;resize:vertical;
-  }
-  .edit-grid{
-    display:grid;grid-template-columns:repeat(2,1fr);gap:12px;
-  }
-  .btn-group{
-    display:flex;gap:12px;margin-top:20px;
-  }
-  .btn{
-    flex:1;padding:14px 20px;border:0;border-radius:14px;
-    font-weight:900;font-size:15px;cursor:pointer;
-    transition:all .2s ease;
-  }
-  .btn-primary{
-    background:linear-gradient(135deg,var(--okA),var(--okB));
-    color:#fff;box-shadow:var(--shadow);
-  }
-  .btn-secondary{
-    background:rgba(255,255,255,.2);color:#fff;
-  }
-  .btn:active{transform:scale(.98);}
-  .btn.loading{opacity:.7;pointer-events:none;}
-  .spinner{
-    display:inline-block;width:16px;height:16px;
-    border:2px solid rgba(255,255,255,.3);
-    border-top-color:#fff;border-radius:50%;
-    animation:spin .8s linear infinite;
-    margin-left:8px;
-  }
-  @keyframes spin{to{transform:rotate(360deg);}}
-
-  /* Скрытый input для выбора файла */
-  #fileInput{display:none;}
-
-  /* Loading overlay */
-  .loading-overlay{
-    position:fixed;inset:0;z-index:400;
-    background:rgba(0,0,0,.8);
-    display:none;align-items:center;justify-content:center;
-    flex-direction:column;gap:16px;
-  }
-  .loading-overlay.active{display:flex;}
-  .loading-spinner{
-    width:48px;height:48px;border:4px solid rgba(255,255,255,.3);
-    border-top-color:#fff;border-radius:50%;
-    animation:spin .8s linear infinite;
-  }
-  .loading-text{font-size:16px;opacity:.9;}
-</style>
+    /* --- АНАЛИТИКА --- */
+    .stats-grid { display: flex; gap: 10px; margin-bottom: 16px; }
+    .stat-col { flex: 1; text-align: center; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 12px; }
+    .stat-val { font-size: 18px; font-weight: 900; display: block; }
+    .stat-lbl { font-size: 12px; opacity: 0.7; }
+    
+    .today-list { font-size: 13px; }
+    .today-row { 
+      display: flex; justify-content: space-between; padding: 8px 0; 
+      border-bottom: 1px solid rgba(255,255,255,0.1); 
+    }
+  </style>
 </head>
 <body>
 
 <div class="page">
-  <!-- Календарь -->
-  <div class="calendar-wrapper">
-    <div class="calendar-scroll" id="calendar">
-      <!-- Дни генерируются JS -->
-    </div>
-  </div>
 
-  <!-- Виджет КБЖУ -->
-  <div class="stats-widget">
-    <div class="stats-grid">
-      <div class="stat-item">
-        <div class="stat-label">К</div>
-        <div class="stat-bar">
-          <div class="stat-fill" id="cal-fill" style="height:0%"></div>
-        </div>
-        <div class="stat-value"><span id="cal-current">0</span></div>
-        <div class="stat-target">из <span id="cal-target">2000</span></div>
-      </div>
-      <div class="stat-item">
-        <div class="stat-label">Б</div>
-        <div class="stat-bar">
-          <div class="stat-fill" id="protein-fill" style="height:0%"></div>
-        </div>
-        <div class="stat-value"><span id="protein-current">0</span></div>
-        <div class="stat-target">из <span id="protein-target">150</span></div>
-      </div>
-      <div class="stat-item">
-        <div class="stat-label">Ж</div>
-        <div class="stat-bar">
-          <div class="stat-fill" id="fat-fill" style="height:0%"></div>
-        </div>
-        <div class="stat-value"><span id="fat-current">0</span></div>
-        <div class="stat-target">из <span id="fat-target">65</span></div>
-      </div>
-      <div class="stat-item">
-        <div class="stat-label">У</div>
-        <div class="stat-bar">
-          <div class="stat-fill" id="carbs-fill" style="height:0%"></div>
-        </div>
-        <div class="stat-value"><span id="carbs-current">0</span></div>
-        <div class="stat-target">из <span id="carbs-target">250</span></div>
-      </div>
+  <section class="section" id="sec-chat">
+    <div class="section-h" onclick="toggleSection('sec-chat')">
+      <span>Дневник питания</span>
+      <span>▼</span>
     </div>
-  </div>
+    <div class="section-content">
+      
+      <div class="chat-area" id="chatFeed">
+        <div class="message ai">
+          <div class="bubble">
+            Привет! Я готов. Сфоткай еду или напиши.
+          </div>
+        </div>
+      </div>
 
-  <!-- Таблица продуктов -->
-  <div class="food-table">
-    <div class="table-header">
-      <div>Продукт</div>
-      <div class="col-value">Вес, г</div>
-      <div class="col-value">К</div>
-      <div class="col-value">Б</div>
-      <div class="col-value">Ж</div>
-      <div class="col-value">У</div>
-      <div class="col-value">💧</div>
+      <div class="input-bar">
+        <button class="btn-icon" onclick="openCamera()">📷</button>
+        <textarea id="msgInput" class="text-input" rows="1" placeholder="Что съели?"></textarea>
+        <button class="btn-icon" style="background: var(--okA)" onclick="sendText()">➤</button>
+      </div>
+
     </div>
-    <div id="foodList">
-      <div class="empty-state">
-        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/>
-        </svg>
-        <div>Добавьте первый продукт</div>
+  </section>
+
+  <section class="section" id="sec-stats">
+    <div class="section-h" onclick="toggleSection('sec-stats')">
+      <span>Аналитика (Сегодня)</span>
+      <span>▼</span>
+    </div>
+    <div class="section-content">
+      <div class="stats-grid">
+        <div class="stat-col"><span class="stat-val" id="st-cal">0</span><span class="stat-lbl">Ккал</span></div>
+        <div class="stat-col"><span class="stat-val" id="st-prot">0</span><span class="stat-lbl">Белки</span></div>
+        <div class="stat-col"><span class="stat-val" id="st-fat">0</span><span class="stat-lbl">Жиры</span></div>
+        <div class="stat-col"><span class="stat-val" id="st-carb">0</span><span class="stat-lbl">Угли</span></div>
+      </div>
+      
+      <div class="today-list" id="todayList">
+        <div style="opacity:0.5; text-align:center; padding:10px">Пока пусто</div>
       </div>
     </div>
-  </div>
+  </section>
+
 </div>
 
-<!-- Кнопка камеры -->
-<div class="camera-btn-fixed">
-  <button class="camera-btn" id="openCamera" aria-label="Добавить продукт">
-    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/>
-      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/>
-    </svg>
-  </button>
-</div>
-
-<!-- Модальное окно камеры -->
-<div class="camera-modal" id="cameraModal">
-  <div class="camera-header">
-    <div class="camera-title">Сфотографируйте продукт</div>
-    <button class="close-btn" id="closeCamera">&times;</button>
-  </div>
-  <div class="camera-container">
-    <video id="video" autoplay playsinline></video>
-    <canvas id="canvas"></canvas>
-    <div class="alignment-overlay">
-      <div class="alignment-target">
-        <div class="target-ring"></div>
-        <div class="target-cross"></div>
-        <div class="moving-cross misaligned" id="movingCross"></div>
-      </div>
-      <div class="alignment-hint" id="alignmentHint">Выровняйте телефон параллельно поверхности</div>
-    </div>
-  </div>
-  <div class="camera-controls">
-    <button class="control-btn" id="uploadBtn" aria-label="Загрузить фото">
-      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
-      </svg>
-    </button>
-    <button class="control-btn capture" id="captureBtn" aria-label="Сделать фото">
-      <svg fill="currentColor" viewBox="0 0 24 24">
-        <circle cx="12" cy="12" r="8"/>
-      </svg>
-    </button>
-    <button class="control-btn" id="switchCamera" aria-label="Переключить камеру" style="display:none;">
-      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
-      </svg>
-    </button>
-  </div>
-</div>
-
-<!-- Скрытый input для загрузки файла -->
-<input type="file" id="fileInput" accept="image/*">
-
-<!-- Модальное окно редактирования -->
-<div class="edit-modal" id="editModal">
-  <div class="edit-content">
-    <img id="previewImage" class="preview-image" alt="Preview">
+<div id="camera-overlay">
+  <div class="cam-wrap">
+    <video id="camVideo" autoplay muted playsinline></video>
     
-    <div class="edit-section">
-      <h3>Распознанные данные</h3>
-      <div class="edit-field">
-        <label class="edit-label">Название продукта</label>
-        <input type="text" class="edit-input" id="productName" placeholder="Введите название">
-      </div>
-      <div class="edit-field">
-        <label class="edit-label">Вес порции, г</label>
-        <input type="number" class="edit-input" id="productWeight" placeholder="0">
-      </div>
+    <div class="close-cam" onclick="closeCamera()">Закрыть ✕</div>
+    
+    <div class="level-guide">
+      <div id="lvlBubble" class="level-bubble"></div>
     </div>
 
-    <div class="edit-section">
-      <h3>КБЖУ на 100г</h3>
-      <div class="edit-grid">
-        <div class="edit-field">
-          <label class="edit-label">Калории</label>
-          <input type="number" class="edit-input" id="calories" placeholder="0">
-        </div>
-        <div class="edit-field">
-          <label class="edit-label">Белки, г</label>
-          <input type="number" class="edit-input" id="protein" placeholder="0">
-        </div>
-        <div class="edit-field">
-          <label class="edit-label">Жиры, г</label>
-          <input type="number" class="edit-input" id="fats" placeholder="0">
-        </div>
-        <div class="edit-field">
-          <label class="edit-label">Углеводы, г</label>
-          <input type="number" class="edit-input" id="carbs" placeholder="0">
-        </div>
-      </div>
-    </div>
-
-    <div class="edit-section">
-      <h3>Вода, мл</h3>
-      <div class="edit-field">
-        <input type="number" class="edit-input" id="water" placeholder="0">
-      </div>
-    </div>
-
-    <div class="edit-section">
-      <h3>Комментарий для AI</h3>
-      <div class="edit-field">
-        <textarea class="edit-input" id="aiComment" placeholder="Например: тарелка супа, добавить больше белка..."></textarea>
-      </div>
-    </div>
-
-    <div class="btn-group">
-      <button class="btn btn-secondary" id="cancelEdit">Отмена</button>
-      <button class="btn btn-primary" id="saveFood">
-        Сохранить
-        <span class="spinner" style="display:none;" id="saveSpinner"></span>
-      </button>
+    <div class="cam-ui">
+      <button class="shutter" onclick="takePhoto()"></button>
     </div>
   </div>
-</div>
-
-<!-- Loading overlay -->
-<div class="loading-overlay" id="loadingOverlay">
-  <div class="loading-spinner"></div>
-  <div class="loading-text">Анализируем фото...</div>
 </div>
 
 <script>
-// ========== Константы ==========
-const API_CONFIG = {
-  // Замените на ваш реальный API endpoint
-  analyzeEndpoint: '/api/analyze-food',
-  saveEndpoint: '/api/save-food',
-  getFoodsEndpoint: '/api/get-foods',
-  getTargetsEndpoint: '/api/get-targets'
-};
-
-// ========== Вибро отклик ==========
-function hapticFeedback(type = 'light') {
-  // Проверяем поддержку Vibration API
-  if (!navigator.vibrate) return;
-  
-  switch(type) {
-    case 'light':
-      navigator.vibrate(10); // Легкий тап
-      break;
-    case 'medium':
-      navigator.vibrate(20); // Средний тап
-      break;
-    case 'heavy':
-      navigator.vibrate(30); // Сильный тап
-      break;
-    case 'success':
-      navigator.vibrate([10, 50, 10]); // Двойная вибрация для успеха
-      break;
-    case 'error':
-      navigator.vibrate([50, 100, 50]); // Тройная для ошибки
-      break;
-    default:
-      navigator.vibrate(10);
-  }
-  
-  // Для iOS/Telegram WebApp можно использовать их API
-  if (window.Telegram?.WebApp?.HapticFeedback) {
-    const haptic = window.Telegram.WebApp.HapticFeedback;
-    switch(type) {
-      case 'light':
-        haptic.impactOccurred('light');
-        break;
-      case 'medium':
-        haptic.impactOccurred('medium');
-        break;
-      case 'heavy':
-      case 'success':
-        haptic.impactOccurred('heavy');
-        break;
-      case 'error':
-        haptic.notificationOccurred('error');
-        break;
-    }
-  }
+/* ================= ЛОГИКА UI ================= */
+function toggleSection(id) {
+  document.getElementById(id).classList.toggle('collapsed');
 }
 
-// ========== Состояние приложения ==========
-let currentDate = new Date();
-let selectedDate = new Date();
-let cameraStream = null;
-let capturedImageData = null;
-let currentFacingMode = 'environment';
-let deviceOrientationActive = false;
+/* ================= ЧАТ И ВИДЖЕТЫ ================= */
+const feed = document.getElementById('chatFeed');
 
-// ========== Генерация календаря ==========
-let isFirstCalendarLoad = true;
-
-function generateCalendar(scrollToSelected = false) {
-  const calendar = document.getElementById('calendar');
-  const currentScroll = calendar.scrollLeft; // Сохраняем текущую позицию скролла
-  calendar.innerHTML = '';
-  
-  // Генерируем 61 день: 30 назад и 30 вперед от currentDate
-  for (let i = -30; i <= 30; i++) {
-    const date = new Date(currentDate);
-    date.setDate(date.getDate() + i);
-    
-    const dayItem = document.createElement('div');
-    dayItem.className = 'day-item';
-    
-    const isToday = date.toDateString() === new Date().toDateString();
-    const isSelected = date.toDateString() === selectedDate.toDateString();
-    
-    if (isToday) dayItem.classList.add('today');
-    if (isSelected) dayItem.classList.add('selected');
-    
-    const dayNames = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
-    const monthNames = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
-    
-    dayItem.innerHTML = `
-      <div class="day-name">${dayNames[date.getDay()]}</div>
-      <div class="day-date">${date.getDate()}</div>
-      <div class="day-month">${monthNames[date.getMonth()]}</div>
-    `;
-    
-    dayItem.addEventListener('click', () => {
-      hapticFeedback('light'); // Легкая вибрация при выборе дня
-      selectedDate = new Date(date);
-      loadFoodData(selectedDate);
-      generateCalendar(false); // Не скроллим после выбора дня
-    });
-    
-    calendar.appendChild(dayItem);
-  }
-  
-  // Скроллим только при первой загрузке или если явно указано
-  if (isFirstCalendarLoad || scrollToSelected) {
-    isFirstCalendarLoad = false;
-    requestAnimationFrame(() => {
-      const selectedElement = calendar.querySelector('.today');
-      if (selectedElement) {
-        selectedElement.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
-      }
-    });
-  } else {
-    // Восстанавливаем позицию скролла
-    calendar.scrollLeft = currentScroll;
-  }
+function addMessage(role, content) {
+  const div = document.createElement('div');
+  div.className = `message ${role}`;
+  div.innerHTML = `<div class="bubble">${content}</div>`;
+  feed.appendChild(div);
+  feed.scrollTop = feed.scrollHeight;
 }
 
-// Скролл календаря для подгрузки новых дней
-let calendarScrollTimeout;
-let isScrollingCalendar = false;
-
-document.getElementById('calendar').addEventListener('scroll', (e) => {
-  if (isScrollingCalendar) return; // Предотвращаем множественные срабатывания
+// Функция рендера ИНТЕРАКТИВНОГО ЧЕКА
+function addFoodWidget(data) {
+  const div = document.createElement('div');
+  div.className = 'message ai';
   
-  clearTimeout(calendarScrollTimeout);
-  calendarScrollTimeout = setTimeout(() => {
-    const container = e.target;
-    const scrollLeft = container.scrollLeft;
-    const scrollWidth = container.scrollWidth;
-    const clientWidth = container.clientWidth;
-    
-    // Если проскроллили к началу или концу, сдвигаем currentDate
-    if (scrollLeft < 300) {
-      isScrollingCalendar = true;
-      currentDate.setDate(currentDate.getDate() - 14);
-      generateCalendar(false);
-      setTimeout(() => { isScrollingCalendar = false; }, 100);
-    } else if (scrollLeft > scrollWidth - clientWidth - 300) {
-      isScrollingCalendar = true;
-      currentDate.setDate(currentDate.getDate() + 14);
-      generateCalendar(false);
-      setTimeout(() => { isScrollingCalendar = false; }, 100);
-    }
-  }, 150);
-});
+  // Уникальный ID для кнопки сохранения этого блока
+  const btnId = 'btn_' + Date.now();
+  const jsonStr = JSON.stringify(data).replace(/"/g, '&quot;'); // Экранируем для атрибута
 
-// ========== Работа с гироскопом для выравнивания ==========
-function startDeviceOrientation() {
-  if (deviceOrientationActive) return;
-  
-  // Для iOS 13+ нужно запросить разрешение
-  if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-    DeviceOrientationEvent.requestPermission()
-      .then(permissionState => {
-        if (permissionState === 'granted') {
-          window.addEventListener('deviceorientation', handleOrientation);
-          deviceOrientationActive = true;
-        }
-      })
-      .catch(console.error);
-  } else {
-    // Для других браузеров/устройств
-    window.addEventListener('deviceorientation', handleOrientation);
-    deviceOrientationActive = true;
-  }
-}
+  let listHtml = '';
+  data.products.forEach(p => {
+    listHtml += `<div class="fw-item"><span>${p.name}</span><span>${p.kcal} ккал</span></div>`;
+  });
 
-function stopDeviceOrientation() {
-  window.removeEventListener('deviceorientation', handleOrientation);
-  deviceOrientationActive = false;
-}
-
-function handleOrientation(event) {
-  const beta = event.beta;   // Наклон вперед-назад (-180 до 180)
-  const gamma = event.gamma;  // Наклон влево-вправо (-90 до 90)
-  
-  if (beta === null || gamma === null) return;
-  
-  const movingCross = document.getElementById('movingCross');
-  const hint = document.getElementById('alignmentHint');
-  
-  if (!movingCross || !hint) return;
-  
-  // Определяем отклонение от идеальной горизонтали
-  // Идеальное положение: beta около 90 (или -90), gamma около 0
-  const targetBeta = 90;  // Телефон параллельно поверхности
-  const tolerance = 5;     // Градусов допуска
-  
-  // Нормализуем beta (может быть 90 или -90 в зависимости от ориентации)
-  let normalizedBeta = Math.abs(beta);
-  if (normalizedBeta > 90) normalizedBeta = 180 - normalizedBeta;
-  
-  const betaOffset = normalizedBeta - targetBeta;
-  const gammaOffset = gamma;
-  
-  // Двигаем красный крестик в зависимости от наклона
-  // Масштабируем смещение (±30 градусов = ±40px)
-  const maxOffset = 40;
-  const scale = maxOffset / 30;
-  
-  const offsetX = Math.max(-maxOffset, Math.min(maxOffset, gammaOffset * scale));
-  const offsetY = Math.max(-maxOffset, Math.min(maxOffset, betaOffset * scale));
-  
-  movingCross.style.transform = `translate(calc(-50% + ${offsetX}px), calc(-50% + ${offsetY}px))`;
-  
-  // Проверяем выравнивание
-  const isAligned = Math.abs(betaOffset) < tolerance && Math.abs(gammaOffset) < tolerance;
-  
-  if (isAligned) {
-    movingCross.classList.remove('misaligned');
-    movingCross.classList.add('aligned');
-    hint.classList.remove('misaligned');
-    hint.classList.add('aligned', 'show');
-    hint.textContent = '✓ Идеально! Можно снимать';
-  } else {
-    movingCross.classList.remove('aligned');
-    movingCross.classList.add('misaligned');
-    hint.classList.remove('aligned');
-    hint.classList.add('misaligned', 'show');
-    
-    // Подсказки по направлению
-    let hintText = '';
-    if (Math.abs(betaOffset) > Math.abs(gammaOffset)) {
-      hintText = betaOffset > 0 ? 'Поднимите верх телефона' : 'Опустите верх телефона';
-    } else {
-      hintText = gammaOffset > 0 ? 'Наклоните влево' : 'Наклоните вправо';
-    }
-    hint.textContent = hintText;
-  }
-}
-
-// ========== Работа с камерой ==========
-async function startCamera() {
-  try {
-    if (cameraStream) {
-      cameraStream.getTracks().forEach(track => track.stop());
-    }
-    
-    const constraints = {
-      video: {
-        facingMode: currentFacingMode,
-        width: { ideal: 1920 },
-        height: { ideal: 1080 }
-      }
-    };
-    
-    cameraStream = await navigator.mediaDevices.getUserMedia(constraints);
-    const video = document.getElementById('video');
-    video.srcObject = cameraStream;
-    
-    // Показываем кнопку переключения камеры, если есть несколько камер
-    const devices = await navigator.mediaDevices.enumerateDevices();
-    const videoDevices = devices.filter(device => device.kind === 'videoinput');
-    if (videoDevices.length > 1) {
-      document.getElementById('switchCamera').style.display = 'flex';
-    }
-    
-    // Запускаем отслеживание ориентации устройства
-    startDeviceOrientation();
-    
-  } catch (error) {
-    console.error('Ошибка доступа к камере:', error);
-    alert('Не удалось получить доступ к камере');
-  }
-}
-
-function stopCamera() {
-  if (cameraStream) {
-    cameraStream.getTracks().forEach(track => track.stop());
-    cameraStream = null;
-  }
-  stopDeviceOrientation();
-}
-
-function capturePhoto() {
-  const video = document.getElementById('video');
-  const canvas = document.getElementById('canvas');
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
-  
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(video, 0, 0);
-  
-  canvas.toBlob(blob => {
-    capturedImageData = blob;
-    showEditModal(URL.createObjectURL(blob));
-    stopCamera();
-    document.getElementById('cameraModal').classList.remove('active');
-  }, 'image/jpeg', 0.9);
-}
-
-// ========== Модальные окна ==========
-document.getElementById('openCamera').addEventListener('click', () => {
-  hapticFeedback('medium'); // Средняя вибрация при открытии камеры
-  document.getElementById('cameraModal').classList.add('active');
-  startCamera();
-});
-
-document.getElementById('closeCamera').addEventListener('click', () => {
-  hapticFeedback('light'); // Легкая вибрация при закрытии
-  document.getElementById('cameraModal').classList.remove('active');
-  stopCamera();
-});
-
-document.getElementById('captureBtn').addEventListener('click', capturePhoto);
-
-document.getElementById('captureBtn').addEventListener('click', () => {
-  hapticFeedback('heavy'); // Сильная вибрация при съемке
-});
-
-document.getElementById('switchCamera').addEventListener('click', () => {
-  hapticFeedback('light'); // Легкая вибрация при переключении
-  currentFacingMode = currentFacingMode === 'environment' ? 'user' : 'environment';
-  startCamera();
-});
-
-document.getElementById('uploadBtn').addEventListener('click', () => {
-  hapticFeedback('light'); // Легкая вибрация при открытии галереи
-  document.getElementById('fileInput').click();
-});
-
-document.getElementById('fileInput').addEventListener('change', (e) => {
-  const file = e.target.files[0];
-  if (file) {
-    capturedImageData = file;
-    showEditModal(URL.createObjectURL(file));
-    document.getElementById('cameraModal').classList.remove('active');
-    stopCamera();
-  }
-});
-
-function showEditModal(imageUrl) {
-  document.getElementById('previewImage').src = imageUrl;
-  document.getElementById('editModal').classList.add('active');
-  
-  // Очищаем поля
-  document.getElementById('productName').value = '';
-  document.getElementById('productWeight').value = '';
-  document.getElementById('calories').value = '';
-  document.getElementById('protein').value = '';
-  document.getElementById('fats').value = '';
-  document.getElementById('carbs').value = '';
-  document.getElementById('water').value = '';
-  document.getElementById('aiComment').value = '';
-  
-  // Отправляем фото на анализ
-  analyzePhoto(capturedImageData);
-}
-
-document.getElementById('cancelEdit').addEventListener('click', () => {
-  hapticFeedback('light'); // Легкая вибрация при отмене
-  document.getElementById('editModal').classList.remove('active');
-  capturedImageData = null;
-});
-
-// ========== API взаимодействие ==========
-async function analyzePhoto(imageBlob) {
-  try {
-    document.getElementById('loadingOverlay').classList.add('active');
-    
-    const formData = new FormData();
-    formData.append('image', imageBlob);
-    formData.append('date', selectedDate.toISOString());
-    
-    // Пример запроса к вашему бэкенду
-    const response = await fetch(API_CONFIG.analyzeEndpoint, {
-      method: 'POST',
-      body: formData
-    });
-    
-    if (!response.ok) throw new Error('Ошибка анализа');
-    
-    const data = await response.json();
-    
-    // Заполняем поля распознанными данными
-    document.getElementById('productName').value = data.name || '';
-    document.getElementById('productWeight').value = data.weight || '';
-    document.getElementById('calories').value = data.calories || '';
-    document.getElementById('protein').value = data.protein || '';
-    document.getElementById('fats').value = data.fats || '';
-    document.getElementById('carbs').value = data.carbs || '';
-    document.getElementById('water').value = data.water || '';
-    
-  } catch (error) {
-    console.error('Ошибка анализа:', error);
-    // В случае ошибки оставляем поля пустыми для ручного ввода
-  } finally {
-    document.getElementById('loadingOverlay').classList.remove('active');
-  }
-}
-
-async function saveFoodEntry() {
-  const saveBtn = document.getElementById('saveFood');
-  const spinner = document.getElementById('saveSpinner');
-  
-  try {
-    saveBtn.classList.add('loading');
-    spinner.style.display = 'inline-block';
-    
-    const weight = parseFloat(document.getElementById('productWeight').value) || 0;
-    const caloriesPer100 = parseFloat(document.getElementById('calories').value) || 0;
-    const proteinPer100 = parseFloat(document.getElementById('protein').value) || 0;
-    const fatsPer100 = parseFloat(document.getElementById('fats').value) || 0;
-    const carbsPer100 = parseFloat(document.getElementById('carbs').value) || 0;
-    
-    const foodData = {
-      date: selectedDate.toISOString(),
-      name: document.getElementById('productName').value,
-      weight: weight,
-      calories: (caloriesPer100 * weight / 100).toFixed(1),
-      protein: (proteinPer100 * weight / 100).toFixed(1),
-      fats: (fatsPer100 * weight / 100).toFixed(1),
-      carbs: (carbsPer100 * weight / 100).toFixed(1),
-      water: parseFloat(document.getElementById('water').value) || 0,
-      comment: document.getElementById('aiComment').value,
-      image: capturedImageData
-    };
-    
-    const formData = new FormData();
-    Object.keys(foodData).forEach(key => {
-      formData.append(key, foodData[key]);
-    });
-    
-    const response = await fetch(API_CONFIG.saveEndpoint, {
-      method: 'POST',
-      body: formData
-    });
-    
-    if (!response.ok) throw new Error('Ошибка сохранения');
-    
-    hapticFeedback('success'); // Двойная вибрация при успешном сохранении
-    
-    document.getElementById('editModal').classList.remove('active');
-    capturedImageData = null;
-    
-    // Перезагружаем данные
-    await loadFoodData(selectedDate);
-    
-  } catch (error) {
-    console.error('Ошибка сохранения:', error);
-    hapticFeedback('error'); // Тройная вибрация при ошибке
-    alert('Не удалось сохранить продукт');
-  } finally {
-    saveBtn.classList.remove('loading');
-    spinner.style.display = 'none';
-  }
-}
-
-document.getElementById('saveFood').addEventListener('click', saveFoodEntry);
-
-// ========== Загрузка данных из БД ==========
-async function loadFoodData(date) {
-  try {
-    const dateStr = date.toISOString().split('T')[0];
-    console.log('📅 Загружаем данные для:', dateStr);
-    
-    const response = await fetch(`${API_CONFIG.getFoodsEndpoint}?date=${dateStr}`);
-    
-    if (!response.ok) {
-      // Если нет данных, показываем пустое состояние
-      console.log('ℹ️ Нет данных для этой даты');
-      displayFoodList([]);
-      updateStats({ calories: 0, protein: 0, fats: 0, carbs: 0, water: 0 });
-      return;
-    }
-    
-    const data = await response.json();
-    console.log('✅ Данные загружены:', data);
-    displayFoodList(data.foods || []);
-    updateStats(data.totals || { calories: 0, protein: 0, fats: 0, carbs: 0, water: 0 });
-    
-  } catch (error) {
-    console.error('Ошибка загрузки данных:', error);
-    // Показываем моковые данные для демонстрации
-    console.log('🔄 Показываем моковые данные для демонстрации');
-    displayMockData();
-  }
-}
-
-function displayFoodList(foods) {
-  const listContainer = document.getElementById('foodList');
-  
-  if (foods.length === 0) {
-    listContainer.innerHTML = `
-      <div class="empty-state">
-        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/>
-        </svg>
-        <div>Добавьте первый продукт</div>
+  div.innerHTML = `
+    <div class="bubble food-widget">
+      <div class="fw-header">Распознано</div>
+      <div class="fw-list">${listHtml}</div>
+      <div class="fw-total">
+        <span>Итого:</span>
+        <span>${data.total_kcal} ккал</span>
       </div>
-    `;
-    return;
-  }
+      <div class="fw-actions">
+        <button id="${btnId}" class="btn-save" onclick="saveToLog('${btnId}', ${jsonStr})">
+          ✅ Записать в дневник
+        </button>
+      </div>
+    </div>
+  `;
+  feed.appendChild(div);
+  feed.scrollTop = feed.scrollHeight;
+}
+
+// Обработчик кнопки "Записать" ВНУТРИ чата
+function saveToLog(btnId, data) {
+  const btn = document.getElementById(btnId);
+  if (!btn) return;
   
-  listContainer.innerHTML = foods.map(food => `
-    <div class="table-row" data-id="${food.id}" onclick="hapticFeedback('light')">
-      <div class="col-name">${food.name}</div>
-      <div class="col-value">${food.weight}</div>
-      <div class="col-value">${food.calories}</div>
-      <div class="col-value">${food.protein}</div>
-      <div class="col-value">${food.fats}</div>
-      <div class="col-value">${food.carbs}</div>
-      <div class="col-value">${food.water || '-'}</div>
+  // 1. Визуально меняем кнопку
+  btn.textContent = 'Записано ✓';
+  btn.classList.add('saved');
+  
+  // 2. Вибрация
+  if(window.Telegram?.WebApp?.HapticFeedback) {
+    window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
+  }
+
+  // 3. Обновляем "Базу" (пока просто переменную)
+  updateStats(data);
+}
+
+/* ================= АНАЛИТИКА ================= */
+let dailyStats = { cal: 0, prot: 0, fat: 0, carb: 0, items: [] };
+
+function updateStats(data) {
+  // Суммируем
+  dailyStats.cal += data.total_kcal;
+  data.products.forEach(p => {
+     dailyStats.prot += (p.p || 0);
+     dailyStats.fat += (p.f || 0);
+     dailyStats.carb += (p.c || 0);
+     dailyStats.items.push(p);
+  });
+
+  // Обновляем UI в секции аналитики
+  document.getElementById('st-cal').textContent = Math.round(dailyStats.cal);
+  document.getElementById('st-prot').textContent = Math.round(dailyStats.prot);
+  document.getElementById('st-fat').textContent = Math.round(dailyStats.fat);
+  document.getElementById('st-carb').textContent = Math.round(dailyStats.carb);
+
+  // Обновляем список
+  const list = document.getElementById('todayList');
+  list.innerHTML = dailyStats.items.map((item, idx) => `
+    <div class="today-row">
+      <span>${item.name}</span>
+      <span>${item.kcal}</span>
+      <span style="color:#ef4444; font-weight:bold; cursor:pointer" onclick="removeItem(${idx})">✕</span>
     </div>
   `).join('');
 }
 
-function updateStats(totals) {
-  // Получаем целевые значения (можно также загружать из API)
-  const targets = {
-    calories: parseInt(document.getElementById('cal-target').textContent),
-    protein: parseInt(document.getElementById('protein-target').textContent),
-    fats: parseInt(document.getElementById('fat-target').textContent),
-    carbs: parseInt(document.getElementById('carbs-target').textContent)
-  };
+/* ================= ОТПРАВКА ТЕКСТА ================= */
+function sendText() {
+  const inp = document.getElementById('msgInput');
+  const txt = inp.value.trim();
+  if(!txt) return;
   
-  // Обновляем текущие значения
-  document.getElementById('cal-current').textContent = Math.round(totals.calories);
-  document.getElementById('protein-current').textContent = Math.round(totals.protein);
-  document.getElementById('fat-current').textContent = Math.round(totals.fats);
-  document.getElementById('carbs-current').textContent = Math.round(totals.carbs);
-  
-  // Обновляем прогресс-бары
-  updateProgressBar('cal-fill', totals.calories, targets.calories);
-  updateProgressBar('protein-fill', totals.protein, targets.protein);
-  updateProgressBar('fat-fill', totals.fats, targets.fats);
-  updateProgressBar('carbs-fill', totals.carbs, targets.carbs);
+  addMessage('user', txt);
+  inp.value = '';
+
+  // Имитация ответа AI через 1 сек (Здесь будет твой fetch к бэкенду)
+  setTimeout(() => {
+    // Твой бэкенд должен вернуть такой JSON
+    const mockResponse = {
+      total_kcal: 350,
+      products: [
+        { name: txt, kcal: 350, p: 15, f: 10, c: 40 }
+      ]
+    };
+    addFoodWidget(mockResponse);
+  }, 1000);
 }
 
-function updateProgressBar(id, current, target) {
-  const element = document.getElementById(id);
-  const percentage = Math.min((current / target) * 100, 100);
-  element.style.height = percentage + '%';
-}
+/* ================= КАМЕРА (Упрощенная логика cam.html) ================= */
+const camOverlay = document.getElementById('camera-overlay');
+const video = document.getElementById('camVideo');
+let stream = null;
 
-// ========== Моковые данные для демонстрации ==========
-function displayMockData() {
-  const mockFoods = [
-    { id: 1, name: 'Овсяная каша', weight: 200, calories: 140, protein: 5, fats: 3, carbs: 23, water: 0 },
-    { id: 2, name: 'Куриная грудка', weight: 150, calories: 165, protein: 31, fats: 3.6, carbs: 0, water: 0 },
-    { id: 3, name: 'Греческий салат', weight: 250, calories: 200, protein: 8, fats: 15, carbs: 12, water: 0 },
-    { id: 4, name: 'Вода', weight: 0, calories: 0, protein: 0, fats: 0, carbs: 0, water: 500 }
-  ];
-  
-  const mockTotals = {
-    calories: 505,
-    protein: 44,
-    fats: 21.6,
-    carbs: 35,
-    water: 500
-  };
-  
-  displayFoodList(mockFoods);
-  updateStats(mockTotals);
-}
-
-// ========== Инициализация ==========
-generateCalendar();
-loadFoodData(selectedDate);
-
-// Загружаем целевые значения из API
-async function loadTargets() {
+async function openCamera() {
+  camOverlay.style.display = 'block';
   try {
-    const response = await fetch(API_CONFIG.getTargetsEndpoint);
-    if (response.ok) {
-      const targets = await response.json();
-      document.getElementById('cal-target').textContent = targets.calories;
-      document.getElementById('protein-target').textContent = targets.protein;
-      document.getElementById('fat-target').textContent = targets.fats;
-      document.getElementById('carbs-target').textContent = targets.carbs;
-    }
-  } catch (error) {
-    console.error('Ошибка загрузки целевых значений:', error);
+    stream = await navigator.mediaDevices.getUserMedia({ 
+      video: { facingMode: 'environment' } 
+    });
+    video.srcObject = stream;
+    startLevelSensor(); // Запуск гироскопа
+  } catch(e) {
+    alert('Ошибка камеры: ' + e.message);
+    closeCamera();
   }
 }
 
-loadTargets();
+function closeCamera() {
+  camOverlay.style.display = 'none';
+  if(stream) stream.getTracks().forEach(t => t.stop());
+  stopLevelSensor();
+}
 
-// Закрытие модальных окон по клику на фон
-document.getElementById('cameraModal').addEventListener('click', (e) => {
-  if (e.target.id === 'cameraModal') {
-    document.getElementById('cameraModal').classList.remove('active');
-    stopCamera();
-  }
-});
+function takePhoto() {
+  // 1. Фейк снимка: берем кадр из видео
+  const canvas = document.createElement('canvas');
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  canvas.getContext('2d').drawImage(video, 0, 0);
+  
+  // 2. Закрываем камеру
+  closeCamera();
+  
+  // 3. Показываем в чате "Фото отправлено"
+  addMessage('user', '📷 [Фото еды]');
+  addMessage('ai', 'Анализирую фото...');
+  
+  // 4. Имитация ответа AI
+  setTimeout(() => {
+    const mockPhotoResponse = {
+      total_kcal: 420,
+      products: [
+        { name: 'Куриная грудка', kcal: 200, p: 30, f: 5, c: 0 },
+        { name: 'Рис белый', kcal: 220, p: 4, f: 1, c: 45 }
+      ]
+    };
+    addFoodWidget(mockPhotoResponse);
+  }, 1500);
+}
 
-document.getElementById('editModal').addEventListener('click', (e) => {
-  if (e.target.id === 'editModal') {
-    document.getElementById('editModal').classList.remove('active');
-    capturedImageData = null;
+/* ================= ГИРОСКОП (Уровень) ================= */
+// Простая логика для движения пузырька
+function handleOrientation(event) {
+  const bubble = document.getElementById('lvlBubble');
+  // beta: наклон вперед-назад [-180, 180]
+  // gamma: наклон влево-вправо [-90, 90]
+  // Для "плоского" положения beta ~ 0, gamma ~ 0
+  
+  let x = event.gamma || 0; 
+  let y = event.beta || 0;
+  
+  // Ограничиваем движение в пределах круга
+  if(x > 20) x = 20; if(x < -20) x = -20;
+  if(y > 20) y = 20; if(y < -20) y = -20;
+  
+  bubble.style.transform = `translate(calc(-50% + ${x * 2}px), calc(-50% + ${y * 2}px))`;
+  
+  // Если ровно - зеленый, иначе желтый
+  if(Math.abs(x) < 3 && Math.abs(y) < 3) {
+    bubble.style.background = '#22c55e'; // Green
+  } else {
+    bubble.style.background = '#fbbf24'; // Yellow
   }
-});
+}
+
+function startLevelSensor() {
+  if (window.DeviceOrientationEvent) {
+    window.addEventListener('deviceorientation', handleOrientation);
+  }
+}
+function stopLevelSensor() {
+  window.removeEventListener('deviceorientation', handleOrientation);
+}
+
+// Инициализация TMA
+if(window.Telegram?.WebApp) {
+  window.Telegram.WebApp.ready();
+  window.Telegram.WebApp.expand();
+}
 </script>
 
 </body>
