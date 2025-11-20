@@ -11,7 +11,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0001'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0002'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -1729,6 +1729,7 @@ function handleSaveClick_bm(e) {
     localStorage.removeItem('bm:macros:vals:'  + String(uid));
     localStorage.removeItem('bm:chart:data:'   + String(uid));
     localStorage.removeItem('bm:comment:html:' + String(uid));
+    localStorage.removeItem('bm:chart_weight:data:' + String(uid));
   } catch(_){}
 
   // 👉 после сохранения анкеты забываем выбранную дату — следующий график станет на последнюю
@@ -1752,6 +1753,7 @@ function handleSaveClick_bm(e) {
     try { window.startMacrosFlow_bm_bm(); } catch(_){}
     try { window.startChartDataFlow_bm_bm && window.startChartDataFlow_bm_bm(); } catch(_){}
     try { window.startChartFlow_bm_bm(); } catch(_){}
+    try { window.startWeightChartFlow_bm_bm(); } catch(_){}
   }, 50);
 
   // 9) Мгновенная обратная связь пользователю
@@ -1772,6 +1774,7 @@ function handleSaveClick_bm(e) {
       // Обновляем макросы и график
       try { window.startMacrosFlow_bm_bm(); } catch(_){}
       try { window.startChartFlow_bm_bm(); } catch(_){}
+      try { window.startWeightChartFlow_bm_bm(); } catch(_){} 
       // Кэшируем введённые данные анкеты
       try {
         const uid = (typeof currentUserId_bm === 'function') ? currentUserId_bm() : 'anon';
@@ -2237,6 +2240,27 @@ function handleSaveClick_bm(e) {
         } else { try { window.startChartFlow_bm_bm(); } catch(_){ } }
       } catch(_){}
 
+    // CHART WEIGHT
+          try{
+            const uid = (typeof currentUserId_bm === 'function') ? currentUserId_bm() : 'anon';
+            if (b.chart_weight){
+              const chartWeightRow = Number(b.chart_weight.row || b.row || 0);
+              // не кладём старее reqRow
+              if (b.chart_weight.ready && b.chart_weight.data && !(reqRow && chartWeightRow < Number(reqRow))) {  
+                const seed = { 
+                  row: b.chart_weight.row || b.row || null, 
+                  data: b.chart_weight.data, 
+                  updated_at: b.chart_weight.updated_at || new Date().toISOString()
+                };
+                localStorage.setItem('bm:chart_weight:data:' + String(uid), JSON.stringify(seed));
+                console.log('✅ WeightChart: данные сохранены в кэш');
+              }
+              try { window.startWeightChartFlow_bm_bm(); } catch(_){}
+            } else { 
+              try { window.startWeightChartFlow_bm_bm(); } catch(_){} 
+            }
+          } catch(_){}
+      
     } catch {
       // AI-поток здесь больше не запускаем — им управляет BLOCK EAI
       // window.startFrontDataFlow_bm_bm();
@@ -3491,6 +3515,137 @@ function updateHint(){
   })();
 })();
 
+/* ============================================================
+ *  BLOCK E3.0 — Weight Chart View Flow (динамика веса)
+ * ============================================================ */
+(function weightChartViewFlowInit(){
+  console.log('%c[E3] Weight chart flow init','color:#8a2be2');
+
+  var WEIGHT_CHART_KEY_PREFIX = 'bm:chart_weight:data:';
+  
+  function currentUserId_bm(){ 
+    try { return window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'anon'; } 
+    catch(_){ return 'anon'; } 
+  }
+  
+  function weightChartKey_bm(uid){ 
+    return WEIGHT_CHART_KEY_PREFIX + String(uid ?? currentUserId_bm()); 
+  }
+  
+  function saveWeightChartCache_bm(obj, uid){ 
+    try { 
+      localStorage.setItem(weightChartKey_bm(uid), JSON.stringify(obj)); 
+    } catch(_){} 
+  }
+  
+  function loadWeightChartCache_bm(uid){ 
+    try { 
+      const raw = localStorage.getItem(weightChartKey_bm(uid ?? currentUserId_bm())); 
+      return raw ? JSON.parse(raw) : null; 
+    } catch(_) { return null; } 
+  }
+
+  // Конвертируем формат бэка в формат WeightChart
+  function convertToWeightChartFormat(chartWeightData){
+    if (!chartWeightData || !chartWeightData.series) return [];
+    
+    var series = chartWeightData.series;
+    var dates = Object.keys(series).sort(function(a, b){
+      return new Date(a) - new Date(b);
+    });
+    
+    var result = [];
+    for (var i = 0; i < dates.length; i++){
+      var dateKey = dates[i];
+      var entry = series[dateKey];
+      
+      // Форматируем дату для отображения (дд.мм)
+      var d = new Date(dateKey);
+      var dateStr = d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
+      
+      // Получаем вес (может быть в разных форматах)
+      var weight = null;
+      if (typeof entry === 'number') {
+        weight = entry;
+      } else if (entry && typeof entry.weight === 'number') {
+        weight = entry.weight;
+      } else if (entry && typeof entry.value === 'number') {
+        weight = entry.value;
+      }
+      
+      if (weight !== null && !isNaN(weight)) {
+        result.push({
+          date: dateStr,
+          weight: weight
+        });
+      }
+    }
+    
+    return result;
+  }
+
+  function renderWeightChart(chartWeightData){
+    console.log('%c[E3] renderWeightChart called','color:#8a2be2', chartWeightData);
+    
+    if (!chartWeightData || !chartWeightData.data){
+      console.log('%c[E3] No weight chart data','color:#f80');
+      // Можно показать placeholder или скрыть секцию
+      return;
+    }
+    
+    var formattedData = convertToWeightChartFormat(chartWeightData.data);
+    console.log('%c[E3] Formatted weight data:','color:#8a2be2', formattedData);
+    
+    if (formattedData.length === 0){
+      console.log('%c[E3] Empty formatted data','color:#f80');
+      return;
+    }
+    
+    // Вызываем WeightChart API
+    if (typeof WeightChart !== 'undefined' && WeightChart.setData){
+      WeightChart.setData(formattedData);
+      console.log('%c[E3] WeightChart.setData OK','color:#0f0');
+    } else {
+      console.log('%c[E3] WeightChart not available','color:#f00');
+    }
+  }
+
+  function targetRow(){
+    return (typeof desiredRow === 'function' && desiredRow() != null)
+      ? desiredRow()
+      : (typeof getRowCalcForUser_bm === 'function' ? getRowCalcForUser_bm() : null);
+  }
+
+  // Публичная функция запуска
+  window.startWeightChartFlow_bm_bm = function(){
+    console.log('%c[E3] START WEIGHT CHART FLOW','color:#8a2be2');
+
+    var target = targetRow();
+    var cached = loadWeightChartCache_bm();
+
+    console.log('%c[E3] cached vs target','color:#8a2be2', { cached, target });
+
+    // Показываем только кэш, который не старее desiredRow/rowCalc
+    if (cached?.data && !(target && Number(cached.row||0) < Number(target))) {
+      renderWeightChart(cached);
+    } else {
+      console.log('%c[E3] waiting fresh weight chart...','color:#f80');
+      renderWeightChart(null);
+    }
+  };
+
+  // Пересчёт при смене видимости
+  document.addEventListener('visibilitychange', function(){
+    if (document.visibilityState === 'visible'){
+      window.startWeightChartFlow_bm_bm();
+    }
+  });
+
+  console.log('%c[E3] initialized','color:#8a2be2');
+  window.startWeightChartFlow_bm_bm();
+})();
+
+  
 /* ============================================================
  * E3 Динамика веса
  * ============================================================ */
