@@ -44,169 +44,236 @@
 
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
-  <style>
-    html, body, #app, .container {height: 100%; min-height: 100vh; }
-    html, body, button, [role="button"], .btn { touch-action: manipulation; }
-    input, select, textarea { font-size: 16px; }
-
-    :root{
-      --bg: linear-gradient(135deg,#667eea 0%,#764ba2 100%);
-      --userBubble: rgba(251,191,36,.25);
-      --userBorder: rgba(251,191,36,.4);
-      --aiBubble: rgba(255,255,255,.18);
-      --aiBorder: rgba(255,255,255,.28);
-      --inputBg: rgba(255,255,255,.12);
-      --inputBorder: rgba(255,255,255,.24);
-      --shadow: 0 8px 28px rgba(0,0,0,.18);
-      --okA:#fbbf24; --okB:#f59e0b;
-
-      /* ==== Ключевые переменные для стабилизации ==== */
-      --vh: 100svh;    /* стабильная высота экрана (по умолчанию) */
-      --kb: 0px;       /* высота перекрытия клавиатурой (JS выставит) */
-      --input-h: 56px; /* реальная высота панели ввода (JS измерит) */
-      --maxw: 560px;   /* макс. ширина контейнера */
+<style>
+    /* ==== 1. Глобальные настройки и переменные ==== */
+    :root {
+      --bg: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      --userBubble: rgba(251, 191, 36, .25);
+      --userBorder: rgba(251, 191, 36, .4);
+      --aiBubble: rgba(255, 255, 255, .18);
+      --aiBorder: rgba(255, 255, 255, .28);
+      --inputBg: rgba(255, 255, 255, .12);
+      --inputBorder: rgba(255, 255, 255, .24);
+      --shadow: 0 8px 28px rgba(0, 0, 0, .18);
+      --okA: #fbbf24; --okB: #f59e0b;
+      
+      /* Переменные размеров (обновляются через JS) */
+      --vh: 100vh;     
+      --kb: 0px;       /* Высота клавиатуры */
+      --input-h: 56px; /* Высота инпута */
+      --maxw: 560px;
     }
 
-    *{ box-sizing:border-box; margin:0; padding:0; }
-    html,body{ height:100%; }
-    html{ background:transparent; }
-    body{
-      min-height: var(--vh);
-      background:transparent; color:#fff;
-      font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;
-      position:relative; isolation:isolate; display:flex; flex-direction:column;
-      overscroll-behavior-y: contain;
-    }
-    @supports (min-height: 100dvh){
-      body{ min-height: 100dvh; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    input, select, textarea { font-size: 16px; } /* Защита от зума на iOS */
+    button, [role="button"], .btn { touch-action: manipulation; }
+
+    /* ==== 2. ЖЕСТКАЯ ФИКСАЦИЯ КАРКАСА (Лекарство от бага iOS) ==== */
+    html {
+      position: fixed; /* Запрещаем браузеру двигать холст */
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      overflow: hidden; /* Глобальный скролл запрещен */
+      background: transparent;
     }
 
-    body::before{
-      content:""; position:fixed; inset:0; background:var(--bg);
-      z-index:0; pointer-events:none; transform:translateZ(0);
+    body {
+      position: fixed; /* Дублируем фиксацию для надежности */
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      overflow: hidden;
+      
+      display: flex;
+      flex-direction: column;
+      
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+      color: #fff;
+      background: transparent;
     }
 
-    .container{
-      position:relative; z-index:1; width:100%;
-      max-width: var(--maxw); margin:0 auto; display:flex; flex-direction:column;
-      min-height: var(--vh);
-    }
-    @supports (min-height: 100dvh){
-      .container{ min-height: 100dvh; }
+    /* Фон через псевдоэлемент */
+    body::before {
+      content: ""; position: fixed; inset: 0; 
+      background: var(--bg);
+      z-index: -1; pointer-events: none; transform: translateZ(0);
     }
 
-    .header{
-      padding:14px 16px; display:flex; align-items:center; justify-content:center;
-      background:linear-gradient(180deg,var(--aiBubble),rgba(255,255,255,.12));
-      border-bottom:1px solid var(--aiBorder); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
-      position:relative; border-radius:0 0 20px 20px;
+    /* ==== 3. Основной контейнер ==== */
+    .container {
+      position: relative;
+      width: 100%; 
+      height: 100%; /* Занимает всю высоту фиксированного body */
+      max-width: var(--maxw);
+      margin: 0 auto;
+      display: flex; 
+      flex-direction: column;
+      overflow: hidden; /* Скролл только внутри .chat-area */
+      z-index: 1;
     }
-    .header h4{ font-size:18px; font-weight:900; letter-spacing:.3px; }
-    .clear-btn{
-      position:absolute; right:16px; padding:8px 14px; border:0; border-radius:10px;
-      background:rgba(239,68,68,.2); border:1px solid rgba(239,68,68,.4); color:#fff; font-weight:700; font-size:13px; cursor:pointer; transition:.2s;
-      -webkit-tap-highlight-color:transparent;
-    }
-    .clear-btn:active{ transform:scale(.96); background:rgba(239,68,68,.3); }
 
-    .chat-area{
-      flex:1; overflow-y:auto; overflow-x:hidden; padding:16px 14px;
-      display:flex; flex-direction:column; gap:12px;
-      -webkit-overflow-scrolling:touch; scrollbar-width:thin; scrollbar-color:rgba(255,255,255,.3) transparent;
-
-      /* ключ: даём место под инпут + клавиатуру */
-      padding-bottom: calc(16px + env(safe-area-inset-bottom) + var(--input-h) + var(--kb));
-      scroll-padding-bottom: calc(var(--input-h) + 24px);
+    /* ==== 4. Шапка ==== */
+    .header {
+      flex-shrink: 0; /* Не сжимать */
+      padding: 14px 16px; 
+      display: flex; align-items: center; justify-content: center;
+      background: linear-gradient(180deg, var(--aiBubble), rgba(255, 255, 255, .12));
+      border-bottom: 1px solid var(--aiBorder);
+      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      border-radius: 0 0 20px 20px;
+      position: relative; z-index: 10;
     }
-    .chat-area::-webkit-scrollbar{ width:6px; }
-    .chat-area::-webkit-scrollbar-thumb{ background:rgba(255,255,255,.3); border-radius:3px; }
-
-    .message{ display:flex; flex-direction:column; max-width:80%; animation:slideIn .3s ease; position:relative; }
-    @keyframes slideIn{ from{opacity:0; transform:translateY(10px);} to{opacity:1; transform:translateY(0);} }
-    .message.user{ align-self:flex-end; align-items:flex-end; }
-    .message.ai{ align-self:flex-start; align-items:flex-start; }
-    .message-bubble{
-      padding:12px 16px; border-radius:18px; backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
-      box-shadow:var(--shadow); font-size:15px; line-height:1.5; word-wrap:break-word; overflow-wrap:break-word;
-      -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+    .header h4 { font-size: 18px; font-weight: 900; letter-spacing: .3px; }
+    .clear-btn {
+      position: absolute; right: 16px; 
+      padding: 8px 14px; border: 0; border-radius: 10px;
+      background: rgba(239, 68, 68, .2); border: 1px solid rgba(239, 68, 68, .4);
+      color: #fff; font-weight: 700; font-size: 13px; cursor: pointer; transition: .2s;
     }
-    .message.user .message-bubble{
-      background:linear-gradient(135deg,var(--userBubble),rgba(251,191,36,.2));
-      border:1px solid var(--userBorder); border-bottom-right-radius:4px;
-    }
-    .message.ai .message-bubble{
-      background:linear-gradient(180deg,var(--aiBubble),rgba(255,255,255,.14));
-      border:1px solid var(--aiBorder); border-bottom-left-radius:4px;
-    }
-    .message-time{ font-size:11px; opacity:.7; margin-top:4px; padding:0 4px; }
+    .clear-btn:active { transform: scale(.96); background: rgba(239, 68, 68, .3); }
 
-    .typing-indicator{ display:flex; align-items:center; gap:4px; padding:12px 16px; }
-    .typing-dot{ width:8px; height:8px; border-radius:50%; background:rgba(255,255,255,.7); animation:typing 1.4s infinite; }
-    .typing-dot:nth-child(2){ animation-delay:.2s; }
-    .typing-dot:nth-child(3){ animation-delay:.4s; }
-    @keyframes typing{ 0%,60%,100%{ transform:translateY(0); opacity:.7; } 30%{ transform:translateY(-10px); opacity:1; } }
+    /* ==== 5. Область чата (Скроллится только она) ==== */
+    .chat-area {
+      flex: 1; /* Занимает всё доступное место */
+      overflow-y: auto; 
+      overflow-x: hidden;
+      padding: 16px 14px;
+      display: flex; flex-direction: column; gap: 12px;
+      
+      /* Инерционный скролл для iOS */
+      -webkit-overflow-scrolling: touch; 
+      
+      /* Отступ снизу: Высота инпута + Высота клавиатуры + Запас */
+      padding-bottom: calc(var(--input-h) + var(--kb) + 20px);
+      
+      /* Чтобы при открытии клавиатуры скролл был плавным */
+      scroll-behavior: smooth;
+    }
+    
+    /* Стилизация скроллбара */
+    .chat-area::-webkit-scrollbar { width: 6px; }
+    .chat-area::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, .3); border-radius: 3px; }
 
-    /* ==== инпут-панель: фиксируем к вьюпорту и центрируем по max-width ==== */
-    .input-area{
-      position: fixed; left: 50%; transform: translateX(-50%) translateZ(0);
-      bottom: 0; width: min(100%, var(--maxw)); padding:12px 14px;
+    /* ==== 6. Сообщения ==== */
+    .message { display: flex; flex-direction: column; max-width: 80%; animation: slideIn .3s ease; position: relative; }
+    @keyframes slideIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    
+    .message.user { align-self: flex-end; align-items: flex-end; }
+    .message.ai { align-self: flex-start; align-items: flex-start; }
+    
+    .message-bubble {
+      padding: 12px 16px; border-radius: 18px;
+      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      box-shadow: var(--shadow); font-size: 15px; line-height: 1.5;
+      word-wrap: break-word; overflow-wrap: break-word;
+      /* Защита от выделения текста при скролле */
+      -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; 
+    }
+    
+    .message.user .message-bubble {
+      background: linear-gradient(135deg, var(--userBubble), rgba(251, 191, 36, .2));
+      border: 1px solid var(--userBorder); border-bottom-right-radius: 4px;
+    }
+    .message.ai .message-bubble {
+      background: linear-gradient(180deg, var(--aiBubble), rgba(255, 255, 255, .14));
+      border: 1px solid var(--aiBorder); border-bottom-left-radius: 4px;
+    }
+    .message-time { font-size: 11px; opacity: .7; margin-top: 4px; padding: 0 4px; }
+
+    /* Тайпинг индикатор */
+    .typing-indicator { display: flex; align-items: center; gap: 4px; padding: 12px 16px; }
+    .typing-dot { width: 8px; height: 8px; border-radius: 50%; background: rgba(255, 255, 255, .7); animation: typing 1.4s infinite; }
+    .typing-dot:nth-child(2) { animation-delay: .2s; }
+    .typing-dot:nth-child(3) { animation-delay: .4s; }
+    @keyframes typing { 0%, 60%, 100% { transform: translateY(0); opacity: .7; } 30% { transform: translateY(-10px); opacity: 1; } }
+
+    /* ==== 7. ИНПУТ (Ключевой момент фикса) ==== */
+    .input-area {
+      position: fixed; /* Висит над контентом */
+      left: 50%; 
+      transform: translateX(-50%) translateZ(0);
+      
+      /* МАГИЯ ЗДЕСЬ: Поднимаем инпут на высоту клавиатуры */
+      bottom: var(--kb, 0px);
+      
+      width: min(100%, var(--maxw));
+      padding: 12px 14px;
+      /* Учитываем зону жестов iPhone (safe-area), но только когда клавы нет (kb=0) */
       padding-bottom: max(env(safe-area-inset-bottom), 8px);
-      background: transparent; will-change: transform;
-      z-index: 5;
+      
+      background: transparent; 
+      z-index: 20;
+      will-change: bottom; /* Оптимизация для GPU */
+      transition: bottom 0.25s cubic-bezier(0.2, 0.8, 0.2, 1); /* Плавный подъем */
     }
-    .input-wrapper{ display:flex; gap:10px; align-items:flex-end; }
-    .input-field{
-      flex:1; min-height:44px; max-height:120px; padding:12px 16px; border:1px solid var(--inputBorder);
-      border-radius:22px; background:var(--inputBg); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
-      color:#fff; font-size:15px; font-family:inherit; resize:none; overflow-y:auto; -webkit-overflow-scrolling:touch;
-    }
-    .input-field::placeholder{ color:rgba(255,255,255,.6); }
-    .input-field:focus{ outline:none; border-color:var(--okA); box-shadow:0 0 0 3px rgba(251,191,36,.2); }
-    .send-btn{
-      width:44px; height:44px; border:0; border-radius:50%;
-      background:linear-gradient(135deg,var(--okA),var(--okB));
-      color:#fff; display:flex; align-items:center; justify-content:center; box-shadow:var(--shadow);
-      transition:.2s; -webkit-tap-highlight-color:transparent;
-    }
-    .send-btn:active:not(:disabled){ transform:scale(.95); }
-    .send-btn:disabled{ opacity:.5; cursor:not-allowed; }
-    .send-btn svg{ width:20px; height:20px; }
 
-    .empty-state{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:40px 20px; text-align:center; opacity:.7; }
-    .empty-state-icon{ font-size:64px; margin-bottom:16px; }
-    .empty-state h2{ font-size:20px; font-weight:800; margin-bottom:8px; }
-    .empty-state p{ font-size:14px; opacity:.8; }
+    .input-wrapper { display: flex; gap: 10px; align-items: flex-end; }
+    .input-field {
+      flex: 1; min-height: 44px; max-height: 120px; 
+      padding: 12px 16px; border: 1px solid var(--inputBorder);
+      border-radius: 22px; background: var(--inputBg);
+      backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+      color: #fff; font-size: 15px; font-family: inherit;
+      resize: none; overflow-y: auto; -webkit-overflow-scrolling: touch;
+    }
+    .input-field::placeholder { color: rgba(255, 255, 255, .6); }
+    .input-field:focus { outline: none; border-color: var(--okA); box-shadow: 0 0 0 3px rgba(251, 191, 36, .2); }
 
-    .delete-btn{
-      position:absolute; top:50%; transform:translateY(-50%); width:32px; height:32px; border-radius:50%;
-      background:rgba(239,68,68,.9); border:1px solid rgba(239,68,68,1); color:#fff; display:none; align-items:center; justify-content:center; cursor:pointer;
-      box-shadow:0 4px 12px rgba(239,68,68,.4); z-index:10; transition:.2s;
+    .send-btn {
+      width: 44px; height: 44px; border: 0; border-radius: 50%; flex-shrink: 0;
+      background: linear-gradient(135deg, var(--okA), var(--okB));
+      color: #fff; display: flex; align-items: center; justify-content: center;
+      box-shadow: var(--shadow); transition: .2s; -webkit-tap-highlight-color: transparent;
     }
-    .message.user .delete-btn{ left:-40px; }
-    .message.ai .delete-btn{ right:-40px; }
-    .message.show-delete .delete-btn{ display:flex; }
-    .delete-btn:active{ transform:translateY(-50%) scale(.9); }
-    .delete-btn svg{ width:16px; height:16px; }
+    .send-btn:active:not(:disabled) { transform: scale(.95); }
+    .send-btn:disabled { opacity: .5; cursor: not-allowed; }
+    .send-btn svg { width: 20px; height: 20px; }
 
-    .modal{
-      position:fixed; inset:0; background:rgba(0,0,0,.7); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
-      display:none; align-items:center; justify-content:center; z-index:1000; padding:20px;
+    /* ==== 8. Empty State и прочее UI ==== */
+    .empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 20px; text-align: center; opacity: .7; }
+    .empty-state-icon { font-size: 64px; margin-bottom: 16px; }
+    .empty-state h2 { font-size: 20px; font-weight: 800; margin-bottom: 8px; }
+    .empty-state p { font-size: 14px; opacity: .8; }
+
+    .delete-btn {
+      position: absolute; top: 50%; transform: translateY(-50%); width: 32px; height: 32px; border-radius: 50%;
+      background: rgba(239, 68, 68, .9); border: 1px solid rgba(239, 68, 68, 1); color: #fff; 
+      display: none; align-items: center; justify-content: center; cursor: pointer;
+      box-shadow: 0 4px 12px rgba(239, 68, 68, .4); z-index: 10; transition: .2s;
     }
-    .modal.show{ display:flex; }
-    .modal-content{
-      background:linear-gradient(180deg,var(--aiBubble),rgba(255,255,255,.12));
-      border:1px solid var(--aiBorder); border-radius:20px; padding:24px; max-width:340px; width:100%; box-shadow:0 20px 60px rgba(0,0,0,.4);
-      backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px); animation:modalSlideIn .3s ease;
+    .message.user .delete-btn { left: -40px; }
+    .message.ai .delete-btn { right: -40px; }
+    .message.show-delete .delete-btn { display: flex; }
+    .delete-btn:active { transform: translateY(-50%) scale(.9); }
+    .delete-btn svg { width: 16px; height: 16px; }
+
+    /* ==== 9. Модальное окно ==== */
+    .modal {
+      position: fixed; inset: 0; 
+      background: rgba(0, 0, 0, .7);
+      backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+      display: none; align-items: center; justify-content: center; 
+      z-index: 1000; padding: 20px;
     }
-    @keyframes modalSlideIn{ from{opacity:0; transform:scale(.9) translateY(20px);} to{opacity:1; transform:scale(1) translateY(0);} }
-    .modal h3{ font-size:18px; font-weight:900; margin-bottom:12px; }
-    .modal p{ font-size:14px; opacity:.9; margin-bottom:20px; line-height:1.5; }
-    .modal-buttons{ display:flex; gap:10px; }
-    .modal-btn{ display:inline-flex; align-items:center; justify-content:center; gap:8px;
-      flex:1; padding:12px; border:0; border-radius:12px; font-weight:700; font-size:14px; cursor:pointer; transition:.2s; -webkit-tap-highlight-color:transparent; }
-    .modal-btn.cancel{ background:rgba(255,255,255,.15); color:#fff; }
-    .modal-btn.confirm{ background:linear-gradient(135deg,var(--okA),var(--okB)); color:#fff; }
-    .modal-btn:active{ transform:scale(.96); }
+    .modal.show { display: flex; }
+    .modal-content {
+      background: linear-gradient(180deg, var(--aiBubble), rgba(255, 255, 255, .12));
+      border: 1px solid var(--aiBorder); border-radius: 20px; padding: 24px;
+      max-width: 340px; width: 100%; box-shadow: 0 20px 60px rgba(0, 0, 0, .4);
+      backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+      animation: modalSlideIn .3s ease;
+    }
+    @keyframes modalSlideIn { from { opacity: 0; transform: scale(.9) translateY(20px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+    .modal h3 { font-size: 18px; font-weight: 900; margin-bottom: 12px; }
+    .modal p { font-size: 14px; opacity: .9; margin-bottom: 20px; line-height: 1.5; }
+    .modal-buttons { display: flex; gap: 10px; }
+    .modal-btn {
+      flex: 1; padding: 12px; border: 0; border-radius: 12px; font-weight: 700; font-size: 14px;
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      cursor: pointer; transition: .2s; -webkit-tap-highlight-color: transparent;
+    }
+    .modal-btn.cancel { background: rgba(255, 255, 255, .15); color: #fff; }
+    .modal-btn.confirm { background: linear-gradient(135deg, var(--okA), var(--okB)); color: #fff; }
+    .modal-btn:active { transform: scale(.96); }
   </style>
 
   <meta name="tma:home-url" content="./router.html" />
