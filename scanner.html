@@ -3,417 +3,512 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
-  <title>FoodTracker AI</title>
+  <title>Food AI</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
   <style>
+    /* === ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ (из measurements.html) === */
     :root {
       --bg: linear-gradient(135deg,#667eea 0%,#764ba2 100%);
       --text-primary: #fff;
-      --cardA: rgba(255,255,255,.18);
-      --cardB: rgba(255,255,255,.12);
-      --okA: #fbbf24; --okB: #f59e0b;
-      --danger: #ef4444;
+      --card-bg: rgba(255,255,255,0.12);
+      --card-border: rgba(255,255,255,0.2);
+      --ok-color: #22c55e;
+      --accent-grad: linear-gradient(135deg, #fbbf24, #f59e0b);
+      --shadow: 0 8px 28px rgba(0,0,0,0.18);
     }
+
     * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
     body {
       background: var(--bg); color: var(--text-primary);
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      min-height: 100vh; padding-bottom: 40px;
+      min-height: 100vh; overflow-x: hidden;
     }
-    
-    /* --- АККОРДЕОНЫ (База) --- */
-    .page { max-width: 560px; margin: 0 auto; padding: 16px; }
+
+    .page { max-width: 560px; margin: 0 auto; padding: 12px; }
+
+    /* === АККОРДЕОН (Стиль measurements.html) === */
     .section {
-      background: linear-gradient(180deg, var(--cardA), var(--cardB));
-      border: 1px solid rgba(255,255,255,0.2); border-radius: 18px;
-      margin-bottom: 14px; overflow: hidden; backdrop-filter: blur(12px);
+      background: linear-gradient(180deg, rgba(255,255,255,0.18), rgba(255,255,255,0.12));
+      border: 1px solid var(--card-border);
+      border-radius: 20px; margin-bottom: 12px;
+      overflow: hidden; backdrop-filter: blur(12px);
+      box-shadow: var(--shadow); transition: all 0.3s ease;
     }
     .section-h {
-      padding: 16px; display: flex; align-items: center; justify-content: space-between;
-      font-weight: 800; cursor: pointer;
+      padding: 16px 20px; display: flex; align-items: center; justify-content: space-between;
+      cursor: pointer; user-select: none;
     }
+    .section-h h2 { font-size: 18px; font-weight: 800; margin: 0; }
+    .toggle-icon { transition: transform 0.3s; font-size: 14px; opacity: 0.7; }
     .section.collapsed .section-content { display: none; }
-    .section-content { padding: 0 16px 16px; }
+    .section:not(.collapsed) .toggle-icon { transform: rotate(180deg); }
+    .section-content { padding: 0; /* Padding внутри чата свой */ }
 
-    /* --- ЧАТ (Встроенный) --- */
-    .chat-area {
-      height: 400px; overflow-y: auto;
-      display: flex; flex-direction: column; gap: 12px;
-      padding-bottom: 10px; scroll-behavior: smooth;
+    /* === ЧАТ ФИД (Стиль ai.html адаптированный) === */
+    .chat-container {
+      height: 450px; /* Фиксированная высота для скролла */
+      display: flex; flex-direction: column;
+      background: rgba(0,0,0,0.1);
     }
-    .message { max-width: 85%; animation: fadeUp 0.3s ease; }
-    .message.user { align-self: flex-end; }
-    .message.ai { align-self: flex-start; width: 100%; }
+    .chat-messages {
+      flex: 1; overflow-y: auto; padding: 16px;
+      display: flex; flex-direction: column; gap: 12px;
+      scroll-behavior: smooth;
+    }
     
-    @keyframes fadeUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+    /* Сообщения */
+    .msg { max-width: 85%; animation: slideIn 0.3s ease; }
+    .msg.user { align-self: flex-end; }
+    .msg.ai { align-self: flex-start; width: 100%; /* Виджеты на всю ширину */ }
+    
+    @keyframes slideIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
 
     .bubble {
-      padding: 10px 14px; border-radius: 14px; font-size: 15px; line-height: 1.4;
+      padding: 10px 14px; border-radius: 16px; font-size: 15px; line-height: 1.4; position: relative;
     }
-    .message.user .bubble {
-      background: rgba(251,191,36,0.2); border: 1px solid rgba(251,191,36,0.4);
-      border-bottom-right-radius: 2px;
+    .msg.user .bubble {
+      background: rgba(251,191,36,0.25); border: 1px solid rgba(251,191,36,0.4);
+      border-bottom-right-radius: 4px;
     }
-    .message.ai .bubble {
-      background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2);
-      border-bottom-left-radius: 2px; padding: 0; /* Паддинг 0 для виджета */
+    /* Фото в чате */
+    .msg-photo {
+      border-radius: 12px; margin-bottom: 6px; overflow: hidden; border: 1px solid rgba(255,255,255,0.2);
     }
+    .msg-photo img { display: block; width: 100%; height: auto; }
 
-    /* --- ВИДЖЕТ ЕДЫ (Интерактивный чек) --- */
-    .food-widget { width: 100%; }
-    .fw-header {
-      padding: 10px 14px; background: rgba(255,255,255,0.05);
-      border-bottom: 1px solid rgba(255,255,255,0.1); font-weight: 700; font-size: 13px; opacity: 0.8;
+    /* === ВИДЖЕТ-ЧЕК (Сердце модуля) === */
+    .food-widget {
+      background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 16px; border-bottom-left-radius: 4px; overflow: hidden;
     }
-    .fw-list { padding: 10px 14px; }
-    .fw-item { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 14px; }
-    .fw-item span:last-child { font-weight: 700; opacity: 0.9; }
+    .fw-head {
+      background: rgba(255,255,255,0.05); padding: 8px 12px;
+      font-size: 12px; font-weight: 700; opacity: 0.8; letter-spacing: 0.5px; text-transform: uppercase;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+    }
+    .fw-body { padding: 12px; }
+    .fw-row { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 14px; }
+    .fw-row span:first-child { margin-right: 10px; }
+    .fw-row span:last-child { font-weight: 700; white-space: nowrap; }
     
     .fw-total {
-      padding: 10px 14px; border-top: 1px solid rgba(255,255,255,0.1);
-      display: flex; justify-content: space-between; font-weight: 900; color: var(--okA);
+      margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.15);
+      display: flex; justify-content: space-between; font-size: 16px; font-weight: 900; color: #fbbf24;
     }
     
-    .fw-actions { padding: 10px; display: flex; gap: 8px; }
-    .btn-save {
-      flex: 1; padding: 10px; border-radius: 10px; border: none;
-      background: linear-gradient(135deg, var(--okA), var(--okB));
-      color: #fff; font-weight: 700; cursor: pointer; transition: transform 0.1s;
+    .fw-actions { padding: 12px; padding-top: 0; display: flex; gap: 8px; }
+    .btn-action {
+      flex: 1; padding: 12px; border-radius: 12px; border: none; font-weight: 700; font-size: 14px;
+      cursor: pointer; transition: transform 0.1s, filter 0.2s;
+      display: flex; align-items: center; justify-content: center; gap: 6px;
     }
-    .btn-save:active { transform: scale(0.96); }
-    .btn-save.saved { background: #22c55e; pointer-events: none; }
+    .btn-action:active { transform: scale(0.97); }
+    
+    .btn-save { background: var(--accent-grad); color: #fff; box-shadow: 0 4px 12px rgba(251,191,36,0.3); }
+    .btn-edit { background: rgba(255,255,255,0.1); color: #fff; border: 1px solid rgba(255,255,255,0.2); }
+    
+    /* Состояние "Сохранено" */
+    .btn-save.done { background: var(--ok-color); pointer-events: none; box-shadow: none; }
 
-    /* --- ПАНЕЛЬ ВВОДА --- */
-    .input-bar {
-      margin-top: 12px; display: flex; gap: 8px; align-items: flex-end;
+    /* === ПАНЕЛЬ ВВОДА === */
+    .input-area {
+      padding: 10px; background: rgba(0,0,0,0.2); backdrop-filter: blur(10px);
+      border-top: 1px solid rgba(255,255,255,0.1);
+      display: flex; align-items: flex-end; gap: 8px;
     }
-    .btn-icon {
-      width: 44px; height: 44px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.3);
-      background: rgba(255,255,255,0.1); color: #fff; font-size: 20px;
-      display: flex; align-items: center; justify-content: center; cursor: pointer;
+    .inp-btn {
+      width: 44px; height: 44px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.2);
+      background: rgba(255,255,255,0.08); color: #fff; display: flex; justify-content: center; align-items: center;
+      font-size: 20px; flex-shrink: 0; cursor: pointer;
     }
-    .text-input {
-      flex: 1; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.3);
-      border-radius: 12px; padding: 12px; color: #fff; font-size: 16px; resize: none;
+    .inp-field {
+      flex: 1; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 12px; padding: 12px; color: #fff; font-size: 16px;
+      max-height: 100px; overflow-y: auto; resize: none; font-family: inherit;
     }
+    .inp-field::placeholder { color: rgba(255,255,255,0.5); }
 
-    /* --- КАМЕРА (Оверлей) --- */
-    #camera-overlay {
+    /* === КАМЕРА ОВЕРЛЕЙ (Интеграция cam.html) === */
+    #cam-overlay {
       position: fixed; inset: 0; z-index: 9999; background: #000;
-      display: none; /* Скрыто по умолчанию */
+      display: none; opacity: 0; transition: opacity 0.3s;
     }
-    /* Используем классы из cam.html для внутренностей */
-    .cam-wrap { width: 100%; height: 100%; position: relative; }
-    video { width: 100%; height: 100%; object-fit: cover; }
-    .cam-ui { position: absolute; bottom: 30px; left: 0; right: 0; display: flex; justify-content: center; gap: 20px; }
-    .shutter { width: 70px; height: 70px; border-radius: 50%; background: #fff; border: 4px solid rgba(255,255,255,0.5); }
-    .close-cam { 
-      position: absolute; top: 20px; right: 20px; z-index: 10000;
-      background: rgba(0,0,0,0.5); color: #fff; padding: 8px 16px; border-radius: 20px; font-weight: bold;
+    #cam-overlay.visible { display: block; opacity: 1; }
+    
+    .cam-view { position: relative; width: 100%; height: 100%; }
+    .cam-video { width: 100%; height: 100%; object-fit: cover; }
+    
+    /* UI Камеры */
+    .cam-ui-top {
+      position: absolute; top: 16px; left: 0; right: 0; 
+      display: flex; justify-content: space-between; padding: 0 20px; z-index: 10;
+    }
+    .cam-btn-round {
+      width: 40px; height: 40px; border-radius: 50%; background: rgba(0,0,0,0.5);
+      border: 1px solid rgba(255,255,255,0.3); color: #fff; display: flex; justify-content: center; align-items: center;
+      backdrop-filter: blur(4px); cursor: pointer;
     }
     
-    /* УРОВЕНЬ (из cam.html simplified) */
-    .level-guide {
+    .cam-ui-bottom {
+      position: absolute; bottom: 0; left: 0; right: 0;
+      background: linear-gradient(to top, rgba(0,0,0,0.9), transparent);
+      padding: 20px 20px 40px; display: flex; flex-direction: column; gap: 16px; align-items: center;
+    }
+    
+    /* Поле комментария прямо в камере */
+    .cam-input-wrap { width: 100%; position: relative; }
+    .cam-input {
+      width: 100%; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 12px; padding: 10px 12px; color: #fff; font-size: 14px;
+      backdrop-filter: blur(4px);
+    }
+    .cam-input::placeholder { color: rgba(255,255,255,0.7); }
+
+    .shutter-btn {
+      width: 72px; height: 72px; border-radius: 50%; background: #fff;
+      border: 4px solid rgba(255,255,255,0.5); box-shadow: 0 0 20px rgba(0,0,0,0.5);
+      cursor: pointer; transition: transform 0.1s;
+    }
+    .shutter-btn:active { transform: scale(0.9); }
+
+    /* Уровень (Гироскоп) */
+    .level-target {
       position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-      width: 100px; height: 100px; border: 2px dashed rgba(255,255,255,0.5); border-radius: 50%;
-      pointer-events: none;
+      width: 60px; height: 60px; border-radius: 50%;
+      border: 2px dashed rgba(255,255,255,0.4); pointer-events: none;
     }
     .level-bubble {
-      position: absolute; width: 20px; height: 20px; background: var(--okA); border-radius: 50%;
-      top: 50%; left: 50%; transform: translate(-50%, -50%); transition: all 0.2s;
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      width: 16px; height: 16px; border-radius: 50%; background: #fbbf24;
+      box-shadow: 0 0 8px rgba(251,191,36,0.6); transition: background 0.2s, transform 0.1s linear;
     }
+    .level-bubble.green { background: #22c55e; box-shadow: 0 0 8px rgba(34,197,94,0.6); }
 
-    /* --- АНАЛИТИКА --- */
-    .stats-grid { display: flex; gap: 10px; margin-bottom: 16px; }
-    .stat-col { flex: 1; text-align: center; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 12px; }
-    .stat-val { font-size: 18px; font-weight: 900; display: block; }
-    .stat-lbl { font-size: 12px; opacity: 0.7; }
-    
-    .today-list { font-size: 13px; }
-    .today-row { 
-      display: flex; justify-content: space-between; padding: 8px 0; 
-      border-bottom: 1px solid rgba(255,255,255,0.1); 
-    }
   </style>
 </head>
 <body>
 
 <div class="page">
 
-  <section class="section" id="sec-chat">
-    <div class="section-h" onclick="toggleSection('sec-chat')">
-      <span>Дневник питания</span>
-      <span>▼</span>
+  <section class="section" id="sec-food">
+    <div class="section-h" onclick="toggleAccordion('sec-food')">
+      <h2>Дневник питания</h2>
+      <div class="toggle-icon">▼</div>
     </div>
+    
     <div class="section-content">
-      
-      <div class="chat-area" id="chatFeed">
-        <div class="message ai">
-          <div class="bubble">
-            Привет! Я готов. Сфоткай еду или напиши.
+      <div class="chat-container">
+        
+        <div class="chat-messages" id="chatFeed">
+          <div class="msg ai">
+            <div class="bubble" style="background: rgba(255,255,255,0.08);">
+              Привет! 👋 <br>
+              Я готов записать еду. Нажми 📷, чтобы сделать фото с уровнем точности, или просто напиши, что съел.
+            </div>
           </div>
         </div>
-      </div>
 
-      <div class="input-bar">
-        <button class="btn-icon" onclick="openCamera()">📷</button>
-        <textarea id="msgInput" class="text-input" rows="1" placeholder="Что съели?"></textarea>
-        <button class="btn-icon" style="background: var(--okA)" onclick="sendText()">➤</button>
-      </div>
+        <div class="input-area">
+          <button class="inp-btn" onclick="openCameraFlow()">📷</button>
+          <textarea id="mainInput" class="inp-field" rows="1" placeholder="Например: Борщ и сметана..."></textarea>
+          <button class="inp-btn" style="background: var(--accent-grad); border:none;" onclick="handleTextSend()">➤</button>
+        </div>
 
-    </div>
-  </section>
-
-  <section class="section" id="sec-stats">
-    <div class="section-h" onclick="toggleSection('sec-stats')">
-      <span>Аналитика (Сегодня)</span>
-      <span>▼</span>
-    </div>
-    <div class="section-content">
-      <div class="stats-grid">
-        <div class="stat-col"><span class="stat-val" id="st-cal">0</span><span class="stat-lbl">Ккал</span></div>
-        <div class="stat-col"><span class="stat-val" id="st-prot">0</span><span class="stat-lbl">Белки</span></div>
-        <div class="stat-col"><span class="stat-val" id="st-fat">0</span><span class="stat-lbl">Жиры</span></div>
-        <div class="stat-col"><span class="stat-val" id="st-carb">0</span><span class="stat-lbl">Угли</span></div>
-      </div>
-      
-      <div class="today-list" id="todayList">
-        <div style="opacity:0.5; text-align:center; padding:10px">Пока пусто</div>
       </div>
     </div>
   </section>
 
 </div>
 
-<div id="camera-overlay">
-  <div class="cam-wrap">
+<div id="cam-overlay">
+  <div class="cam-view">
     <video id="camVideo" autoplay muted playsinline></video>
     
-    <div class="close-cam" onclick="closeCamera()">Закрыть ✕</div>
-    
-    <div class="level-guide">
-      <div id="lvlBubble" class="level-bubble"></div>
+    <div class="cam-ui-top">
+      <div class="cam-btn-round" onclick="closeCameraFlow()">✕</div>
+      <div class="cam-btn-round" style="width:auto; padding:0 12px; font-size:13px; font-weight:600" id="camStatus">
+        Держите ровно
+      </div>
     </div>
 
-    <div class="cam-ui">
-      <button class="shutter" onclick="takePhoto()"></button>
+    <div class="level-target">
+      <div id="levelBubble" class="level-bubble"></div>
+    </div>
+
+    <div class="cam-ui-bottom">
+      <div class="cam-input-wrap">
+        <input type="text" id="camComment" class="cam-input" placeholder="Комментарий (необязательно)..." autocomplete="off">
+      </div>
+      <button class="shutter-btn" onclick="capturePhoto()"></button>
     </div>
   </div>
+  
+  <canvas id="camCanvas" style="display:none;"></canvas>
 </div>
 
 <script>
-/* ================= ЛОГИКА UI ================= */
-function toggleSection(id) {
-  document.getElementById(id).classList.toggle('collapsed');
+// Инициализация Telegram
+const tg = window.Telegram?.WebApp;
+if(tg) { tg.ready(); tg.expand(); }
+
+/* ==========================================
+   ЛОГИКА АККОРДЕОНА
+   ========================================== */
+function toggleAccordion(id) {
+  const el = document.getElementById(id);
+  el.classList.toggle('collapsed');
 }
 
-/* ================= ЧАТ И ВИДЖЕТЫ ================= */
-const feed = document.getElementById('chatFeed');
+/* ==========================================
+   ЛОГИКА ЧАТА И ВИДЖЕТОВ
+   ========================================== */
+const chatFeed = document.getElementById('chatFeed');
+const mainInput = document.getElementById('mainInput');
 
-function addMessage(role, content) {
-  const div = document.createElement('div');
-  div.className = `message ${role}`;
-  div.innerHTML = `<div class="bubble">${content}</div>`;
-  feed.appendChild(div);
-  feed.scrollTop = feed.scrollHeight;
-}
-
-// Функция рендера ИНТЕРАКТИВНОГО ЧЕКА
-function addFoodWidget(data) {
-  const div = document.createElement('div');
-  div.className = 'message ai';
+// 1. Добавление сообщения пользователя
+function appendUserMessage(text, photoBlob = null) {
+  const msgDiv = document.createElement('div');
+  msgDiv.className = 'msg user';
   
-  // Уникальный ID для кнопки сохранения этого блока
-  const btnId = 'btn_' + Date.now();
-  const jsonStr = JSON.stringify(data).replace(/"/g, '&quot;'); // Экранируем для атрибута
+  let contentHtml = '';
+  
+  if (photoBlob) {
+    const url = URL.createObjectURL(photoBlob);
+    contentHtml += `<div class="msg-photo"><img src="${url}"></div>`;
+  }
+  
+  if (text) {
+    contentHtml += `<div class="bubble">${text}</div>`;
+  }
+  
+  msgDiv.innerHTML = contentHtml;
+  chatFeed.appendChild(msgDiv);
+  scrollToBottom();
+  
+  // Запускаем имитацию анализа (здесь будет запрос к бэку)
+  simulateAIAnalysis();
+}
 
-  let listHtml = '';
-  data.products.forEach(p => {
-    listHtml += `<div class="fw-item"><span>${p.name}</span><span>${p.kcal} ккал</span></div>`;
+// 2. Скролл вниз
+function scrollToBottom() {
+  chatFeed.parentElement.scrollTop = chatFeed.parentElement.scrollHeight;
+}
+
+// 3. Отправка текста
+function handleTextSend() {
+  const text = mainInput.value.trim();
+  if(!text) return;
+  
+  appendUserMessage(text);
+  mainInput.value = '';
+}
+
+/* ==========================================
+   ЛОГИКА AI И ВИДЖЕТА (MOCKUP)
+   ========================================== */
+function simulateAIAnalysis() {
+  // Показываем "Печатает..."
+  const loadingId = 'loading_' + Date.now();
+  const loadingDiv = document.createElement('div');
+  loadingDiv.className = 'msg ai';
+  loadingDiv.id = loadingId;
+  loadingDiv.innerHTML = `<div class="bubble" style="opacity:0.7"><i>Анализирую...</i></div>`;
+  chatFeed.appendChild(loadingDiv);
+  scrollToBottom();
+
+  // Имитация задержки сети 1.5 сек
+  setTimeout(() => {
+    document.getElementById(loadingId).remove();
+    
+    // Данные, которые должен вернуть твой бэкенд
+    const mockData = {
+      total_kcal: 450,
+      items: [
+        { name: "Борщ с говядиной", weight: "300г", kcal: 280 },
+        { name: "Сметана 20%", weight: "30г", kcal: 60 },
+        { name: "Хлеб бородинский", weight: "1 кус.", kcal: 110 }
+      ]
+    };
+    
+    renderFoodWidget(mockData);
+  }, 1500);
+}
+
+// 4. Рендер Интерактивного Виджета
+function renderFoodWidget(data) {
+  const widgetId = 'widget_' + Date.now();
+  const msgDiv = document.createElement('div');
+  msgDiv.className = 'msg ai';
+  
+  let rowsHtml = '';
+  data.items.forEach(item => {
+    rowsHtml += `
+      <div class="fw-row">
+        <span>${item.name} <span style="opacity:0.5">(${item.weight})</span></span>
+        <span>${item.kcal}</span>
+      </div>
+    `;
   });
 
-  div.innerHTML = `
-    <div class="bubble food-widget">
-      <div class="fw-header">Распознано</div>
-      <div class="fw-list">${listHtml}</div>
-      <div class="fw-total">
-        <span>Итого:</span>
-        <span>${data.total_kcal} ккал</span>
+  msgDiv.innerHTML = `
+    <div class="food-widget" id="${widgetId}">
+      <div class="fw-head">Результат анализа</div>
+      <div class="fw-body">
+        ${rowsHtml}
+        <div class="fw-total">
+          <span>ИТОГО:</span>
+          <span>${data.total_kcal} ккал</span>
+        </div>
       </div>
       <div class="fw-actions">
-        <button id="${btnId}" class="btn-save" onclick="saveToLog('${btnId}', ${jsonStr})">
-          ✅ Записать в дневник
+        <button class="btn-action btn-edit" onclick="editEntry('${widgetId}')">
+          ✏️ Изм.
+        </button>
+        <button class="btn-action btn-save" onclick="confirmEntry(this, '${widgetId}')">
+          ✅ Записать
         </button>
       </div>
     </div>
   `;
-  feed.appendChild(div);
-  feed.scrollTop = feed.scrollHeight;
-}
-
-// Обработчик кнопки "Записать" ВНУТРИ чата
-function saveToLog(btnId, data) {
-  const btn = document.getElementById(btnId);
-  if (!btn) return;
   
-  // 1. Визуально меняем кнопку
-  btn.textContent = 'Записано ✓';
-  btn.classList.add('saved');
+  chatFeed.appendChild(msgDiv);
+  scrollToBottom();
   
-  // 2. Вибрация
-  if(window.Telegram?.WebApp?.HapticFeedback) {
-    window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
-  }
-
-  // 3. Обновляем "Базу" (пока просто переменную)
-  updateStats(data);
+  // Виброотклик "Успех" (Telegram)
+  if(tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
 }
 
-/* ================= АНАЛИТИКА ================= */
-let dailyStats = { cal: 0, prot: 0, fat: 0, carb: 0, items: [] };
-
-function updateStats(data) {
-  // Суммируем
-  dailyStats.cal += data.total_kcal;
-  data.products.forEach(p => {
-     dailyStats.prot += (p.p || 0);
-     dailyStats.fat += (p.f || 0);
-     dailyStats.carb += (p.c || 0);
-     dailyStats.items.push(p);
-  });
-
-  // Обновляем UI в секции аналитики
-  document.getElementById('st-cal').textContent = Math.round(dailyStats.cal);
-  document.getElementById('st-prot').textContent = Math.round(dailyStats.prot);
-  document.getElementById('st-fat').textContent = Math.round(dailyStats.fat);
-  document.getElementById('st-carb').textContent = Math.round(dailyStats.carb);
-
-  // Обновляем список
-  const list = document.getElementById('todayList');
-  list.innerHTML = dailyStats.items.map((item, idx) => `
-    <div class="today-row">
-      <span>${item.name}</span>
-      <span>${item.kcal}</span>
-      <span style="color:#ef4444; font-weight:bold; cursor:pointer" onclick="removeItem(${idx})">✕</span>
-    </div>
-  `).join('');
-}
-
-/* ================= ОТПРАВКА ТЕКСТА ================= */
-function sendText() {
-  const inp = document.getElementById('msgInput');
-  const txt = inp.value.trim();
-  if(!txt) return;
+// 5. Логика кнопки "Записать"
+function confirmEntry(btn, widgetId) {
+  // Визуальная реакция
+  btn.innerHTML = 'Записано ✓';
+  btn.classList.add('done');
   
-  addMessage('user', txt);
-  inp.value = '';
+  // Блокируем кнопку редактирования рядом
+  const parent = btn.parentElement;
+  const editBtn = parent.querySelector('.btn-edit');
+  if(editBtn) editBtn.style.display = 'none'; // Скрываем edit после сохранения
 
-  // Имитация ответа AI через 1 сек (Здесь будет твой fetch к бэкенду)
-  setTimeout(() => {
-    // Твой бэкенд должен вернуть такой JSON
-    const mockResponse = {
-      total_kcal: 350,
-      products: [
-        { name: txt, kcal: 350, p: 15, f: 10, c: 40 }
-      ]
-    };
-    addFoodWidget(mockResponse);
-  }, 1000);
+  // Вибро
+  if(tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+  
+  // TODO: Здесь вызов функции сохранения в реальную БД (Google Script)
+  console.log('Saving to DB:', widgetId);
 }
 
-/* ================= КАМЕРА (Упрощенная логика cam.html) ================= */
-const camOverlay = document.getElementById('camera-overlay');
+function editEntry(widgetId) {
+  alert('Тут откроется модалка редактирования продуктов');
+}
+
+/* ==========================================
+   ЛОГИКА КАМЕРЫ (ИЗ cam.html)
+   ========================================== */
+const camOverlay = document.getElementById('cam-overlay');
 const video = document.getElementById('camVideo');
+const canvas = document.getElementById('camCanvas');
+const camComment = document.getElementById('camComment');
+const levelBubble = document.getElementById('levelBubble');
 let stream = null;
 
-async function openCamera() {
-  camOverlay.style.display = 'block';
+async function openCameraFlow() {
+  camOverlay.classList.add('visible');
+  camComment.value = ''; // Сброс комментария
+  
   try {
+    // Запрос потока (environment = задняя камера)
     stream = await navigator.mediaDevices.getUserMedia({ 
       video: { facingMode: 'environment' } 
     });
     video.srcObject = stream;
-    startLevelSensor(); // Запуск гироскопа
+    video.play();
+    
+    // Старт гироскопа
+    startLevelSensor();
   } catch(e) {
-    alert('Ошибка камеры: ' + e.message);
-    closeCamera();
+    alert('Ошибка доступа к камере: ' + e.message);
+    closeCameraFlow();
   }
 }
 
-function closeCamera() {
-  camOverlay.style.display = 'none';
-  if(stream) stream.getTracks().forEach(t => t.stop());
+function closeCameraFlow() {
+  camOverlay.classList.remove('visible');
+  if(stream) {
+    stream.getTracks().forEach(t => t.stop());
+    stream = null;
+  }
   stopLevelSensor();
 }
 
-function takePhoto() {
-  // 1. Фейк снимка: берем кадр из видео
-  const canvas = document.createElement('canvas');
+function capturePhoto() {
+  if(!stream) return;
+  
+  // 1. Захват кадра
   canvas.width = video.videoWidth;
   canvas.height = video.videoHeight;
-  canvas.getContext('2d').drawImage(video, 0, 0);
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(video, 0, 0);
   
-  // 2. Закрываем камеру
-  closeCamera();
-  
-  // 3. Показываем в чате "Фото отправлено"
-  addMessage('user', '📷 [Фото еды]');
-  addMessage('ai', 'Анализирую фото...');
-  
-  // 4. Имитация ответа AI
-  setTimeout(() => {
-    const mockPhotoResponse = {
-      total_kcal: 420,
-      products: [
-        { name: 'Куриная грудка', kcal: 200, p: 30, f: 5, c: 0 },
-        { name: 'Рис белый', kcal: 220, p: 4, f: 1, c: 45 }
-      ]
-    };
-    addFoodWidget(mockPhotoResponse);
-  }, 1500);
+  // 2. Конвертация в Blob
+  canvas.toBlob(blob => {
+    const text = camComment.value.trim();
+    
+    // 3. Закрываем камеру
+    closeCameraFlow();
+    
+    // 4. Добавляем в чат
+    appendUserMessage(text, blob);
+  }, 'image/jpeg', 0.8);
 }
 
-/* ================= ГИРОСКОП (Уровень) ================= */
-// Простая логика для движения пузырька
+/* ==========================================
+   ЛОГИКА УРОВНЯ (ГИРОСКОП)
+   ========================================== */
 function handleOrientation(event) {
-  const bubble = document.getElementById('lvlBubble');
-  // beta: наклон вперед-назад [-180, 180]
-  // gamma: наклон влево-вправо [-90, 90]
-  // Для "плоского" положения beta ~ 0, gamma ~ 0
+  // gamma: наклон влево-вправо (-90...90)
+  // beta: наклон вперед-назад (-180...180)
   
   let x = event.gamma || 0; 
   let y = event.beta || 0;
   
-  // Ограничиваем движение в пределах круга
-  if(x > 20) x = 20; if(x < -20) x = -20;
-  if(y > 20) y = 20; if(y < -20) y = -20;
+  // Корректировка для портретного режима: нам нужно чтобы телефон лежал плоско (beta ~0, gamma ~0)
+  // Чувствительность (множитель смещения)
+  const sens = 2; 
   
-  bubble.style.transform = `translate(calc(-50% + ${x * 2}px), calc(-50% + ${y * 2}px))`;
+  // Ограничиваем перемещение пузырька внутри круга
+  let moveX = x * sens;
+  let moveY = y * sens;
   
-  // Если ровно - зеленый, иначе желтый
+  const maxDist = 25; // Радиус ограничения
+  if(moveX > maxDist) moveX = maxDist; if(moveX < -maxDist) moveX = -maxDist;
+  if(moveY > maxDist) moveY = maxDist; if(moveY < -maxDist) moveY = -maxDist;
+  
+  levelBubble.style.transform = `translate(calc(-50% + ${moveX}px), calc(-50% + ${moveY}px))`;
+  
+  // Проверка "Ровно ли?"
   if(Math.abs(x) < 3 && Math.abs(y) < 3) {
-    bubble.style.background = '#22c55e'; // Green
+    levelBubble.classList.add('green');
+    document.getElementById('camStatus').innerText = "Отлично! Снимайте";
+    document.getElementById('camStatus').style.color = "#22c55e";
   } else {
-    bubble.style.background = '#fbbf24'; // Yellow
+    levelBubble.classList.remove('green');
+    document.getElementById('camStatus').innerText = "Держите ровно";
+    document.getElementById('camStatus').style.color = "#fff";
   }
 }
 
 function startLevelSensor() {
+  // Проверка поддержки
   if (window.DeviceOrientationEvent) {
+    // Для iOS 13+ нужно запрашивать разрешение (здесь упрощено, но в cam.html у тебя есть полная логика)
     window.addEventListener('deviceorientation', handleOrientation);
   }
 }
+
 function stopLevelSensor() {
   window.removeEventListener('deviceorientation', handleOrientation);
 }
 
-// Инициализация TMA
-if(window.Telegram?.WebApp) {
-  window.Telegram.WebApp.ready();
-  window.Telegram.WebApp.expand();
-}
 </script>
-
 </body>
 </html>
