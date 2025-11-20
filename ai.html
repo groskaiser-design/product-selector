@@ -78,25 +78,17 @@
        2. КАРКАС (FIX IOS BUG)
        Самая важная часть: жесткая фиксация
        ========================================= */
-    html {
-      position: fixed; /* ЗАПРЕТ скролла страницы */
-      top: 0; left: 0;
-      width: 100%; height: 100%;
-      overflow: hidden; 
-      background: #000; /* Подложка на случай рывков */
-    }
-
-    body {
-      position: fixed; /* ЗАПРЕТ скролла тела */
-      top: 0; left: 0;
-      width: 100%; height: 100%;
-      overflow: hidden;
-      
-      display: flex; flex-direction: column;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
-      color: #fff;
-      /* Фон прозрачный, градиент ниже в ::before */
-      background: transparent; 
+    html, body {
+      position: fixed; /* Обязательно */
+      top: 0; 
+      left: 0;
+      width: 100%; 
+      height: 100%;
+      overflow: hidden; /* Никакого скролла на уровне документа */
+      overscroll-behavior: none; /* Отключаем "пружинку" iOS */
+      background-color: #000; /* Цвет подложки, чтобы не мелькало белым */
+      touch-action: none; /* Отключаем лишние жесты */
+      z-index: 0;
     }
 
     /* Ваш красивый градиент на фоне */
@@ -108,13 +100,14 @@
 
     /* Контейнер ограничивает ширину на десктопе */
     .container {
-      position: relative;
-      width: 100%; height: 100%;
-      max-width: var(--maxw);
-      margin: 0 auto;
-      display: flex; flex-direction: column;
-      overflow: hidden; /* Скролл только в чате */
-      z-index: 1;
+      position: absolute;
+      top: 0; 
+      left: 0;
+      width: 100%; 
+      height: 100%;
+      overflow: hidden;
+      display: flex; 
+      flex-direction: column;
     }
 
     /* =========================================
@@ -383,18 +376,90 @@
 
 
   /* ====== 0.1) FIX: Стабилизатор БЕЗ прыжков ====== */
-(function initKeyboardStabilizer(){
-    const tg = window.Telegram?.WebApp;
-    const vv = window.visualViewport;
+/* ====== 0.1) iOS/Telegram стабилизация (NUCLEAR FIX) ====== */
+  (function initKeyboardStabilizer(){
+    const tg   = window.Telegram && window.Telegram.WebApp;
+    const vv   = window.visualViewport;
     
-    // Функция, которая не дает iOS сдвигать страницу
-    function forceScrollTop() {
-      if (window.scrollY !== 0) {
-        window.scrollTo(0, 0);
-      }
+    // Главная функция пересчета геометрии
+    function updateGeometry() {
+      // 1. Жесткий сброс скролла страницы (лечит "прыжок" и дыру сверху)
+      window.scrollTo(0, 0);
       document.body.scrollTop = 0;
       document.documentElement.scrollTop = 0;
+
+      // 2. Получаем реальную высоту вьюпорта
+      // На iOS с overlays-content высота vv.height уменьшается при открытии клавиатуры?
+      // Обычно с overlays-content она НЕ меняется, а клавиатура просто ложится сверху.
+      // Но нам нужно знать высоту клавиатуры.
+      
+      let viewportHeight = window.innerHeight;
+      let keyboardHeight = 0;
+      
+      if (vv) {
+        // Высота видимой части
+        viewportHeight = vv.height; 
+        
+        // Вычисляем высоту клавиатуры как разницу
+        // (С учетом смещения, если оно есть)
+        keyboardHeight = window.innerHeight - vv.height - vv.offsetTop;
+        
+        // Фильтруем отрицательные значения (баги округления)
+        if (keyboardHeight < 0) keyboardHeight = 0;
+      }
+
+      // 3. Устанавливаем CSS переменные
+      document.documentElement.style.setProperty('--kb', `${keyboardHeight}px`);
+      // На всякий случай обновляем высоту, если она плавает
+      document.documentElement.style.setProperty('--vh', `${viewportHeight}px`); 
+      
+      // 4. Обновляем высоту инпута
+      const inputArea = document.querySelector('.input-area');
+      if (inputArea) {
+         document.documentElement.style.setProperty('--input-h', `${inputArea.offsetHeight}px`);
+      }
     }
+
+    // СЛУШАТЕЛИ СОБЫТИЙ
+
+    if (vv) {
+      // Когда меняется размер вьюпорта (клавиатура едет)
+      vv.addEventListener('resize', updateGeometry);
+      // Когда вьюпорт скроллится (этого быть не должно, но если вдруг)
+      vv.addEventListener('scroll', updateGeometry);
+    }
+
+    // Обычный ресайз окна
+    window.addEventListener('resize', updateGeometry);
+    
+    // АГРЕССИВНАЯ БОРЬБА С ПРЫЖКАМИ
+    // Как только скролл происходит (Safari пытается сдвинуть экран) -> возвращаем назад
+    window.addEventListener('scroll', () => {
+        if (window.scrollY !== 0) window.scrollTo(0, 0);
+    }, { passive: false });
+
+    // При фокусе на инпут Safari часто делает прыжок. 
+    // Мы ждем немного и принудительно выравниваем все.
+    const input = document.getElementById('messageInput');
+    if (input) {
+      input.addEventListener('focus', () => {
+        // Сразу
+        window.scrollTo(0, 0);
+        // И через короткие промежутки, пока анимация клавиатуры идет
+        setTimeout(() => window.scrollTo(0, 0), 100);
+        setTimeout(() => window.scrollTo(0, 0), 300);
+        setTimeout(updateGeometry, 350); // Финальный пересчет
+      });
+      
+      // Исправление бага, когда кликаешь мимо клавиатуры
+      input.addEventListener('blur', () => {
+        setTimeout(updateGeometry, 100);
+      });
+    }
+
+    // Первый запуск
+    updateGeometry();
+  })();
 
     function updateMetrics() {
       // 1. Принудительно держим верх
