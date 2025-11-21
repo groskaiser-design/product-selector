@@ -1,9 +1,7 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta name="viewport"
-        content="width=device-width, initial-scale=1, maximum-scale=1,
-                 user-scalable=no, viewport-fit=cover, interactive-widget=overlays-content" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
   <meta charset="UTF-8" />
   <title>AI Чат</title>
 
@@ -12,7 +10,7 @@
   // Фиксируем момент загрузки
   window.__pageLoadTime = (window.performance && performance.now) ? performance.now() : Date.now();
   // ↑ Меняй при каждом релизе
-  const APP_HTML_VERSION = 'v2025-0009';
+  const APP_HTML_VERSION = 'v2025-0010';
 
   if (!window.__vc_done) {
     window.__vc_done = true;
@@ -45,8 +43,37 @@
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
   <style>
-    html, body, #app, .container {height: 100%; min-height: 100vh; }
-    html, body, button, [role="button"], .btn { touch-action: manipulation; }
+
+    /* СБРОС */
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+    html {
+      background-color: #000; /* Черная подложка от белых полос */
+    }
+
+    body {
+      margin: 0; padding: 0; width: 100%;
+      background: transparent; color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+      overflow: hidden; /* ЗАПРЕЩАЕМ СКРОЛЛ BODY */
+      position: fixed; top: 0; left: 0; bottom: 0; right: 0; /* ЖЕСТКАЯ ФИКСАЦИЯ */
+    }
+
+    /* ФОН ОТДЕЛЬНО (чтобы не дергался) */
+    body::before {
+      content:""; position:fixed; inset:0; background:var(--bg);
+      z-index:-1; pointer-events:none;
+    }
+
+    /* ГЛАВНЫЙ КОНТЕЙНЕР */
+    .container {
+      position: absolute; top: 0; left: 0; right: 0;
+      height: 100%; /* Будет обновляться через JS */
+      max-width: var(--maxw); margin: 0 auto;
+      display: flex; flex-direction: column;
+      overflow: hidden; /* Скролл только внутри чата */
+    }
+    
     input, select, textarea { font-size: 16px; }
 
     :root{
@@ -147,13 +174,16 @@
     @keyframes typing{ 0%,60%,100%{ transform:translateY(0); opacity:.7; } 30%{ transform:translateY(-10px); opacity:1; } }
 
     /* ==== инпут-панель: фиксируем к вьюпорту и центрируем по max-width ==== */
-    .input-area{
-      position: fixed; left: 50%; transform: translateX(-50%) translateZ(0);
-      bottom: 0; width: min(100%, var(--maxw)); padding:12px 14px;
-      padding-bottom: max(env(safe-area-inset-bottom), 8px);
-      background: transparent; will-change: transform;
+      .input-area {
+      flex-shrink: 0; /* Не сжиматься */
+      width: 100%;
+      padding: 12px 14px;
+      background: transparent;
       z-index: 5;
-    }
+      /* position: fixed УБРАНО */
+      }
+
+    
     .input-wrapper{ display:flex; gap:10px; align-items:flex-end; }
     .input-field{
       flex:1; min-height:44px; max-height:120px; padding:12px 16px; border:1px solid var(--inputBorder);
@@ -352,37 +382,51 @@ function isAdmin() {
 
 
   /* ====== 0.1) iOS/Telegram стабилизация высоты и клавиатуры ====== */
-  (function initKeyboardStabilizer(){
-    const tg   = window.Telegram && window.Telegram.WebApp;
-    const vv   = window.visualViewport;
-    const root = document.documentElement;
-    const chat = document.getElementById('chatArea');
-    const inputArea = document.querySelector('.input-area');
+/* ====== 0.1) STABLE VIEWPORT (OFFICIAL TELEGRAM API) ====== */
+  (function initStableLayout() {
+    const app = document.querySelector('.container'); // Твой главный див
     const input = document.getElementById('messageInput');
-    const setVar = (n,v)=> root.style.setProperty(n, v);
+    const chatArea = document.getElementById('chatArea');
+    const tg = window.Telegram?.WebApp;
 
-    function measureInput(){
-      const h = (inputArea && inputArea.offsetHeight) || 56;
-      setVar('--input-h', h + 'px');
-    }
-    function update(){
-      // 1) стабильная высота экрана
-      let vh = window.innerHeight;
-      if (tg && tg.viewportStableHeight) vh = tg.viewportStableHeight;
-      setVar('--vh', Math.round(vh) + 'px');
+    if (!app) return;
 
-      // 2) высота перекрытия клавиатурой
-      let kb = 0;
-      if (vv) {
-        const occluded = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-        kb = Math.round(occluded);
+    function setHeight() {
+      // Если есть API Телеграма - берем высоту оттуда (она идеальна)
+      if (tg && tg.viewportHeight) {
+        app.style.height = `${tg.viewportHeight}px`;
+      } else {
+        // Фолбэк для браузера
+        app.style.height = `${window.innerHeight}px`;
       }
-      setVar('--kb', kb + 'px');
-
-      // 3) докрутить чат вниз без «мягкой» анимации
-      if (chat) chat.scrollTop = chat.scrollHeight;
     }
 
+    // Слушаем Телеграм
+    if (tg) {
+      tg.onEvent('viewportChanged', ({ isStateStable }) => {
+        setHeight();
+        // Если анимация закончилась - докручиваем чат
+        if (isStateStable) {
+           requestAnimationFrame(() => { chatArea.scrollTop = chatArea.scrollHeight; });
+        }
+      });
+      // Инициализация
+      setHeight();
+      tg.expand();
+    } else {
+      window.addEventListener('resize', setHeight);
+      setHeight();
+    }
+
+    // FIX ДЛЯ ФОКУСА: Чуть-чуть ждем и скроллим вниз, чтобы клава не закрыла последнее сообщение
+    if (input) {
+      input.addEventListener('focus', () => {
+        setTimeout(() => {
+          chatArea.scrollTop = chatArea.scrollHeight;
+        }, 300);
+      });
+    }
+  })();
     measureInput();
     update();
 
