@@ -3,402 +3,290 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>AI Чат (No Jump)</title>
-
+  <title>AI Chat Stable</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
   <style>
+    /* Сброс */
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
     :root {
       --bg: linear-gradient(135deg,#667eea 0%,#764ba2 100%);
       --userBubble: rgba(251,191,36,.25);
-      --userBorder: rgba(251,191,36,.4);
-      --aiBubble: rgba(255,255,255,.18);
-      --aiBorder: rgba(255,255,255,.28);
-      --inputBg: rgba(255,255,255,.12);
-      --inputBorder: rgba(255,255,255,.24);
-      --okA: #fbbf24; --okB: #f59e0b;
-      --maxw: 560px;
+      --aiBubble: rgba(255,255,255,.15);
+      --input-h: 60px;
     }
 
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-
-    /* САМОЕ ВАЖНОЕ: 
-      Фиксируем body намертво. Никакого скролла страницы.
-      Страница не может "прыгнуть", если она прибита гвоздями.
+    /* ЖЕСТКАЯ ФИКСАЦИЯ
+       Это предотвращает сдвиг самой страницы браузером
     */
-    html, body {
-      width: 100%;
-      height: 100%;
-      overflow: hidden; /* Запрет прокрутки */
-      position: fixed;  /* Запрет сдвига на iOS */
-      top: 0; left: 0;
+    html {
+      width: 100%; height: 100%;
+      overflow: hidden; /* Запрет скролла html */
+      position: fixed;  /* Запрет "резинового" эффекта */
+    }
+
+    body {
+      width: 100%; height: 100%;
+      overflow: hidden;
       background: var(--bg);
-      color: #fff;
       font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      color: #fff;
+      position: fixed; /* Двойная фиксация */
+      top: 0; left: 0;
     }
 
-    /*
-      Контейнер приложения.
-      Его высоту мы будем менять JS-ом.
+    /* ВИРТУАЛЬНЫЙ ВЬЮПОРТ
+       Мы будем менять высоту этого блока через JS
     */
-    #app-viewport {
+    #app {
       position: absolute;
-      top: 0; left: 0; right: 0;
-      height: 100%; /* По умолчанию 100%, JS изменит это */
-      max-width: var(--maxw);
-      margin: 0 auto;
-      display: flex;
-      flex-direction: column;
-      /* Плавность изменения размера при открытии клавиатуры */
-      transition: height 0.1s ease-out;
+      top: 0; left: 0; width: 100%;
+      /* Высота будет задаваться скриптом */
+      height: 100%; 
+      display: flex; flex-direction: column;
     }
 
     /* Шапка */
-    .header {
-      flex-shrink: 0;
-      height: 54px;
+    header {
+      flex-shrink: 0; height: 50px;
       display: flex; align-items: center; justify-content: center;
-      background: rgba(255,255,255,0.1);
-      backdrop-filter: blur(10px);
-      border-bottom: 1px solid rgba(255,255,255,0.1);
-      z-index: 20;
+      background: rgba(255,255,255,0.1); border-bottom: 1px solid rgba(255,255,255,0.1);
+      font-weight: bold;
     }
-    .header h4 { font-size: 17px; font-weight: 700; }
     .clear-btn {
-      position: absolute; right: 16px; padding: 6px 12px;
-      border: 1px solid rgba(239,68,68,0.5); border-radius: 8px;
-      background: rgba(239,68,68,0.2); color: #fff; font-size: 12px;
+      position: absolute; right: 15px; font-size: 12px;
+      padding: 5px 10px; background: rgba(255,0,0,0.2); border-radius: 8px; border:none; color:#fff;
     }
 
-    /* Область чата */
-    .chat-area {
+    /* Чат */
+    #chat {
       flex-grow: 1;
-      overflow-y: auto;
+      overflow-y: auto; /* Скролл ТОЛЬКО здесь */
       overflow-x: hidden;
-      padding: 16px 14px;
+      padding: 15px;
       display: flex; flex-direction: column; gap: 10px;
       -webkit-overflow-scrolling: touch;
-      /* Скроллбар */
-      scrollbar-width: none; 
+      padding-bottom: 10px;
     }
-    .chat-area::-webkit-scrollbar { display: none; }
+    /* Скрываем скроллбар */
+    #chat::-webkit-scrollbar { display: none; }
 
-    /* Сообщения */
-    .message { max-width: 85%; display: flex; flex-direction: column; position: relative; animation: fadeUp 0.2s ease; }
-    @keyframes fadeUp { from{opacity:0;transform:translateY(5px)} to{opacity:1;transform:translateY(0)} }
-    
-    .message.user { align-self: flex-end; align-items: flex-end; }
-    .message.ai { align-self: flex-start; align-items: flex-start; }
+    .msg { padding: 10px 14px; border-radius: 16px; max-width: 85%; font-size: 15px; line-height: 1.4; word-wrap: break-word; }
+    .msg.user { align-self: flex-end; background: var(--userBubble); border-bottom-right-radius: 2px; }
+    .msg.ai { align-self: flex-start; background: var(--aiBubble); border-bottom-left-radius: 2px; }
 
-    .bubble {
-      padding: 10px 14px; border-radius: 16px; font-size: 15px; line-height: 1.4;
-      word-wrap: break-word; backdrop-filter: blur(5px);
-    }
-    .message.user .bubble { background: rgba(251,191,36,0.2); border: 1px solid rgba(251,191,36,0.4); border-bottom-right-radius: 2px; }
-    .message.ai .bubble { background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.2); border-bottom-left-radius: 2px; }
-    
-    .time { font-size: 10px; opacity: 0.6; margin-top: 3px; padding: 0 2px; }
-
-    /* Панель ввода */
-    .input-area {
+    /* Ввод */
+    footer {
       flex-shrink: 0;
+      padding: 10px;
       background: rgba(0,0,0,0.2);
       backdrop-filter: blur(10px);
-      padding: 10px 14px;
-      /* padding-bottom НЕ нужен, так как мы ресайзим контейнер ровно до клавиатуры */
       display: flex; gap: 10px; align-items: flex-end;
-      z-index: 20;
     }
 
-    .input-field {
-      flex: 1;
+    textarea {
+      flex-grow: 1;
       background: rgba(255,255,255,0.1);
-      border: 1px solid rgba(255,255,255,0.2);
-      border-radius: 20px;
-      padding: 10px 14px;
-      color: #fff; font-size: 16px; /* Важно 16px для iOS */
-      max-height: 100px;
-      min-height: 40px;
-      resize: none; outline: none;
-      font-family: inherit;
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 20px; padding: 10px 15px;
+      color: #fff; font-size: 16px; /* 16px ВАЖНО чтобы не зумило */
+      max-height: 120px; min-height: 40px;
+      resize: none; outline: none; font-family: inherit;
     }
-    .send-btn {
-      width: 40px; height: 40px; border-radius: 50%; border: none;
-      background: linear-gradient(135deg, var(--okA), var(--okB));
-      color: #fff; display: flex; align-items: center; justify-content: center;
-      flex-shrink: 0;
-    }
-    .send-btn:disabled { opacity: 0.5; }
 
-    /* UI states */
-    .empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; opacity: 0.6; text-align: center; }
-    .empty-state div { font-size: 40px; margin-bottom: 10px; }
-    
-    /* Модалка и кнопки удаления (твои стили) */
-    .delete-btn { position: absolute; top: 50%; transform: translateY(-50%); width: 28px; height: 28px; background: #ef4444; border-radius: 50%; display: none; align-items: center; justify-content: center; color: #fff; z-index: 5; }
-    .message.user .delete-btn { left: -36px; } .message.ai .delete-btn { right: -36px; }
-    .message.show-delete .delete-btn { display: flex; }
-    .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 1000; display: none; align-items: center; justify-content: center; }
-    .modal.show { display: flex; }
-    .modal-box { background: #2d2d2d; padding: 20px; border-radius: 16px; width: 300px; text-align: center; border: 1px solid rgba(255,255,255,0.2); }
-    .modal-btns { display: flex; gap: 10px; margin-top: 15px; }
-    .modal-btns button { flex: 1; padding: 10px; border-radius: 8px; border: none; font-weight: bold; }
-    
+    button {
+      width: 40px; height: 40px; border-radius: 50%; border: none;
+      background: #fbbf24; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+      font-weight: bold; color: #000;
+    }
+    button:disabled { opacity: 0.5; }
+
+    /* Хак для высоты на iOS Safari */
+    @supports (-webkit-touch-callout: none) {
+       /* CSS фикс высоты для iOS (на случай если JS не успеет) */
+       #app { height: -webkit-fill-available; }
+    }
   </style>
 </head>
 <body>
 
-  <div id="app-viewport">
-    <div class="header">
-      <h4>Ai-Коуч</h4>
-      <button class="clear-btn" id="clearBtn">Очистить</button>
+  <div id="app">
+    <header>
+      AI Assistant
+      <button class="clear-btn" id="clearBtn">Сброс</button>
+    </header>
+    
+    <div id="chat">
+      <div class="msg ai" style="margin: auto 0;">Привет! Я готов.</div>
     </div>
 
-    <div class="chat-area" id="chatArea">
-      <div class="empty-state" id="emptyState">
-        <div>💬</div>
-        <h3>Начните диалог</h3>
-      </div>
-    </div>
-
-    <div class="input-area">
-      <textarea class="input-field" id="messageInput" placeholder="Сообщение..." rows="1"></textarea>
-      <button class="send-btn" id="sendBtn" disabled>➤</button>
-    </div>
-  </div>
-
-  <div class="modal" id="confirmModal">
-    <div class="modal-box">
-      <h3>Удалить?</h3>
-      <p>Отменить действие нельзя.</p>
-      <div class="modal-btns">
-        <button style="background:#ffffff20; color:#fff" id="modalCancel">Нет</button>
-        <button style="background:#fbbf24; color:#000" id="modalConfirm">Да</button>
-      </div>
-    </div>
+    <footer>
+      <textarea id="input" rows="1" placeholder="Сообщение..."></textarea>
+      <button id="sendBtn">➤</button>
+    </footer>
   </div>
 
   <script>
-  // ========================================================
-  // 1. FIX VIEWPORT JUMPS (ГЛАВНЫЙ СКРИПТ)
-  // ========================================================
-  const viewport = document.getElementById('app-viewport');
-  const input = document.getElementById('messageInput');
-  const chat = document.getElementById('chatArea');
-
-  // Функция, которая жестко задает высоту приложения равной видимой области
-  function resizeViewport() {
-    // window.visualViewport.height - это реальная высота БЕЗ клавиатуры
-    if (window.visualViewport) {
-      viewport.style.height = `${window.visualViewport.height}px`;
-      // Если есть смещение сверху (бывает на iOS), компенсируем
-      viewport.style.top = `${window.visualViewport.offsetTop}px`;
-      
-      // Принудительно скроллим чат вниз при ресайзе
-      scrollToBottom();
-    } else {
-      viewport.style.height = `${window.innerHeight}px`;
-    }
-    // Хак: принудительно возвращаем скролл страницы в 0, чтобы не съезжала шапка
-    window.scrollTo(0, 0);
-  }
-
-  // Слушаем изменения видимой области (открытие/закрытие клавы)
-  if (window.visualViewport) {
-    window.visualViewport.addEventListener('resize', resizeViewport);
-    window.visualViewport.addEventListener('scroll', resizeViewport);
-  } else {
-    window.addEventListener('resize', resizeViewport);
-  }
-
-  // Инициализация
-  resizeViewport();
-
-  // Хак для iOS при фокусе: иногда iOS все равно пытается сдвинуть body
-  input.addEventListener('focus', () => {
-    setTimeout(() => {
-      window.scrollTo(0, 0);
-      resizeViewport();
-      scrollToBottom();
-    }, 100);
-  });
-  
-  // ========================================================
-  // 2. LOGIC (ТВОЙ КОД)
-  // ========================================================
-  (function initTMA(){
+    // --- CONFIG ---
+    const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbzvlDKUH6qsON-A6iSHYvMU_6XWtReZc5oXnnZOMTgETfvZqMMh2zUbdQJF-iOanMBc/exec'; 
+    
+    // --- ELEMENTS ---
+    const app = document.getElementById('app');
+    const chat = document.getElementById('chat');
+    const input = document.getElementById('input');
+    const sendBtn = document.getElementById('sendBtn');
     const tg = window.Telegram?.WebApp;
-    if(tg){ 
-        tg.ready(); 
-        tg.expand(); 
-        tg.disableVerticalSwipes?.();
-    }
-  })();
-
-  const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbzvlDKUH6qsON-A6iSHYvMU_6XWtReZc5oXnnZOMTgETfvZqMMh2zUbdQJF-iOanMBc/exec';
-  let messages = [];
-
-  const sendBtn = document.getElementById('sendBtn');
-  const clearBtn = document.getElementById('clearBtn');
-  const emptyState = document.getElementById('emptyState');
-  
-  // --- Helper Functions ---
-  function scrollToBottom() {
-    // requestAnimationFrame помогает скроллить ПОСЛЕ отрисовки
-    requestAnimationFrame(() => {
-      chat.scrollTop = chat.scrollHeight;
-    });
-  }
-
-  function formatTime(ts) {
-    const d = new Date(ts);
-    return d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0');
-  }
-
-  // --- Rendering ---
-  function render() {
-    // Чистим (кроме emptyState)
-    Array.from(chat.children).forEach(c => { if(c.id !== 'emptyState') c.remove(); });
     
-    if(messages.length === 0) {
-      emptyState.style.display = 'flex';
+    // --- INIT ---
+    if(tg) {
+      tg.ready();
+      tg.expand();
+      // Включаем режим, когда клавиатура НЕ сжимает viewport нативно, мы сделаем это руками
+      // Если этот метод недоступен, скрипт ниже все равно сработает
+      try { tg.requestFullscreen(); } catch(e){} 
+    }
+
+    // ============================================================
+    // 🛑 ANTI-JUMP SYSTEM (СИСТЕМА ПРОТИВ ПРЫЖКОВ)
+    // ============================================================
+    
+    // 1. Функция ресайза
+    function handleResize() {
+      // Используем visualViewport если есть, иначе window.innerHeight
+      const h = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+      const offset = window.visualViewport ? window.visualViewport.offsetTop : 0;
+      
+      app.style.height = `${h}px`;
+      app.style.top = `${offset}px`;
+      
+      // Докручиваем чат, если он был внизу
+      scrollToBottom();
+    }
+
+    // Слушаем изменения
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', handleResize);
+      window.visualViewport.addEventListener('scroll', handleResize); // Иногда iOS скроллит вьюпорт
     } else {
-      emptyState.style.display = 'none';
-      messages.forEach((m, i) => {
-        const el = createMsgEl(m, i);
-        chat.appendChild(el);
+      window.addEventListener('resize', handleResize);
+    }
+    handleResize(); // Запуск сразу
+
+    // 2. Блокировка скролла при фокусе (Самое важное)
+    input.addEventListener('focus', () => {
+      // Запускаем "долбежку", которая возвращает скролл страницы в 0
+      // Это длится 400мс - время анимации клавиатуры
+      const lockInterval = setInterval(() => {
+        window.scrollTo(0, 0);
+        document.body.scrollTop = 0;
+        handleResize(); // Принудительно обновляем высоту
+      }, 10);
+
+      setTimeout(() => {
+        clearInterval(lockInterval);
+        // Когда клава открылась, докручиваем чат до низа
+        setTimeout(scrollToBottom, 50); 
+      }, 400);
+    });
+
+    // Также при потере фокуса обновляем
+    input.addEventListener('blur', () => {
+      setTimeout(handleResize, 100);
+    });
+
+    // ============================================================
+    // LOGIC
+    // ============================================================
+    let messages = [];
+    
+    function scrollToBottom() {
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    function render() {
+      // Простая перерисовка (для теста)
+      const saved = localStorage.getItem('msgs');
+      if(saved) messages = JSON.parse(saved);
+      
+      chat.innerHTML = '';
+      if(messages.length === 0) {
+         chat.innerHTML = '<div class="msg ai" style="margin: auto 0;">Привет! Начни диалог.</div>';
+      }
+      messages.forEach(m => {
+        const div = document.createElement('div');
+        div.className = `msg ${m.role}`;
+        div.textContent = m.text;
+        chat.appendChild(div);
       });
+      scrollToBottom();
     }
-    scrollToBottom();
-  }
 
-  function createMsgEl(m, index) {
-    const div = document.createElement('div');
-    div.className = `message ${m.role}`;
-    
-    const bubble = document.createElement('div');
-    bubble.className = 'bubble';
-    bubble.textContent = m.content;
-    
-    // Delete logic
-    const delBtn = document.createElement('div');
-    delBtn.className = 'delete-btn';
-    delBtn.innerHTML = '✕';
-    delBtn.onclick = (e) => { e.stopPropagation(); confirmDelete(index); };
-    
-    let timer;
-    bubble.addEventListener('touchstart', () => timer = setTimeout(() => {
-       div.classList.add('show-delete');
-       window.Telegram?.WebApp?.HapticFeedback?.impactOccurred('medium');
-    }, 500));
-    bubble.addEventListener('touchend', () => clearTimeout(timer));
+    async function send() {
+      const text = input.value.trim();
+      if(!text) return;
+      
+      window.Telegram?.WebApp?.HapticFeedback?.impactOccurred('light');
 
-    const time = document.createElement('div');
-    time.className = 'time';
-    time.textContent = formatTime(m.timestamp);
+      messages.push({ role:'user', text });
+      localStorage.setItem('msgs', JSON.stringify(messages));
+      render();
+      
+      input.value = '';
+      input.style.height = 'auto';
+      
+      // Fake AI Delay & Fetch
+      const tempId = Date.now();
+      messages.push({ role:'ai', text:'...', id:tempId });
+      render();
 
-    div.appendChild(delBtn);
-    div.appendChild(bubble);
-    div.appendChild(time);
-    return div;
-  }
-
-  // --- API ---
-  async function sendMessage() {
-    const text = input.value.trim();
-    if(!text) return;
-    
-    window.Telegram?.WebApp?.HapticFeedback?.impactOccurred('light');
-    
-    // Local add
-    messages.push({ role:'user', content:text, timestamp:Date.now() });
-    save();
-    render();
-    
-    input.value = '';
-    input.style.height = 'auto';
-    sendBtn.disabled = true;
-
-    // AI placeholder
-    const loadingId = Date.now();
-    messages.push({ role:'ai', content:'...', timestamp:loadingId }); // Placeholder
-    render();
-
-    // Fetch
-    try {
+      // Backend
+      try {
         const u = window.Telegram?.WebApp?.initDataUnsafe?.user || {};
-        const uid = u.id || localStorage.getItem('debug_uid') || 'd-'+Math.random();
-        if(!u.id) localStorage.setItem('debug_uid', uid);
-
-        const res = await fetch(BACKEND_URL, {
-            method: 'POST',
-            body: JSON.stringify({
-                action: 'send_message',
-                message: text,
-                user_id: uid,
-                user_data: { first_name: u.first_name || '' },
-                init_data: window.Telegram?.WebApp?.initData || ''
-            })
-        }).then(r => r.json());
+        const uid = u.id || 'debug';
         
-        // Replace placeholder
-        messages.pop(); // remove loading
+        const res = await fetch(BACKEND_URL, {
+          method: 'POST',
+          body: JSON.stringify({
+             action: 'send_message',
+             user_id: uid,
+             message: text,
+             user_data: u
+          })
+        }).then(r => r.json());
+
+        messages = messages.filter(m => m.id !== tempId); // Remove loading
+        
         if(res.success) {
-            messages.push({ role:'ai', content: res.text || 'Пусто', timestamp:Date.now() });
-            window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('success');
+           messages.push({ role:'ai', text: res.text });
+           window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('success');
         } else {
-            messages.push({ role:'ai', content: 'Ошибка: '+(res.error||'Unknown'), timestamp:Date.now() });
-            window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('error');
+           messages.push({ role:'ai', text: 'Ошибка сервера' });
         }
-    } catch(e) {
-        messages.pop();
-        messages.push({ role:'ai', content: 'Ошибка сети', timestamp:Date.now() });
+      } catch(e) {
+        messages = messages.filter(m => m.id !== tempId);
+        messages.push({ role:'ai', text: 'Ошибка сети' });
+      }
+      
+      localStorage.setItem('msgs', JSON.stringify(messages));
+      render();
     }
-    save();
-    render();
-  }
 
-  // --- Storage ---
-  function save() { localStorage.setItem('chat_hist', JSON.stringify(messages)); }
-  function load() { 
-      const s = localStorage.getItem('chat_hist'); 
-      if(s) { messages = JSON.parse(s); render(); }
-  }
-
-  // --- Events ---
-  input.addEventListener('input', function() {
+    // Handlers
+    sendBtn.onclick = send;
+    input.addEventListener('input', function() {
       this.style.height = 'auto';
       this.style.height = Math.min(this.scrollHeight, 100) + 'px';
-      sendBtn.disabled = !this.value.trim();
-  });
-  sendBtn.onclick = sendMessage;
+    });
 
-  // Modal
-  let delCallback = null;
-  function confirmDelete(i) {
-      delCallback = () => { messages.splice(i, 1); save(); render(); };
-      document.getElementById('confirmModal').classList.add('show');
-  }
-  document.getElementById('modalCancel').onclick = () => document.getElementById('confirmModal').classList.remove('show');
-  document.getElementById('modalConfirm').onclick = () => { if(delCallback) delCallback(); document.getElementById('confirmModal').classList.remove('show'); };
-  
-  clearBtn.onclick = () => {
-      delCallback = async () => {
-         messages = []; save(); render();
-         // Call backend clear if needed
-         const u = window.Telegram?.WebApp?.initDataUnsafe?.user || {};
-         const uid = u.id || localStorage.getItem('debug_uid');
-         await fetch(BACKEND_URL, { method:'POST', body:JSON.stringify({action:'clear_history', user_id: uid}) });
-      };
-      document.getElementById('confirmModal').classList.add('show');
-  }
+    document.getElementById('clearBtn').onclick = () => {
+      messages = [];
+      localStorage.removeItem('msgs');
+      render();
+    };
 
-  document.addEventListener('click', (e) => {
-     document.querySelectorAll('.show-delete').forEach(el => el.classList.remove('show-delete'));
-  });
-
-  load();
-
+    // Init Load
+    render();
   </script>
 </body>
 </html>
