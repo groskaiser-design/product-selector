@@ -1,290 +1,417 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
-  <title>AI Чат</title>
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
-
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-
-    :root {
-      --bg: linear-gradient(135deg,#667eea 0%,#764ba2 100%);
-      --userBubble: rgba(251,191,36,.25);
-      --aiBubble: rgba(255,255,255,.18);
-      --maxw: 560px;
-    }
-
-    html {
-      background-color: #000; /* Черный фон подложки, чтобы не было белых полос */
-    }
-
-    body {
-      margin: 0; 
-      padding: 0;
-      width: 100%;
-      background: var(--bg);
-      color: #fff;
-      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-      overflow: hidden; /* ЗАПРЕЩАЕМ СКРОЛЛ ВСЕЙ СТРАНИЦЫ */
-      height: 100vh; /* Фоллбэк */
-    }
-
-    /* Главная обертка */
-    #app {
-      display: flex;
-      flex-direction: column;
-      margin: 0 auto;
-      max-width: var(--maxw);
-      height: 100%; /* Будет перезаписано JS */
-      position: relative;
-      overflow: hidden; /* Важно */
-    }
-
-    .header {
-      flex-shrink: 0; height: 50px;
-      display: flex; align-items: center; justify-content: center;
-      background: rgba(0,0,0,0.2); font-weight: bold;
-      position: relative;
-      z-index: 10;
-    }
-    .clear-btn {
-      position: absolute; right: 15px; font-size: 12px; 
-      background: rgba(255,0,0,0.3); border:none; color:#fff; padding:4px 8px; border-radius:4px;
-    }
-
-    /* Чат: резиновый */
-    .chat-area {
-      flex-grow: 1;
-      overflow-y: auto; /* Скролл только здесь */
-      padding: 15px;
-      display: flex; flex-direction: column; gap: 10px;
-      -webkit-overflow-scrolling: touch;
-    }
-    /* Скроллбар */
-    .chat-area::-webkit-scrollbar { width: 4px; }
-    .chat-area::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); }
-
-    .message { padding: 10px 14px; border-radius: 14px; max-width: 85%; word-wrap: break-word; font-size: 15px; line-height: 1.4; }
-    .message.user { align-self: flex-end; background: var(--userBubble); }
-    .message.ai { align-self: flex-start; background: var(--aiBubble); }
-    .time { font-size: 10px; opacity: 0.6; margin-top: 4px; text-align: right; }
-
-    /* Ввод: лежит в потоке (не fixed) */
-    .input-area {
-      flex-shrink: 0;
-      background: rgba(0,0,0,0.2);
-      backdrop-filter: blur(10px);
-      padding: 10px;
-      display: flex; gap: 10px; align-items: flex-end;
-    }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Dashboard v2</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  /* === ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ (Из твоего дизайн-кода) === */
+  :root {
+    --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    --bg: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     
-    textarea {
-      flex: 1; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2);
-      border-radius: 18px; padding: 10px 14px; color: #fff; font-size: 16px; /* 16px чтобы iOS не зумил */
-      max-height: 100px; resize: none; outline: none; font-family: inherit;
-    }
+    /* Стекло и карточки */
+    --glass-bg: rgba(255, 255, 255, 0.12);
+    --glass-border: rgba(255, 255, 255, 0.25);
+    --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+    --blur: 14px;
     
-    button {
-      width: 40px; height: 40px; border-radius: 50%; border: none;
-      background: #fbbf24; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-    }
+    /* Цвета */
+    --text-primary: #ffffff;
+    --text-secondary: rgba(255, 255, 255, 0.75);
+    --accent-gradient: linear-gradient(135deg, #fbbf24, #f59e0b);
+    
+    /* Размеры */
+    --page-padding: 16px;
+    --tile-gap: 12px;
+    --radius-l: 20px;
+    --radius-m: 16px;
+    --radius-s: 12px;
+  }
 
-    /* Модалка */
-    .modal { position: fixed; inset:0; background:rgba(0,0,0,0.7); display:none; align-items:center; justify-content:center; z-index:100; }
-    .modal.show { display:flex; }
-    .modal-box { background:#222; padding:20px; border-radius:12px; text-align:center; min-width:250px; }
-    .modal-btns { margin-top:15px; display:flex; gap:10px; }
-    .modal-btns button { flex:1; border-radius:6px; }
-  </style>
+  /* === СБРОС === */
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    font-family: var(--font-family);
+    background: var(--bg);
+    color: var(--text-primary);
+    min-height: 100vh;
+    /* Фикс для iOS скролла */
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  
+  /* Фон на весь экран (чтобы не дергался при скролле) */
+  body::before {
+    content: ""; position: fixed; inset: 0; 
+    background: var(--bg); z-index: -1; pointer-events: none;
+  }
+
+  /* === ЛЭЙАУТ === */
+  .page {
+    max-width: 560px; margin: 0 auto;
+    padding: var(--page-padding);
+    padding-bottom: calc(40px + env(safe-area-inset-bottom));
+    display: flex; flex-direction: column; gap: 20px;
+  }
+
+  /* === 1. ПРОФИЛЬ (Компактный) === */
+  .profile-card {
+    display: flex; align-items: center; gap: 14px;
+    padding: 12px 16px;
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-l);
+    backdrop-filter: blur(var(--blur));
+    -webkit-backdrop-filter: blur(var(--blur));
+    box-shadow: var(--glass-shadow);
+  }
+  
+  .avatar {
+    width: 48px; height: 48px; border-radius: 50%;
+    background: rgba(255,255,255,0.2);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 20px; color: #fff;
+    overflow: hidden; flex-shrink: 0;
+    border: 1px solid rgba(255,255,255,0.3);
+  }
+  .avatar img { width: 100%; height: 100%; object-fit: cover; }
+  
+  .profile-info { flex: 1; display: flex; flex-direction: column; justify-content: center; }
+  .profile-name { font-weight: 700; font-size: 17px; line-height: 1.2; }
+  .profile-status { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+  
+  .profile-action {
+    width: 36px; height: 36px; border-radius: 10px;
+    background: rgba(255,255,255,0.1);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; transition: background .2s;
+  }
+  .profile-action:active { background: rgba(255,255,255,0.25); }
+
+  /* === 2. СЕТКА МЕНЮ (Grid) === */
+  .grid-section {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr); /* 3 колонки */
+    gap: var(--tile-gap);
+  }
+
+  .tile {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 8px;
+    aspect-ratio: 1 / 0.95; /* Чуть приплюснутые квадраты */
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-m);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    cursor: pointer;
+    transition: transform 0.1s ease, background 0.2s ease;
+  }
+
+  /* Эффект нажатия (без поднятия, просто scale down) */
+  .tile:active {
+    transform: scale(0.96);
+    background: rgba(255,255,255,0.18);
+  }
+
+  .tile-icon {
+    width: 32px; height: 32px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .tile-icon img { width: 100%; height: 100%; object-fit: contain; }
+  /* Фолбэк для иконок (эмодзи) */
+  .tile-emoji { font-size: 28px; line-height: 1; }
+
+  .tile-label {
+    font-size: 12px; font-weight: 600; text-align: center;
+    color: var(--text-primary);
+    line-height: 1.1;
+    padding: 0 4px;
+  }
+
+  /* === 3. СЛАЙДЕР ВИДЖЕТОВ (Widgets) === */
+  .widgets-title {
+    font-size: 15px; font-weight: 700; 
+    margin-bottom: 10px; padding-left: 4px; opacity: 0.9;
+  }
+
+  .widgets-slider {
+    display: flex;
+    gap: 12px;
+    overflow-x: auto;
+    padding-bottom: 10px; /* место для скроллбара (хотя мы его скроем) */
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    /* Скрываем скроллбар */
+    scrollbar-width: none; 
+  }
+  .widgets-slider::-webkit-scrollbar { display: none; }
+
+  .widget-card {
+    flex: 0 0 85%; /* Ширина карточки (85% экрана) */
+    scroll-snap-align: center;
+    background: rgba(255,255,255,0.1);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: var(--radius-l);
+    padding: 16px;
+    display: flex; flex-direction: column; gap: 8px;
+    position: relative; overflow: hidden;
+  }
+
+  /* Типы виджетов */
+  .widget-kbju { background: linear-gradient(180deg, rgba(255,255,255,0.15), rgba(255,255,255,0.08)); }
+  .widget-tip { background: rgba(251, 191, 36, 0.15); border-color: rgba(251, 191, 36, 0.3); }
+  
+  .w-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+  .w-title { font-weight: 700; font-size: 14px; opacity: 0.9; display:flex; align-items:center; gap:6px; }
+  .w-value { font-weight: 800; font-size: 14px; }
+  
+  .progress-bar {
+    height: 8px; width: 100%; background: rgba(255,255,255,0.15);
+    border-radius: 4px; overflow: hidden; margin-top: 6px;
+  }
+  .progress-fill {
+    height: 100%; background: var(--accent-gradient);
+    border-radius: 4px; width: 0%; transition: width 0.5s ease;
+  }
+  
+  .w-text { font-size: 13px; line-height: 1.4; opacity: 0.85; }
+  .w-link { font-size: 12px; font-weight: 700; margin-top: 8px; color: #fbbf24; text-transform: uppercase; }
+
+  /* === Спиннер загрузки (для обновлений) === */
+  #loader {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.4); backdrop-filter: blur(5px);
+    z-index: 1000; display: none; align-items: center; justify-content: center;
+  }
+  .spinner {
+    width: 32px; height: 32px; border: 3px solid rgba(255,255,255,0.3);
+    border-top-color: #fff; border-radius: 50%; animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+</style>
 </head>
 <body>
 
-  <div id="app">
-    <div class="header">
-      AI Чат
-      <button class="clear-btn" id="clearBtn">Сброс</button>
-    </div>
+  <div id="loader"><div class="spinner"></div></div>
 
-    <div class="chat-area" id="chatArea">
-      <div class="message ai">Привет!</div>
-    </div>
-
-    <div class="input-area">
-      <textarea id="messageInput" rows="1" placeholder="Сообщение..."></textarea>
-      <button id="sendBtn">➤</button>
-    </div>
-  </div>
-
-  <div class="modal" id="confirmModal">
-    <div class="modal-box">
-      <h3>Удалить?</h3>
-      <div class="modal-btns">
-        <button id="modalCancel" style="background:#444; color:#fff">Нет</button>
-        <button id="modalConfirm" style="background:#ef4444; color:#fff">Да</button>
+  <div class="page">
+    
+    <div class="profile-card" id="profileCard">
+      <div class="avatar" id="userAvatar">U</div>
+      <div class="profile-info">
+        <div class="profile-name" id="userName">Загрузка...</div>
+        <div class="profile-status" id="userStatus">ID: ...</div>
+      </div>
+      <div class="profile-action" onclick="haptic('light'); alert('Настройки профиля')">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
       </div>
     </div>
+
+    <div class="grid-section" id="menuGrid">
+      </div>
+
+    <div class="widgets-section">
+      <div class="widgets-title">Сводка &amp; Советы</div>
+      <div class="widgets-slider" id="widgetsSlider">
+        </div>
+    </div>
+
   </div>
 
-  <script>
-    // ===========================================================
-    // 1. STABLE VIEWPORT (OFFICIAL TELEGRAM API)
-    // ===========================================================
-    const app = document.getElementById('app');
-    const chatArea = document.getElementById('chatArea');
-    const input = document.getElementById('messageInput');
-    const tg = window.Telegram?.WebApp;
+<script>
+/* ============================================================
+   КОНФИГУРАЦИЯ (Потом это будет приходить из Google Sheet)
+   ============================================================ */
+// Версия конфига (если отличается от localStorage — обновляем)
+const DATA_VERSION = 1;
 
-    // Главная функция установки высоты
-    function setAppHeight() {
-        // Если мы в Телеграме, берем высоту ИЗ SDK. Она уже вычла клавиатуру.
-        if (tg && tg.viewportHeight) {
-            app.style.height = `${tg.viewportHeight}px`;
-        } else {
-            // Фолбэк для браузера
-            app.style.height = `${window.innerHeight}px`;
-        }
-    }
+// Список кнопок меню
+const APP_MENU = [
+  { id: 'kbju',     title: 'КБЖУ',       icon: '🥗', link: 'kbju.html' },
+  { id: 'measure',  title: 'Замеры',     icon: '📏', link: 'measurements.html' },
+  { id: 'diary',    title: 'Отчёт',      icon: '📝', link: 'scanner.html' }, // Дневник/Сканер
+  { id: 'menu',     title: 'Рацион',     icon: '🍎', link: '#' },
+  { id: 'ai',       title: 'AI-Коуч',    icon: '🤖', link: 'ai.html' },
+  { id: 'analyt',   title: 'Аналитика',  icon: '📊', link: '2.html' },
+  { id: 'profile',  title: 'Профиль',    icon: '👤', link: '#' },
+  { id: 'subs',     title: 'Подписка',   icon: '💎', link: '#' },
+  { id: 'manual',   title: 'Инструкция', icon: '❔', link: '#' } // По клику можно открывать сториз
+];
 
-    if (tg) {
-        tg.ready();
-        tg.expand(); // Раскрываем на всю
-        
-        // Слушаем официальное событие изменения вьюпорта
-        // Телеграм сам скажет, когда клавиатура открылась и какая теперь высота
-        tg.onEvent('viewportChanged', ({ isStateStable }) => {
-            setAppHeight();
-            // Если состояние стабильно (анимация закончилась), докручиваем скролл
-            if (isStateStable) {
-                scrollToBottom();
-            }
-        });
-    }
+// Данные для виджетов
+const APP_WIDGETS = [
+  {
+    type: 'kbju',
+    title: 'Сегодня',
+    valCurrent: 1250,
+    valMax: 2100,
+    unit: 'ккал'
+  },
+  {
+    type: 'tip',
+    title: 'Совет дня',
+    text: 'Взвешивайте продукты в сухом виде. После варки крупы впитывают воду и увеличивают вес в 2-3 раза.',
+    linkText: 'Читать базу знаний'
+  },
+  {
+    type: 'info',
+    title: 'Обновление v2.0',
+    text: 'Мы обновили интерфейс! Теперь замеры грузятся быстрее, а AI-коуч стал умнее.',
+    linkText: 'Что нового?'
+  }
+];
+
+/* ============================================================
+   ЛОГИКА
+   ============================================================ */
+
+// Инициализация Telegram
+const tg = window.Telegram?.WebApp;
+if (tg) {
+  tg.ready();
+  tg.expand();
+  tg.setHeaderColor('#667eea'); // Под цвет фона
+  // Отключаем кнопку назад на главной, если она была
+  tg.BackButton?.hide();
+}
+
+// Хаптика (безопасная функция)
+function haptic(style = 'light') {
+  try { tg?.HapticFeedback?.impactOccurred(style); } catch(e){}
+}
+
+// 1. Рендер Профиля
+function renderProfile() {
+  const user = tg?.initDataUnsafe?.user || { first_name: 'Гость', id: '---' };
+  const nameEl = document.getElementById('userName');
+  const statusEl = document.getElementById('userStatus');
+  const avatarEl = document.getElementById('userAvatar');
+
+  nameEl.textContent = user.first_name + (user.last_name ? ' ' + user.last_name : '');
+  statusEl.textContent = `ID: ${user.id}`;
+  
+  if (user.photo_url) {
+    avatarEl.innerHTML = `<img src="${user.photo_url}" alt="ava">`;
+  } else {
+    avatarEl.textContent = (user.first_name?.[0] || 'U').toUpperCase();
+  }
+}
+
+// 2. Рендер Меню (Grid)
+function renderMenu() {
+  const container = document.getElementById('menuGrid');
+  container.innerHTML = '';
+
+  APP_MENU.forEach(item => {
+    const tile = document.createElement('div');
+    tile.className = 'tile';
+    tile.onclick = () => handleMenuClick(item);
     
-    // На всякий случай слушаем и обычный ресайз
-    window.addEventListener('resize', setAppHeight);
-    
-    // Запуск при старте
-    setAppHeight();
+    // HTML иконки (сейчас эмодзи, потом можно <img src="${item.iconUrl}">)
+    // Если используешь SVG файлы, замени строку ниже на <img>
+    const iconHtml = `<div class="tile-emoji">${item.icon}</div>`;
 
-    // Маленький фикс: при фокусе скроллим чат вниз через небольшую задержку,
-    // чтобы убедиться, что клавиатура не перекрыла последнее сообщение
-    input.addEventListener('focus', () => {
-        setTimeout(scrollToBottom, 300);
+    tile.innerHTML = `
+      <div class="tile-icon">${iconHtml}</div>
+      <div class="tile-label">${item.title}</div>
+    `;
+    container.appendChild(tile);
+  });
+}
+
+// Обработка клика по меню
+function handleMenuClick(item) {
+  haptic('light');
+  
+  if (item.link && item.link !== '#') {
+    // Небольшая задержка для анимации нажатия
+    setTimeout(() => {
+      window.location.href = item.link;
+    }, 100);
+  } else {
+    // Заглушка
+    tg?.showPopup({ 
+        title: 'Раздел в разработке', 
+        message: `Раздел "${item.title}" скоро появится!` 
     });
+  }
+}
 
+// 3. Рендер Виджетов
+function renderWidgets() {
+  const container = document.getElementById('widgetsSlider');
+  container.innerHTML = '';
 
-    // ===========================================================
-    // 2. ТВОЯ ЛОГИКА
-    // ===========================================================
+  APP_WIDGETS.forEach(w => {
+    const card = document.createElement('div');
+    card.className = `widget-card widget-${w.type}`;
     
-    const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbzvlDKUH6qsON-A6iSHYvMU_6XWtReZc5oXnnZOMTgETfvZqMMh2zUbdQJF-iOanMBc/exec';
-    let messages = [];
-
-    const sendBtn = document.getElementById('sendBtn');
-    const clearBtn = document.getElementById('clearBtn');
-
-    function formatTime(ts) {
-       const d = new Date(ts);
-       return d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0');
+    if (w.type === 'kbju') {
+      // Виджет КБЖУ (Прогресс)
+      const percent = Math.min(100, (w.valCurrent / w.valMax) * 100);
+      card.innerHTML = `
+        <div class="w-header">
+          <div class="w-title">🔥 ${w.title}</div>
+          <div class="w-value">${w.valCurrent} / ${w.valMax} ${w.unit}</div>
+        </div>
+        <div class="progress-bar">
+          <div class="progress-fill" style="width: ${percent}%"></div>
+        </div>
+      `;
+    } else {
+      // Текстовый виджет (Совет / Инфо)
+      const icon = w.type === 'tip' ? '💡' : 'ℹ️';
+      card.innerHTML = `
+        <div class="w-header">
+          <div class="w-title">${icon} ${w.title}</div>
+        </div>
+        <div class="w-text">${w.text}</div>
+        ${w.linkText ? `<div class="w-link">${w.linkText} &rarr;</div>` : ''}
+      `;
     }
+    
+    // Клик по виджету
+    card.onclick = () => {
+      haptic('medium');
+      // Тут можно открывать подробности или мануал
+    };
 
-    function scrollToBottom() {
-       chatArea.scrollTop = chatArea.scrollHeight;
-    }
+    container.appendChild(card);
+  });
+}
 
-    function render() {
-       chatArea.innerHTML = '';
-       if(messages.length === 0) {
-           chatArea.innerHTML = '<div class="message ai" style="margin:auto">Начните диалог</div>';
-       }
-       messages.forEach((m, i) => {
-           const div = document.createElement('div');
-           div.className = `message ${m.role}`;
-           div.innerHTML = `<div>${m.content}</div><div class="time">${formatTime(m.timestamp)}</div>`;
-           
-           // Удаление по клику
-           div.onclick = () => confirmDelete(i);
-           chatArea.appendChild(div);
-       });
-       scrollToBottom();
-    }
+/* ============================================================
+   СИСТЕМА ОБНОВЛЕНИЙ (Заглушка для будущего)
+   ============================================================ */
+async function checkUpdates() {
+  // 1. Читаем версию из localStorage
+  const localVer = localStorage.getItem('app_config_version');
+  
+  // 2. Сравниваем с DATA_VERSION (в реале тут будет fetch к Google Script)
+  if (localVer != DATA_VERSION) {
+    console.log('New version found! Updating UI...');
+    // Тут будет логика сохранения нового конфига в localStorage
+    localStorage.setItem('app_config_version', DATA_VERSION);
+    // И перезапуск рендера
+  }
+}
 
-    async function send() {
-       const txt = input.value.trim();
-       if(!txt) return;
-       
-       messages.push({role:'user', content:txt, timestamp:Date.now()});
-       save(); render();
-       input.value=''; input.style.height='auto';
-       
-       // Loading
-       const loadId = Date.now();
-       messages.push({role:'ai', content:'...', timestamp:loadId});
-       render();
+/* ============================================================
+   ЗАПУСК
+   ============================================================ */
+document.addEventListener('DOMContentLoaded', () => {
+  renderProfile();
+  renderMenu();
+  renderWidgets();
+  checkUpdates();
+});
 
-       try {
-           const u = tg?.initDataUnsafe?.user || {};
-           const uid = u.id || localStorage.getItem('uid') || 'debug';
-           if(!u.id) localStorage.setItem('uid', uid);
-
-           const res = await fetch(BACKEND_URL, {
-               method: 'POST',
-               body: JSON.stringify({
-                   action: 'send_message',
-                   user_id: uid,
-                   message: txt,
-                   user_data: u,
-                   init_data: tg?.initData || ''
-               })
-           }).then(r=>r.json());
-           
-           messages = messages.filter(m=>m.timestamp !== loadId);
-           
-           if(res.success) messages.push({role:'ai', content:res.text, timestamp:Date.now()});
-           else messages.push({role:'ai', content:'Ошибка', timestamp:Date.now()});
-           
-           if(tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred(res.success ? 'success' : 'error');
-
-       } catch(e) {
-           messages = messages.filter(m=>m.timestamp !== loadId);
-           messages.push({role:'ai', content:'Сбой сети', timestamp:Date.now()});
-       }
-       save(); render();
-    }
-
-    function save(){ localStorage.setItem('chat_fix', JSON.stringify(messages)); }
-    function load(){ const s=localStorage.getItem('chat_fix'); if(s){ messages=JSON.parse(s); render(); } }
-
-    input.addEventListener('input', function(){
-        this.style.height='auto'; this.style.height=Math.min(this.scrollHeight,100)+'px';
-    });
-    sendBtn.onclick = send;
-
-    // Modal Logic
-    const modal = document.getElementById('confirmModal');
-    let onDel = null;
-    function confirmDelete(i) {
-        onDel = () => { messages.splice(i,1); save(); render(); };
-        modal.classList.add('show');
-    }
-    document.getElementById('modalCancel').onclick = () => modal.classList.remove('show');
-    document.getElementById('modalConfirm').onclick = () => { if(onDel)onDel(); modal.classList.remove('show'); };
-
-    clearBtn.onclick = () => {
-        if(!messages.length) return;
-        onDel = async () => {
-           messages=[]; save(); render();
-           const u = tg?.initDataUnsafe?.user || {};
-           const uid = u.id || localStorage.getItem('uid');
-           fetch(BACKEND_URL, {method:'POST', body:JSON.stringify({action:'clear_history', user_id:uid})}).catch(()=>{});
-        };
-        modal.classList.add('show');
-    }
-
-    // Start
-    load();
-  </script>
+</script>
 </body>
 </html>
