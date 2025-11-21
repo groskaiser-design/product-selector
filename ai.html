@@ -1,33 +1,28 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
   <title>AI Чат</title>
 
-  <!-- === SMART VERSION CONTROL: обновляем только при смене версии (без перезагрузок) === -->
   <script>
-  // Фиксируем момент загрузки
   window.__pageLoadTime = (window.performance && performance.now) ? performance.now() : Date.now();
   // ↑ Меняй при каждом релизе
-  const APP_HTML_VERSION = 'v2025-0010';
+  const APP_HTML_VERSION = 'v2025-0010'; // Обновил версию
 
   if (!window.__vc_done) {
     window.__vc_done = true;
-
     (function smartVersionOnce(){
       try {
         const url = new URL(location.href);
         const v = url.searchParams.get('v');
         if (v !== APP_HTML_VERSION) {
           url.searchParams.set('v', APP_HTML_VERSION);
-          // мягкая замена адреса без новой записи и без reload
           history.replaceState(null, '', url.href);
         }
       } catch (_) {}
     })();
-
-    // При возврате из bfcache — лишь синхронизируем параметр, НЕ перезагружаем
+    
     window.addEventListener('pageshow', () => {
       try {
         const url = new URL(location.href);
@@ -43,204 +38,122 @@
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
   <style>
-
-    /* СБРОС */
+    /* === СБРОС И ФИКСАЦИЯ === */
     * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
 
     html {
-      background-color: #000; /* Черная подложка от белых полос */
+      background-color: #000; /* Защита от белых вспышек */
     }
 
     body {
-      margin: 0; padding: 0; width: 100%;
-      background: transparent; color: #fff;
+      width: 100%; 
+      /* Высоту задаем жестко, скролл запрещаем */
+      height: 100vh; 
+      margin: 0; padding: 0;
+      overflow: hidden;
+      background: transparent;
+      color: #fff;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
-      overflow: hidden; /* ЗАПРЕЩАЕМ СКРОЛЛ BODY */
       position: fixed; top: 0; left: 0; bottom: 0; right: 0; /* ЖЕСТКАЯ ФИКСАЦИЯ */
     }
 
-    /* ФОН ОТДЕЛЬНО (чтобы не дергался) */
+    /* Фон отдельным слоем */
     body::before {
-      content:""; position:fixed; inset:0; background:var(--bg);
+      content:""; position:fixed; inset:0; background: linear-gradient(135deg,#667eea 0%,#764ba2 100%);
       z-index:-1; pointer-events:none;
     }
 
-    /* ГЛАВНЫЙ КОНТЕЙНЕР */
+    /* === ГЛАВНЫЙ КОНТЕЙНЕР === */
+    /* Его высоту мы будем менять через JS под размер WebApp */
     .container {
       position: absolute; top: 0; left: 0; right: 0;
-      height: 100%; /* Будет обновляться через JS */
-      max-width: var(--maxw); margin: 0 auto;
+      height: 100%; 
+      max-width: 560px; margin: 0 auto;
       display: flex; flex-direction: column;
-      overflow: hidden; /* Скролл только внутри чата */
+      overflow: hidden;
     }
+
+    /* === СТИЛИ ИНТЕРФЕЙСА === */
+    .header {
+      flex-shrink: 0; height: 56px;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(255,255,255,0.12); backdrop-filter: blur(12px);
+      border-bottom: 1px solid rgba(255,255,255,0.28);
+      position: relative; z-index: 10;
+    }
+    .header h4 { font-size: 18px; font-weight: 900; letter-spacing: .3px; }
+    .clear-btn {
+      position: absolute; right: 16px; padding: 6px 12px; border: 0; border-radius: 10px;
+      background: rgba(239,68,68,.2); border: 1px solid rgba(239,68,68,.4);
+      color: #fff; font-weight: 700; font-size: 13px; cursor: pointer;
+    }
+
+    .chat-area {
+      flex-grow: 1;
+      overflow-y: auto; overflow-x: hidden;
+      padding: 16px 14px;
+      display: flex; flex-direction: column; gap: 12px;
+      -webkit-overflow-scrolling: touch;
+    }
+    .chat-area::-webkit-scrollbar { width: 4px; }
+    .chat-area::-webkit-scrollbar-thumb { background: rgba(255,255,255,.3); border-radius: 3px; }
+
+    .message { display: flex; flex-direction: column; max-width: 85%; animation: slideIn .3s ease; position: relative; }
+    @keyframes slideIn { from{opacity:0; transform:translateY(10px);} to{opacity:1; transform:translateY(0);} }
+    .message.user { align-self: flex-end; align-items: flex-end; }
+    .message.ai { align-self: flex-start; align-items: flex-start; }
+
+    .message-bubble {
+      padding: 12px 16px; border-radius: 18px; 
+      backdrop-filter: blur(12px); box-shadow: 0 8px 28px rgba(0,0,0,.18);
+      font-size: 16px; line-height: 1.5; word-wrap: break-word;
+    }
+    .message.user .message-bubble {
+      background: rgba(251,191,36,.25); border: 1px solid rgba(251,191,36,.4); border-bottom-right-radius: 4px;
+    }
+    .message.ai .message-bubble {
+      background: rgba(255,255,255,.18); border: 1px solid rgba(255,255,255,.28); border-bottom-left-radius: 4px;
+    }
+    .message-time { font-size: 11px; opacity: .7; margin-top: 4px; padding: 0 4px; }
+
+    .input-area {
+      flex-shrink: 0; width: 100%;
+      padding: 12px 14px; background: transparent; z-index: 5;
+    }
+    .input-wrapper { display: flex; gap: 10px; align-items: flex-end; }
+    .input-field {
+      flex: 1; min-height: 44px; max-height: 120px; padding: 12px 16px;
+      border: 1px solid rgba(255,255,255,.24); border-radius: 22px;
+      background: rgba(255,255,255,.12); backdrop-filter: blur(8px);
+      color: #fff; font-size: 16px; font-family: inherit; resize: none; outline: none;
+    }
+    .send-btn {
+      width: 44px; height: 44px; border: 0; border-radius: 50%; flex-shrink: 0;
+      background: linear-gradient(135deg,#fbbf24,#f59e0b);
+      color: #fff; display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 8px 28px rgba(0,0,0,.18);
+    }
+    .send-btn:disabled { opacity: .5; }
+
+    .empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; opacity: .7; text-align: center; }
+    .empty-state-icon { font-size: 64px; margin-bottom: 16px; }
+    .delete-btn { position: absolute; top: 50%; transform: translateY(-50%); width: 32px; height: 32px; border-radius: 50%; background: rgba(239,68,68,.9); color: #fff; display: none; align-items: center; justify-content: center; z-index: 10; }
+    .message.user .delete-btn { left: -40px; } .message.ai .delete-btn { right: -40px; }
+    .message.show-delete .delete-btn { display: flex; }
     
-    input, select, textarea { font-size: 16px; }
-
-    :root{
-      --bg: linear-gradient(135deg,#667eea 0%,#764ba2 100%);
-      --userBubble: rgba(251,191,36,.25);
-      --userBorder: rgba(251,191,36,.4);
-      --aiBubble: rgba(255,255,255,.18);
-      --aiBorder: rgba(255,255,255,.28);
-      --inputBg: rgba(255,255,255,.12);
-      --inputBorder: rgba(255,255,255,.24);
-      --shadow: 0 8px 28px rgba(0,0,0,.18);
-      --okA:#fbbf24; --okB:#f59e0b;
-
-      /* ==== Ключевые переменные для стабилизации ==== */
-      --vh: 100svh;    /* стабильная высота экрана (по умолчанию) */
-      --kb: 0px;       /* высота перекрытия клавиатурой (JS выставит) */
-      --input-h: 56px; /* реальная высота панели ввода (JS измерит) */
-      --maxw: 560px;   /* макс. ширина контейнера */
-    }
-
-    *{ box-sizing:border-box; margin:0; padding:0; }
-    html,body{ height:100%; }
-    html{ background:transparent; }
-    body{
-      min-height: var(--vh);
-      background:transparent; color:#fff;
-      font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;
-      position:relative; isolation:isolate; display:flex; flex-direction:column;
-      overscroll-behavior-y: contain;
-    }
-    @supports (min-height: 100dvh){
-      body{ min-height: 100dvh; }
-    }
-
-    body::before{
-      content:""; position:fixed; inset:0; background:var(--bg);
-      z-index:0; pointer-events:none; transform:translateZ(0);
-    }
-
-    .container{
-      position:relative; z-index:1; width:100%;
-      max-width: var(--maxw); margin:0 auto; display:flex; flex-direction:column;
-      min-height: var(--vh);
-    }
-    @supports (min-height: 100dvh){
-      .container{ min-height: 100dvh; }
-    }
-
-    .header{
-      padding:14px 16px; display:flex; align-items:center; justify-content:center;
-      background:linear-gradient(180deg,var(--aiBubble),rgba(255,255,255,.12));
-      border-bottom:1px solid var(--aiBorder); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
-      position:relative; border-radius:0 0 20px 20px;
-    }
-    .header h4{ font-size:18px; font-weight:900; letter-spacing:.3px; }
-    .clear-btn{
-      position:absolute; right:16px; padding:8px 14px; border:0; border-radius:10px;
-      background:rgba(239,68,68,.2); border:1px solid rgba(239,68,68,.4); color:#fff; font-weight:700; font-size:13px; cursor:pointer; transition:.2s;
-      -webkit-tap-highlight-color:transparent;
-    }
-    .clear-btn:active{ transform:scale(.96); background:rgba(239,68,68,.3); }
-
-    .chat-area{
-      flex:1; overflow-y:auto; overflow-x:hidden; padding:16px 14px;
-      display:flex; flex-direction:column; gap:12px;
-      -webkit-overflow-scrolling:touch; scrollbar-width:thin; scrollbar-color:rgba(255,255,255,.3) transparent;
-
-      /* ключ: даём место под инпут + клавиатуру */
-      padding-bottom: calc(16px + env(safe-area-inset-bottom) + var(--input-h) + var(--kb));
-      scroll-padding-bottom: calc(var(--input-h) + 24px);
-    }
-    .chat-area::-webkit-scrollbar{ width:6px; }
-    .chat-area::-webkit-scrollbar-thumb{ background:rgba(255,255,255,.3); border-radius:3px; }
-
-    .message{ display:flex; flex-direction:column; max-width:80%; animation:slideIn .3s ease; position:relative; }
-    @keyframes slideIn{ from{opacity:0; transform:translateY(10px);} to{opacity:1; transform:translateY(0);} }
-    .message.user{ align-self:flex-end; align-items:flex-end; }
-    .message.ai{ align-self:flex-start; align-items:flex-start; }
-    .message-bubble{
-      padding:12px 16px; border-radius:18px; backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
-      box-shadow:var(--shadow); font-size:15px; line-height:1.5; word-wrap:break-word; overflow-wrap:break-word;
-      -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
-    }
-    .message.user .message-bubble{
-      background:linear-gradient(135deg,var(--userBubble),rgba(251,191,36,.2));
-      border:1px solid var(--userBorder); border-bottom-right-radius:4px;
-    }
-    .message.ai .message-bubble{
-      background:linear-gradient(180deg,var(--aiBubble),rgba(255,255,255,.14));
-      border:1px solid var(--aiBorder); border-bottom-left-radius:4px;
-    }
-    .message-time{ font-size:11px; opacity:.7; margin-top:4px; padding:0 4px; }
-
-    .typing-indicator{ display:flex; align-items:center; gap:4px; padding:12px 16px; }
-    .typing-dot{ width:8px; height:8px; border-radius:50%; background:rgba(255,255,255,.7); animation:typing 1.4s infinite; }
-    .typing-dot:nth-child(2){ animation-delay:.2s; }
-    .typing-dot:nth-child(3){ animation-delay:.4s; }
-    @keyframes typing{ 0%,60%,100%{ transform:translateY(0); opacity:.7; } 30%{ transform:translateY(-10px); opacity:1; } }
-
-    /* ==== инпут-панель: фиксируем к вьюпорту и центрируем по max-width ==== */
-      .input-area {
-      flex-shrink: 0; /* Не сжиматься */
-      width: 100%;
-      padding: 12px 14px;
-      background: transparent;
-      z-index: 5;
-      /* position: fixed УБРАНО */
-      }
-
+    .modal { position: fixed; inset: 0; background: rgba(0,0,0,.7); display: none; align-items: center; justify-content: center; z-index: 1000; padding: 20px; backdrop-filter: blur(5px); }
+    .modal.show { display: flex; }
+    .modal-content { background: #2d2d2d; border: 1px solid rgba(255,255,255,.28); border-radius: 20px; padding: 24px; width: 100%; max-width: 320px; text-align: center; }
+    .modal-buttons { display: flex; gap: 10px; margin-top: 20px; }
+    .modal-btn { flex: 1; padding: 12px; border-radius: 12px; border: none; font-weight: bold; cursor: pointer; }
+    .modal-btn.cancel { background: rgba(255,255,255,.15); color: #fff; }
+    .modal-btn.confirm { background: linear-gradient(135deg,#fbbf24,#f59e0b); color: #fff; }
     
-    .input-wrapper{ display:flex; gap:10px; align-items:flex-end; }
-    .input-field{
-      flex:1; min-height:44px; max-height:120px; padding:12px 16px; border:1px solid var(--inputBorder);
-      border-radius:22px; background:var(--inputBg); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
-      color:#fff; font-size:15px; font-family:inherit; resize:none; overflow-y:auto; -webkit-overflow-scrolling:touch;
-    }
-    .input-field::placeholder{ color:rgba(255,255,255,.6); }
-    .input-field:focus{ outline:none; border-color:var(--okA); box-shadow:0 0 0 3px rgba(251,191,36,.2); }
-    .send-btn{
-      width:44px; height:44px; border:0; border-radius:50%;
-      background:linear-gradient(135deg,var(--okA),var(--okB));
-      color:#fff; display:flex; align-items:center; justify-content:center; box-shadow:var(--shadow);
-      transition:.2s; -webkit-tap-highlight-color:transparent;
-    }
-    .send-btn:active:not(:disabled){ transform:scale(.95); }
-    .send-btn:disabled{ opacity:.5; cursor:not-allowed; }
-    .send-btn svg{ width:20px; height:20px; }
-
-    .empty-state{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:40px 20px; text-align:center; opacity:.7; }
-    .empty-state-icon{ font-size:64px; margin-bottom:16px; }
-    .empty-state h2{ font-size:20px; font-weight:800; margin-bottom:8px; }
-    .empty-state p{ font-size:14px; opacity:.8; }
-
-    .delete-btn{
-      position:absolute; top:50%; transform:translateY(-50%); width:32px; height:32px; border-radius:50%;
-      background:rgba(239,68,68,.9); border:1px solid rgba(239,68,68,1); color:#fff; display:none; align-items:center; justify-content:center; cursor:pointer;
-      box-shadow:0 4px 12px rgba(239,68,68,.4); z-index:10; transition:.2s;
-    }
-    .message.user .delete-btn{ left:-40px; }
-    .message.ai .delete-btn{ right:-40px; }
-    .message.show-delete .delete-btn{ display:flex; }
-    .delete-btn:active{ transform:translateY(-50%) scale(.9); }
-    .delete-btn svg{ width:16px; height:16px; }
-
-    .modal{
-      position:fixed; inset:0; background:rgba(0,0,0,.7); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
-      display:none; align-items:center; justify-content:center; z-index:1000; padding:20px;
-    }
-    .modal.show{ display:flex; }
-    .modal-content{
-      background:linear-gradient(180deg,var(--aiBubble),rgba(255,255,255,.12));
-      border:1px solid var(--aiBorder); border-radius:20px; padding:24px; max-width:340px; width:100%; box-shadow:0 20px 60px rgba(0,0,0,.4);
-      backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px); animation:modalSlideIn .3s ease;
-    }
-    @keyframes modalSlideIn{ from{opacity:0; transform:scale(.9) translateY(20px);} to{opacity:1; transform:scale(1) translateY(0);} }
-    .modal h3{ font-size:18px; font-weight:900; margin-bottom:12px; }
-    .modal p{ font-size:14px; opacity:.9; margin-bottom:20px; line-height:1.5; }
-    .modal-buttons{ display:flex; gap:10px; }
-    .modal-btn{ display:inline-flex; align-items:center; justify-content:center; gap:8px;
-      flex:1; padding:12px; border:0; border-radius:12px; font-weight:700; font-size:14px; cursor:pointer; transition:.2s; -webkit-tap-highlight-color:transparent; }
-    .modal-btn.cancel{ background:rgba(255,255,255,.15); color:#fff; }
-    .modal-btn.confirm{ background:linear-gradient(135deg,var(--okA),var(--okB)); color:#fff; }
-    .modal-btn:active{ transform:scale(.96); }
+    .typing-indicator { display: flex; gap: 4px; padding: 12px 16px; }
+    .typing-dot { width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,.7); animation: typing 1.4s infinite; }
+    .typing-dot:nth-child(2){ animation-delay:.2s; } .typing-dot:nth-child(3){ animation-delay:.4s; }
+    @keyframes typing{ 0%,60%,100%{transform:translateY(0);opacity:.7} 30%{transform:translateY(-10px);opacity:1} }
   </style>
-
-  <meta name="tma:home-url" content="./router.html" />
-  <meta name="tma:home-hash" content="" />
 </head>
 <body>
 
@@ -262,7 +175,7 @@
       <div class="input-wrapper">
         <textarea class="input-field" id="messageInput" placeholder="Задайте вопрос..." rows="1"></textarea>
         <button class="send-btn" id="sendBtn" disabled>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20">
             <line x1="22" y1="2" x2="11" y2="13"></line>
             <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
           </svg>
@@ -283,411 +196,258 @@
   </div>
 
   <script>
-/* ============================================================
- *  BLOCK 0: TMA boot + admin detect
- *  Инициализация Telegram WebApp и определение админа
- * ============================================================ */
-/**
- * Инициализация Telegram Mini App:
- * - готовим WebApp
- * - разворачиваем на весь экран
- * - задаём цвет заголовка
- * - отключаем вертикальные свайпы (жест сворачивания)
- * - настраиваем кнопку "Назад" (возврат на router.html)
- */
-(function initTMA() {
-  const tg = window.Telegram?.WebApp;
-  if (!tg) return; // Если не в окружении Telegram — тихо выходим
-  // Базовая инициализация WebApp
-  try {
-    tg.ready();
-    tg.expand();
-    tg.setHeaderColor('secondary_bg_color');
-    // Отключаем вертикальные свайпы для сворачивания мини-приложения
-    tg.disableVerticalSwipes?.();
-  } catch (_) {
-    // Ошибки Telegram SDK не ломают приложение
-  }
-  // Настройка системной кнопки "Назад" в Telegram
-  try {
-    tg.BackButton?.offClick?.(); // Сбрасываем возможные старые обработчики
-    tg.BackButton?.show();
-    tg.BackButton?.onClick(() => {
-      try {
-        window.location.href = 'router.html';
-      } catch (_) {
-        // В крайнем случае просто игнорируем
-      }
-    });
-  } catch (_) {
-    // Если BackButton недоступна — тихо игнорируем
-  }
-})();
-/**
- * Проверка, является ли текущий пользователь админом
- * @returns {boolean} true, если Telegram user.id совпадает с ID администратора
- */
-function isAdmin() {
-  try {
-    const userId = Number(window.Telegram?.WebApp?.initDataUnsafe?.user?.id);
-    return userId === 196047220;
-  } catch (_) {
-    return false;
-  }
-}
-    
- /* ====== 0) Telegram WebApp bootstrap + BackButton ====== */
-(function initTMA(){
-  const tg = window.Telegram?.WebApp;
-  if (!tg) return;
+    /* ==================================================================
+       1. VIEWPORT STABILIZATION (OFFICIAL API)
+       ================================================================== */
+    (function initViewport() {
+      const app = document.querySelector('.container');
+      const input = document.getElementById('messageInput');
+      const chatArea = document.getElementById('chatArea');
+      const tg = window.Telegram?.WebApp;
 
-  try {
-    tg.ready();
-    tg.expand();
-    tg.setHeaderColor?.('secondary_bg_color');
-    if (tg.isVersionAtLeast?.('6.1')) tg.disableVerticalSwipes?.();
-    tg.disableClosingConfirmation?.(); // чтобы Telegram не перехватывал закрытие
-  } catch (_) {}
+      if (!app) return;
 
-  const HOME = document.querySelector('meta[name="tma:home-url"]')?.content || './router.html';
-
-  function closeKeyboardIfNeeded(){
-    const el = document.activeElement;
-    if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) {
-      try { el.blur(); } catch(_){}
-      return true; // клавиатуру закрыли — навигацию пока не делаем
-    }
-    return false;
-  }
-
-  // Кастомная кнопка «Назад»: сперва закрыть клавиатуру, потом перейти на HOME
-  try {
-    tg.BackButton?.offClick?.();
-    tg.BackButton?.show?.();
-    tg.BackButton?.onClick?.(()=>{
-      if (closeKeyboardIfNeeded()) return;
-      try { location.assign(HOME); }
-      catch(_) { try { location.href = HOME; } catch(__) { tg.close?.(); } }
-    });
-  } catch (_) {}
-
-  // Системный «назад» (если появится): при открытой клавиатуре — только blur, без хождения по истории
-  window.addEventListener('popstate', () => {
-    if (closeKeyboardIfNeeded()) {
-      // отменяем пустой шаг назад, чтобы стек не страдал
-      try { history.forward(); } catch(_){}
-    }
-  }, { passive:true });
-})();
-
-
-  /* ====== 0.1) iOS/Telegram стабилизация высоты и клавиатуры ====== */
-/* ====== 0.1) STABLE VIEWPORT (OFFICIAL TELEGRAM API) ====== */
-  (function initStableLayout() {
-    const app = document.querySelector('.container'); // Твой главный див
-    const input = document.getElementById('messageInput');
-    const chatArea = document.getElementById('chatArea');
-    const tg = window.Telegram?.WebApp;
-
-    if (!app) return;
-
-    function setHeight() {
-      // Если есть API Телеграма - берем высоту оттуда (она идеальна)
-      if (tg && tg.viewportHeight) {
-        app.style.height = `${tg.viewportHeight}px`;
-      } else {
-        // Фолбэк для браузера
-        app.style.height = `${window.innerHeight}px`;
-      }
-    }
-
-    // Слушаем Телеграм
-    if (tg) {
-      tg.onEvent('viewportChanged', ({ isStateStable }) => {
-        setHeight();
-        // Если анимация закончилась - докручиваем чат
-        if (isStateStable) {
-           requestAnimationFrame(() => { chatArea.scrollTop = chatArea.scrollHeight; });
-        }
-      });
-      // Инициализация
-      setHeight();
-      tg.expand();
-    } else {
-      window.addEventListener('resize', setHeight);
-      setHeight();
-    }
-
-    // FIX ДЛЯ ФОКУСА: Чуть-чуть ждем и скроллим вниз, чтобы клава не закрыла последнее сообщение
-    if (input) {
-      input.addEventListener('focus', () => {
-        setTimeout(() => {
-          chatArea.scrollTop = chatArea.scrollHeight;
-        }, 300);
-      });
-    }
-  })();
-    measureInput();
-    update();
-
-    if (tg && tg.onEvent){
-      tg.onEvent('viewportChanged', (e)=>{ if (e && e.isStateStable) { measureInput(); update(); } });
-    }
-    if (vv){
-      vv.addEventListener('resize', ()=> { measureInput(); update(); });
-      vv.addEventListener('scroll',  ()=> { update(); });
-    }
-    window.addEventListener('orientationchange', ()=> setTimeout(()=>{ measureInput(); update(); }, 300));
-    window.addEventListener('resize', ()=> { measureInput(); update(); });
-    input && input.addEventListener('focus', ()=> setTimeout(()=> update(), 250));
-  })();
-
-  /* ====== 1) Конфиг фронта ====== */
-  const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbzvlDKUH6qsON-A6iSHYvMU_6XWtReZc5oXnnZOMTgETfvZqMMh2zUbdQJF-iOanMBc/exec'; // ← ЗАМЕНИ при необходимости
-  const REQUEST_TIMEOUT_MS = 45000;
-
-  /* ====== 2) Состояние и DOM ====== */
-  let messages = [];
-  let isTyping = false;
-
-  const chatArea   = document.getElementById('chatArea');
-  const emptyState = document.getElementById('emptyState');
-  const messageInput = document.getElementById('messageInput');
-  const sendBtn    = document.getElementById('sendBtn');
-  const clearBtn   = document.getElementById('clearBtn');
-
-  const confirmModal = document.getElementById('confirmModal');
-  const modalTitle   = document.getElementById('modalTitle');
-  const modalText    = document.getElementById('modalText');
-  const modalCancel  = document.getElementById('modalCancel');
-  const modalConfirm = document.getElementById('modalConfirm');
-
-  let modalCallback = null;
-
-  /* ====== 3) Хелперы Telegram и API ====== */
-  function getInitData() {
-    return (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData) || '';
-  }
-  function getUser() {
-    const u = (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe && window.Telegram.WebApp.initDataUnsafe.user) || {};
-    return { id: u.id || null, first_name: u.first_name || '', username: u.username || '' };
-  }
-
-  // fetch с таймаутом (AbortController)
-  function fetchWithTimeout(url, options = {}, ms = REQUEST_TIMEOUT_MS) {
-    const controller = new AbortController();
-    const id = setTimeout(() => controller.abort(), ms);
-    return fetch(url, { ...options, signal: controller.signal })
-      .finally(() => clearTimeout(id));
-  }
-
-  // единый вызов бэка (без preflight → text/plain)
-  async function callBackend(action, payload) {
-    const u = getUser();
-    const body = Object.assign({
-      action,
-      user_id: u.id || localStorage.getItem('debug_uid') || (function(){ const x='debug-' + Math.floor(Math.random()*1e9); localStorage.setItem('debug_uid', x); return x; })(),
-      user_data: { first_name: u.first_name, username: u.username },
-      init_data: getInitData()
-    }, payload || {});
-
-    const res = await fetchWithTimeout(BACKEND_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain' },
-      body: JSON.stringify(body)
-    });
-
-    let data;
-    try { data = await res.json(); }
-    catch(e) { data = { success:false, code:'bad_json', error:'Invalid JSON from backend' }; }
-    return data;
-  }
-
-  /* ====== 4) Работа с локальным стором ====== */
-  function loadData() {
-    try {
-      const savedMessages = localStorage.getItem('ai_chat_messages');
-      if (savedMessages) { messages = JSON.parse(savedMessages); renderMessages(); }
-    } catch (e) { console.error('Error loading data:', e); }
-  }
-  function saveMessages() {
-    try { localStorage.setItem('ai_chat_messages', JSON.stringify(messages)); } catch (e) { console.error('Error saving messages:', e); }
-  }
-
-  /* ====== 5) Рендер ====== */
-  function formatTime(date){ const h=String(date.getHours()).padStart(2,'0'); const m=String(date.getMinutes()).padStart(2,'0'); return h+':'+m; }
-
-  function createMessageElement(message, index){
-    const messageDiv = document.createElement('div');
-    messageDiv.className = 'message ' + message.role; messageDiv.dataset.index = index;
-
-    const bubble = document.createElement('div'); bubble.className='message-bubble'; bubble.textContent = message.content;
-    const time = document.createElement('div'); time.className='message-time'; time.textContent = formatTime(new Date(message.timestamp));
-    const del = document.createElement('button'); del.className='delete-btn'; del.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2M10 11v6M14 11v6"/></svg>';
-    del.onclick = (e)=>{ e.stopPropagation(); deleteMessage(index); };
-
-    messageDiv.appendChild(del); messageDiv.appendChild(bubble); messageDiv.appendChild(time);
-
-    // long-press для показа delete
-    let longPressTimer;
-    const startLP = ()=>{ longPressTimer = setTimeout(()=>{ messageDiv.classList.add('show-delete'); if(window.Telegram?.WebApp?.HapticFeedback){ window.Telegram.WebApp.HapticFeedback.impactOccurred('medium'); } },100); };
-    const cancelLP = ()=>{ clearTimeout(longPressTimer); };
-    bubble.addEventListener('touchstart', startLP, { passive:true });
-    ['touchend','touchcancel','touchmove'].forEach(ev=>bubble.addEventListener(ev,cancelLP));
-
-    return messageDiv;
-  }
-
-  function createTypingIndicator(){
-    const messageDiv=document.createElement('div'); messageDiv.className='message ai'; messageDiv.id='typingIndicator';
-    const bubble=document.createElement('div'); bubble.className='message-bubble';
-    const indicator=document.createElement('div'); indicator.className='typing-indicator';
-    indicator.innerHTML='<div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div>';
-    bubble.appendChild(indicator); messageDiv.appendChild(bubble); return messageDiv;
-  }
-
-  function renderMessages(){
-    const tip=document.getElementById('typingIndicator'); if(tip) tip.remove();
-    chatArea.querySelectorAll('.message').forEach(m=>m.remove());
-    emptyState.style.display = messages.length ? 'none' : 'flex';
-    if(messages.length){ messages.forEach((m,i)=> chatArea.appendChild(createMessageElement(m,i))); }
-    scrollToBottom();
-  }
-  function addMessageToChat(message){
-    if (emptyState.style.display !== 'none') emptyState.style.display = 'none';
-    const index = messages.length - 1;
-    chatArea.appendChild(createMessageElement(message, index));
-    scrollToBottom();
-  }
-  function scrollToBottom(){ requestAnimationFrame(()=>{ chatArea.scrollTop = chatArea.scrollHeight; }); }
-  function showTyping(){ isTyping = true; chatArea.appendChild(createTypingIndicator()); scrollToBottom(); }
-  function hideTyping(){ isTyping = false; const tip=document.getElementById('typingIndicator'); if(tip) tip.remove(); }
-
-  /* ====== 6) Отправка ====== */
-  async function sendMessage() {
-    const text = messageInput.value.trim();
-    if (!text || isTyping) return;
-
-    if (window.Telegram?.WebApp?.HapticFeedback) {
-      window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
-    }
-
-    const userMessage = { role: 'user', content: text, timestamp: Date.now() };
-    messages.push(userMessage);
-    saveMessages();
-    addMessageToChat(userMessage);
-
-    messageInput.value = '';
-    messageInput.style.height = 'auto';
-    updateSendButton();
-
-    showTyping();
-
-    try {
-      const resp = await callBackend('send_message', { message: text });
-      console.log('backend response:', resp);
-
-      hideTyping();
-
-      if (!resp || !resp.success) {
-        const errText = (resp && (resp.error || resp.code))
-          ? `Ошибка: ${resp.code || ''} ${resp.error || ''}`
-          : 'Ошибка сети. Попробуйте снова.';
-        const aiError = { role: 'ai', content: errText.trim(), timestamp: Date.now() };
-        messages.push(aiError);
-        saveMessages();
-        addMessageToChat(aiError);
-        return;
-      }
-
-      if (window.Telegram?.WebApp?.HapticFeedback) {
-        window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
-      }
-
-      const answer = resp.text
-        || (resp.status === 'timeout'
-            ? 'Ответ формируется дольше обычного — попробуйте ещё раз.'
-            : 'Готово.');
-
-      const aiMessage = { role: 'ai', content: answer, timestamp: Date.now() };
-      messages.push(aiMessage);
-      saveMessages();
-      addMessageToChat(aiMessage);
-    } catch (error) {
-      hideTyping();
-      console.error('network error:', error);
-      const aiError = { role: 'ai', content: 'Ошибка сети. Попробуйте снова.', timestamp: Date.now() };
-      messages.push(aiError);
-      saveMessages();
-      addMessageToChat(aiError);
-    }
-  }
-
-  /* ====== 7) Удаление/очистка и модалка ====== */
-  function deleteMessage(index){
-    showConfirmModal('Удалить сообщение?','Это действие нельзя отменить', ()=>{
-      messages.splice(index,1); saveMessages(); renderMessages();
-      if (window.Telegram?.WebApp?.HapticFeedback) window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
-    });
-  }
-
-  function clearChat(){
-    if (messages.length === 0) return;
-    showConfirmModal('Очистить чат?','Вся история сообщений будет удалена у вас локально и начнётся новый диалог с ассистентом.', async ()=>{
-      messages = []; saveMessages(); renderMessages();
-      try {
-        const resp = await callBackend('clear_history', {});
-        if (!resp || !resp.success) {
-          const aiMsg = { role:'ai', content:'Не удалось сбросить историю на сервере. Можно продолжать, но история на стороне ассистента не обнулилась.', timestamp: Date.now() };
-          messages.push(aiMsg); saveMessages(); addMessageToChat(aiMsg);
+      function setHeight() {
+        // Используем официальную высоту от Telegram SDK
+        if (tg && tg.viewportHeight) {
+          app.style.height = `${tg.viewportHeight}px`;
         } else {
-          const aiMsg = { role:'ai', content:'История очищена. Начните новый диалог. ✨', timestamp: Date.now() };
-          messages.push(aiMsg); saveMessages(); addMessageToChat(aiMsg);
+          app.style.height = `${window.innerHeight}px`;
         }
-      } catch (e) {
-        const aiMsg = { role:'ai', content:'Сервер недоступен, локальная история очищена.', timestamp: Date.now() };
-        messages.push(aiMsg); saveMessages(); addMessageToChat(aiMsg);
       }
-      if (window.Telegram?.WebApp?.HapticFeedback) window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
+
+      // Инициализация Telegram
+      if (tg) {
+        try {
+          tg.ready();
+          tg.expand();
+          tg.setHeaderColor?.('secondary_bg_color');
+          if (tg.isVersionAtLeast?.('6.1')) tg.disableVerticalSwipes?.();
+          tg.disableClosingConfirmation?.();
+          
+          // Back Button
+          const HOME = './router.html';
+          tg.BackButton?.offClick?.();
+          tg.BackButton?.show?.();
+          tg.BackButton?.onClick?.(()=>{ location.href = HOME; });
+
+          // Слушаем изменения высоты
+          tg.onEvent('viewportChanged', ({ isStateStable }) => {
+            setHeight();
+            if (isStateStable) {
+               requestAnimationFrame(() => { chatArea.scrollTop = chatArea.scrollHeight; });
+            }
+          });
+        } catch (e) {}
+        setHeight();
+      } else {
+        window.addEventListener('resize', setHeight);
+        setHeight();
+      }
+
+      // FIX: Докрутка при фокусе
+      if (input) {
+        input.addEventListener('focus', () => {
+          setTimeout(() => {
+            chatArea.scrollTop = chatArea.scrollHeight;
+          }, 300);
+        });
+      }
+    })();
+
+    /* ==================================================================
+       2. BUSINESS LOGIC
+       ================================================================== */
+    const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbzvlDKUH6qsON-A6iSHYvMU_6XWtReZc5oXnnZOMTgETfvZqMMh2zUbdQJF-iOanMBc/exec';
+    const REQUEST_TIMEOUT_MS = 45000;
+
+    let messages = [];
+    let isTyping = false;
+
+    const chatArea = document.getElementById('chatArea');
+    const emptyState = document.getElementById('emptyState');
+    const messageInput = document.getElementById('messageInput');
+    const sendBtn = document.getElementById('sendBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    
+    const modal = document.getElementById('confirmModal');
+    const mTitle = document.getElementById('modalTitle');
+    const mText = document.getElementById('modalText');
+    let modalCallback = null;
+
+    // --- API Call ---
+    async function callBackend(action, payload) {
+      const u = window.Telegram?.WebApp?.initDataUnsafe?.user || {};
+      const uid = u.id || localStorage.getItem('debug_uid') || 'd-'+Math.floor(Math.random()*1e9);
+      if(!u.id) localStorage.setItem('debug_uid', uid);
+
+      const body = {
+        action,
+        user_id: uid,
+        user_data: { first_name: u.first_name, username: u.username },
+        init_data: window.Telegram?.WebApp?.initData || '',
+        ...payload
+      };
+
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+      try {
+        const res = await fetch(BACKEND_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain' },
+          body: JSON.stringify(body),
+          signal: controller.signal
+        });
+        clearTimeout(id);
+        return await res.json();
+      } catch (e) {
+        return { success:false, error: String(e) };
+      }
+    }
+
+    // --- Render ---
+    function formatTime(ts) {
+      const d = new Date(ts);
+      return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
+    }
+
+    function createMessageElement(m, idx) {
+      const div = document.createElement('div');
+      div.className = `message ${m.role}`;
+      
+      const bubble = document.createElement('div');
+      bubble.className = 'message-bubble';
+      bubble.textContent = m.content;
+      
+      const delBtn = document.createElement('div');
+      delBtn.className = 'delete-btn';
+      delBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2M10 11v6M14 11v6"/></svg>';
+      delBtn.onclick = (e) => { e.stopPropagation(); confirmDelete(idx); };
+
+      let timer;
+      bubble.addEventListener('touchstart', () => timer = setTimeout(() => {
+         div.classList.add('show-delete');
+         window.Telegram?.WebApp?.HapticFeedback?.impactOccurred('medium');
+      }, 500));
+      bubble.addEventListener('touchend', () => clearTimeout(timer));
+
+      const time = document.createElement('div');
+      time.className = 'message-time';
+      time.textContent = formatTime(m.timestamp);
+
+      div.appendChild(delBtn);
+      div.appendChild(bubble);
+      div.appendChild(time);
+      return div;
+    }
+
+    function createTypingIndicator() {
+      const div = document.createElement('div');
+      div.className = 'message ai'; div.id = 'typingIndicator';
+      div.innerHTML = `<div class="message-bubble"><div class="typing-indicator"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div></div>`;
+      return div;
+    }
+
+    function renderMessages() {
+      Array.from(chatArea.children).forEach(c => { if(c.id!=='emptyState') c.remove(); });
+      
+      if(messages.length > 0) {
+        emptyState.style.display = 'none';
+        messages.forEach((m,i) => chatArea.appendChild(createMessageElement(m,i)));
+      } else {
+        emptyState.style.display = 'flex';
+      }
+      requestAnimationFrame(() => chatArea.scrollTop = chatArea.scrollHeight);
+    }
+
+    // --- Actions ---
+    async function sendMessage() {
+      const text = messageInput.value.trim();
+      if(!text || isTyping) return;
+      
+      window.Telegram?.WebApp?.HapticFeedback?.impactOccurred('light');
+
+      messages.push({ role:'user', content:text, timestamp:Date.now() });
+      localStorage.setItem('ai_chat_messages', JSON.stringify(messages));
+      renderMessages();
+
+      messageInput.value = ''; 
+      messageInput.style.height = 'auto';
+      sendBtn.disabled = true;
+      isTyping = true;
+
+      chatArea.appendChild(createTypingIndicator());
+      chatArea.scrollTop = chatArea.scrollHeight;
+
+      const res = await callBackend('send_message', { message: text });
+      isTyping = false;
+      const typ = document.getElementById('typingIndicator');
+      if(typ) typ.remove();
+
+      let aiContent = 'Ошибка сети';
+      if(res.success) {
+         aiContent = res.text || 'Пустой ответ';
+         window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('success');
+      } else {
+         aiContent = res.error || 'Ошибка сервера';
+         window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('error');
+      }
+
+      messages.push({ role:'ai', content:aiContent, timestamp:Date.now() });
+      localStorage.setItem('ai_chat_messages', JSON.stringify(messages));
+      renderMessages();
+    }
+
+    function confirmDelete(i) {
+      mTitle.textContent = 'Удалить сообщение?';
+      mText.textContent = 'Действие необратимо.';
+      modalCallback = () => {
+         messages.splice(i,1);
+         localStorage.setItem('ai_chat_messages', JSON.stringify(messages));
+         renderMessages();
+      };
+      modal.classList.add('show');
+    }
+
+    clearBtn.onclick = () => {
+      if(!messages.length) return;
+      mTitle.textContent = 'Очистить историю?';
+      mText.textContent = 'Удалит переписку локально и создаст новый диалог.';
+      modalCallback = async () => {
+         messages = [];
+         localStorage.removeItem('ai_chat_messages');
+         renderMessages();
+         callBackend('clear_history', {});
+      };
+      modal.classList.add('show');
+    };
+
+    // --- Events & Init ---
+    document.getElementById('modalCancel').onclick = () => modal.classList.remove('show');
+    document.getElementById('modalConfirm').onclick = () => { if(modalCallback) modalCallback(); modal.classList.remove('show'); };
+    
+    messageInput.addEventListener('input', function() {
+       this.style.height = 'auto';
+       this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+       sendBtn.disabled = !this.value.trim();
     });
-  }
-
-  function showConfirmModal(title,text,onConfirm){
-    modalTitle.textContent = title; modalText.textContent = text; modalCallback = onConfirm; confirmModal.classList.add('show');
-    if (window.Telegram?.WebApp?.HapticFeedback) window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
-  }
-  function hideConfirmModal(){ confirmModal.classList.remove('show'); modalCallback = null; }
-
-  /* ====== 8) UI мелочи ====== */
-  function updateSendButton(){ const hasText = messageInput.value.trim().length > 0; sendBtn.disabled = !hasText || isTyping; }
-  function autoResizeTextarea(){
-    messageInput.style.height='auto';
-    messageInput.style.height = Math.min(messageInput.scrollHeight,120)+'px';
-  }
-
-  sendBtn.addEventListener('click', sendMessage);
-  messageInput.addEventListener('input', ()=>{ updateSendButton(); autoResizeTextarea(); });
-  messageInput.addEventListener('keydown', (e)=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); sendMessage(); }});
-  clearBtn.addEventListener('click', clearChat);
-  document.getElementById('modalCancel').addEventListener('click', hideConfirmModal);
-  document.getElementById('modalConfirm').addEventListener('click', ()=>{ if (modalCallback) modalCallback(); hideConfirmModal(); });
-
-  // глобальный делегированный слушатель — скрывать delete у всех сообщений
-  document.addEventListener('click', (e) => {
-    document.querySelectorAll('.message.show-delete').forEach(el => {
-      if (!el.contains(e.target)) el.classList.remove('show-delete');
+    
+    messageInput.addEventListener('keydown', (e) => {
+       if(e.key==='Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
     });
-  });
+    
+    sendBtn.onclick = sendMessage;
 
-  confirmModal.addEventListener('click', (e)=>{ if(e.target===confirmModal) hideConfirmModal(); });
+    document.addEventListener('click', (e) => {
+       document.querySelectorAll('.show-delete').forEach(el => el.classList.remove('show-delete'));
+    });
 
-  /* ====== 9) Init ====== */
-  loadData(); updateSendButton();
-
-  // Prevent zoom on double tap (iOS)
-  let lastTouchEnd = 0;
-  document.addEventListener('touchend', (e)=>{ const now=Date.now(); if(now-lastTouchEnd<=300){ e.preventDefault(); } lastTouchEnd=now; }, { passive:false });
+    // Load data
+    const saved = localStorage.getItem('ai_chat_messages');
+    if(saved) { 
+       try { messages = JSON.parse(saved); renderMessages(); } catch(e){} 
+    }
   </script>
-
 </body>
 </html>
