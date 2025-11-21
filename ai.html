@@ -12,7 +12,7 @@
   // Фиксируем момент загрузки
   window.__pageLoadTime = (window.performance && performance.now) ? performance.now() : Date.now();
   // ↑ Меняй при каждом релизе
-  const APP_HTML_VERSION = 'v2025-0009';
+  const APP_HTML_VERSION = 'v2025-00010';
 
   if (!window.__vc_done) {
     window.__vc_done = true;
@@ -45,7 +45,41 @@
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
   <style>
-    html, body, #app, .container {height: 100%; min-height: 100vh; }
+
+    /* 1. ЖЕСТКАЯ ФИКСАЦИЯ (ЧТОБЫ НЕ ПРЫГАЛО) */
+    html {
+      width: 100%; height: 100%;
+      overflow: hidden; /* Запрет скролла html */
+      position: fixed;  /* Гвоздь программы */
+    }
+
+    body {
+      width: 100%; height: 100%;
+      overflow: hidden;
+      background: var(--bg); /* Или твой градиент */
+      position: fixed; /* Второй гвоздь */
+      top: 0; left: 0;
+    }
+
+    /* 2. ОБЕРТКА, КОТОРУЮ МЫ БУДЕМ РЕСАЙЗИТЬ */
+    #app-viewport {
+      position: absolute;
+      top: 0; left: 0; width: 100%;
+      height: 100%; /* JS будет менять это значение */
+      display: flex; 
+      flex-direction: column;
+      transition: height 0.1s ease-out; /* Плавность */
+    }
+
+    /* Твоя старая .container теперь должна просто заполнять обертку */
+    .container {
+      width: 100%; height: 100%;
+      max-width: var(--maxw);
+      margin: 0 auto;
+      display: flex; flex-direction: column;
+      position: relative; 
+    }
+    
     html, body, button, [role="button"], .btn { touch-action: manipulation; }
     input, select, textarea { font-size: 16px; }
 
@@ -214,31 +248,36 @@
 </head>
 <body>
 
-  <div class="container">
-    <div class="header">
-      <h4>Ai-Коуч</h4>
-      <button class="clear-btn" id="clearBtn">Очистить</button>
-    </div>
+  
+<div id="app-viewport">
 
-    <div class="chat-area" id="chatArea">
-      <div class="empty-state" id="emptyState">
-        <div class="empty-state-icon">💬</div>
-        <h2>Начните диалог</h2>
-        <p>Задайте любой вопрос ИИ-ассистенту</p>
+    <div class="container">
+      <div class="header">
+        <h4>Ai-Коуч</h4>
+        <button class="clear-btn" id="clearBtn">Очистить</button>
+      </div>
+
+      <div class="chat-area" id="chatArea">
+        <div class="empty-state" id="emptyState">
+          <div class="empty-state-icon">💬</div>
+          <h2>Начните диалог</h2>
+          <p>Задайте любой вопрос ИИ-ассистенту</p>
+        </div>
+      </div>
+
+      <div class="input-area">
+        <div class="input-wrapper">
+          <textarea class="input-field" id="messageInput" placeholder="Задайте вопрос..." rows="1"></textarea>
+          <button class="send-btn" id="sendBtn" disabled>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+          </button>
+        </div>
       </div>
     </div>
-
-    <div class="input-area">
-      <div class="input-wrapper">
-        <textarea class="input-field" id="messageInput" placeholder="Задайте вопрос..." rows="1"></textarea>
-        <button class="send-btn" id="sendBtn" disabled>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="22" y1="2" x2="11" y2="13"></line>
-            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-          </svg>
-        </button>
-      </div>
-    </div>
+  
   </div>
 
   <div class="modal" id="confirmModal">
@@ -643,6 +682,60 @@ function isAdmin() {
   // Prevent zoom on double tap (iOS)
   let lastTouchEnd = 0;
   document.addEventListener('touchend', (e)=>{ const now=Date.now(); if(now-lastTouchEnd<=300){ e.preventDefault(); } lastTouchEnd=now; }, { passive:false });
+
+  // ==========================================
+  // 🛑 ANTI-JUMP FIX (ВСТАВИТЬ В КОНЕЦ СКРИПТА)
+  // ==========================================
+  
+  const viewportNode = document.getElementById('app-viewport');
+  const inputNode = document.getElementById('messageInput');
+  const chatNode = document.getElementById('chatArea');
+
+  // 1. Функция, которая подгоняет размер приложения под клавиатуру
+  function handleVisualResize() {
+    if (window.visualViewport) {
+      // Ставим высоту равной реальной видимой области
+      viewportNode.style.height = window.visualViewport.height + 'px';
+      // Компенсируем сдвиг сверху (актуально для iOS)
+      viewportNode.style.top = window.visualViewport.offsetTop + 'px';
+    }
+    // Докручиваем чат вниз, чтобы не перекрыло последнее сообщение
+    requestAnimationFrame(() => {
+      chatNode.scrollTop = chatNode.scrollHeight;
+    });
+  }
+
+  // 2. Слушаем изменения размеров (выезд клавиатуры)
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', handleVisualResize);
+    window.visualViewport.addEventListener('scroll', handleVisualResize);
+  }
+  // Запускаем один раз на старте
+  handleVisualResize();
+
+  // 3. ГЛАВНЫЙ ХАК: Блокировка сдвига body при фокусе
+  if (inputNode) {
+    inputNode.addEventListener('focus', () => {
+      // В течение 400мс (пока едет клава) мы принудительно держим скролл страницы на 0
+      const lockTimer = setInterval(() => {
+        window.scrollTo(0, 0);
+        document.body.scrollTop = 0;
+        handleVisualResize();
+      }, 10);
+
+      setTimeout(() => {
+        clearInterval(lockTimer);
+        // Финальная докрутка чата
+        chatNode.scrollTop = chatNode.scrollHeight;
+      }, 400);
+    });
+
+    // При потере фокуса возвращаем размеры
+    inputNode.addEventListener('blur', () => {
+      setTimeout(handleVisualResize, 100);
+    });
+  }
+  
   </script>
 
 </body>
