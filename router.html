@@ -3,50 +3,21 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-<meta http-equiv="Pragma" content="no-cache">
-<meta http-equiv="Expires" content="0">
-
 <title>Ultima Dashboard</title>
 
 <script>
-  // 🔔 МЕНЯЙ ПРИ КАЖДОМ ОБНОВЛЕНИИ (Это ключ к сбросу)
-  const APP_VERSION = 'v2025.01.08-Ironclad'; 
+  // 🔔 ОБНОВИЛ ВЕРСИЮ (чтобы обновить скрипты у всех)
+  const APP_VERSION = 'v2025.01.08-Greeting'; 
 
-  (function strictVersionControl() {
-    try {
-      const url = new URL(window.location.href);
-      const currentV = url.searchParams.get('v');
-
-      // 1. ПРОВЕРКА ПРИ ЗАГРУЗКЕ
-      if (currentV !== APP_VERSION) {
-        console.warn('Version mismatch! Force updating...');
-        
-        // Если версия реально сменилась (а не просто первый вход), чистим старый кэш данных
-        if (currentV) {
-             try { localStorage.removeItem('app_cache'); } catch(e){}
-        }
-        
-        url.searchParams.set('v', APP_VERSION);
-        // ⚠️ ЖЕСТКИЙ РЕДИРЕКТ (Заставляет браузер загрузить новый файл)
-        window.location.replace(url.href);
-        throw new Error('Redirecting to new version...'); // Останавливаем выполнение старого скрипта
+  (function smartVersionCheck(){
+    try{
+      const url = new URL(location.href);
+      if (url.searchParams.get('v') !== APP_VERSION){ 
+        url.searchParams.set('v', APP_VERSION); 
+        if (window.history.replaceState) window.history.replaceState(null, null, url.href);
+        else location.replace(url.href); 
       }
-
-      // 2. ЗАЩИТА ОТ КНОПКИ "НАЗАД" (BFcache)
-      // Если браузер достал страницу из RAM (старую), мы это отловим и перезагрузим
-      window.addEventListener('pageshow', (event) => {
-        if (event.persisted) {
-          console.log('Restored from cache. Reloading...');
-          window.location.reload();
-        }
-      });
-
-    } catch (e) {
-      // Если произошел редирект, мы не хотим, чтобы исполнялся код ниже
-      if (e.message === 'Redirecting to new version...') return;
-      console.error(e);
-    }
+    }catch(_){}
   })();
 </script>
 
@@ -247,7 +218,7 @@
   <div class="header">
     <div class="profile-lockup">
       <div class="avatar-box"><img src="" id="ava" class="avatar-img" style="display:none"></div>
-      <div class="user-text"><p>Доброе утро,</p><h1 id="username">Гость</h1></div>
+      <div class="user-text"><p class="greeting-text">Доброе утро,</p><h1 id="username">Гость</h1></div>
     </div>
     <div class="icon-btn" onclick="haptic('light')">
       <svg width="22" height="22" viewBox="0 0 24 24" stroke="white" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
@@ -274,12 +245,10 @@
      DATA LOGIC
      ============================================================ */
   
-  // 🔴 ВСТАВЬ СВОЙ URL ГУГЛ СКРИПТА НИЖЕ:
   const API_URL = 'https://script.google.com/macros/s/AKfycbz7InxH1oeGDzSGtcgUwvJACNH8xMLcpN2K7f-V0CxFH8NEhrFy_Zykzu7-bPkVViCHSQ/exec'; 
-  
   const CFG = { iconBase: 'https://groskaiser-design.github.io/icons/' };
 
-  // FULL DEFAULT DATA SET
+  // DEFAULT DATA
   const DEFAULT_DATA = {
     version: 1,
     widgets: [
@@ -313,9 +282,7 @@
     const loader = document.getElementById('loader');
     const localData = loadCache();
     
-    // 1. LOAD CACHE FIRST
     if (localData && localData.menu) {
-      console.log('Loaded Cache v', localData.version);
       renderAll(localData);
       loader.classList.add('hidden');
     } else {
@@ -325,7 +292,6 @@
 
     if (!API_URL) return;
 
-    // 2. CHECK UPDATES
     try {
       const response = await fetch(API_URL + '?action=get_data');
       const json = await response.json();
@@ -337,7 +303,7 @@
           renderAll(json); 
         }
       }
-    } catch (e) { console.warn('Offline:', e); }
+    } catch (e) { console.warn('Offline mode:', e); }
   }
 
   function renderAll(data) {
@@ -515,9 +481,21 @@
 
   function haptic(style) { if(tg?.HapticFeedback) tg.HapticFeedback.impactOccurred(style); }
 
+  function getGreeting() {
+    const h = new Date().getHours();
+    if (h >= 5 && h < 12) return 'Доброе утро,';
+    if (h >= 12 && h < 18) return 'Добрый день,';
+    if (h >= 18) return 'Добрый вечер,';
+    return 'Доброй ночи,';
+  }
+
   function loadUser() {
     const u = tg?.initDataUnsafe?.user || { first_name: 'Александр' };
     document.getElementById('username').textContent = u.first_name;
+    
+    const greetingEl = document.querySelector('.greeting-text');
+    if (greetingEl) greetingEl.textContent = getGreeting();
+
     if(u.photo_url){ const img = document.getElementById('ava'); img.src=u.photo_url; img.style.display='block'; }
   }
 
@@ -555,6 +533,7 @@
   document.addEventListener('DOMContentLoaded', () => {
     loadUser();
     document.getElementById('fabIcon').src = CFG.iconBase + 'ai.svg';
+    initCarousel();
     syncData(); 
   });
 
