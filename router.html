@@ -6,8 +6,8 @@
 <title>Ultima Dashboard</title>
 
 <script>
-  // 🔔 ОБНОВЛЕНИЕ ВЕРСИИ (Сброс кэша)
-  const APP_VERSION = 'v2025.01.11-LiveWidgets'; 
+  // 🔔 ВЕРСИЯ 2025-01-11 (Donut Fix)
+  const APP_VERSION = 'v2025.01.11-DonutFix'; 
 
   (function smartVersionCheck(){
     try{
@@ -106,7 +106,6 @@
     backdrop-filter: blur(30px); -webkit-backdrop-filter: blur(30px);
     box-shadow: 0 12px 32px rgba(0,0,0,0.3);
     position: relative; overflow: hidden; 
-    /* GRID LAYOUT */
     display: grid; grid-template-columns: 1fr auto; align-items: center;
     padding: 0 24px;
     transition: transform 0.2s;
@@ -131,7 +130,7 @@
   /* Visuals */
   .donut-svg { width: 90px; height: 90px; transform: rotate(-90deg); }
   .d-bg { fill: none; stroke: rgba(255,255,255,0.1); stroke-width: 8; }
-  .d-val { fill: none; stroke: url(#grad-fire); stroke-width: 8; stroke-linecap: round; stroke-dasharray: 251; stroke-dashoffset: 251; /* По умолчанию пустой */ transition: stroke-dashoffset 1s cubic-bezier(0.25, 0.46, 0.45, 0.94); }
+  .d-val { fill: none; stroke: url(#grad-fire); stroke-width: 8; stroke-linecap: round; stroke-dasharray: 251; stroke-dashoffset: 251; transition: stroke-dashoffset 1s cubic-bezier(0.25, 0.46, 0.45, 0.94); }
   .d-icon { position: absolute; font-size: 28px; }
   
   .icon-glow { font-size: 50px; filter: drop-shadow(0 0 15px rgba(255,255,255,0.2)); }
@@ -216,6 +215,7 @@
 <div id="loader"><div class="spinner"></div></div>
 
 <div class="app-shell">
+  
   <div class="header">
     <div class="profile-lockup">
       <div class="avatar-box"><img src="" id="ava" class="avatar-img" style="display:none"></div>
@@ -234,6 +234,7 @@
   </div>
 
   <div id="dynamicContent"></div>
+
 </div>
 
 <div class="fab-ai" onclick="nav('ai.html')">
@@ -241,9 +242,7 @@
 </div>
 
 <script>
-  // 🔴 URL ТВОЕГО СКРИПТА (тот же, что ты кидал)
   const API_URL = 'https://script.google.com/macros/s/AKfycbzUtBu8wULajQS9KyNPfu4PXCn_V7l_ntnjEY8g1dQNNdY3RBvD4Qkn2dgT6cVJmqbn-g/exec'; 
-  
   const CFG = { iconBase: 'https://groskaiser-design.github.io/icons/' };
 
   const DEFAULT_DATA = {
@@ -255,7 +254,6 @@
     menu: []
   };
 
-  /* --- SYNC LOGIC --- */
   async function syncData() {
     const loader = document.getElementById('loader');
     const localData = loadCache();
@@ -275,15 +273,18 @@
       const response = await fetch(API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ action: 'get_data', init_data: initData })
+        body: JSON.stringify({ 
+            action: 'get_data', 
+            init_data: initData,
+            // user_id: '196047220' // ТЕСТ
+        })
       });
       const json = await response.json();
 
       if (json.ok) {
-        if (!localData || localData.version != json.version || true) { 
-          saveCache(json);
-          renderAll(json); 
-        }
+        // Обновляем всегда при успехе
+        saveCache(json);
+        renderAll(json); 
       }
     } catch (e) { console.warn('Offline:', e); }
   }
@@ -300,7 +301,6 @@
   function loadCache() { try { return JSON.parse(localStorage.getItem('app_cache')); } catch(e){ return null; } }
   function saveCache(data) { try { localStorage.setItem('app_cache', JSON.stringify(data)); } catch(e){} }
 
-  /* --- RENDER WIDGETS --- */
   function renderWidgets(widgets) {
     const track = document.getElementById('carouselTrack');
     track.innerHTML = '';
@@ -312,12 +312,21 @@
 
       let content = '';
       
-      if (w.type === 'kbju') {
-        // Рассчет круга
-        const curr = Number(w.raw_curr) || (parseFloat(w.val?.replace(/\s/g,'')) || 0);
-        const max = Number(w.raw_max) || 2000;
+      // 🔥 FIX: Добавлена проверка на тип 'donut', так как в таблице он так называется
+      if (w.type === 'kbju' || w.type === 'donut') {
+        // Парсинг чисел для графика (учитывает "1,250")
+        const valClean = String(w.val).replace(/[^0-9.,]/g, '').replace(',', '.');
+        const curr = Number(w.raw_curr) || parseFloat(valClean) || 0;
+        
+        // Парсинг цели из подстроки (если raw_max не пришел)
+        let max = Number(w.raw_max) || 2100;
+        if (!w.raw_max && w.sub) {
+           const match = w.sub.match(/(\d+[\s.,]?\d*)/);
+           if (match) max = parseFloat(match[0].replace(/\s/g,'').replace(',', '.')) || 2100;
+        }
+
         const pct = Math.min(100, Math.max(0, (curr / max) * 100));
-        const offset = 251 - (251 * pct / 100); // 251 = длина окружности
+        const offset = 251 - (251 * pct / 100);
 
         content = `
           <div class="w-left">
@@ -392,7 +401,6 @@
     });
   }
 
-  /* --- RENDER MENU --- */
   function renderMenu(menuData) {
     const root = document.getElementById('dynamicContent');
     root.innerHTML = '';
@@ -427,7 +435,6 @@
     if (scrollPos > 0) window.scrollTo(0, scrollPos);
   }
 
-  /* --- UTILS --- */
   const tg = window.Telegram?.WebApp;
   if(tg){ tg.ready(); tg.expand(); tg.setHeaderColor('#050505'); tg.setBackgroundColor('#050505'); tg.BackButton?.hide(); if (tg.isVersionAtLeast && tg.isVersionAtLeast('6.1')) tg.disableVerticalSwipes(); }
 
