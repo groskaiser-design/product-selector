@@ -3,21 +3,50 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+
 <title>Ultima Dashboard</title>
 
 <script>
-  // 🔔 ВЕРСИЯ 8.0 (Включает все 6 виджетов)
-  const APP_VERSION = 'v2025.01.08-FullSet'; 
+  // 🔔 МЕНЯЙ ПРИ КАЖДОМ ОБНОВЛЕНИИ (Это ключ к сбросу)
+  const APP_VERSION = 'v2025.01.08-Ironclad'; 
 
-  (function smartVersionCheck(){
-    try{
-      const url = new URL(location.href);
-      if (url.searchParams.get('v') !== APP_VERSION){ 
-        url.searchParams.set('v', APP_VERSION); 
-        if (window.history.replaceState) window.history.replaceState(null, null, url.href);
-        else location.replace(url.href); 
+  (function strictVersionControl() {
+    try {
+      const url = new URL(window.location.href);
+      const currentV = url.searchParams.get('v');
+
+      // 1. ПРОВЕРКА ПРИ ЗАГРУЗКЕ
+      if (currentV !== APP_VERSION) {
+        console.warn('Version mismatch! Force updating...');
+        
+        // Если версия реально сменилась (а не просто первый вход), чистим старый кэш данных
+        if (currentV) {
+             try { localStorage.removeItem('app_cache'); } catch(e){}
+        }
+        
+        url.searchParams.set('v', APP_VERSION);
+        // ⚠️ ЖЕСТКИЙ РЕДИРЕКТ (Заставляет браузер загрузить новый файл)
+        window.location.replace(url.href);
+        throw new Error('Redirecting to new version...'); // Останавливаем выполнение старого скрипта
       }
-    }catch(_){}
+
+      // 2. ЗАЩИТА ОТ КНОПКИ "НАЗАД" (BFcache)
+      // Если браузер достал страницу из RAM (старую), мы это отловим и перезагрузим
+      window.addEventListener('pageshow', (event) => {
+        if (event.persisted) {
+          console.log('Restored from cache. Reloading...');
+          window.location.reload();
+        }
+      });
+
+    } catch (e) {
+      // Если произошел редирект, мы не хотим, чтобы исполнялся код ниже
+      if (e.message === 'Redirecting to new version...') return;
+      console.error(e);
+    }
   })();
 </script>
 
@@ -33,7 +62,7 @@
     --surface-glass: rgba(255, 255, 255, 0.07);
     --surface-list: rgba(255, 255, 255, 0.04);
     --surface-border: rgba(255, 255, 255, 0.1);
-    --surface-highlight: rgba(255, 255, 255, 0.25); /* Белый блик сверху */
+    --surface-highlight: rgba(255, 255, 255, 0.25);
     
     /* --- ACCENTS --- */
     --acc-orange: #ff9f0a;
@@ -245,10 +274,12 @@
      DATA LOGIC
      ============================================================ */
   
+  // 🔴 ВСТАВЬ СВОЙ URL ГУГЛ СКРИПТА НИЖЕ:
   const API_URL = 'https://script.google.com/macros/s/AKfycbz7InxH1oeGDzSGtcgUwvJACNH8xMLcpN2K7f-V0CxFH8NEhrFy_Zykzu7-bPkVViCHSQ/exec'; 
+  
   const CFG = { iconBase: 'https://groskaiser-design.github.io/icons/' };
 
-  // DEFAULT DATA (FULL SET)
+  // FULL DEFAULT DATA SET
   const DEFAULT_DATA = {
     version: 1,
     widgets: [
@@ -282,7 +313,9 @@
     const loader = document.getElementById('loader');
     const localData = loadCache();
     
+    // 1. LOAD CACHE FIRST
     if (localData && localData.menu) {
+      console.log('Loaded Cache v', localData.version);
       renderAll(localData);
       loader.classList.add('hidden');
     } else {
@@ -292,6 +325,7 @@
 
     if (!API_URL) return;
 
+    // 2. CHECK UPDATES
     try {
       const response = await fetch(API_URL + '?action=get_data');
       const json = await response.json();
@@ -300,19 +334,18 @@
         if (!localData || localData.version != json.version) {
           console.log('Updating to v', json.version);
           saveCache(json);
-          renderAll(json); // Full re-render
+          renderAll(json); 
         }
       }
-    } catch (e) { console.warn('Offline mode:', e); }
+    } catch (e) { console.warn('Offline:', e); }
   }
 
   function renderAll(data) {
-    // Если с бэка пришли виджеты - рисуем их, иначе берем дефолтные
-    const widgetsToRender = (data.widgets && data.widgets.length > 0) ? data.widgets : DEFAULT_DATA.widgets;
-    const menuToRender = (data.menu && data.menu.length > 0) ? data.menu : DEFAULT_DATA.menu;
+    const widgets = (data.widgets && data.widgets.length) ? data.widgets : DEFAULT_DATA.widgets;
+    const menu = (data.menu && data.menu.length) ? data.menu : DEFAULT_DATA.menu;
     
-    renderWidgets(widgetsToRender);
-    renderMenu(menuToRender);
+    renderWidgets(widgets);
+    renderMenu(menu);
     initCarousel(); 
   }
 
@@ -522,7 +555,6 @@
   document.addEventListener('DOMContentLoaded', () => {
     loadUser();
     document.getElementById('fabIcon').src = CFG.iconBase + 'ai.svg';
-    initCarousel();
     syncData(); 
   });
 
