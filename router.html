@@ -6,8 +6,8 @@
 <title>Ultima Dashboard</title>
 
 <script>
-  // 🔔 ВЕРСИЯ 7.1 (Donut + Clean Graphs)
-  const APP_VERSION = 'v2025.01.11-FinalFix'; 
+  // 🔔 ВЕРСИЯ 2025-01-11 (Live Water + Fixes)
+  const APP_VERSION = 'v2025.01.11-LiveWater'; 
 
   (function smartVersionCheck(){
     try{
@@ -146,7 +146,17 @@
 
   /* Water Wave */
   .wave-box { width: 80px; height: 80px; border-radius: 50%; background: rgba(255,255,255,0.1); overflow: hidden; position: relative; border: 2px solid rgba(255,255,255,0.2); }
-  .wave { position: absolute; bottom: 0; left: 0; width: 200%; height: 200%; background: var(--acc-blue); opacity: 0.8; border-radius: 40%; animation: wave 6s infinite linear; margin-left: -50%; margin-bottom: -130%; }
+  
+  /* Волну поднимаем через margin-bottom (или top) */
+  .wave { 
+    position: absolute; bottom: 0; left: 0; width: 200%; height: 200%; 
+    background: var(--acc-blue); opacity: 0.8; border-radius: 40%; 
+    animation: wave 6s infinite linear; 
+    margin-left: -50%; 
+    /* margin-bottom меняется динамически JS-ом */
+    margin-bottom: -210%; 
+    transition: margin-bottom 1s ease;
+  }
   @keyframes wave { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
   /* Dots */
@@ -242,7 +252,7 @@
 </div>
 
 <script>
-  // 🔴 ВСТАВЬ СЮДА СВОЙ URL API (из Google Apps Script)
+  // 🔴 ВСТАВЬ СЮДА СВОЙ URL
   const API_URL = 'https://script.google.com/macros/s/AKfycbzUtBu8wULajQS9KyNPfu4PXCn_V7l_ntnjEY8g1dQNNdY3RBvD4Qkn2dgT6cVJmqbn-g/exec'; 
   
   const CFG = { iconBase: 'https://groskaiser-design.github.io/icons/' };
@@ -261,7 +271,6 @@
     const loader = document.getElementById('loader');
     const localData = loadCache();
     
-    // 1. Показываем кэш мгновенно
     if (localData && localData.menu) {
       renderAll(localData);
       loader.classList.add('hidden');
@@ -272,7 +281,6 @@
 
     if (!API_URL) return;
 
-    // 2. Запрашиваем свежие данные
     try {
       const initData = window.Telegram?.WebApp?.initData || '';
       const response = await fetch(API_URL, {
@@ -281,14 +289,13 @@
         body: JSON.stringify({ 
             action: 'get_data', 
             init_data: initData,
-            // user_id: '196047220' // Для тестов
+            // user_id: '196047220' // Тест
         })
       });
       const json = await response.json();
 
       if (json.ok) {
-        // Обновляем, если версия на сервере отличается от локальной
-        // (или для динамики можно убрать проверку и обновлять всегда)
+        // Обновляем всегда, если пришли новые данные
         if (!localData || localData.version != json.version || true) { 
           saveCache(json);
           renderAll(json); 
@@ -309,7 +316,7 @@
   function loadCache() { try { return JSON.parse(localStorage.getItem('app_cache')); } catch(e){ return null; } }
   function saveCache(data) { try { localStorage.setItem('app_cache', JSON.stringify(data)); } catch(e){} }
 
-  /* --- RENDER WIDGETS (UPDATED LOGIC) --- */
+  /* --- RENDER WIDGETS (FIXED ICONS + WATER LIVE) --- */
   function renderWidgets(widgets) {
     const track = document.getElementById('carouselTrack');
     track.innerHTML = '';
@@ -319,18 +326,17 @@
       el.className = 'widget';
       el.onclick = () => nav(w.link);
 
-      // Иконка из таблицы
+      // Иконка из таблицы (если есть)
       const icon = w.icon || '';
 
       let content = '';
       
       if (w.type === 'kbju' || w.type === 'donut') {
-        // Чистим число (1,250 -> 1250) для расчета графика
+        // Питание: Круг + Иконка в центре
         const valClean = String(w.val).replace(/[^0-9.,]/g, '').replace(',', '.');
         const curr = Number(w.raw_curr) || parseFloat(valClean) || 0;
         
         let max = Number(w.raw_max) || 2100;
-        // Пытаемся вытащить цель из текста "Цель: 2100"
         if (!w.raw_max && w.sub) {
            const match = w.sub.match(/(\d+[\s.,]?\d*)/);
            if (match) max = parseFloat(match[0].replace(/\s/g,'').replace(',', '.')) || 2100;
@@ -354,10 +360,10 @@
           </div>`;
 
       } else if (w.type === 'weight') {
-        // Для веса иконку не ставим, там график
+        // Вес: Иконка рядом с заголовком
         content = `
           <div class="w-left">
-            <div class="w-lbl" style="color: var(--acc-green)">${w.title}</div>
+            <div class="w-lbl" style="color: var(--acc-green)">${w.title} <span style="margin-left:6px; filter: grayscale(0); font-size:14px">${icon}</span></div>
             <div class="w-val">${w.val} <span>${w.unit||''}</span></div>
             <div class="w-sub" style="color: var(--acc-green)">${w.sub}</div>
           </div>
@@ -371,14 +377,27 @@
           </div>`;
 
       } else if (w.type === 'water') {
+        // Вода: Расчет заполнения волны (Live)
+        const valClean = String(w.val).replace(/[^0-9.,]/g, '').replace(',', '.');
+        const curr = Number(w.raw_curr) || parseFloat(valClean) || 0;
+        
+        let max = Number(w.raw_max) || 2.5; 
+        if (!w.raw_max && w.sub) {
+           const match = w.sub.match(/(\d+[\s.,]?\d*)/);
+           if (match) max = parseFloat(match[0].replace(/\s/g,'').replace(',', '.')) || 2.5;
+        }
+        
+        const pct = Math.min(100, Math.max(0, (curr / max) * 100));
+        const waveLevel = -210 + (pct * 1.5); 
+
         content = `
           <div class="w-left">
-            <div class="w-lbl" style="color: var(--acc-blue)">${w.title}</div>
+            <div class="w-lbl" style="color: var(--acc-blue)">${w.title} <span style="margin-left:6px; filter: grayscale(0); font-size:14px">${icon}</span></div>
             <div class="w-val">${w.val} <span>${w.unit||''}</span></div>
             <div class="w-sub">${w.sub}</div>
           </div>
           <div class="w-right">
-            <div class="wave-box"><div class="wave"></div></div>
+            <div class="wave-box"><div class="wave" style="margin-bottom: ${waveLevel}%"></div></div>
           </div>`;
 
       } else if (w.type === 'insight') {
@@ -406,7 +425,8 @@
 
       } else if (w.type === 'alert') {
         el.style.background = 'linear-gradient(160deg, rgba(255,69,58,0.15) 0%, rgba(20,20,20,0.6) 100%)'; el.style.borderColor = 'rgba(255,69,58,0.3)';
-        const alertIcon = icon ? `<div style="font-size:32px">${icon}</div>` : `<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>`;
+        const alertIcon = icon ? `<div style="font-size:32px;filter:grayscale(0)">${icon}</div>` : `<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>`;
+        
         content = `
           <div class="w-left">
             <div class="w-lbl" style="color: var(--acc-red)">${w.title}</div>
@@ -421,6 +441,7 @@
     });
   }
 
+  /* --- RENDER MENU --- */
   function renderMenu(menuData) {
     const root = document.getElementById('dynamicContent');
     root.innerHTML = '';
@@ -491,7 +512,6 @@
     slides.forEach((_, i) => { const dot = document.createElement('div'); dot.className = `dot ${i === 0 ? 'active' : ''}`; dotsContainer.appendChild(dot); });
     
     if (window.carouselObserver) window.carouselObserver.disconnect();
-    
     window.carouselObserver = new IntersectionObserver(entries => {
       entries.forEach(entry => {
         if (entry.isIntersecting) {
