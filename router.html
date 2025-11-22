@@ -6,8 +6,8 @@
 <title>Ultima Dashboard</title>
 
 <script>
-  // 🔔 ВЕРСИЯ 2025-01-11 (Safety Fix)
-  const APP_VERSION = 'v2025.01.11-Safety'; 
+  // 🔔 ВЕРСИЯ 2025-01-12 (Blog Animation)
+  const APP_VERSION = 'v2025.01.12-BlogAnim'; 
 
   (function smartVersionCheck(){
     try{
@@ -149,6 +149,28 @@
   .wave { position: absolute; bottom: 0; left: 0; width: 200%; height: 200%; background: var(--acc-blue); opacity: 0.8; border-radius: 40%; animation: wave 6s infinite linear; margin-left: -50%; margin-bottom: -130%; }
   @keyframes wave { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
+  /* === BLOG ANIMATION (FALLING LETTERS) === */
+  .blog-anim-box { width: 100px; height: 100px; position: relative; overflow: hidden; display: flex; justify-content: center; gap: 6px; }
+  .blog-col {
+    width: 18px;
+    background: linear-gradient(180deg, rgba(94,96,206,0) 0%, rgba(94,96,206,0.8) 50%, rgba(94,96,206,0) 100%);
+    border-radius: 4px;
+    animation: blogFall 2s linear infinite;
+    opacity: 0.7;
+  }
+  /* Разные задержки для эффекта дождя */
+  .blog-col:nth-child(1) { height: 60px; animation-duration: 2.2s; animation-delay: 0s; }
+  .blog-col:nth-child(2) { height: 90px; animation-duration: 1.8s; animation-delay: 0.5s; background: linear-gradient(180deg, rgba(162,155,254,0) 0%, rgba(162,155,254,0.9) 50%, rgba(162,155,254,0) 100%); }
+  .blog-col:nth-child(3) { height: 50px; animation-duration: 2.5s; animation-delay: 1s; }
+
+  @keyframes blogFall {
+    0% { transform: translateY(-110%); opacity: 0; }
+    20% { opacity: 0.8; }
+    80% { opacity: 0.8; }
+    100% { transform: translateY(150%); opacity: 0; }
+  }
+
+
   /* Dots */
   .dots { display: flex; justify-content: center; gap: 6px; margin-top: -14px; margin-bottom: 8px; pointer-events: none; }
   .dot { width: 6px; height: 6px; border-radius: 10px; background: rgba(255,255,255,0.2); transition: 0.3s cubic-bezier(0.25, 0.1, 0.25, 1); }
@@ -242,7 +264,7 @@
 </div>
 
 <script>
-  // 🔴 ВСТАВЬ СВОЙ URL
+  // 🔴 ВСТАВЬ СЮДА СВОЙ URL
   const API_URL = 'https://script.google.com/macros/s/AKfycbzUtBu8wULajQS9KyNPfu4PXCn_V7l_ntnjEY8g1dQNNdY3RBvD4Qkn2dgT6cVJmqbn-g/exec'; 
   
   const CFG = { iconBase: 'https://groskaiser-design.github.io/icons/' };
@@ -276,34 +298,30 @@
       const response = await fetch(API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ 
-            action: 'get_data', 
-            init_data: initData,
-            // user_id: '196047220' // ТЕСТ
-        })
+        body: JSON.stringify({ action: 'get_data', init_data: initData })
       });
       const json = await response.json();
 
       if (json.ok) {
-        // Используем новый ключ кэша v2, чтобы сбросить старый
-        saveCache(json);
-        renderAll(json); 
+        if (!localData || localData.version != json.version || true) { 
+          saveCache(json);
+          renderAll(json); 
+        }
       }
     } catch (e) { console.warn('Offline:', e); }
   }
 
   function renderAll(data) {
-    // Безопасная проверка на наличие массивов
-    const widgets = (data.widgets && Array.isArray(data.widgets)) ? data.widgets : [];
-    const menu = (data.menu && Array.isArray(data.menu)) ? data.menu : [];
+    const widgets = (data.widgets && data.widgets.length) ? data.widgets : DEFAULT_DATA.widgets;
+    const menu = (data.menu && data.menu.length) ? data.menu : [];
     
     renderWidgets(widgets);
     renderMenu(menu);
     initCarousel();
   }
 
-  function loadCache() { try { return JSON.parse(localStorage.getItem('app_cache_v2')); } catch(e){ return null; } }
-  function saveCache(data) { try { localStorage.setItem('app_cache_v2', JSON.stringify(data)); } catch(e){} }
+  function loadCache() { try { return JSON.parse(localStorage.getItem('app_cache')); } catch(e){ return null; } }
+  function saveCache(data) { try { localStorage.setItem('app_cache', JSON.stringify(data)); } catch(e){} }
 
   /* --- RENDER WIDGETS --- */
   function renderWidgets(widgets) {
@@ -315,6 +333,7 @@
       el.className = 'widget';
       el.onclick = () => nav(w.link);
 
+      // Иконка из таблицы (если есть)
       const icon = w.icon || '';
 
       let content = '';
@@ -322,13 +341,11 @@
       if (w.type === 'kbju' || w.type === 'donut') {
         const valClean = String(w.val).replace(/[^0-9.,]/g, '').replace(',', '.');
         const curr = Number(w.raw_curr) || parseFloat(valClean) || 0;
-        
         let max = Number(w.raw_max) || 2100;
         if (!w.raw_max && w.sub) {
            const match = w.sub.match(/(\d+[\s.,]?\d*)/);
            if (match) max = parseFloat(match[0].replace(/\s/g,'').replace(',', '.')) || 2100;
         }
-
         const pct = Math.min(100, Math.max(0, (curr / max) * 100));
         const offset = 251 - (251 * pct / 100);
 
@@ -349,7 +366,7 @@
       } else if (w.type === 'weight') {
         content = `
           <div class="w-left">
-            <div class="w-lbl" style="color: var(--acc-green)">${w.title}</div>
+            <div class="w-lbl" style="color: var(--acc-green)">${w.title} <span style="margin-left:6px; filter: grayscale(0); font-size:14px">${icon}</span></div>
             <div class="w-val">${w.val} <span>${w.unit||''}</span></div>
             <div class="w-sub" style="color: var(--acc-green)">${w.sub}</div>
           </div>
@@ -375,7 +392,7 @@
 
         content = `
           <div class="w-left">
-            <div class="w-lbl" style="color: var(--acc-blue)">${w.title}</div>
+            <div class="w-lbl" style="color: var(--acc-blue)">${w.title} <span style="margin-left:6px; filter: grayscale(0); font-size:14px">${icon}</span></div>
             <div class="w-val">${w.val} <span>${w.unit||''}</span></div>
             <div class="w-sub">${w.sub}</div>
           </div>
@@ -396,6 +413,7 @@
           </div>`;
 
       } else if (w.type === 'news') {
+        // NEW ANIMATION FOR NEWS/BLOG
         content = `
           <div class="w-left">
             <div class="w-lbl"><span class="w-tag">BLOG</span></div>
@@ -403,12 +421,17 @@
             <div class="w-btn" style="background: var(--acc-blue); color: #fff">${w.btn || 'Открыть'}</div>
           </div>
           <div class="w-right">
-             <div class="icon-glow" style="font-size: 40px;">${icon || '📰'}</div>
+             <div class="blog-anim-box">
+               <div class="blog-col"></div>
+               <div class="blog-col"></div>
+               <div class="blog-col"></div>
+             </div>
           </div>`;
 
       } else if (w.type === 'alert') {
         el.style.background = 'linear-gradient(160deg, rgba(255,69,58,0.15) 0%, rgba(20,20,20,0.6) 100%)'; el.style.borderColor = 'rgba(255,69,58,0.3)';
         const alertIcon = icon ? `<div style="font-size:32px;filter:grayscale(0)">${icon}</div>` : `<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>`;
+        
         content = `
           <div class="w-left">
             <div class="w-lbl" style="color: var(--acc-red)">${w.title}</div>
