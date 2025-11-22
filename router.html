@@ -6,8 +6,8 @@
 <title>Ultima Dashboard</title>
 
 <script>
-  // 🔔 ВЕРСИЯ 2025-01-12 (Insight Animation)
-  const APP_VERSION = 'v2025.01.12-InsightGlow'; 
+  // 🔔 ВЕРСИЯ 2025-01-11 (Safety Fix)
+  const APP_VERSION = 'v2025.01.11-Safety'; 
 
   (function smartVersionCheck(){
     try{
@@ -133,20 +133,7 @@
   .d-val { fill: none; stroke: url(#grad-fire); stroke-width: 8; stroke-linecap: round; stroke-dasharray: 251; stroke-dashoffset: 251; transition: stroke-dashoffset 1s cubic-bezier(0.25, 0.46, 0.45, 0.94); }
   .d-icon { position: absolute; font-size: 28px; }
   
-  /* 💡 NEW: INSIGHT ANIMATION */
-  .bulb-anim { 
-    font-size: 50px; 
-    animation: idea-glow 3s infinite ease-in-out; 
-    transform-origin: center center;
-  }
-  @keyframes idea-glow {
-    0%, 100% { filter: drop-shadow(0 0 10px rgba(255, 190, 0, 0.3)); transform: scale(1); }
-    50% { filter: drop-shadow(0 0 30px rgba(255, 190, 0, 0.7)); transform: scale(1.08); }
-  }
-
-  /* 📰 NEW: BLOG ANIMATION */
   .icon-glow { font-size: 50px; filter: drop-shadow(0 0 15px rgba(255,255,255,0.2)); }
-  
   .icon-alert { width: 54px; height: 54px; border-radius: 50%; background: rgba(255, 69, 58, 0.2); color: var(--acc-red); display: flex; align-items: center; justify-content: center; }
 
   /* Tech Graph */
@@ -292,31 +279,31 @@
         body: JSON.stringify({ 
             action: 'get_data', 
             init_data: initData,
-            // user_id: '196047220' // Тест
+            // user_id: '196047220' // ТЕСТ
         })
       });
       const json = await response.json();
 
       if (json.ok) {
-        if (!localData || localData.version != json.version || true) { 
-          saveCache(json);
-          renderAll(json); 
-        }
+        // Используем новый ключ кэша v2, чтобы сбросить старый
+        saveCache(json);
+        renderAll(json); 
       }
     } catch (e) { console.warn('Offline:', e); }
   }
 
   function renderAll(data) {
-    const widgets = (data.widgets && data.widgets.length) ? data.widgets : DEFAULT_DATA.widgets;
-    const menu = (data.menu && data.menu.length) ? data.menu : [];
+    // Безопасная проверка на наличие массивов
+    const widgets = (data.widgets && Array.isArray(data.widgets)) ? data.widgets : [];
+    const menu = (data.menu && Array.isArray(data.menu)) ? data.menu : [];
     
     renderWidgets(widgets);
     renderMenu(menu);
     initCarousel();
   }
 
-  function loadCache() { try { return JSON.parse(localStorage.getItem('app_cache')); } catch(e){ return null; } }
-  function saveCache(data) { try { localStorage.setItem('app_cache', JSON.stringify(data)); } catch(e){} }
+  function loadCache() { try { return JSON.parse(localStorage.getItem('app_cache_v2')); } catch(e){ return null; } }
+  function saveCache(data) { try { localStorage.setItem('app_cache_v2', JSON.stringify(data)); } catch(e){} }
 
   /* --- RENDER WIDGETS --- */
   function renderWidgets(widgets) {
@@ -328,7 +315,6 @@
       el.className = 'widget';
       el.onclick = () => nav(w.link);
 
-      // Иконка из таблицы (если есть)
       const icon = w.icon || '';
 
       let content = '';
@@ -336,11 +322,13 @@
       if (w.type === 'kbju' || w.type === 'donut') {
         const valClean = String(w.val).replace(/[^0-9.,]/g, '').replace(',', '.');
         const curr = Number(w.raw_curr) || parseFloat(valClean) || 0;
+        
         let max = Number(w.raw_max) || 2100;
         if (!w.raw_max && w.sub) {
            const match = w.sub.match(/(\d+[\s.,]?\d*)/);
            if (match) max = parseFloat(match[0].replace(/\s/g,'').replace(',', '.')) || 2100;
         }
+
         const pct = Math.min(100, Math.max(0, (curr / max) * 100));
         const offset = 251 - (251 * pct / 100);
 
@@ -361,7 +349,7 @@
       } else if (w.type === 'weight') {
         content = `
           <div class="w-left">
-            <div class="w-lbl" style="color: var(--acc-green)">${w.title} <span style="margin-left:6px; filter: grayscale(0); font-size:14px">${icon}</span></div>
+            <div class="w-lbl" style="color: var(--acc-green)">${w.title}</div>
             <div class="w-val">${w.val} <span>${w.unit||''}</span></div>
             <div class="w-sub" style="color: var(--acc-green)">${w.sub}</div>
           </div>
@@ -387,7 +375,7 @@
 
         content = `
           <div class="w-left">
-            <div class="w-lbl" style="color: var(--acc-blue)">${w.title} <span style="margin-left:6px; filter: grayscale(0); font-size:14px">${icon}</span></div>
+            <div class="w-lbl" style="color: var(--acc-blue)">${w.title}</div>
             <div class="w-val">${w.val} <span>${w.unit||''}</span></div>
             <div class="w-sub">${w.sub}</div>
           </div>
@@ -404,7 +392,7 @@
             <div class="w-btn">${w.btn || 'Читать →'}</div>
           </div>
           <div class="w-right">
-            <div class="bulb-anim">${icon || '💡'}</div>
+            <div class="icon-glow" style="font-size: 48px;">${icon || '💡'}</div>
           </div>`;
 
       } else if (w.type === 'news') {
@@ -435,12 +423,9 @@
     });
   }
 
-  /* --- RENDER MENU --- */
   function renderMenu(menuData) {
     const root = document.getElementById('dynamicContent');
-    const scrollPos = window.scrollY;
     root.innerHTML = '';
-
     if(!menuData) return;
 
     menuData.forEach(section => {
@@ -472,7 +457,6 @@
     if (scrollPos > 0) window.scrollTo(0, scrollPos);
   }
 
-  /* --- UTILS --- */
   const tg = window.Telegram?.WebApp;
   if(tg){ tg.ready(); tg.expand(); tg.setHeaderColor('#050505'); tg.setBackgroundColor('#050505'); tg.BackButton?.hide(); if (tg.isVersionAtLeast && tg.isVersionAtLeast('6.1')) tg.disableVerticalSwipes(); }
 
