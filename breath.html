@@ -8,7 +8,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0004'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0005'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -198,132 +198,79 @@ window.addEventListener('pageshow', (e)=>{
   svg { overflow: visible; }
   #noSleepVideo { top: -10px; left: -10px; }
 
-/* ============================================================
-   📊 СТИЛИ ДЛЯ ГРАФИКА ДЫХАНИЯ (Ultima Breath Chart)
-   ============================================================ */
+/* === BREATH CHART STYLES (100% Copy of KBJU7) === */
+.breath7 { 
+  --h: 180; 
+  --gap: 8; 
+  --ink: #fff; 
+  --c-stress: #4facfe; /* Blue */
+  --c-sleep:  #ff9f0a; /* Orange */
+  --c-focus:  #5e60ce; /* Purple */
+  position: relative; 
+}
 
-.breath-chart-card {
-  /* Ваши фирменные цвета */
-  --c-stress: #4facfe;
-  --c-sleep:  #ff9f0a;
-  --c-focus:  #5e60ce;
-
-  background: rgba(255, 255, 255, 0.12);
-  border: 1px solid rgba(255, 255, 255, 0.24);
+.breath7-card {
+  background: linear-gradient(180deg, rgba(255,255,255,.18), rgba(255,255,255,.16));
+  border: 1px solid rgba(255,255,255,.28); 
   border-radius: 18px;
-  color: #fff;
-  position: relative;
+  box-shadow: 0 8px 28px rgba(0,0,0,.18);
+  backdrop-filter: blur(12px); 
+  -webkit-backdrop-filter: blur(12px);
+  color: var(--ink);
   overflow: hidden;
-  margin-top: 8px;
-  backdrop-filter: blur(10px); /* Красивое размытие фона */
-  -webkit-backdrop-filter: blur(10px);
 }
 
-.chart-viewport {
-  padding: 14px 8px 0; /* Отступ сверху для "шапок" капсул */
+.breath7-viewport { position: relative; padding: 6px 8px 4px; }
+.breath7-scroll { 
+  position: relative; overflow-x: auto; overflow-y: hidden; 
+  -webkit-overflow-scrolling: touch; scrollbar-width: none; touch-action: pan-x; 
 }
+.breath7-scroll::-webkit-scrollbar { display: none; }
 
-.chart-scroll {
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none; /* Firefox */
-  -webkit-overflow-scrolling: touch; /* Плавный скролл на iOS */
-  touch-action: pan-x;
-  padding-bottom: 4px;
+.breath7-info {
+  display: flex; align-items: center; justify-content: center;
+  gap: 8px; flex-wrap: nowrap;
+  padding: 10px 12px; min-height: 42px;
+  font-size: clamp(12px, 3.4vw, 14px);
+  font-variant-numeric: tabular-nums;
+  border-top: 1px solid rgba(255,255,255,0.1);
 }
-.chart-scroll::-webkit-scrollbar {
-  display: none; /* Скрываем скроллбар в Chrome/Safari */
+.breath7-info .v { display: inline-block; min-width: 0; text-align: center; font-weight: 800; }
+
+.legend-tap {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: 1 1 0; min-width: 0;
+  gap: 6px; padding: 8px 10px;
+  white-space: nowrap; line-height: 1;
+  border: 1px solid rgba(255,255,255,.9); 
+  background: transparent; color: inherit; font: inherit;
+  border-radius: 12px; min-height: 36px; cursor: pointer;
 }
+.legend-tap:focus-visible { outline: 2px solid rgba(255,255,255,.7); outline-offset: 2px; }
 
-/* --- ЛЕГЕНДА (Кнопки внизу) --- */
-.chart-legend {
-  display: flex;
-  gap: 8px;
-  justify-content: center;
-  padding: 12px 10px;
-  background: rgba(0, 0, 0, 0.15);
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-}
+.legend-tap .dot { width: 6px; height: 6px; border-radius: 50%; flex: 0 0 6px; min-width: 6px; min-height: 6px; }
+.legend-tap[data-key="stress"] .dot { background: var(--c-stress); }
+.legend-tap[data-key="sleep"]  .dot { background: var(--c-sleep); }
+.legend-tap[data-key="focus"]  .dot { background: var(--c-focus); }
 
-.legend-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  color: rgba(255, 255, 255, 0.85);
-  font-size: 11px;
-  padding: 8px 10px;
-  border-radius: 12px;
-  cursor: pointer;
-  flex: 1;
-  justify-content: center;
-  white-space: nowrap;
-  transition: all 0.2s ease;
-}
+.legend-tap.active { background: rgba(255,255,255,.12); border-color: transparent; }
 
-.legend-item .dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  display: inline-block;
-  box-shadow: 0 0 5px rgba(0,0,0,0.2);
-}
+/* SVG Helpers */
+.bar-anim { transform: scaleY(0); transform-origin: bottom; transform-box: fill-box; transition: transform .35s ease; }
+.bar-anim.show { transform: scaleY(1); }
+.sel-outline { fill: none; stroke: #fff; stroke-width: 2; rx: 18; ry: 18; }
 
-.legend-item.active {
-  background: rgba(255, 255, 255, 0.15);
-  border-color: #fff;
-  color: #fff;
-  transform: scale(1.02);
-  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-}
+/* Dimming logic */
+.breath7[data-filter="stress"] .legend-tap:not([data-key="stress"]),
+.breath7[data-filter="sleep"]  .legend-tap:not([data-key="sleep"]),
+.breath7[data-filter="focus"]  .legend-tap:not([data-key="focus"]) { opacity: .7; }
 
-/* --- SVG ЭЛЕМЕНТЫ --- */
-/* Анимация появления столбиков (пружинистый эффект) */
-.bar-anim {
-  transform: scaleY(0);
-  transform-origin: bottom;
-  transition: transform 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-.bar-anim.show {
-  transform: scaleY(1);
-}
+.breath7, .breath7 * { -webkit-tap-highlight-color: transparent; }
+.breath7 svg, .breath7 svg * { -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; }
 
-/* Рамка выделения при клике на столбик */
-.sel-outline {
-  fill: none;
-  stroke: #fff;
-  stroke-width: 2px;
-  rx: 12px; ry: 12px;
-  opacity: 0;
-  transition: opacity 0.2s ease;
-  pointer-events: none;
-}
-
-/* Цвета сегментов */
-.seg-stress { fill: var(--c-stress); }
-.seg-sleep  { fill: var(--c-sleep); }
-.seg-focus  { fill: var(--c-focus); }
-
-/* --- ЛОГИКА ФИЛЬТРАЦИИ (Dimming) --- */
-/* Когда на контейнере стоит атрибут data-filter="stress", остальные тускнеют */
-
-#breath-chart-host[data-filter="stress"] .seg-sleep,
-#breath-chart-host[data-filter="stress"] .seg-focus {
-  opacity: 0.15;
-  transition: opacity 0.3s;
-}
-
-#breath-chart-host[data-filter="sleep"] .seg-stress,
-#breath-chart-host[data-filter="sleep"] .seg-focus {
-  opacity: 0.15;
-  transition: opacity 0.3s;
-}
-
-#breath-chart-host[data-filter="focus"] .seg-stress,
-#breath-chart-host[data-filter="focus"] .seg-sleep {
-  opacity: 0.15;
-  transition: opacity 0.3s;
+@media (max-width: 340px) {
+  .breath7-info { gap: 6px; }
+  .legend-tap { padding: 6px 8px; }
 }
 
 </style>
@@ -361,32 +308,32 @@ window.addEventListener('pageshow', (e)=>{
   </div>
 
   <div class="field" id="chart-box" style="margin: 20px 4px 0; display:none;">
-    <div class="breath-chart-card" id="breath-chart-host">
+    <div class="breath7 breath7-card" id="breath-chart-host" style="--r:18">
       
-      <div class="chart-viewport">
-        <div class="chart-scroll" id="chart-scroll">
-          <svg id="chart-svg"></svg>
+      <div class="breath7-viewport">
+        <div class="breath7-scroll" id="breath-chart-scroll">
+          <svg id="breath-chart-svg" xmlns="http://www.w3.org/2000/svg"></svg>
         </div>
       </div>
       
-      <div class="chart-legend" id="chart-legend">
-        <button class="legend-item" data-key="stress">
-          <span class="dot" style="background:var(--c-stress)"></span>
-          <span>Стресс:</span> <b id="val-stress">—</b> мин
+      <div class="breath7-info" id="breath-chart-info" role="tablist">
+        <button type="button" class="legend-tap" data-key="stress" aria-pressed="false">
+          <span class="dot" aria-hidden="true"></span>
+          <span>Стресс:</span> <b class="v" id="val-stress">—</b>
         </button>
-        <button class="legend-item" data-key="sleep">
-          <span class="dot" style="background:var(--c-sleep)"></span>
-          <span>Сон:</span> <b id="val-sleep">—</b> мин
+        <button type="button" class="legend-tap" data-key="sleep" aria-pressed="false">
+          <span class="dot" aria-hidden="true"></span>
+          <span>Сон:</span> <b class="v" id="val-sleep">—</b>
         </button>
-        <button class="legend-item" data-key="focus">
-          <span class="dot" style="background:var(--c-focus)"></span>
-          <span>Фокус:</span> <b id="val-focus">—</b> мин
+        <button type="button" class="legend-tap" data-key="focus" aria-pressed="false">
+          <span class="dot" aria-hidden="true"></span>
+          <span>Фокус:</span> <b class="v" id="val-focus">—</b>
         </button>
       </div>
 
     </div>
-    <div class="help" style="text-align:center; margin-top:8px; opacity:0.5; font-size:12px">
-      Динамика практики (минут в день)
+    <div class="help" style="text-align:center; margin-top:8px; opacity:0.6; font-size:12px">
+      Динамика практики (мин/день)
     </div>
   </div>
   </div>
@@ -955,260 +902,315 @@ window.addEventListener('pageshow', (e)=>{
   function haptic(style) { tg?.HapticFeedback?.impactOccurred(style); }
 
 // ============================================================================
-// 📊 ЛОГИКА ГРАФИКА И ОБНОВЛЕНИЯ ДАШБОРДА
+// 📊 ORIGINAL KBJU CHART ENGINE (ADAPTED FOR BREATH)
 // ============================================================================
 
-// 1. ГЛАВНАЯ ФУНКЦИЯ ОБНОВЛЕНИЯ UI
 function updateDashboardUI(historyData) {
-  console.log('📊 Dashboard update. Records:', historyData ? historyData.length : 0);
+  // Агрегация данных (Суммируем минуты по дням)
+  const dailyData = aggregateHistoryByDay(historyData);
   
-  // Агрегируем данные (если они есть)
-  let dailyData = [];
-  if (historyData && historyData.length > 0) {
-    dailyData = aggregateHistoryByDay(historyData);
-  }
-  
-  // Рисуем график (всегда показываем контейнер, даже если данных пока нет)
   const chartBox = document.getElementById('chart-box');
+  const root = document.getElementById('breath-chart-host');
+  
   if (chartBox) {
-    chartBox.style.display = 'block'; 
-    renderBreathChart(dailyData);
+    chartBox.style.display = 'block';
+    // Вызываем рендер с параметрами как в оригинале
+    renderBreathChart(root, dailyData, { visible: 7, shape: 'clip-capsule', animate: true });
   }
 }
 
-// 2. АГРЕГАТОР ДАННЫХ (Приводит все форматы к единому виду)
 function aggregateHistoryByDay(rawList) {
+  if (!rawList || !Array.isArray(rawList)) return [];
   const map = {};
 
   rawList.forEach(row => {
-    if (!row) return;
-
-    let date, s, l, f;
-
-    // ВАРИАНТ А: Пришел массив с бэкенда [id, name, date, ts, stress, sleep, focus]
-    if (Array.isArray(row)) {
-       // Индексы строго по твоему бэкенду: 2=date, 4=stress, 5=sleep, 6=focus
-       if (row.length < 7) return; 
-       date = row[2]; 
-       s = Number(row[4]) || 0;
-       l = Number(row[5]) || 0;
-       f = Number(row[6]) || 0;
-    } 
-    // ВАРИАНТ Б: Пришел объект из кэша {date: "...", stress: ...}
-    else if (typeof row === 'object') {
-       date = row.date || row.day || row.client_day_local;
-       s = Number(row.stress) || 0;
-       l = Number(row.sleep) || 0;
-       f = Number(row.focus) || 0;
+    // Поддержка формата массива [id, name, date, ts, stress, sleep, focus]
+    if (Array.isArray(row) && row.length >= 7) {
+       const date = row[2];
+       if (!date) return;
+       if (!map[date]) map[date] = { date, stress: 0, sleep: 0, focus: 0 };
+       map[date].stress += Number(row[4]) || 0;
+       map[date].sleep  += Number(row[5]) || 0;
+       map[date].focus  += Number(row[6]) || 0;
     }
-
-    // Если даты нет или она кривая — пропускаем
-    if (!date || date.length < 10) return;
-
-    if (!map[date]) map[date] = { date: date, stress: 0, sleep: 0, focus: 0 };
-    
-    map[date].stress += s;
-    map[date].sleep  += l;
-    map[date].focus  += f;
+    // Поддержка формата объекта (из кэша)
+    else if (typeof row === 'object' && (row.date || row.day)) {
+       const date = row.date || row.day;
+       if (!map[date]) map[date] = { date, stress: 0, sleep: 0, focus: 0 };
+       map[date].stress += Number(row.stress) || 0;
+       map[date].sleep  += Number(row.sleep) || 0;
+       map[date].focus  += Number(row.focus) || 0;
+    }
   });
 
-  // Сортируем по дате
   return Object.values(map).sort((a, b) => new Date(a.date) - new Date(b.date));
 }
 
-// 3. РЕНДЕРЕР SVG ГРАФИКА
-function renderBreathChart(data) {
-  const root = document.getElementById('breath-chart-host');
-  const svg = document.getElementById('chart-svg');
-  const scrollEl = document.getElementById('chart-scroll');
-  
-  // Ссылки на цифры
-  const lblS = document.getElementById('val-stress');
-  const lblL = document.getElementById('val-sleep');
-  const lblF = document.getElementById('val-focus');
+// --- 100% COPY OF renderKBJU7 (Variable Renamed) ---
+function renderBreathChart(hostEl, data, opts = {}) {
+  const root = hostEl;
+  if (!root) return;
 
-  // Сброс цифр, если данных нет
-  if (data.length === 0) {
-    lblS.textContent = '—'; lblL.textContent = '—'; lblF.textContent = '—';
-  }
-
-  // Настройки
-  const H = 180;   
-  const BAR = 24;  
-  const GAP = 12;  
-  const BTM_PAD = 20; 
+  const scr = root.querySelector('#breath-chart-scroll');
+  const svg = root.querySelector('#breath-chart-svg');
   
-  // Ширина контента
-  const contentW = Math.max(scrollEl.clientWidth, data.length * (BAR + GAP) + GAP);
-  
-  svg.setAttribute('viewBox', `0 0 ${contentW} ${H}`);
-  svg.setAttribute('width', contentW);
-  svg.setAttribute('height', H);
-  svg.innerHTML = ''; // Очистка
+  // UI References
+  const infS = root.querySelector('#val-stress');
+  const infL = root.querySelector('#val-sleep');
+  const infF = root.querySelector('#val-focus');
 
-  // === ЕСЛИ ДАННЫХ НЕТ ===
-  if (data.length === 0) {
-    const txt = createSVG('text');
-    txt.textContent = 'Пока нет данных';
-    txt.setAttribute('x', contentW / 2);
-    txt.setAttribute('y', H / 2);
-    txt.setAttribute('text-anchor', 'middle');
-    txt.setAttribute('dominant-baseline', 'middle');
-    txt.setAttribute('fill', 'rgba(255,255,255,0.3)');
-    txt.setAttribute('font-size', '13');
-    svg.appendChild(txt);
+  const list = (data || []).slice(); // Copy
+  
+  // "Нет данных" logic from original
+  if (!list.length) {
+    svg.setAttribute('viewBox', '0 0 300 160');
+    svg.innerHTML = '<text x="150" y="80" fill="#fff" opacity=".5" text-anchor="middle" font-size="14">Нет данных</text>';
+    if(infS) infS.textContent = '—';
+    if(infL) infL.textContent = '—';
+    if(infF) infF.textContent = '—';
     return;
   }
 
-  // === ЕСТЬ ДАННЫЕ ===
-  // 1. Масштаб
-  let maxMin = 0;
-  data.forEach(d => {
-    const sum = d.stress + d.sleep + d.focus;
-    if (sum > maxMin) maxMin = sum;
+  // --- CONFIG (As per KBJU7) ---
+  const H = 160, DATE_PAD = 18, LIFT = 8, TOP_PAD = 14;
+  const visible = Number(opts.visible || 7);
+  const shape   = opts.shape || 'clip-capsule';
+  // Анимацию включаем только если попросили (обычно при первом рендере)
+  const doAnim = !!opts.animate; 
+
+  // Width calc
+  const W = (scr && scr.clientWidth) || root.clientWidth || 320;
+  const GAP = 8;
+  const BAR = Math.max(12, Math.floor((W - GAP*(visible+1)) / visible));
+  
+  const contentW = list.length * (BAR + GAP) + GAP;
+  const filter = root.getAttribute('data-filter') || 'all';
+
+  // --- Scaling Logic ---
+  let maxVal;
+  if (filter === 'stress') maxVal = Math.max(20, ...list.map(d => d.stress));
+  else if (filter === 'sleep') maxVal = Math.max(20, ...list.map(d => d.sleep));
+  else if (filter === 'focus') maxVal = Math.max(20, ...list.map(d => d.focus));
+  else maxVal = Math.max(20, ...list.map(d => d.stress + d.sleep + d.focus));
+
+  const yG = v => (H - TOP_PAD - DATE_PAD - 4) * (v / maxVal);
+  const fmtD = d => { try { return new Date(d).toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit'}); } catch { return d; } };
+
+  svg.setAttribute('viewBox', `0 0 ${contentW} ${H}`);
+  svg.setAttribute('width', contentW);
+  svg.setAttribute('height', H);
+  svg.innerHTML = ''; // Clear
+
+  const defs = document.createElementNS('http://www.w3.org/2000/svg','defs');
+  const gBars = document.createElementNS('http://www.w3.org/2000/svg','g');
+  const gSel  = document.createElementNS('http://www.w3.org/2000/svg','g');
+  const gHit  = document.createElementNS('http://www.w3.org/2000/svg','g');
+  
+  const groups=[]; const dates=[]; const outlines=[];
+
+  const yBase = H - 2 - DATE_PAD;
+  const yDate = H - 6;
+  const outerR = 18; // From CSS variable usually, hardcoded for safety
+
+  list.forEach((d, i) => {
+    const x = GAP + i*(BAR + GAP);
+    
+    let gS = d.stress || 0;
+    let gL = d.sleep || 0;
+    let gF = d.focus || 0;
+
+    // Filter Logic (Zeroing out others)
+    if (filter === 'stress') { gL = 0; gF = 0; }
+    else if (filter === 'sleep') { gS = 0; gF = 0; }
+    else if (filter === 'focus') { gS = 0; gL = 0; }
+
+    const hS = yG(gS);
+    const hL = yG(gL);
+    const hF = yG(gF);
+    const sum = hS + hL + hF;
+    const topY = yBase - Math.max(sum, 0);
+
+    // --- 1. Clip Path (Capsule) ---
+    let clipId = null;
+    if (shape === 'clip-capsule'){
+      clipId = `clip_br_${i}`;
+      const cp = document.createElementNS('http://www.w3.org/2000/svg','clipPath');
+      cp.setAttribute('id', clipId);
+      // Capsule shape
+      const pill = rect(x, Math.max(TOP_PAD, topY), BAR, Math.max(sum, 0.0001), BAR/2);
+      cp.appendChild(pill); defs.appendChild(cp);
+    }
+
+    const group = document.createElementNS('http://www.w3.org/2000/svg','g');
+    if (clipId) group.setAttribute('clip-path', `url(#${clipId})`);
+    group.style.transition = 'transform .2s ease';
+
+    // --- 2. Stacked Bars ---
+    // Order: Stress(Blue) -> Sleep(Orange) -> Focus(Purple)
+    const rS = rect(x, yBase - hS, BAR, hS, 0); // Bottom
+    const rL = rect(x, yBase - (hS + hL), BAR, hL, 0); // Middle
+    const rF = rect(x, yBase - (hS + hL + hF), BAR, hF, 0); // Top
+
+    // Colors via CSS vars (mapped in CSS)
+    rS.setAttribute('fill', 'var(--c-stress)');
+    rL.setAttribute('fill', 'var(--c-sleep)');
+    rF.setAttribute('fill', 'var(--c-focus)');
+
+    if (doAnim){ 
+      rS.classList.add('bar-anim'); 
+      rL.classList.add('bar-anim'); 
+      rF.classList.add('bar-anim'); 
+    }
+
+    group.appendChild(rS); group.appendChild(rL); group.appendChild(rF);
+    gBars.appendChild(group);
+
+    // --- 3. Text Value on Bar (Only if filtered) ---
+    if (filter !== 'all') {
+      const val = filter==='stress' ? gS : filter==='sleep' ? gL : gF;
+      const hVal = filter==='stress' ? hS : filter==='sleep' ? hL : hF;
+      if (hVal > 22) {
+        const tx = document.createElementNS('http://www.w3.org/2000/svg','text');
+        tx.textContent = String(Math.round(val));
+        tx.setAttribute('x', x + BAR/2);
+        tx.setAttribute('y', yBase - (hVal * 0.75)); // Visual center
+        tx.setAttribute('text-anchor','middle');
+        tx.setAttribute('font-size','12');
+        tx.setAttribute('font-weight','900');
+        tx.setAttribute('fill','#fff');
+        tx.style.pointerEvents = 'none';
+        tx.style.dominantBaseline = 'middle';
+        group.appendChild(tx);
+      }
+    }
+
+    // --- 4. Date Label ---
+    const tDate = document.createElementNS('http://www.w3.org/2000/svg','text');
+    tDate.textContent = fmtD(d.date);
+    tDate.setAttribute('x', x + BAR/2);
+    tDate.setAttribute('y', yDate);
+    tDate.setAttribute('text-anchor','middle');
+    tDate.setAttribute('font-size','10');
+    tDate.setAttribute('font-weight','700');
+    tDate.setAttribute('fill','rgba(255,255,255,.6)');
+    tDate.style.opacity = '0'; // Hidden by default
+    tDate.style.transition = 'opacity .18s ease';
+    tDate.style.pointerEvents = 'none';
+    gBars.appendChild(tDate); dates.push(tDate);
+
+    // --- 5. Selection Outline ---
+    const selOutline = rect(x-1, topY, BAR+2, Math.max(sum,2), BAR/2);
+    selOutline.setAttribute('class','sel-outline'); 
+    selOutline.style.opacity = '0';
+    selOutline.style.transition = 'transform .2s ease, opacity .12s ease';
+    gSel.appendChild(selOutline); outlines.push(selOutline);
+
+    // --- 6. Hit Area ---
+    const hit = rect(x, 0, BAR, H, BAR/2); 
+    hit.setAttribute('fill','transparent'); 
+    hit.style.cursor='pointer';
+    hit.addEventListener('click', ()=> select(i, d)); 
+    gHit.appendChild(hit);
   });
-  if (maxMin < 15) maxMin = 15; // Минимальный масштаб (чтобы не было плоским при 1 минуте)
 
-  const availH = H - BTM_PAD - 10;
-  const scaleY = (val) => (val / maxMin) * availH;
+  svg.appendChild(defs); svg.appendChild(gBars); svg.appendChild(gSel); svg.appendChild(gHit);
 
-  const defs = createSVG('defs');
-  const gBars = createSVG('g');
-  const gUI = createSVG('g');
+  // Trigger Animation
+  if (doAnim){
+    requestAnimationFrame(()=>{ svg.querySelectorAll('.bar-anim').forEach(el=> el.classList.add('show')); });
+  }
 
-  data.forEach((d, i) => {
-    const x = GAP + i * (BAR + GAP);
-    
-    const hS = scaleY(d.stress);
-    const hL = scaleY(d.sleep);
-    const hF = scaleY(d.focus);
-    const hTotal = hS + hL + hF;
-    const yBase = H - BTM_PAD; 
-
-    // А. Капсула (ClipPath)
-    const clipId = `clip_br_${i}`;
-    const clipPath = createSVG('clipPath');
-    clipPath.setAttribute('id', clipId);
-    
-    const capsule = createRect(x, yBase - hTotal, BAR, hTotal, BAR/2);
-    if (hTotal < 0.5) capsule.setAttribute('height', 0);
-    clipPath.appendChild(capsule);
-    defs.appendChild(clipPath);
-
-    // Б. Столбец (Сегменты)
-    const gCol = createSVG('g');
-    gCol.setAttribute('clip-path', `url(#${clipId})`);
-    
-    // Рисуем: Stress (низ), Sleep (середина), Focus (верх)
-    const rS = createRect(x, yBase - hS, BAR, hS, 0);
-    rS.classList.add('seg-stress', 'bar-anim');
-    
-    const rL = createRect(x, yBase - hS - hL, BAR, hL, 0);
-    rL.classList.add('seg-sleep', 'bar-anim');
-
-    const rF = createRect(x, yBase - hS - hL - hF, BAR, hF, 0);
-    rF.classList.add('seg-focus', 'bar-anim');
-
-    gCol.appendChild(rS); gCol.appendChild(rL); gCol.appendChild(rF);
-    gBars.appendChild(gCol);
-
-    // В. Дата
-    const txt = createSVG('text');
-    txt.textContent = formatDateShort(d.date);
-    txt.setAttribute('x', x + BAR/2);
-    txt.setAttribute('y', H - 5);
-    txt.setAttribute('text-anchor', 'middle');
-    txt.setAttribute('fill', 'rgba(255,255,255,0.5)');
-    txt.setAttribute('font-size', '10');
-    gUI.appendChild(txt);
-
-    // Г. Интерактивность (рамка + клик)
-    const outline = createRect(x - 3, yBase - hTotal - 3, BAR + 6, hTotal + 6, (BAR+6)/2);
-    outline.classList.add('sel-outline');
-    outline.id = `outline_${i}`;
-    
-    const hit = createRect(x, 0, BAR, H, 0);
-    hit.setAttribute('fill', 'transparent');
-    hit.style.cursor = 'pointer';
-    hit.addEventListener('click', () => highlightBar(i, d));
-    
-    gUI.appendChild(outline);
-    gUI.appendChild(hit);
-  });
-
-  svg.appendChild(defs);
-  svg.appendChild(gBars);
-  svg.appendChild(gUI);
-
-  // Запуск анимации
-  setTimeout(() => {
-    svg.querySelectorAll('.bar-anim').forEach(el => el.classList.add('show'));
-  }, 50);
-
-  // Скролл в конец
+  // Scroll to end
   requestAnimationFrame(() => {
-     scrollEl.scrollLeft = scrollEl.scrollWidth;
+     if(scr) scr.scrollLeft = scr.scrollWidth;
   });
 
-  // Выделяем последний день
-  if (data.length > 0) {
-    const lastIdx = data.length - 1;
-    highlightBar(lastIdx, data[lastIdx]);
+  // Select Last
+  if (list.length > 0) {
+    select(list.length-1, list[list.length-1]);
   }
 
-  // --- Helper Functions ---
-  function createSVG(tag) { return document.createElementNS('http://www.w3.org/2000/svg', tag); }
-  function createRect(x,y,w,h,r) {
-    const el = createSVG('rect');
-    el.setAttribute('x', x); el.setAttribute('y', y);
-    el.setAttribute('width', w); el.setAttribute('height', h);
-    if(r) { el.setAttribute('rx', r); el.setAttribute('ry', r); }
-    return el;
-  }
-  function formatDateShort(iso) {
-    try {
-      const d = new Date(iso);
-      return d.getDate() + '.' + (d.getMonth()+1).toString().padStart(2,'0');
-    } catch(e) { return ''; }
-  }
-  function highlightBar(idx, item) {
-    lblS.textContent = Math.round(item.stress);
-    lblL.textContent = Math.round(item.sleep);
-    lblF.textContent = Math.round(item.focus);
+  // --- INTERNAL UTILS ---
+  function select(idx, d){
+    if (infS) infS.textContent = Math.round(d.stress || 0);
+    if (infL) infL.textContent = Math.round(d.sleep || 0);
+    if (infF) infF.textContent = Math.round(d.focus || 0);
 
-    svg.querySelectorAll('.sel-outline').forEach(el => el.style.opacity = '0');
-    const target = document.getElementById(`outline_${idx}`);
-    if (target) target.style.opacity = '1';
-    
+    outlines.forEach((o,i)=>{ 
+      o.style.opacity = (i===idx ? '1' : '0'); 
+      o.style.transform = (i===idx ? `translateY(-${LIFT}px)` : 'translateY(0)'); 
+    });
+    groups.forEach((g,i)=>{ 
+      g.style.transform = (i===idx ? `translateY(-${LIFT}px)` : 'translateY(0)'); 
+    });
+    dates.forEach((t,i)=>{ 
+      t.style.opacity = (i===idx ? '1' : '0'); 
+    });
+
     if (window.Telegram?.WebApp?.HapticFeedback) {
-       window.Telegram.WebApp.HapticFeedback.selectionChanged();
+        window.Telegram.WebApp.HapticFeedback.selectionChanged();
     }
   }
 
-  // --- Легенда (Фильтры) ---
-  const legend = document.getElementById('chart-legend');
-  const newLegend = legend.cloneNode(true);
-  legend.parentNode.replaceChild(newLegend, legend);
-
-  newLegend.querySelectorAll('.legend-item').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const key = btn.dataset.key;
-      const currentFilter = root.getAttribute('data-filter');
-      
-      if (currentFilter === key) {
-        root.removeAttribute('data-filter');
-        btn.classList.remove('active');
-      } else {
-        root.setAttribute('data-filter', key);
-        newLegend.querySelectorAll('.legend-item').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-      }
-      if (window.Telegram?.WebApp?.HapticFeedback) {
-         window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
-      }
-    });
-  });
+  function rect(x,y,w,h,r=0){
+    const e = document.createElementNS('http://www.w3.org/2000/svg','rect');
+    e.setAttribute('x', x); e.setAttribute('y', Math.max(0,y));
+    e.setAttribute('width', w); e.setAttribute('height', Math.max(0,h));
+    if (r){ e.setAttribute('rx', r); e.setAttribute('ry', r); }
+    return e;
+  }
 }
+
+// --- LEGEND BINDING (Idempotent) ---
+(function bindBreathLegend(){
+  const root = document.getElementById('breath-chart-host');
+  if (!root) return;
+  const info = root.querySelector('#breath-chart-info'); 
+  if (!info || info._bound) return; // Prevent double bind
+
+  info.addEventListener('click', (e)=>{
+    const btn = e.target.closest('.legend-tap'); if (!btn) return;
+    const key = btn.dataset.key;
+    const cur = root.getAttribute('data-filter') || 'all';
+    const next = (cur === key) ? 'all' : key;
+    
+    root.setAttribute('data-filter', next);
+    
+    info.querySelectorAll('.legend-tap').forEach(b=>{
+      const on = (next === b.dataset.key);
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', String(on));
+    });
+
+    if (window.Telegram?.WebApp?.HapticFeedback) {
+        window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+    }
+
+    // Re-render WITHOUT animation to update logic
+    // We need access to current data. For simplicity, we just trigger a UI update if available
+    // OR ideally, we pass data into this closure.
+    // For now, let's rely on CSS dimming which handles the visual part perfectly.
+    // However, if we want the numbers on bars, we need re-render.
+    // Let's assume CSS dimming is enough for "100% visual copy" as per your KBJU code.
+    // (KBJU re-rendered, but here we can just rely on the stored data if we wanted perfection).
+    
+    // To make it perfect, we can trigger a re-render if we stored the data globally.
+    // For now, CSS Opacity handles the visual filter immediately.
+    
+    // UPDATE: To show values on bars (SVG text) we do need re-render.
+    // Let's grab the data from LocalStorage to re-render:
+    try {
+      const raw = localStorage.getItem(SYS.STORAGE.DATA);
+      if(raw) {
+         const data = JSON.parse(raw);
+         const agg = aggregateHistoryByDay(data);
+         renderBreathChart(root, agg, { visible:7, shape:'clip-capsule', animate:false });
+      }
+    } catch(e){}
+
+  });
+  info._bound = true;
+})();
   
 </script>
 
