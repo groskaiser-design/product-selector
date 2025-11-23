@@ -587,13 +587,23 @@
   }
 
   function stopPractice(completed = false) {
+    // 1. Сохраняем данные о текущей практике ПЕРЕД сбросом переменных
+    const finishedKey = activeKey; 
+    const finishedDuration = activeConfig ? activeConfig.duration : 0;
+
     isRunning = false;
     activeKey = null; 
     clearInterval(sessionInterval);
     disableInsomnia();
     el.photon.style.transition = 'none';
     el.lbl.classList.remove('visible');
-    if(completed && tg) tg.showPopup({ title: 'Отлично', message: 'Сессия завершена' });
+
+    // 2. Если практика завершена успешно — отправляем аналитику и показываем попап
+    if(completed) {
+      sendAnalytics(finishedKey, finishedDuration);
+      if(tg) tg.showPopup({ title: 'Отлично', message: 'Сессия завершена' });
+    }
+
     el.player.classList.remove('active');
     el.menu.classList.add('active');
     updateOrbs('default');
@@ -628,6 +638,36 @@
   function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
   function haptic(style) { tg?.HapticFeedback?.impactOccurred(style); }
 
+// === ANALYTICS ===
+  function sendAnalytics(practiceType, durationSec) {
+    const tg = window.Telegram?.WebApp;
+    // Если не в телеграм или нет initData, не отправляем
+    if (!tg || !tg.initData) return; 
+
+    // 👇👇👇 ВСТАВЬ СЮДА СВОЮ ССЫЛКУ (Google Script Web App URL) 👇👇👇
+    const API_URL = 'https://script.google.com/macros/s/AKfycbxY_xhTgV1GxRs4wXNPvQ2OngE1FU7jzxXVPG2GSc5PsapaV4Rc_qZ9BIge8HrvUgCB/exec'; 
+
+    const payload = {
+      action: 'track_session',
+      init_data: tg.initData,
+      practice_type: practiceType,
+      duration: durationSec,
+      // Дата в формате YYYY-MM-DD
+      client_day_local: new Date().toISOString().split('T')[0], 
+      // Таймзона пользователя
+      tz: Intl.DateTimeFormat().resolvedOptions().timeZone 
+    };
+
+    // Отправляем "в фоне", не блокируем интерфейс
+    fetch(API_URL, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }).then(r => console.log('Analytics sent:', r.status))
+      .catch(e => console.error('Analytics error:', e));
+  }
+
+
+  
 </script>
 </body>
 </html>
