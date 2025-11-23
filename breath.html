@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Ultima Breath</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  /* === НАСЛЕДОВАНИЕ СТИЛЕЙ ULTIMA DASHBOARD === */
+  :root {
+    --bg-core: #050505;
+    --text-main: #ffffff;
+    --text-muted: rgba(255, 255, 255, 0.55);
+    --surface-glass: rgba(255, 255, 255, 0.07);
+    --surface-border: rgba(255, 255, 255, 0.1);
+    --acc-orange: #ff9f0a;
+    --acc-green: #30d158;
+    --acc-blue: #0a84ff;
+    --acc-purple: #5e60ce;
+    --radius-l: 22px;
+    --radius-xl: 28px;
+    --font-main: -apple-system, BlinkMacSystemFont, 'SF Pro Text', Roboto, sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  
+  body {
+    background-color: var(--bg-core);
+    font-family: var(--font-main);
+    color: var(--text-main);
+    height: 100vh;
+    overflow: hidden; /* Блокируем скролл во время практики */
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ФОН (Noise + Orbs) */
+  .fx-layer { position: fixed; inset: 0; z-index: -1; pointer-events: none; }
+  .orb { position: absolute; border-radius: 50%; filter: blur(80px); opacity: 0.3; transition: all 2s ease; }
+  .orb-1 { width: 300px; height: 300px; background: var(--acc-purple); top: -10%; left: -10%; }
+  .orb-2 { width: 250px; height: 250px; background: var(--acc-blue); bottom: -10%; right: -10%; }
+  .noise { position: fixed; inset: 0; opacity: 0.05; background: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+
+  /* === ЭКРАН ВЫБОРА === */
+  #menuScreen {
+    padding: 24px;
+    padding-top: calc(20px + env(safe-area-inset-top));
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    transition: opacity 0.4s ease;
+  }
+
+  .header-title { font-size: 28px; font-weight: 800; letter-spacing: -0.5px; margin-bottom: 10px; }
+  .header-sub { font-size: 15px; color: var(--text-muted); line-height: 1.4; }
+
+  .cards-grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
+  
+  .practice-card {
+    background: var(--surface-glass);
+    border: 1px solid var(--surface-border);
+    border-radius: var(--radius-l);
+    padding: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    position: relative;
+    overflow: hidden;
+    transition: transform 0.1s;
+  }
+  .practice-card:active { transform: scale(0.97); background: rgba(255,255,255,0.1); }
+
+  .pc-left { z-index: 2; }
+  .pc-title { font-size: 18px; font-weight: 700; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
+  .pc-desc { font-size: 13px; color: var(--text-muted); }
+  .pc-tag { font-size: 11px; font-weight: 700; padding: 4px 8px; border-radius: 8px; text-transform: uppercase; margin-left: auto; }
+  
+  /* Цветовое кодирование карточек */
+  .card-stress .pc-title { color: var(--acc-orange); }
+  .card-stress .pc-tag { background: rgba(255, 159, 10, 0.2); color: var(--acc-orange); }
+  
+  .card-sleep .pc-title { color: var(--acc-purple); }
+  .card-sleep .pc-tag { background: rgba(94, 96, 206, 0.2); color: var(--acc-purple); }
+
+  .card-focus .pc-title { color: var(--acc-green); }
+  .card-focus .pc-tag { background: rgba(48, 209, 88, 0.2); color: var(--acc-green); }
+
+  /* === ЭКРАН ПРАКТИКИ (Active) === */
+  #breathScreen {
+    position: fixed; inset: 0;
+    background: var(--bg-core);
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.5s ease;
+  }
+  #breathScreen.active { opacity: 1; pointer-events: all; }
+
+  /* ВИЗУАЛИЗАЦИЯ (ORB) */
+  .visualizer-container {
+    position: relative;
+    width: 300px; height: 300px;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  /* Внешнее кольцо (статичное, едва видно) */
+  .guide-ring {
+    position: absolute;
+    width: 280px; height: 280px;
+    border-radius: 50%;
+    border: 1px dashed rgba(255,255,255,0.1);
+  }
+
+  /* Основная сфера дыхания */
+  .breath-orb {
+    width: 100px; height: 100px;
+    border-radius: 50%;
+    background: radial-gradient(circle, #fff 0%, rgba(255,255,255,0.5) 40%, rgba(255,255,255,0) 70%);
+    box-shadow: 0 0 40px 10px rgba(255,255,255,0.1);
+    will-change: transform, opacity;
+    /* Анимация управляется через JS */
+  }
+
+  /* Текстовые инструкции */
+  .status-label {
+    position: absolute;
+    font-size: 24px;
+    font-weight: 800;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    text-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    opacity: 0.9;
+  }
+
+  .timer-display {
+    position: absolute;
+    bottom: 60px;
+    font-family: monospace;
+    font-size: 16px;
+    color: var(--text-muted);
+    background: var(--surface-glass);
+    padding: 8px 16px;
+    border-radius: 20px;
+  }
+
+  .btn-close {
+    position: absolute; top: 50px; right: 24px;
+    width: 40px; height: 40px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.1);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; z-index: 10;
+  }
+
+  /* COUNTDOWN OVERLAY (3-2-1) */
+  #countdown {
+    position: fixed; inset: 0; z-index: 200;
+    background: rgba(0,0,0,0.8);
+    backdrop-filter: blur(10px);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 120px; font-weight: 900;
+    opacity: 0; pointer-events: none;
+  }
+  #countdown.active { opacity: 1; }
+
+</style>
+</head>
+<body>
+
+<div class="fx-layer">
+  <div class="orb orb-1" id="bgOrb1"></div>
+  <div class="orb orb-2" id="bgOrb2"></div>
+  <div class="noise"></div>
+</div>
+
+<div id="menuScreen">
+  <div>
+    <h1 class="header-title">Дыхание</h1>
+    <p class="header-sub">Выберите технику для изменения состояния вашей нервной системы.</p>
+  </div>
+
+  <div class="cards-grid">
+    <div class="practice-card card-stress" onclick="startSession('stress')">
+      <div class="pc-left">
+        <div class="pc-title">Анти-стресс</div>
+        <div class="pc-desc">Короткий вдох, длинный выдох.</div>
+      </div>
+      <div class="pc-tag">2 мин</div>
+    </div>
+
+    <div class="practice-card card-sleep" onclick="startSession('sleep')">
+      <div class="pc-left">
+        <div class="pc-title">Глубокий сон</div>
+        <div class="pc-desc">Техника 4-7-8 для расслабления.</div>
+      </div>
+      <div class="pc-tag">3 мин</div>
+    </div>
+
+    <div class="practice-card card-focus" onclick="startSession('focus')">
+      <div class="pc-left">
+        <div class="pc-title">Фокус</div>
+        <div class="pc-desc">Квадратное дыхание для ясности.</div>
+      </div>
+      <div class="pc-tag">5 мин</div>
+    </div>
+  </div>
+  
+  <div style="margin-top:auto; text-align:center; padding:20px; opacity:0.5; font-size:14px;" onclick="history.back()">
+    ← Вернуться назад
+  </div>
+</div>
+
+<div id="breathScreen">
+  <div class="btn-close" onclick="stopSession()">
+    <svg width="24" height="24" viewBox="0 0 24 24" stroke="white" stroke-width="2" fill="none"><path d="M18 6L6 18M6 6l12 12"/></svg>
+  </div>
+
+  <div class="visualizer-container">
+    <div class="guide-ring"></div>
+    <div class="breath-orb" id="orb"></div>
+    <div class="status-label" id="statusText">ГОТОВНОСТЬ</div>
+  </div>
+
+  <div class="timer-display" id="timer">00:00</div>
+</div>
+
+<div id="countdown">3</div>
+
+<script>
+  const tg = window.Telegram?.WebApp;
+  if(tg) { tg.ready(); tg.expand(); tg.enableClosingConfirmation(); }
+
+  // КОНФИГУРАЦИЯ ПРАКТИК
+  const PRACTICES = {
+    stress: {
+      color: '#ff9f0a',
+      totalTime: 120, // 2 минуты
+      // Паттерн: Вдох (4), Выдох (6) - упрощенный антистресс
+      pattern: [
+        { label: 'ВДОХ', duration: 4000, scale: 2.5, opacity: 0.8, haptic: 'heavy' },
+        { label: 'ВЫДОХ', duration: 6000, scale: 1.0, opacity: 0.4, haptic: 'light' }
+      ]
+    },
+    sleep: {
+      color: '#5e60ce',
+      totalTime: 180, // 3 минуты
+      // Паттерн: 4-7-8
+      pattern: [
+        { label: 'ВДОХ', duration: 4000, scale: 2.2, opacity: 0.9, haptic: 'medium' },
+        { label: 'ДЕРЖИМ', duration: 7000, scale: 2.2, opacity: 0.9, haptic: 'rigid' }, // пульсация на задержке
+        { label: 'ВЫДОХ', duration: 8000, scale: 0.8, opacity: 0.3, haptic: 'soft' }
+      ]
+    },
+    focus: {
+      color: '#30d158',
+      totalTime: 300, // 5 минут
+      // Паттерн: Квадрат (4-4-4-4)
+      pattern: [
+        { label: 'ВДОХ', duration: 4000, scale: 2.0, opacity: 0.9, haptic: 'medium' },
+        { label: 'ДЕРЖИМ', duration: 4000, scale: 2.0, opacity: 0.9, haptic: 'light' },
+        { label: 'ВЫДОХ', duration: 4000, scale: 1.0, opacity: 0.4, haptic: 'medium' },
+        { label: 'ПАУЗА', duration: 4000, scale: 1.0, opacity: 0.4, haptic: 'light' }
+      ]
+    }
+  };
+
+  let activeInterval = null;
+  let sessionTimeLeft = 0;
+  let currentPractice = null;
+  let isRunning = false;
+
+  // --- ЛОГИКА ---
+
+  function haptic(style) {
+    if (tg && tg.HapticFeedback) {
+      // Mapping custom strings to Telegram API
+      if (style === 'heavy') tg.HapticFeedback.impactOccurred('heavy');
+      else if (style === 'medium') tg.HapticFeedback.impactOccurred('medium');
+      else if (style === 'light') tg.HapticFeedback.impactOccurred('light');
+      else if (style === 'rigid') tg.HapticFeedback.impactOccurred('rigid');
+      else if (style === 'soft') tg.HapticFeedback.impactOccurred('soft');
+    }
+  }
+
+  async function startSession(type) {
+    currentPractice = PRACTICES[type];
+    if(!currentPractice) return;
+
+    // 1. UI Transition
+    document.getElementById('menuScreen').style.opacity = '0';
+    setTimeout(() => {
+      document.getElementById('menuScreen').style.display = 'none';
+      const screen = document.getElementById('breathScreen');
+      screen.classList.add('active');
+      
+      // Подстройка цветов под практику
+      const orb = document.getElementById('orb');
+      orb.style.background = `radial-gradient(circle, #fff 0%, ${currentPractice.color} 50%, transparent 70%)`;
+      orb.style.boxShadow = `0 0 50px 20px ${currentPractice.color}40`; // 40 = hex opacity
+    }, 400);
+
+    // 2. Countdown 3-2-1
+    const cntEl = document.getElementById('countdown');
+    cntEl.classList.add('active');
+    
+    for(let i=3; i>0; i--) {
+      cntEl.textContent = i;
+      haptic('medium');
+      await new Promise(r => setTimeout(r, 1000));
+    }
+    cntEl.classList.remove('active');
+
+    // 3. Start Loop
+    runBreathingLoop();
+    startTimer(currentPractice.totalTime);
+  }
+
+  function stopSession() {
+    isRunning = false;
+    clearTimeout(activeInterval);
+    
+    // Reset UI
+    document.getElementById('breathScreen').classList.remove('active');
+    setTimeout(() => {
+      document.getElementById('menuScreen').style.display = 'flex';
+      setTimeout(() => document.getElementById('menuScreen').style.opacity = '1', 50);
+    }, 500);
+
+    // Reset Text
+    document.getElementById('statusText').textContent = 'ГОТОВНОСТЬ';
+    document.getElementById('orb').style.transform = 'scale(1)';
+  }
+
+  function startTimer(seconds) {
+    sessionTimeLeft = seconds;
+    const display = document.getElementById('timer');
+    
+    const timerInt = setInterval(() => {
+      if(!isRunning) { clearInterval(timerInt); return; }
+      
+      sessionTimeLeft--;
+      const m = Math.floor(sessionTimeLeft / 60).toString().padStart(2, '0');
+      const s = (sessionTimeLeft % 60).toString().padStart(2, '0');
+      display.textContent = `${m}:${s}`;
+
+      if(sessionTimeLeft <= 0) {
+        clearInterval(timerInt);
+        finishSession();
+      }
+    }, 1000);
+  }
+
+  function finishSession() {
+    stopSession();
+    if(tg) tg.showPopup({ title: 'Отлично!', message: 'Практика завершена. Вы стали немного спокойнее.' });
+  }
+
+  // ГЛАВНЫЙ ЦИКЛ ДЫХАНИЯ
+  async function runBreathingLoop() {
+    isRunning = true;
+    const pattern = currentPractice.pattern;
+    let idx = 0;
+
+    const orb = document.getElementById('orb');
+    const txt = document.getElementById('statusText');
+
+    while(isRunning) {
+      const step = pattern[idx];
+      
+      // 1. Update UI
+      txt.textContent = step.label;
+      
+      // CSS Animation applied via JS for dynamic timing
+      orb.style.transition = `transform ${step.duration}ms ease-in-out, opacity ${step.duration}ms ease`;
+      orb.style.transform = `scale(${step.scale})`;
+      orb.style.opacity = step.opacity;
+
+      // 2. Haptics
+      haptic(step.haptic);
+
+      // 3. Wait duration
+      await new Promise(r => activeInterval = setTimeout(r, step.duration));
+
+      // 4. Next step
+      idx = (idx + 1) % pattern.length;
+    }
+  }
+
+</script>
+</body>
+</html>
