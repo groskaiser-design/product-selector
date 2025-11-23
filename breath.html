@@ -114,17 +114,12 @@
   .bottom-timer { font-family: 'SF Pro Display', sans-serif; font-size: 56px; font-weight: 100; letter-spacing: -1px; font-variant-numeric: tabular-nums; color: rgba(255,255,255,0.9); text-shadow: 0 5px 15px rgba(0,0,0,0.5); }
   .sub-timer-lbl { font-size: 12px; color: var(--text-muted); text-align: center; margin-top: -8px; letter-spacing: 2px; text-transform: uppercase; }
 
-  /* === OVERLAY & PAUSE === */
+  /* === OVERLAY === */
   #overlay { position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,0.7); backdrop-filter: blur(30px); -webkit-backdrop-filter: blur(30px); display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: opacity 0.4s; }
   #overlay.active { opacity: 1; pointer-events: all; }
   .count-thin { font-family: 'SF Pro Display', sans-serif; font-size: 180px; font-weight: 100; color: #fff; transform: scale(0.9); opacity: 0; transition: transform 0.4s cubic-bezier(0.17, 0.67, 0.83, 0.67), opacity 0.4s; }
   .count-thin.pop { transform: scale(1); opacity: 1; }
   
-  /* Pause Screen Content */
-  .pause-content { text-align: center; display: none; flex-direction: column; align-items: center; gap: 20px; }
-  .pause-title { font-size: 24px; font-weight: 700; }
-  .btn-resume { padding: 12px 30px; background: #fff; color: #000; border-radius: 30px; font-weight: 600; cursor: pointer; }
-
   svg { stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; fill: none; }
 
 </style>
@@ -186,10 +181,6 @@
 
 <div id="overlay">
   <div class="count-thin" id="cntNum">5</div>
-  <div class="pause-content" id="pauseScreen">
-    <div class="pause-title">Пауза</div>
-    <div class="btn-resume" onclick="resumePractice()">Продолжить</div>
-  </div>
 </div>
 
 <script>
@@ -233,7 +224,6 @@
   let activeConfig = null;
   let activeKey = null;
   let isRunning = false;
-  let isPaused = false;
   let sessionInterval = null;
   let timeLeft = 0;
 
@@ -250,7 +240,6 @@
     orb2: document.getElementById('bgOrb2'),
     overlay: document.getElementById('overlay'),
     cnt: document.getElementById('cntNum'),
-    pause: document.getElementById('pauseScreen'),
     // Intro elements
     iTitle: document.getElementById('iTitle'),
     iDesc: document.getElementById('iDesc'),
@@ -267,13 +256,6 @@
       else { tg.HapticFeedback.impactOccurred('light'); window.location.href = 'router.html'; }
     });
   }
-
-  // === VISIBILITY HANDLER (AUTO-PAUSE) ===
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden && isRunning && !isPaused) {
-      pausePractice();
-    }
-  });
 
   // 1. SHOW INTRO
   function showIntro(key) {
@@ -308,14 +290,17 @@
   // 2. START FROM INTRO
   async function startFromIntro() {
     haptic('medium');
+    
+    // БЛОКИРУЕМ ОТКЛЮЧЕНИЕ ЭКРАНА
+    if(tg && tg.keepScreenOn) tg.keepScreenOn(true);
+
     el.intro.classList.remove('active');
     el.player.classList.add('active');
     
     el.marker.style.opacity = (activeKey === 'stress') ? '1' : '0';
 
-    // Countdown
+    // Countdown 5 sec
     el.overlay.classList.add('active');
-    el.pause.style.display = 'none';
     el.cnt.style.display = 'block';
 
     for(let i=5; i>0; i--) {
@@ -334,16 +319,13 @@
   // 3. BREATHING LOGIC
   function startBreathing() {
     isRunning = true;
-    isPaused = false;
     timeLeft = activeConfig.duration;
     updateTimer(timeLeft);
     
     sessionInterval = setInterval(() => {
-      if(!isPaused) {
-        timeLeft--;
-        updateTimer(timeLeft);
-        if(timeLeft <= 0) stopPractice(true);
-      }
+      timeLeft--;
+      updateTimer(timeLeft);
+      if(timeLeft <= 0) stopPractice(true);
     }, 1000);
 
     if (activeConfig.type === 'double_inhale') runStressCycle();
@@ -354,17 +336,14 @@
   async function runStressCycle() {
     const { inhaleBase, inhaleTop, exhale } = activeConfig;
     while(isRunning) {
-      if(isPaused) { await wait(200); continue; }
       
       setStatus('ВДОХ'); haptic('heavy');
       await movePhotonTo('80%', inhaleBase);
       if(!isRunning) break;
-      if(isPaused) { await waitForResume(); continue; } // Check after wait
 
       setStatus('ДОВДОХ'); haptic('rigid');
       await movePhotonTo('100%', inhaleTop);
       if(!isRunning) break;
-      if(isPaused) { await waitForResume(); continue; }
 
       setStatus('ВЫДОХ'); haptic('soft');
       await movePhotonTo('0%', exhale);
@@ -374,24 +353,20 @@
   async function runStandardCycle() {
     const { inhale, hold, exhale, type } = activeConfig;
     while(isRunning) {
-      if(isPaused) { await wait(200); continue; }
 
       setStatus('ВДОХ'); haptic('heavy');
       await movePhotonTo('100%', inhale);
       if(!isRunning) break;
-      if(isPaused) { await waitForResume(); continue; }
 
       if(hold > 0) {
         setStatus(type === 'box' ? 'ПАУЗА' : 'ЗАДЕРЖКА'); haptic('medium');
         await wait(hold);
         if(!isRunning) break;
-        if(isPaused) { await waitForResume(); continue; }
       }
 
       setStatus('ВЫДОХ'); haptic('soft');
       await movePhotonTo('0%', exhale);
       if(!isRunning) break;
-      if(isPaused) { await waitForResume(); continue; }
 
       if (type === 'box') {
          setStatus('ПАУЗА');
@@ -400,7 +375,7 @@
     }
   }
 
-  // --- ANIMATION ENGINE WITH PAUSE SUPPORT ---
+  // --- ANIMATION ENGINE ---
   function movePhotonTo(pos, duration) {
     return new Promise(resolve => {
       let val = '0px';
@@ -418,38 +393,13 @@
     });
   }
 
-  // --- PAUSE LOGIC ---
-  function pausePractice() {
-    isPaused = true;
-    el.overlay.classList.add('active');
-    el.cnt.style.display = 'none';
-    el.pause.style.display = 'flex';
-    
-    // Freeze visual
-    const computedStyle = window.getComputedStyle(el.photon);
-    const matrix = computedStyle.transform;
-    el.photon.style.transition = 'none';
-    el.photon.style.transform = matrix;
-  }
-
-  function resumePractice() {
-    el.overlay.classList.remove('active');
-    isPaused = false;
-  }
-
-  function waitForResume() {
-    return new Promise(resolve => {
-      const check = setInterval(() => {
-        if(!isPaused) { clearInterval(check); resolve(); }
-      }, 200);
-    });
-  }
-
   // --- UTILS ---
   function stopPractice(completed = false) {
     isRunning = false;
-    isPaused = false;
     clearInterval(sessionInterval);
+    
+    // ВОЗВРАЩАЕМ ОБЫЧНЫЙ РЕЖИМ ЭКРАНА
+    if(tg && tg.keepScreenOn) tg.keepScreenOn(false);
     
     el.photon.style.transition = 'transform 0.5s ease';
     el.photon.style.transform = 'translateY(0)';
