@@ -3,213 +3,219 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Active Interactions</title>
+<title>Synced Coordinates</title>
 <style>
   body {
     background-color: #000;
     color: #fff;
-    font-family: 'Courier New', monospace;
+    font-family: sans-serif;
     display: flex;
     flex-direction: column;
     align-items: center;
     padding: 20px;
   }
 
-  h2 { text-transform: uppercase; letter-spacing: 2px; margin-bottom: 40px; font-size: 14px; color: #666; }
-
   .grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 30px;
-    max-width: 800px;
-    width: 100%;
+    gap: 20px;
   }
 
+  /* ЖЕСТКИЙ КОНТЕЙНЕР: 300x300. 
+     Если SVG и Div будут в разных системах координат, они снова разъедутся. 
+     Здесь мы это запрещаем. */
   .card {
+    width: 300px;
+    height: 300px;
     background: #080808;
     border: 1px solid #222;
-    border-radius: 16px;
-    height: 300px;
     position: relative;
-    display: flex;
-    justify-content: center;
-    align-items: center;
     overflow: hidden;
   }
 
   .label {
-    position: absolute; top: 15px; left: 15px; font-size: 12px; color: #444; font-weight: bold; text-transform: uppercase;
+    position: absolute; top: 10px; left: 10px; 
+    font-size: 12px; color: #555; font-weight: bold; z-index: 10;
   }
 
+  /* SVG занимает весь контейнер ровно */
   svg {
-    position: absolute; width: 100%; height: 100%; overflow: visible;
+    position: absolute; top: 0; left: 0;
+    width: 300px; height: 300px;
+    overflow: visible;
   }
 
-  /* --- ОБЩАЯ ГЕОМЕТРИЯ --- */
-  /* Длина пути треугольника ~820px. Анимации настроены на эту длину. */
-  
-  /* =========================================
-     1. LASER WRITER (Рисование светом)
-     Точка "прожигает" трек. Линия остается светящейся.
-     ========================================= */
-  .style-1 .bg-path {
-    stroke: #1a1a1a; stroke-width: 2; fill: none;
-  }
-  .style-1 .active-path {
-    stroke: #0a84ff; 
-    stroke-width: 3;
+  /* БАЗОВЫЙ ПУТЬ (Серый) */
+  .base-track {
     fill: none;
-    stroke-dasharray: 820; 
-    stroke-dashoffset: 820; /* Скрыта полностью */
-    animation: drawLine 4s linear infinite;
-    filter: drop-shadow(0 0 8px #0a84ff);
+    stroke: #222;
+    stroke-linejoin: round;
+    stroke-linecap: round;
   }
+
+  /* =========================================
+     1. LASER WRITER (Рисует линию)
+     ========================================= */
+  .style-1 .base-track { stroke-width: 2; stroke: #333; }
+  
+  /* Активная линия - это копия пути поверх */
+  .style-1 .active-track {
+    fill: none;
+    stroke: #0a84ff;
+    stroke-width: 3;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+    stroke-dasharray: 820; /* Длина треугольника */
+    stroke-dashoffset: 820;
+    animation: laserDraw 4s linear infinite;
+    filter: drop-shadow(0 0 5px #0a84ff);
+  }
+  /* Точка на конце лазера */
   .style-1 .dot {
-    position: absolute; width: 10px; height: 10px; background: #fff; border-radius: 50%;
+    position: absolute; top: 0; left: 0;
+    width: 8px; height: 8px; background: #fff; border-radius: 50%;
     offset-path: path('M 150 40 L 260 260 L 40 260 Z');
     animation: moveDot 4s linear infinite;
-    box-shadow: 0 0 15px 2px #0a84ff;
-    z-index: 10;
+    transform: translate(-50%, -50%); /* ЦЕНТРОВКА */
+    box-shadow: 0 0 10px #fff;
+    z-index: 5;
   }
-  @keyframes drawLine { to { stroke-dashoffset: 0; } } /* Линия заполняется */
+  @keyframes laserDraw { 
+    0% { stroke-dashoffset: 820; } 
+    100% { stroke-dashoffset: 0; } 
+  }
 
   /* =========================================
      2. ENERGY TAIL (Комета)
-     Точка тащит за собой короткий светящийся сегмент.
      ========================================= */
-  .style-2 .bg-path {
-    stroke: #111; stroke-width: 4; fill: none;
-  }
-  /* Хвост кометы */
-  .style-2 .active-path {
-    stroke: url(#grad2); /* Градиент для затухания */
+  .style-2 .base-track { stroke-width: 4; stroke: #1a1a1a; }
+  
+  .style-2 .active-track {
+    fill: none;
+    stroke: url(#gradTail); /* Градиент в defs */
     stroke-width: 4;
+    stroke-linejoin: round;
     stroke-linecap: round;
-    fill: none;
-    stroke-dasharray: 200 820; /* 200px хвост, остальное пусто */
-    stroke-dashoffset: 200;    /* Сдвиг начала */
-    animation: moveTail 4s linear infinite;
-    filter: drop-shadow(0 0 5px #ff0055);
+    stroke-dasharray: 250 820; /* 250px хвост, остальное дырка */
+    stroke-dashoffset: 250;    
+    animation: tailMove 4s linear infinite;
+    filter: drop-shadow(0 0 8px #ff0055);
   }
+  /* Точка-голова */
   .style-2 .dot {
-    position: absolute; width: 16px; height: 16px; background: #fff; border-radius: 50%;
+    position: absolute; top: 0; left: 0;
+    width: 14px; height: 14px; background: #fff; border-radius: 50%;
     offset-path: path('M 150 40 L 260 260 L 40 260 Z');
     animation: moveDot 4s linear infinite;
-    box-shadow: 0 0 20px 5px #ff0055;
-    mix-blend-mode: screen;
+    transform: translate(-50%, -50%); /* ЦЕНТРОВКА */
+    box-shadow: 0 0 15px 5px #ff0055;
+    z-index: 5;
   }
-  /* Хитрый сдвиг: хвост движется синхронно с точкой */
-  @keyframes moveTail { 
-    0% { stroke-dashoffset: 1020; } /* 820 + 200 offset */
-    100% { stroke-dashoffset: 200; } 
+  @keyframes tailMove {
+    0% { stroke-dashoffset: 1070; } /* 820 + 250 */
+    100% { stroke-dashoffset: 250; }
   }
 
   /* =========================================
-     3. MAGMA PIPE (Локальный нагрев)
-     Серая трубка, которая "светится изнутри" только рядом с точкой.
+     3. MAGMA PIPE (Свечение внутри)
      ========================================= */
-  .style-3 .bg-path {
-    stroke: #222; stroke-width: 8; fill: none;
-  }
-  /* Эффект свечения создается маской или вторым путем. Тут используем dasharray трюк для "зоны" */
-  .style-3 .active-path {
-    stroke: #ff9f0a;
-    stroke-width: 8;
-    fill: none;
-    stroke-dasharray: 0 820; /* Исходно пусто */
-    /* Мы используем stroke-dasharray чтобы создать "дырку" вокруг точки? 
-       Нет, проще сделать "пятно" света, которое бежит по SVG */
-    stroke: url(#grad3); /* Градиентная кисть */
-    animation: rotateGradient 4s linear infinite; /* Вращаем градиент по кругу? Нет. */
-  }
-  /* В CSS сложно сделать "пятно" на SVG path без JS. 
-     Сделаем имитацию: точка с HUGE GLOW в режиме overlay */
+  .style-3 .base-track { stroke-width: 10; stroke: #111; }
+  
+  /* Точка - это сгусток магмы */
   .style-3 .dot {
-    position: absolute; width: 20px; height: 20px; background: #ff9f0a; border-radius: 50%;
+    position: absolute; top: 0; left: 0;
+    width: 24px; height: 24px; 
+    background: radial-gradient(circle, #fff 0%, #ff9f0a 60%, transparent 100%);
+    border-radius: 50%;
     offset-path: path('M 150 40 L 260 260 L 40 260 Z');
     animation: moveDot 4s linear infinite;
-    /* Overlay заставит серую линию под точкой окраситься */
-    mix-blend-mode: hard-light; 
-    box-shadow: 
-      0 0 10px 2px #ff9f0a,
-      0 0 30px 10px rgba(255, 159, 10, 0.4),
-      inset 0 0 10px #fff;
+    transform: translate(-50%, -50%); /* ЦЕНТРОВКА */
+    mix-blend-mode: screen; /* Смешивание с серой трубой */
+    box-shadow: 0 0 20px 5px #ff9f0a;
   }
-  /* Добавим искры */
 
   /* =========================================
-     4. GHOST ECHO (Эхо)
-     Линия исчезает. Точка оставляет замирающие следы.
+     4. GHOST ECHO (Исчезающие следы)
      ========================================= */
-  .style-4 .bg-path {
-    stroke: #111; stroke-width: 1; stroke-dasharray: 2 4; fill: none; opacity: 0.3;
-  }
+  .style-4 .base-track { stroke-width: 1; stroke: #333; stroke-dasharray: 4 4; opacity: 0.5; }
+  
   .style-4 .dot {
-    position: absolute; width: 8px; height: 8px; background: #fff; border-radius: 50%;
+    position: absolute; top: 0; left: 0;
+    width: 10px; height: 10px; background: #fff; border-radius: 50%;
     offset-path: path('M 150 40 L 260 260 L 40 260 Z');
     animation: moveDot 4s linear infinite;
-    box-shadow: 0 0 10px 2px #fff, 0 0 20px 10px #b53aff;
+    transform: translate(-50%, -50%);
+    box-shadow: 0 0 10px #fff;
+    z-index: 5;
   }
-  /* Эхо создается псевдоэлементами с задержкой */
-  .style-4 .dot::after {
-    content:''; position: absolute; inset:0; border-radius: 50%; background: inherit;
-    animation: echo 0.4s ease-out infinite;
-    opacity: 0.5;
+  /* Эхо - копия точки с задержкой */
+  .style-4 .echo {
+    position: absolute; top: 0; left: 0;
+    width: 10px; height: 10px; background: rgba(255,255,255,0.3); border-radius: 50%;
+    offset-path: path('M 150 40 L 260 260 L 40 260 Z');
+    transform: translate(-50%, -50%);
   }
-  @keyframes echo { to { transform: scale(3); opacity: 0; } }
+  .echo-1 { animation: moveDot 4s linear infinite; animation-delay: -0.1s; }
+  .echo-2 { animation: moveDot 4s linear infinite; animation-delay: -0.2s; opacity: 0.2; }
+  .echo-3 { animation: moveDot 4s linear infinite; animation-delay: -0.3s; opacity: 0.1; }
 
-  /* Движение точки (одинаковое для всех) */
-  @keyframes moveDot { 0% { offset-distance: 0%; } 100% { offset-distance: 100%; } }
+
+  /* Общая анимация движения точки */
+  @keyframes moveDot { 
+    0% { offset-distance: 0%; } 
+    100% { offset-distance: 100%; } 
+  }
 
 </style>
 </head>
 <body>
 
-  <h2>Взаимодействие Точки и Линии</h2>
-
   <svg width="0" height="0">
     <defs>
-      <linearGradient id="grad2" x1="0%" y1="0%" x2="100%" y2="0%">
-        <stop offset="0%" stop-color="transparent" />
-        <stop offset="100%" stop-color="#ff0055" />
+      <linearGradient id="gradTail" gradientUnits="userSpaceOnUse">
+        <stop offset="0%" stop-color="#ff0055" stop-opacity="1" />
+        <stop offset="100%" stop-color="#ff0055" stop-opacity="0" />
       </linearGradient>
     </defs>
   </svg>
 
   <div class="grid">
-    
+
     <div class="card style-1">
-      <div class="label">1. Laser Writer</div>
+      <div class="label">1. LASER WRITER</div>
       <svg viewBox="0 0 300 300">
-        <path class="bg-path" d="M 150 40 L 260 260 L 40 260 Z" />
-        <path class="active-path" d="M 150 40 L 260 260 L 40 260 Z" />
+        <path class="base-track" d="M 150 40 L 260 260 L 40 260 Z" />
+        <path class="active-track" d="M 150 40 L 260 260 L 40 260 Z" />
       </svg>
       <div class="dot"></div>
     </div>
 
     <div class="card style-2">
-      <div class="label">2. Energy Tail</div>
+      <div class="label">2. ENERGY TAIL</div>
       <svg viewBox="0 0 300 300">
-        <path class="bg-path" d="M 150 40 L 260 260 L 40 260 Z" />
-        <path class="active-path" d="M 150 40 L 260 260 L 40 260 Z" />
+        <path class="base-track" d="M 150 40 L 260 260 L 40 260 Z" />
+        <path class="active-track" d="M 150 40 L 260 260 L 40 260 Z" />
       </svg>
       <div class="dot"></div>
     </div>
 
     <div class="card style-3">
-      <div class="label">3. Magma Pipe</div>
+      <div class="label">3. MAGMA PIPE</div>
       <svg viewBox="0 0 300 300">
-        <path class="bg-path" d="M 150 40 L 260 260 L 40 260 Z" />
+        <path class="base-track" d="M 150 40 L 260 260 L 40 260 Z" />
       </svg>
       <div class="dot"></div>
     </div>
 
     <div class="card style-4">
-      <div class="label">4. Ghost Echo</div>
+      <div class="label">4. GHOST ECHO</div>
       <svg viewBox="0 0 300 300">
-        <path class="bg-path" d="M 150 40 L 260 260 L 40 260 Z" />
+        <path class="base-track" d="M 150 40 L 260 260 L 40 260 Z" />
       </svg>
       <div class="dot"></div>
+      <div class="echo echo-1"></div>
+      <div class="echo echo-2"></div>
+      <div class="echo echo-3"></div>
     </div>
 
   </div>
