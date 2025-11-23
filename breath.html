@@ -8,7 +8,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0003'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0004'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -670,22 +670,6 @@ window.addEventListener('pageshow', (e)=>{
     .catch(e => console.error('Track error:', e));
   }
 
-  // === ОБНОВЛЕНИЕ ДАШБОРДА ===
-  function updateDashboardUI(historyData) {
-    console.log('📊 Dashboard update. Records:', historyData.length);
-    
-    // 1. Агрегируем данные (суммируем минуты по дням)
-    const dailyData = aggregateHistoryByDay(historyData);
-    
-    // 2. Рисуем график
-    const chartBox = document.getElementById('chart-box');
-    if (dailyData.length > 0) {
-      chartBox.style.display = 'block';
-      renderBreathChart(dailyData);
-    } else {
-      chartBox.style.display = 'none';
-    }
-  }
 
 
   // ============================================================================
@@ -971,26 +955,55 @@ window.addEventListener('pageshow', (e)=>{
   function haptic(style) { tg?.HapticFeedback?.impactOccurred(style); }
 
 // ============================================================================
-// 📊 ЛОГИКА ГРАФИКА (ДВИЖОК)
+// 📊 ЛОГИКА ГРАФИКА И ОБНОВЛЕНИЯ ДАШБОРДА
 // ============================================================================
 
-/**
- * 1. Превращает сырой лог с бэкенда в данные для графика
- * Формат бэка: [userId, username, date, ts, stress, sleep, focus]
- * Индексы: date=2, stress=4, sleep=5, focus=6
- */
+// 1. ГЛАВНАЯ ФУНКЦИЯ ОБНОВЛЕНИЯ UI
+function updateDashboardUI(historyData) {
+  console.log('📊 Dashboard update. Records:', historyData ? historyData.length : 0);
+  
+  // Агрегируем данные (если они есть)
+  let dailyData = [];
+  if (historyData && historyData.length > 0) {
+    dailyData = aggregateHistoryByDay(historyData);
+  }
+  
+  // Рисуем график (всегда показываем контейнер, даже если данных пока нет)
+  const chartBox = document.getElementById('chart-box');
+  if (chartBox) {
+    chartBox.style.display = 'block'; 
+    renderBreathChart(dailyData);
+  }
+}
+
+// 2. АГРЕГАТОР ДАННЫХ (Приводит все форматы к единому виду)
 function aggregateHistoryByDay(rawList) {
   const map = {};
 
   rawList.forEach(row => {
-    // Проверка: есть ли дата
-    if (!row || !row[2]) return;
+    if (!row) return;
 
-    const date = row[2]; // 'YYYY-MM-DD'
-    // Данные могут быть строками или числами, приводим к числу
-    const s = Number(row[4]) || 0;
-    const l = Number(row[5]) || 0;
-    const f = Number(row[6]) || 0;
+    let date, s, l, f;
+
+    // ВАРИАНТ А: Пришел массив с бэкенда [id, name, date, ts, stress, sleep, focus]
+    if (Array.isArray(row)) {
+       // Индексы строго по твоему бэкенду: 2=date, 4=stress, 5=sleep, 6=focus
+       if (row.length < 7) return; 
+       date = row[2]; 
+       s = Number(row[4]) || 0;
+       l = Number(row[5]) || 0;
+       f = Number(row[6]) || 0;
+    } 
+    // ВАРИАНТ Б: Пришел объект из кэша {date: "...", stress: ...}
+    else if (typeof row === 'object') {
+       date = row.date || row.day || row.client_day_local;
+       s = Number(row.stress) || 0;
+       l = Number(row.sleep) || 0;
+       f = Number(row.focus) || 0;
+    }
+
+    // Если даты нет или она кривая — пропускаем
+    if (!date || date.length < 10) return;
 
     if (!map[date]) map[date] = { date: date, stress: 0, sleep: 0, focus: 0 };
     
@@ -999,49 +1012,66 @@ function aggregateHistoryByDay(rawList) {
     map[date].focus  += f;
   });
 
-  // Превращаем в массив и сортируем по дате (от старых к новым)
+  // Сортируем по дате
   return Object.values(map).sort((a, b) => new Date(a.date) - new Date(b.date));
 }
 
-/**
- * 2. Рисует SVG график
- */
+// 3. РЕНДЕРЕР SVG ГРАФИКА
 function renderBreathChart(data) {
   const root = document.getElementById('breath-chart-host');
   const svg = document.getElementById('chart-svg');
   const scrollEl = document.getElementById('chart-scroll');
   
-  // Ссылки на цифры в легенде
+  // Ссылки на цифры
   const lblS = document.getElementById('val-stress');
   const lblL = document.getElementById('val-sleep');
   const lblF = document.getElementById('val-focus');
 
-  // --- Настройки размеров ---
-  const H = 180;   // Высота SVG
-  const BAR = 24;  // Ширина столбца
-  const GAP = 12;  // Расстояние между столбцами
-  const BTM_PAD = 20; // Отступ снизу для дат
+  // Сброс цифр, если данных нет
+  if (data.length === 0) {
+    lblS.textContent = '—'; lblL.textContent = '—'; lblF.textContent = '—';
+  }
+
+  // Настройки
+  const H = 180;   
+  const BAR = 24;  
+  const GAP = 12;  
+  const BTM_PAD = 20; 
   
-  // Вычисляем масштаб (максимум минут за день)
-  let maxMin = 0;
-  data.forEach(d => {
-    const sum = d.stress + d.sleep + d.focus;
-    if (sum > maxMin) maxMin = sum;
-  });
-  if (maxMin < 20) maxMin = 20; // Минимальный масштаб, чтобы график не был плоским
-
-  const availH = H - BTM_PAD - 10; // Доступная высота для столбцов
-  const scaleY = (val) => (val / maxMin) * availH;
-
-  // Ширина всего графика
+  // Ширина контента
   const contentW = Math.max(scrollEl.clientWidth, data.length * (BAR + GAP) + GAP);
   
   svg.setAttribute('viewBox', `0 0 ${contentW} ${H}`);
   svg.setAttribute('width', contentW);
   svg.setAttribute('height', H);
-  svg.innerHTML = ''; // Очищаем старое
+  svg.innerHTML = ''; // Очистка
 
-  // Создаем группы элементов SVG
+  // === ЕСЛИ ДАННЫХ НЕТ ===
+  if (data.length === 0) {
+    const txt = createSVG('text');
+    txt.textContent = 'Пока нет данных';
+    txt.setAttribute('x', contentW / 2);
+    txt.setAttribute('y', H / 2);
+    txt.setAttribute('text-anchor', 'middle');
+    txt.setAttribute('dominant-baseline', 'middle');
+    txt.setAttribute('fill', 'rgba(255,255,255,0.3)');
+    txt.setAttribute('font-size', '13');
+    svg.appendChild(txt);
+    return;
+  }
+
+  // === ЕСТЬ ДАННЫЕ ===
+  // 1. Масштаб
+  let maxMin = 0;
+  data.forEach(d => {
+    const sum = d.stress + d.sleep + d.focus;
+    if (sum > maxMin) maxMin = sum;
+  });
+  if (maxMin < 15) maxMin = 15; // Минимальный масштаб (чтобы не было плоским при 1 минуте)
+
+  const availH = H - BTM_PAD - 10;
+  const scaleY = (val) => (val / maxMin) * availH;
+
   const defs = createSVG('defs');
   const gBars = createSVG('g');
   const gUI = createSVG('g');
@@ -1049,30 +1079,27 @@ function renderBreathChart(data) {
   data.forEach((d, i) => {
     const x = GAP + i * (BAR + GAP);
     
-    // Высоты сегментов
     const hS = scaleY(d.stress);
     const hL = scaleY(d.sleep);
     const hF = scaleY(d.focus);
     const hTotal = hS + hL + hF;
     const yBase = H - BTM_PAD; 
 
-    // --- А. ФОРМА КАПСУЛЫ (ClipPath) ---
+    // А. Капсула (ClipPath)
     const clipId = `clip_br_${i}`;
     const clipPath = createSVG('clipPath');
     clipPath.setAttribute('id', clipId);
     
-    // Сама форма капсулы
     const capsule = createRect(x, yBase - hTotal, BAR, hTotal, BAR/2);
-    if (hTotal < 0.1) capsule.setAttribute('height', 0); // Защита от глюков
-    
+    if (hTotal < 0.5) capsule.setAttribute('height', 0);
     clipPath.appendChild(capsule);
     defs.appendChild(clipPath);
 
-    // --- Б. СТОЛБЕЦ (Цветные куски) ---
+    // Б. Столбец (Сегменты)
     const gCol = createSVG('g');
     gCol.setAttribute('clip-path', `url(#${clipId})`);
     
-    // Рисуем снизу вверх: Stress -> Sleep -> Focus
+    // Рисуем: Stress (низ), Sleep (середина), Focus (верх)
     const rS = createRect(x, yBase - hS, BAR, hS, 0);
     rS.classList.add('seg-stress', 'bar-anim');
     
@@ -1085,7 +1112,7 @@ function renderBreathChart(data) {
     gCol.appendChild(rS); gCol.appendChild(rL); gCol.appendChild(rF);
     gBars.appendChild(gCol);
 
-    // --- В. ДАТА ---
+    // В. Дата
     const txt = createSVG('text');
     txt.textContent = formatDateShort(d.date);
     txt.setAttribute('x', x + BAR/2);
@@ -1095,17 +1122,14 @@ function renderBreathChart(data) {
     txt.setAttribute('font-size', '10');
     gUI.appendChild(txt);
 
-    // --- Г. ИНТЕРАКТИВНОСТЬ ---
-    // Рамка выделения (по умолчанию скрыта)
+    // Г. Интерактивность (рамка + клик)
     const outline = createRect(x - 3, yBase - hTotal - 3, BAR + 6, hTotal + 6, (BAR+6)/2);
     outline.classList.add('sel-outline');
     outline.id = `outline_${i}`;
     
-    // Прозрачная зона для клика (во всю высоту)
     const hit = createRect(x, 0, BAR, H, 0);
     hit.setAttribute('fill', 'transparent');
     hit.style.cursor = 'pointer';
-    
     hit.addEventListener('click', () => highlightBar(i, d));
     
     gUI.appendChild(outline);
@@ -1116,25 +1140,24 @@ function renderBreathChart(data) {
   svg.appendChild(gBars);
   svg.appendChild(gUI);
 
-  // Запуск анимации появления
+  // Запуск анимации
   setTimeout(() => {
     svg.querySelectorAll('.bar-anim').forEach(el => el.classList.add('show'));
   }, 50);
 
-  // Авто-скролл в конец (к свежей дате)
+  // Скролл в конец
   requestAnimationFrame(() => {
      scrollEl.scrollLeft = scrollEl.scrollWidth;
   });
 
-  // Выбираем последний день
+  // Выделяем последний день
   if (data.length > 0) {
     const lastIdx = data.length - 1;
     highlightBar(lastIdx, data[lastIdx]);
   }
 
-  // --- Хелперы внутри функции ---
+  // --- Helper Functions ---
   function createSVG(tag) { return document.createElementNS('http://www.w3.org/2000/svg', tag); }
-  
   function createRect(x,y,w,h,r) {
     const el = createSVG('rect');
     el.setAttribute('x', x); el.setAttribute('y', y);
@@ -1142,55 +1165,44 @@ function renderBreathChart(data) {
     if(r) { el.setAttribute('rx', r); el.setAttribute('ry', r); }
     return el;
   }
-
   function formatDateShort(iso) {
     try {
       const d = new Date(iso);
       return d.getDate() + '.' + (d.getMonth()+1).toString().padStart(2,'0');
     } catch(e) { return ''; }
   }
-
   function highlightBar(idx, item) {
-    // Обновляем легенду
     lblS.textContent = Math.round(item.stress);
     lblL.textContent = Math.round(item.sleep);
     lblF.textContent = Math.round(item.focus);
 
-    // Переключаем рамку
-    const outlines = svg.querySelectorAll('.sel-outline');
-    outlines.forEach(el => el.style.opacity = '0');
-    
+    svg.querySelectorAll('.sel-outline').forEach(el => el.style.opacity = '0');
     const target = document.getElementById(`outline_${idx}`);
     if (target) target.style.opacity = '1';
     
-    // Виброотклик (если есть TG)
     if (window.Telegram?.WebApp?.HapticFeedback) {
        window.Telegram.WebApp.HapticFeedback.selectionChanged();
     }
   }
 
-  // --- Логика фильтров (кнопки внизу) ---
+  // --- Легенда (Фильтры) ---
   const legend = document.getElementById('chart-legend');
-  // Чистим старые события (клон ноды)
   const newLegend = legend.cloneNode(true);
   legend.parentNode.replaceChild(newLegend, legend);
 
   newLegend.querySelectorAll('.legend-item').forEach(btn => {
     btn.addEventListener('click', () => {
-      const key = btn.dataset.key; // stress, sleep или focus
+      const key = btn.dataset.key;
       const currentFilter = root.getAttribute('data-filter');
       
       if (currentFilter === key) {
-        // Снять фильтр
         root.removeAttribute('data-filter');
         btn.classList.remove('active');
       } else {
-        // Включить фильтр
         root.setAttribute('data-filter', key);
         newLegend.querySelectorAll('.legend-item').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
       }
-      
       if (window.Telegram?.WebApp?.HapticFeedback) {
          window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
       }
