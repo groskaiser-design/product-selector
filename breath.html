@@ -415,27 +415,29 @@
   async function runStressCycle() {
     const { inhaleBase, inhaleTop, exhale } = activeConfig;
     
-    while(isRunning) {
-      // --- СБРОС В НОЛЬ ПЕРЕД ВДОХОМ (МГНОВЕННО) ---
-      // Отключаем анимацию, чтобы точка "появилась" снизу
-      el.photon.style.transition = 'none';
-      el.photon.style.boxShadow = getGlowStyle(0);
-      void el.photon.offsetWidth; // Принудительный рефлоу
+    // Начальный сброс в ноль и вниз
+    el.photon.style.transition = 'none';
+    el.photon.style.boxShadow = getGlowStyle(0);
+    // При старте убеждаемся, что мы внизу
+    el.photon.style.transform = 'translate(150px, 320px)'; 
+    void el.photon.offsetWidth; 
 
-      // 1. ВДОХ: Плавное разгорание от 0 до 1
+    while(isRunning) {
+      // 1. ВДОХ (0 -> 1)
       setStatus('ВДОХ'); haptic('heavy');
-      // movePhotonTo сама включит плавный transition обратно
       await movePhotonTo({x: 150, y: 80}, inhaleBase, 1);
       if(!isRunning) break;
 
-      // 2. ДОВДОХ: Вспышка от 1 до 2
+      // 2. ДОВДОХ (1 -> 2)
       setStatus('ДОВДОХ'); haptic('rigid');
       await movePhotonTo({x: 150, y: 20}, inhaleTop, 2);
       if(!isRunning) break;
 
-      // 3. ВЫДОХ: Плавное затухание от 2 до 1 (НЕ В НОЛЬ)
+      // 3. ВЫДОХ (2 -> 0) ПРОПОРЦИОНАЛЬНОЕ ЗАТУХАНИЕ
       setStatus('ВЫДОХ'); haptic('soft');
-      await movePhotonTo({x: 150, y: 320}, exhale, 1);
+      // Здесь целевое свечение = 0. Поскольку время перехода (exhale) 
+      // совпадает с движением, свечение будет падать пропорционально движению.
+      await movePhotonTo({x: 150, y: 320}, exhale, 0);
       if(!isRunning) break;
     }
   }
@@ -462,9 +464,11 @@
   // Хелпер для точных стилей свечения
   function getGlowStyle(level) {
     const color = activeConfig.color;
+    // Level 0: Полная прозрачность
     if (level === 0) return `0 0 0 0 transparent`;
+    // Level 1: Стандарт
     if (level === 1) return `0 0 20px 5px ${color}`;
-    // Уровень 2: Максимальное свечение с белым ядром
+    // Level 2: Максимум
     if (level === 2) return `0 0 50px 20px ${color}, inset 0 0 15px #ffffff`;
     return `0 0 20px 5px ${color}`;
   }
@@ -472,15 +476,13 @@
   // UPDATED: V7.0 Dynamic Light Logic
   function movePhotonTo(coords, duration, targetGlowLevel = null) {
     return new Promise(resolve => {
-      // ВАЖНО: Включаем плавную анимацию и для движения, и для тени
+      // Включаем плавную анимацию для обоих свойств
       el.photon.style.transition = `transform ${duration}ms linear, box-shadow ${duration}ms ease`;
       el.photon.style.transform = `translate(${coords.x}px, ${coords.y}px)`;
 
       if (targetGlowLevel !== null) {
-        // Если передан конкретный уровень (для Стресса)
         el.photon.style.boxShadow = getGlowStyle(targetGlowLevel);
       } else {
-        // Логика для других практик
         const isHighEnergy = coords.y < 150;
         el.photon.style.boxShadow = isHighEnergy ? getGlowStyle(2) : getGlowStyle(1);
       }
