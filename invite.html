@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Пригласить друга</title>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+<style>
+  :root {
+    /* --- PALETTE (ИЗ ТВОЕГО ФАЙЛА) --- */
+    --bg-core: #050505;
+    --text-main: #ffffff;
+    --text-muted: rgba(255, 255, 255, 0.55);
+    
+    /* --- GLASS SURFACES --- */
+    --surface-glass: rgba(255, 255, 255, 0.07);
+    --surface-border: rgba(255, 255, 255, 0.1);
+    --surface-highlight: rgba(255, 255, 255, 0.25);
+    
+    /* --- ACCENTS --- */
+    --acc-blue: #0a84ff;
+    --acc-purple: #5e60ce;
+    --acc-green: #30d158;
+
+    /* --- METRICS --- */
+    --radius-xl: 28px;
+    --radius-l: 22px;
+    --pad: 16px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+   
+  body {
+    background-color: var(--bg-core);
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', Roboto, sans-serif;
+    color: var(--text-main);
+    min-height: 100vh;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* FX LAYER */
+  .fx-layer { position: fixed; inset: 0; z-index: -1; pointer-events: none; }
+  .orb { position: absolute; border-radius: 50%; animation: float 30s infinite linear; }
+  .orb-1 { width: 90vw; height: 90vw; opacity: 0.4; background: radial-gradient(circle, rgba(108, 92, 231, 0.8) 0%, transparent 70%); top: -20%; left: -20%; }
+  .orb-2 { width: 400px; height: 400px; opacity: 0.5; background: radial-gradient(circle, rgba(108, 92, 231, 0.8) 0%, transparent 70%); bottom: -150px; right: -100px; animation: breathe 6s infinite ease-in-out; }
+  @keyframes float { 0% {transform:rotate(0deg)} 100% {transform:rotate(360deg)} }
+  @keyframes breathe { 0%, 100% { transform: scale(1); opacity: 0.4; } 50% { transform: scale(1.1); opacity: 0.6; } }
+  .noise { position: fixed; inset: 0; z-index: -1; opacity: 0.04; background: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); pointer-events: none; }
+
+  /* LAYOUT */
+  .app-shell {
+    max-width: 480px; margin: 0 auto;
+    padding: var(--pad);
+    padding-top: calc(12px + env(safe-area-inset-top));
+    padding-bottom: calc(40px + env(safe-area-inset-bottom));
+    display: flex; flex-direction: column; gap: 24px;
+  }
+
+  /* NAV HEADER */
+  .header { display: flex; align-items: center; gap: 16px; margin-bottom: 8px; }
+  .back-btn {
+    width: 44px; height: 44px; border-radius: 50%;
+    background: var(--surface-glass); border: 1px solid var(--surface-border);
+    display: flex; align-items: center; justify-content: center;
+    backdrop-filter: blur(10px); color: #fff; cursor: pointer;
+  }
+  .page-title { font-size: 24px; font-weight: 800; }
+
+  /* QR CARD (Центральный элемент) */
+  .qr-card {
+    background: linear-gradient(165deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.02) 100%);
+    border: 1px solid var(--surface-border);
+    border-top: 1px solid var(--surface-highlight);
+    border-radius: var(--radius-xl);
+    padding: 32px 24px;
+    display: flex; flex-direction: column; align-items: center; gap: 24px;
+    backdrop-filter: blur(30px);
+    box-shadow: 0 12px 32px rgba(0,0,0,0.3);
+    text-align: center;
+  }
+
+  .qr-box {
+    background: #fff; /* QR нужен контраст */
+    padding: 16px;
+    border-radius: var(--radius-l);
+    box-shadow: 0 0 20px rgba(255,255,255,0.1);
+  }
+
+  .qr-text h3 { font-size: 20px; font-weight: 700; margin-bottom: 6px; }
+  .qr-text p { font-size: 14px; color: var(--text-muted); line-height: 1.4; }
+
+  /* STATS ROW */
+  .stats-row {
+    display: flex; gap: 12px;
+  }
+  .stat-tile {
+    flex: 1;
+    background: var(--surface-glass);
+    border: 1px solid var(--surface-border);
+    border-radius: var(--radius-l);
+    padding: 16px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+  }
+  .stat-val { font-size: 28px; font-weight: 800; color: var(--acc-green); }
+  .stat-lbl { font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; margin-top: 4px; }
+
+  /* ACTIONS */
+  .actions { display: flex; flex-direction: column; gap: 12px; margin-top: auto; }
+  
+  .btn {
+    width: 100%; height: 56px;
+    border-radius: 18px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 17px; font-weight: 600;
+    cursor: pointer; transition: transform 0.1s;
+    border: none; outline: none;
+  }
+  .btn:active { transform: scale(0.97); }
+  
+  .btn-primary {
+    background: linear-gradient(135deg, var(--acc-blue) 0%, #5e60ce 100%);
+    color: #fff;
+    box-shadow: 0 8px 24px rgba(94, 96, 206, 0.4);
+  }
+  
+  .btn-glass {
+    background: rgba(255,255,255,0.08);
+    border: 1px solid var(--surface-border);
+    color: #fff;
+  }
+  .btn-icon { margin-right: 10px; font-size: 20px; }
+
+</style>
+</head>
+<body>
+
+<div class="fx-layer">
+  <div class="orb orb-1"></div>
+  <div class="orb orb-2"></div>
+  <div class="noise"></div>
+</div>
+
+<div class="app-shell">
+  
+  <div class="header">
+    <div class="back-btn" onclick="goBack()">
+      <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+    </div>
+    <div class="page-title">Приглашения</div>
+  </div>
+
+  <div class="qr-card">
+    <div class="qr-box">
+      <div id="qrcode"></div>
+    </div>
+    <div class="qr-text">
+      <h3>Твой пропуск</h3>
+      <p>Друг может отсканировать этот код<br>или перейти по ссылке</p>
+    </div>
+  </div>
+
+  <div class="stats-row">
+    <div class="stat-tile">
+      <div class="stat-val">0</div>
+      <div class="stat-lbl">Приглашено</div>
+    </div>
+    <div class="stat-tile">
+      <div class="stat-val">0%</div>
+      <div class="stat-lbl">Бонус</div>
+    </div>
+  </div>
+
+  <div class="actions">
+    <button class="btn btn-primary" onclick="shareRef()">
+      <span class="btn-icon">✈️</span> Отправить другу
+    </button>
+    <button class="btn btn-glass" onclick="copyRef()">
+      <span class="btn-icon">🔗</span> Скопировать ссылку
+    </button>
+  </div>
+
+</div>
+
+<script>
+  const tg = window.Telegram.WebApp;
+  
+  // 1. Инициализация (Цвета шапки)
+  if(tg) {
+    tg.ready();
+    tg.expand();
+    tg.setHeaderColor('#050505'); 
+    tg.setBackgroundColor('#050505');
+    // Используем нативную кнопку "Назад" тоже, если удобно
+    // tg.BackButton.show();
+    // tg.BackButton.onClick(goBack);
+  }
+
+  // 2. Данные пользователя и бота
+  // 🔴 ЗАМЕНИ НА ЮЗЕРНЕЙМ СВОЕГО БОТА (без @)
+  const BOT_USERNAME = "Tvoy_Bot_Name"; 
+  
+  const userId = tg.initDataUnsafe?.user?.id || '12345'; // Fallback для тестов
+  const refLink = `https://t.me/${BOT_USERNAME}?start=ref_${userId}`;
+
+  // 3. Генерация QR кода
+  // Используем библиотеку qrcodejs (подключена в head)
+  new QRCode(document.getElementById("qrcode"), {
+    text: refLink,
+    width: 180,
+    height: 180,
+    colorDark : "#000000",
+    colorLight : "#ffffff",
+    correctLevel : QRCode.CorrectLevel.M
+  });
+
+  // 4. Функции кнопок
+
+  function shareRef() {
+    haptic('medium');
+    const msg = "Привет! Зацени это приложение, очень удобно: ";
+    // Используем share/url для нативного выбора чата
+    const url = `https://t.me/share/url?url=${encodeURIComponent(refLink)}&text=${encodeURIComponent(msg)}`;
+    tg.openTelegramLink(url);
+  }
+
+  function copyRef() {
+    haptic('light');
+    navigator.clipboard.writeText(refLink).then(() => {
+      tg.showPopup({
+        title: 'Готово',
+        message: 'Ссылка скопирована',
+        buttons: [{type: 'ok'}]
+      });
+    }).catch(err => {
+      console.error('Ошибка копирования', err);
+    });
+  }
+
+  function goBack() {
+    haptic('light');
+    // Возврат на главную (если это отдельная страница)
+    // Либо используй history.back(), если навигация через историю
+    // window.history.back();
+    window.location.href = 'index.html'; // Или имя твоего главного файла
+  }
+
+  function haptic(style) {
+    if(tg.HapticFeedback) tg.HapticFeedback.impactOccurred(style);
+  }
+
+</script>
+</body>
+</html>
