@@ -415,46 +415,73 @@
   async function runStressCycle() {
     const { inhaleBase, inhaleTop, exhale } = activeConfig;
     while(isRunning) {
-      setStatus('ВДОХ'); haptic('heavy'); await movePhotonTo({x: 150, y: 80}, inhaleBase); if(!isRunning) break;
-      setStatus('ДОВДОХ'); haptic('rigid'); await movePhotonTo({x: 150, y: 20}, inhaleTop); if(!isRunning) break;
-      setStatus('ВЫДОХ'); haptic('soft'); await movePhotonTo({x: 150, y: 320}, exhale); if(!isRunning) break;
+      // 1. ВДОХ (Снизу вверх): Свечение растет от 0 до 1
+      setStatus('ВДОХ'); haptic('heavy');
+      
+      // Мгновенно сбрасываем свечение в 0 перед началом (без анимации)
+      el.photon.style.transition = 'none';
+      el.photon.style.boxShadow = getGlowStyle(0);
+      void el.photon.offsetWidth; // Force Reflow
+
+      // Движемся вверх к первой точке, разгоняя свечение до 1
+      await movePhotonTo({x: 150, y: 80}, inhaleBase, 1);
+      if(!isRunning) break;
+
+      // 2. ДОВДОХ (Вверх до упора): Свечение удваивается (1 -> 2)
+      setStatus('ДОВДОХ'); haptic('rigid');
+      await movePhotonTo({x: 150, y: 20}, inhaleTop, 2);
+      if(!isRunning) break;
+
+      // 3. ВЫДОХ (Сверху вниз): Свечение падает с 2 до 1
+      setStatus('ВЫДОХ'); haptic('soft');
+      await movePhotonTo({x: 150, y: 320}, exhale, 1);
+      if(!isRunning) break;
     }
   }
+  
   async function runLinearCycle() {
     const { inhale, hold, exhale } = activeConfig;
     while(isRunning) {
-      setStatus('ВДОХ'); haptic('heavy'); await movePhotonTo({x: 150, y: 20}, inhale); if(!isRunning) break;
-      if(hold) { setStatus('ЗАДЕРЖКА'); haptic('medium'); await wait(hold); if(!isRunning) break; }
-      setStatus('ВЫДОХ'); haptic('soft'); await movePhotonTo({x: 150, y: 320}, exhale); if(!isRunning) break;
+      setStatus('ВДОХ'); haptic('heavy'); 
+      await movePhotonTo({x: 150, y: 20}, inhale, 2); 
+      if(!isRunning) break;
+      
+      if(hold) { 
+          setStatus('ЗАДЕРЖКА'); haptic('medium'); 
+          await wait(hold); 
+          if(!isRunning) break; 
+      }
+      
+      setStatus('ВЫДОХ'); haptic('soft'); 
+      await movePhotonTo({x: 150, y: 320}, exhale, 1); 
+      if(!isRunning) break;
     }
   }
 
+  // Хелпер для точных стилей свечения
+  function getGlowStyle(level) {
+    const color = activeConfig.color;
+    if (level === 0) return `0 0 0 0 transparent`;
+    if (level === 1) return `0 0 20px 5px ${color}`;
+    if (level === 2) return `0 0 50px 20px ${color}, inset 0 0 15px #ffffff`;
+    return `0 0 20px 5px ${color}`;
+  }
+
   // UPDATED: V7.0 Dynamic Light Logic
-  function movePhotonTo(coords, duration) {
+  function movePhotonTo(coords, duration, targetGlowLevel = null) {
     return new Promise(resolve => {
-      // 1. Движение
-      el.photon.style.transition = `transform ${duration}ms linear`;
+      // Включаем плавную анимацию и для движения, и для тени
+      el.photon.style.transition = `transform ${duration}ms linear, box-shadow ${duration}ms ease`;
       el.photon.style.transform = `translate(${coords.x}px, ${coords.y}px)`;
 
-      // 2. V7.0 Physics (Свет зависит от высоты)
-      // Y < 150 = Вдох (Высокая энергия)
-      // Y > 150 = Выдох (Низкая энергия)
-      const isHighEnergy = coords.y < 150;
-
-      if (isHighEnergy) {
-        // High Energy: Широкое гало, яркий центр
-        el.photon.style.boxShadow = `
-          0 0 25px 8px ${activeConfig.color}, 
-          0 0 60px 25px ${activeConfig.color}, 
-          inset 0 0 8px rgba(255,255,255,1)
-        `;
+      if (targetGlowLevel !== null) {
+        // Если передан конкретный уровень (для Стресса)
+        el.photon.style.boxShadow = getGlowStyle(targetGlowLevel);
       } else {
-        // Low Energy: Сжатое свечение
-        el.photon.style.boxShadow = `
-          0 0 10px 2px ${activeConfig.color}, 
-          0 0 20px 5px ${activeConfig.color}, 
-          inset 0 0 4px rgba(255,255,255,0.7)
-        `;
+        // Логика для других практик (Треугольник/Квадрат):
+        // Если Y < 150 (верх) -> Уровень 2 (Ярко), иначе -> Уровень 1 (Обычный)
+        const isHighEnergy = coords.y < 150;
+        el.photon.style.boxShadow = isHighEnergy ? getGlowStyle(2) : getGlowStyle(1);
       }
 
       setTimeout(resolve, duration);
