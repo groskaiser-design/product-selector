@@ -504,19 +504,27 @@ window.addEventListener('pageshow', (e)=>{
     const {inhale,hold,exhale}=activeConfig;while(isRunning){setStatus('ВДОХ');haptic('heavy');await movePhotonTo({x:150,y:20},inhale,2);if(!isRunning)break;if(hold){setStatus('ЗАДЕРЖКА');haptic('medium');await wait(hold);if(!isRunning)break;}setStatus('ВЫДОХ');haptic('soft');await movePhotonTo({x:150,y:320},exhale,1);if(!isRunning)break;} 
   }
 
+  // === NEW: HEX TO RGB UTILS FOR IOS COMPATIBILITY ===
   function hexToRgb(hex) {
-    var shorthandRegex = /^#?([a-f\d])([a-f\d])([a-f\d])$/i; hex = hex.replace(r, function(m,r,g,b){return r+r+g+g+b+b}); var result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex); return result ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) } : { r: 0, g: 0, b: 0 }
+    var shorthandRegex = /^#?([a-f\d])([a-f\d])([a-f\d])$/i; 
+    hex = hex.replace(shorthandRegex, function(m, r, g, b) { return r + r + g + g + b + b; }); 
+    var mainRegex = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i;
+    var result = mainRegex.exec(hex);
+    return result ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) } : { r: 0, g: 0, b: 0 };
   }
-  function getGlowStyle(l) {
-    const h=activeConfig.color,rgb=hexToRgb(h),{r,g,b}=rgb;
-    if (l === 0) return `0 0 0 0 rgba(${r}, ${g}, ${b}, 0), inset 0 0 0 0 rgba(255,255,255,0)`;
-    if (l === 1) return `0 0 20px 5px rgba(${r}, ${g}, ${b}, 1), inset 0 0 0 0 rgba(255,255,255,0)`;
-    if (l === 2) return `0 0 50px 20px rgba(${r}, ${g}, ${b}, 1), inset 0 0 15px 0 rgba(255,255,255,1)`;
-    if (l === 3) return `0 0 90px 40px rgba(${r}, ${g}, ${b}, 1), inset 0 0 30px 0 rgba(255,255,255,1)`;
+  
+  function getGlowStyle(level) {
+    const hex = activeConfig.color;
+    const rgb = hexToRgb(hex);
+    const {r, g, b} = rgb;
+    if (level === 0) return `0 0 0 0 rgba(${r}, ${g}, ${b}, 0), inset 0 0 0 0 rgba(255,255,255,0)`;
+    if (level === 1) return `0 0 20px 5px rgba(${r}, ${g}, ${b}, 1), inset 0 0 0 0 rgba(255,255,255,0)`;
+    if (level === 2) return `0 0 50px 20px rgba(${r}, ${g}, ${b}, 1), inset 0 0 15px 0 rgba(255,255,255,1)`;
+    if (level === 3) return `0 0 90px 40px rgba(${r}, ${g}, ${b}, 1), inset 0 0 30px 0 rgba(255,255,255,1)`;
     return `0 0 20px 5px rgba(${r}, ${g}, ${b}, 1), inset 0 0 0 0 rgba(255,255,255,0)`;
   }
-  function movePhotonTo(c,d,t=null) {
-    return new Promise(r=>{const s=`transform ${d}ms linear, box-shadow ${d}ms linear, -webkit-transform ${d}ms linear, -webkit-box-shadow ${d}ms linear`;el.photon.style.transition=s;el.photon.style.webkitTransition=s;el.photon.style.transform=`translate(${c.x}px, ${c.y}px)`;if(t!==null)el.photon.style.boxShadow=getGlowStyle(t);else{const h=c.y<150;el.photon.style.boxShadow=h?getGlowStyle(2):getGlowStyle(1)}setTimeout(r,d)})
+  function movePhotonTo(coords, duration, targetGlowLevel = null) {
+    return new Promise(r=>{const s=`transform ${duration}ms linear, box-shadow ${duration}ms linear, -webkit-transform ${duration}ms linear, -webkit-box-shadow ${duration}ms linear`;el.photon.style.transition=s;el.photon.style.webkitTransition=s;el.photon.style.transform=`translate(${coords.x}px, ${coords.y}px)`;if(t!==null)el.photon.style.boxShadow=getGlowStyle(t);else{const h=coords.y<150;el.photon.style.boxShadow=h?getGlowStyle(2):getGlowStyle(1)}setTimeout(r,d)})
   }
 
   function stopPractice(completed = false) {
@@ -606,17 +614,27 @@ window.addEventListener('pageshow', (e)=>{
       return;
     }
 
+    // 1. Трекаем "Вход в приложение" (практика = "app_open", 0 мин)
+    // Это создает пользователя в Index Sheet, если его нет
+    const myIndexRow = localStorage.getItem(STORAGE_KEY_INDEX_ROW);
+    if (!myIndexRow) {
+      // Регистрируем пользователя только если его нет в локальной памяти
+      // Это спасет от плодения строк, так как происходит только один раз
+      sendAnalytics('app_open', 0);
+    }
+
+
     console.log('🚀 Запрашиваем историю...');
     
     // Читаем из памяти "наш номер строки", если есть
-    const myIndexRow = localStorage.getItem(STORAGE_KEY_INDEX_ROW);
+    const currentMyIndexRow = localStorage.getItem(STORAGE_KEY_INDEX_ROW);
 
     fetch(BACKEND_URL, {
       method: 'POST',
       body: JSON.stringify({
         action: 'get_history', 
         init_data: tg.initData,
-        user_index_row: myIndexRow ? Number(myIndexRow) : 0 // Подсказка бэкенду
+        user_index_row: currentMyIndexRow ? Number(currentMyIndexRow) : 0 // Подсказка бэкенду
       })
     })
     .then(res => res.json())
