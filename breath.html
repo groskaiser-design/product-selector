@@ -81,20 +81,15 @@
   /* 1. Linear Track (PHANTOM GRADIENT STYLE) */
   .track-linear-bg {
     position: absolute; left: 50%; 
-    /* Растягиваем на всю высоту области, чтобы градиент был плавным */
     top: 0; bottom: 0; 
-    width: 1px; /* Ультра-тонкая линия */
+    width: 1px; 
     transform: translateX(-50%);
-    
-    /* Phantom Gradient: прозрачный по краям, видимый в центре */
     background: linear-gradient(to bottom, 
       rgba(255,255,255,0) 0%, 
       rgba(255,255,255,0.3) 40%, 
       rgba(255,255,255,0.3) 60%, 
       rgba(255,255,255,0) 100%
     );
-
-    /* Переопределяем стили unified-track-style, чтобы убрать рамки */
     border: none !important;
     box-shadow: none !important;
     border-radius: 0;
@@ -125,16 +120,15 @@
     border-radius: 0px;
   }
 
-  /* The Dot (ИСПРАВЛЕНО ЦЕНТРИРОВАНИЕ) */
+  /* The Dot */
   .photon-dot { 
     position: absolute; width: 18px; height: 18px; border-radius: 50%; 
     background: #fff; 
-    /* Базовое свечение переопределяется в JS */
-    top: 0; left: 0; 
-    /* Отступы теперь ровно половина размера, чтобы центр был точным */
-    margin-top: -9px; 
-    margin-left: -9px;
-    will-change: transform; z-index: 5; 
+    top: 0; left: 0; margin-top: -9px; margin-left: -9px;
+    /* FIX for iOS: hardware acceleration & specific transition property */
+    will-change: transform, box-shadow; 
+    -webkit-transform: translate3d(0,0,0); /* Force GPU */
+    z-index: 5; 
   }
 
   .bottom-timer { font-family: 'SF Pro Display', sans-serif; font-size: 56px; font-weight: 100; letter-spacing: -1px; font-variant-numeric: tabular-nums; color: rgba(255,255,255,0.9); text-shadow: 0 5px 15px rgba(0,0,0,0.5); }
@@ -461,26 +455,51 @@
     }
   }
 
-  // Хелпер для точных стилей свечения
-  function getGlowStyle(level) {
-    const color = activeConfig.color;
-    // Level 0: Цвет практики, но полностью прозрачный (для плавного затухания)
-    if (level === 0) return `0 0 0 0 ${color}00`;
-    // Level 1: Стандарт
-    if (level === 1) return `0 0 20px 5px ${color}`;
-    // Level 2: Ярко
-    if (level === 2) return `0 0 50px 20px ${color}, inset 0 0 15px #ffffff`;
-    // Level 3: СВЕРХ ЯРКО (Для довдоха)
-    if (level === 3) return `0 0 90px 40px ${color}, inset 0 0 30px #ffffff`;
-    
-    return `0 0 20px 5px ${color}`;
+  // === NEW: HEX TO RGB UTILS FOR IOS COMPATIBILITY ===
+  function hexToRgb(hex) {
+    // Expand shorthand form (e.g. "03F") to full form (e.g. "0033FF")
+    var shorthandRegex = /^#?([a-f\d])([a-f\d])([a-f\d])$/i;
+    hex = hex.replace(shorthandRegex, function(m, r, g, b) {
+      return r + r + g + g + b + b;
+    });
+
+    var result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return result ? {
+      r: parseInt(result[1], 16),
+      g: parseInt(result[2], 16),
+      b: parseInt(result[3], 16)
+    } : { r: 0, g: 0, b: 0 };
   }
 
-  // UPDATED: V7.0 Dynamic Light Logic + Linear Timing
+  // Хелпер для точных стилей свечения (IOS SAFE - using RGBA)
+  function getGlowStyle(level) {
+    const hex = activeConfig.color;
+    const rgb = hexToRgb(hex);
+    const {r, g, b} = rgb;
+
+    // Level 0: Цвет практики, но прозрачность 0 (rgba)
+    if (level === 0) return `0 0 0 0 rgba(${r}, ${g}, ${b}, 0)`;
+    
+    // Level 1: Стандарт
+    if (level === 1) return `0 0 20px 5px rgba(${r}, ${g}, ${b}, 1)`;
+    
+    // Level 2: Ярко
+    if (level === 2) return `0 0 50px 20px rgba(${r}, ${g}, ${b}, 1), inset 0 0 15px rgba(255,255,255,1)`;
+    
+    // Level 3: СВЕРХ ЯРКО (Для довдоха)
+    if (level === 3) return `0 0 90px 40px rgba(${r}, ${g}, ${b}, 1), inset 0 0 30px rgba(255,255,255,1)`;
+    
+    return `0 0 20px 5px rgba(${r}, ${g}, ${b}, 1)`;
+  }
+
+  // UPDATED: V7.0 Dynamic Light Logic + Linear Timing + CSS Prefix
   function movePhotonTo(coords, duration, targetGlowLevel = null) {
     return new Promise(resolve => {
-      // Используем LINEAR для box-shadow, чтобы свечение гасло ровно столько же, сколько идет движение
-      el.photon.style.transition = `transform ${duration}ms linear, box-shadow ${duration}ms linear`;
+      // Add -webkit- prefix for older iOS/Webkit
+      const transStr = `transform ${duration}ms linear, box-shadow ${duration}ms linear, -webkit-transform ${duration}ms linear, -webkit-box-shadow ${duration}ms linear`;
+      el.photon.style.transition = transStr;
+      el.photon.style.webkitTransition = transStr;
+
       el.photon.style.transform = `translate(${coords.x}px, ${coords.y}px)`;
 
       if (targetGlowLevel !== null) {
