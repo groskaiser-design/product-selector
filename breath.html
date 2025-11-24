@@ -52,13 +52,43 @@ window.addEventListener('pageshow', (e)=>{
     display: flex; flex-direction: column;
   }
 
-  /* ORBS (Фон) */
-  .fx-layer { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
-  .orb { position: absolute; border-radius: 50%; filter: blur(90px); opacity: 0.5; transition: background 1s ease; will-change: transform; }
-  .orb-1 { width: 350px; height: 350px; background: radial-gradient(circle, rgba(79, 172, 254, 0.8) 0%, transparent 70%); top: -15%; left: -30%; animation: floatA 12s infinite ease-in-out; }
-  .orb-2 { width: 300px; height: 300px; background: radial-gradient(circle, rgba(94, 96, 206, 0.8) 0%, transparent 70%); bottom: -10%; right: -30%; animation: floatB 16s infinite ease-in-out; }
+  /* === ORBS & NOISE (Hybrid Logic) === */
+  .fx-layer { position: fixed; inset: 0; z-index: 0; pointer-events: none; transform: translate3d(0,0,0); }
+  
+  /* Базовый стиль шаров (общий) */
+  .orb { position: absolute; border-radius: 50%; filter: blur(80px); opacity: 0.6; transition: background 1s ease, opacity 1s ease; will-change: transform; }
+  
+  /* Исходные анимации (для Практики - оставляем как было) */
+  .orb-1 { width: 350px; height: 350px; top: -15%; left: -30%; animation: floatA 12s infinite ease-in-out; }
+  .orb-2 { width: 300px; height: 300px; bottom: -10%; right: -30%; animation: floatB 16s infinite ease-in-out; }
+  
+  /* Новые анимации и стиль (ТОЛЬКО для Меню) */
+  body.menu-mode { background-color: #050505; /* Темно-серый только в меню */ }
+  
+  body.menu-mode .orb-1 {
+    width: 90vw; height: 90vw; opacity: 0.4;
+    animation: floatRotate 30s infinite linear !important; /* Вращение как в KBJU */
+  }
+  body.menu-mode .orb-2 {
+    width: 400px; height: 400px; opacity: 0.5;
+    bottom: -150px; right: -100px;
+    animation: breatheKBJU 6s infinite ease-in-out !important; /* Дыхание как в KBJU */
+  }
+
+  /* Шум (виден ТОЛЬКО в Menu Mode) */
+  .noise { 
+    position: absolute; inset: 0; 
+    opacity: 0; transition: opacity 1s ease; /* Скрыт по умолчанию */
+    background: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); 
+    pointer-events: none; 
+  }
+  body.menu-mode .noise { opacity: 0.04; } /* Появляется в меню */
+
+  /* Кейфреймы (сохраняем старые + добавляем новые из KBJU) */
   @keyframes floatA { 0%,100%{transform:translate(0,0) scale(1)} 50%{transform:translate(30px, 40px) scale(1.1)} }
   @keyframes floatB { 0%,100%{transform:translate(0,0) scale(1)} 50%{transform:translate(-40px, -20px) scale(0.9)} }
+  @keyframes floatRotate { 0% {transform:rotate(0deg)} 100% {transform:rotate(360deg)} }
+  @keyframes breatheKBJU { 0%, 100% { transform: scale(1); opacity: 0.4; } 50% { transform: scale(1.1); opacity: 0.6; } }
 
   /* VIEWS */
   .view { position: absolute; inset: 0; padding: var(--pad); padding-top: calc(10px + env(safe-area-inset-top)); display: flex; flex-direction: column; transition: opacity 0.4s cubic-bezier(0.2, 0.8, 0.2, 1), transform 0.4s; opacity: 0; pointer-events: none; transform: scale(0.96) translateY(10px); z-index: 1; }
@@ -373,6 +403,7 @@ window.addEventListener('pageshow', (e)=>{
 <div class="fx-layer">
   <div class="orb orb-1" id="bgOrb1"></div>
   <div class="orb orb-2" id="bgOrb2"></div>
+  <div class="noise"></div>
 </div>
 
 <div class="view active" id="menuView">
@@ -597,8 +628,9 @@ window.addEventListener('pageshow', (e)=>{
   }
 
   // Запускаем синхронизацию при старте
-  window.onload = () => {
+window.onload = () => {
     syncHistorySmart();
+    updateOrbs('default'); // <--- Добавь это для старта
   };
 
   // ============================================================================
@@ -971,12 +1003,27 @@ window.addEventListener('pageshow', (e)=>{
     }, 200);
   }
 
-  function updateOrbs(type) {
+function updateOrbs(type) {
+    const isMenu = (type === 'default' || !type);
+    
+    // 1. Переключаем режим фона (Шум + Цвет #050505 только в меню)
+    if (isMenu) {
+        document.body.classList.add('menu-mode');
+    } else {
+        document.body.classList.remove('menu-mode');
+    }
+
+    // 2. Логика цветов (Остается как была, но адаптирована под новые стили)
     let c1, c2;
     if(type === 'stress') { c1='rgba(79, 172, 254, 0.6)'; c2='rgba(0, 242, 254, 0.4)'; }
     else if(type === 'sleep') { c1='rgba(255, 159, 10, 0.6)'; c2='rgba(255, 69, 58, 0.4)'; }
     else if(type === 'focus') { c1='rgba(94, 96, 206, 0.6)'; c2='rgba(162, 155, 254, 0.4)'; } 
-    else { c1='rgba(79, 172, 254, 0.8)'; c2='rgba(94, 96, 206, 0.8)'; } 
+    else { 
+        // Цвета для меню (как в KBJU - фиолетовый неон)
+        c1='rgba(108, 92, 231, 0.6)'; 
+        c2='rgba(108, 92, 231, 0.4)'; 
+    } 
+    
     el.orb1.style.background = `radial-gradient(circle, ${c1} 0%, transparent 70%)`;
     el.orb2.style.background = `radial-gradient(circle, ${c2} 0%, transparent 70%)`;
   }
