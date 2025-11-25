@@ -709,20 +709,33 @@ window.onload = () => {
   /**
    * Отправляет сессию и обновляет Hint
    */
+  /**
+   * Отправляет сессию и обновляет Hint
+   */
   function trackSession(practiceType, durationSec) {
     if (!tg || !tg.initData) return;
+
+    // --- НАЧАЛО ИСПРАВЛЕНИЯ ---
+    // 1. Получаем текущую дату
+    const d = new Date();
+    // 2. Формируем строку YYYY-MM-DD вручную, используя локальные методы (getFullYear, getMonth, getDate)
+    // getMonth() возвращает месяц от 0 до 11, поэтому добавляем +1
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    const localDateString = `${year}-${month}-${day}`;
+    // --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
     const payload = {
       action: 'track_session',
       init_data: tg.initData,
       practice_type: practiceType,
       duration: durationSec,
-      client_day_local: new Date().toISOString().split('T')[0],
+      client_day_local: localDateString, // <--- ИСПОЛЬЗУЕМ ПРАВИЛЬНУЮ ЛОКАЛЬНУЮ ДАТУ
       tz: Intl.DateTimeFormat().resolvedOptions().timeZone 
     };
 
-    // Optimistic UI: Можно было бы добавить в локальный массив сразу,
-    // но пока просто отправим
+    // ... остальной код функции без изменений ...
     fetch(SYS.API_URL, {
       method: 'POST',
       body: JSON.stringify(payload)
@@ -730,11 +743,8 @@ window.onload = () => {
     .then(r => r.json())
     .then(json => {
       console.log('📤 Track status:', json.status);
-      // Если сервер вернул новую позицию индекса — запомним её
       if (json.ok && json.user_index_row) {
         localStorage.setItem(SYS.STORAGE.ROW_HINT, json.user_index_row);
-        // После успешной записи данные устарели -> Запросим обновление
-        // Можно сделать небольшую задержку, чтобы формула в Sheets успела посчитаться
         setTimeout(() => syncHistorySmart(), 2000);
       }
     })
