@@ -275,138 +275,214 @@
 </div>
 
 <script>
-  // 🟢 1. FIREBASE CONFIG
-  const firebaseConfig = {
-    // apiKey: "YOUR_API_KEY",
-    // authDomain: "YOUR_PROJECT.firebaseapp.com",
-    // projectId: "YOUR_PROJECT",
-    // ...
+  /**
+   * ====================================================================
+   * 1. КОНФИГУРАЦИЯ И УТИЛИТЫ
+   * ====================================================================
+   */
+  
+  // 🔴 ВСТАВЬ СЮДА СВОЙ URL ОТ GOOGLE APPS SCRIPT
+  const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbx...ТВОЙ_ДЛИННЫЙ_КОД.../exec';
+
+  const TG = window.Telegram?.WebApp;
+  
+  // Инициализация Telegram
+  if (TG) {
+    TG.ready();
+    TG.expand(); // Раскрываем на весь экран
+    try {
+      TG.setHeaderColor('#050505');
+      TG.setBackgroundColor('#050505');
+    } catch(e) {}
+  }
+
+  // Тактильная отдача (вибрация)
+  function haptic(type = 'light') {
+    if (!TG?.HapticFeedback) return;
+    if (type === 'light') TG.HapticFeedback.impactOccurred('light');
+    else if (type === 'medium') TG.HapticFeedback.impactOccurred('medium');
+    else if (type === 'success') TG.HapticFeedback.notificationOccurred('success');
+    else if (type === 'error') TG.HapticFeedback.notificationOccurred('error');
+  }
+
+  // Анимация нажатия
+  const bump = el => { 
+    if(!el) return; 
+    el.classList.remove('bump'); 
+    void el.offsetWidth; // Триггер reflow
+    el.classList.add('bump'); 
   };
 
-  let db = null;
-  try {
-    if (firebaseConfig.apiKey) {
-      firebase.initializeApp(firebaseConfig);
-      db = firebase.firestore();
-      db.enablePersistence().catch(err => console.log("Persistence error:", err));
+  /**
+   * ====================================================================
+   * 2. API (СЕТЕВОЙ СЛОЙ)
+   * ====================================================================
+   */
+  const API = {
+    // Получить каталог и корзину юзера
+    async init() {
+      // Берем локальную версию каталога, чтобы не качать зря, если не менялось
+      const localVer = localStorage.getItem('CATALOG_VER') || 0;
+      
+      const payload = {
+        action: 'init',
+        clientVer: localVer,
+        initData: TG?.initData || '' // Аутентификация через Telegram
+      };
+
+      try {
+        const res = await fetch(BACKEND_URL, {
+          method: 'POST',
+          body: JSON.stringify(payload)
+        });
+        return await res.json();
+      } catch (e) {
+        console.error("Network Error:", e);
+        // Если сети нет, пробуем вернуть хотя бы кэш
+        return { ok: false, error: 'offline' };
+      }
+    },
+
+    // Сохранить выбор на сервер
+    async save(selectionArray) {
+      const payload = {
+        action: 'save',
+        selection: selectionArray, // массив ID ['p1', 'p2']
+        initData: TG?.initData || ''
+      };
+
+      try {
+        const res = await fetch(BACKEND_URL, {
+          method: 'POST',
+          body: JSON.stringify(payload)
+        });
+        return await res.json();
+      } catch (e) {
+        console.error("Save Error:", e);
+        return { ok: false };
+      }
     }
-  } catch(e) { console.log("Firebase skipped", e); }
+  };
 
-  // 🟢 2. MOCK DATA
-  const MOCK_DB = [
-    { id:'c1', name:'Белки', icon:'🥩', items:[
-      {id:'p1',name:'Куриная грудка',meta:'113 ккал · 24Б · 2Ж · 0У'},
-      {id:'p2',name:'Индейка филе',meta:'115 ккал · 24Б · 1Ж · 0У'},
-      {id:'p3',name:'Говядина постная',meta:'180 ккал · 20Б · 10Ж · 0У'},
-      {id:'p4',name:'Яйцо куриное (C0)',meta:'86 ккал · 7Б · 6Ж · 0.5У'},
-      {id:'p5',name:'Творог 5%',meta:'121 ккал · 16Б · 5Ж · 3У'},
-      {id:'p6',name:'Лосось',meta:'208 ккал · 20Б · 13Ж · 0У'}
-    ]},
-    { id:'c2', name:'Крупы', icon:'🍚', items:[
-      {id:'p9',name:'Гречка (сухая)',meta:'313 ккал · 12Б · 3Ж · 62У'},
-      {id:'p10',name:'Рис Басмати',meta:'350 ккал · 7Б · 1Ж · 78У'},
-      {id:'p11',name:'Овсянка',meta:'360 ккал · 12Б · 6Ж · 65У'}
-    ]},
-    { id:'c3', name:'Овощи', icon:'🥦', items:[
-      {id:'p15',name:'Огурцы',meta:'15 ккал · 0.8Б · 0Ж · 3У'},
-      {id:'p16',name:'Помидоры',meta:'20 ккал · 1Б · 0Ж · 4У'},
-      {id:'p17',name:'Брокколи',meta:'34 ккал · 3Б · 0.4Ж · 7У'}
-    ]},
-    { id:'c4', name:'Фрукты', icon:'🍎', items:[{id:'p21',name:'Яблоко',meta:'47 ккал'}]},
-    { id:'c5', name:'Жиры', icon:'🥑', items:[{id:'p25',name:'Оливковое масло',meta:'884 ккал'}]},
-    { id:'c6', name:'Снеки', icon:'🍫', items:[{id:'p30',name:'Протеиновый батончик',meta:'200 ккал'}]}
-  ];
-
-  // 🟢 3. DATA SERVICE
+  /**
+   * ====================================================================
+   * 3. DATA SERVICE (УПРАВЛЕНИЕ ДАННЫМИ)
+   * ====================================================================
+   */
   const DataService = {
     categories: [],
-    productsMap: {},
-    
-    async init() {
-      const cached = localStorage.getItem('ultima_products_v1');
-      if (cached) {
-        const data = JSON.parse(cached);
-        this.categories = data.categories;
-        this.productsMap = data.productsMap;
-        renderCategories(); 
-      } else {
-        this.loadMock(); 
-        renderCategories();
-      }
-      if (db) this.fetchFromFirebase();
-    },
+    productsMap: {}, // { "cat_id": [prodObj, prodObj], ... }
 
-    loadMock() {
-      this.categories = MOCK_DB.map(c => ({id:c.id, name:c.name, icon:c.icon}));
-      MOCK_DB.forEach(c => { this.productsMap[c.id] = c.items; });
-    },
+    async load() {
+      // 1. Показываем лоадер или скелетон (если нужно), пока просто ждем
+      const response = await API.init();
 
-    async fetchFromFirebase() {
-      try {
-        const catsSnap = await db.collection('categories').orderBy('order').get();
-        const newCats = [];
-        const newMap = {};
+      // 2. Обработка КАТАЛОГА
+      if (response.ok && response.catalog) {
+        // Пришли новые данные - обновляем и кэшируем
+        console.log("📥 Loading new catalog from server...");
+        this.processCatalog(response.catalog);
         
-        if (!catsSnap.empty) {
-            catsSnap.forEach(doc => {
-                const d = doc.data();
-                newCats.push({id: doc.id, name: d.name, icon: d.icon});
-            });
-            const prodsSnap = await db.collectionGroup('products').get();
-            prodsSnap.forEach(doc => {
-               const p = doc.data();
-               if (!newMap[p.categoryId]) newMap[p.categoryId] = [];
-               newMap[p.categoryId].push({id: doc.id, name: p.name, meta: p.meta});
-            });
-            this.categories = newCats;
-            this.productsMap = newMap;
-            localStorage.setItem('ultima_products_v1', JSON.stringify({
-                categories: this.categories, productsMap: this.productsMap
-            }));
-            if (!state.activeCatId && !state.searchMode) renderCategories();
-        }
-      } catch(e) { console.warn("Offline/DB err", e); }
+        // Сохраняем в LocalStorage для оффлайна
+        localStorage.setItem('CATALOG_FULL', JSON.stringify(response.catalog));
+        localStorage.setItem('CATALOG_VER', response.serverVer);
+      } else {
+        // Сервер сказал данных нет или ошибка -> читаем из LS
+        console.log("📦 Using cached catalog...");
+        const cached = localStorage.getItem('CATALOG_FULL');
+        if (cached) this.processCatalog(JSON.parse(cached));
+      }
+
+      // 3. Обработка КОРЗИНЫ ПОЛЬЗОВАТЕЛЯ
+      // Приоритет: Сервер > Локально (на случай смены устройства)
+      if (response.userSelection) {
+        let serverSet = new Set();
+        try {
+          // Бэк может прислать JSON-строку или массив
+          const parsed = typeof response.userSelection === 'string' 
+            ? JSON.parse(response.userSelection) 
+            : response.userSelection;
+          
+          if (Array.isArray(parsed)) serverSet = new Set(parsed);
+        } catch(e) { console.error("Error parsing user selection", e); }
+        
+        State.selected = serverSet;
+      } else {
+        // Если сервер молчит, берем локальную корзину
+        State.loadLocal(); 
+      }
     },
 
-    getProducts(catId) { return this.productsMap[catId] || []; },
-    search(query) {
-      const res = []; const q = query.toLowerCase();
-      Object.values(this.productsMap).flat().forEach(p => {
-        if (p.name.toLowerCase().includes(q)) res.push(p);
+    // Распаковка сжатых данных с бэкенда
+    processCatalog(catalogData) {
+      this.categories = catalogData.categories || [];
+      this.productsMap = {};
+
+      const productsRaw = catalogData.products || [];
+      
+      // Бэк присылает массив массивов: [id, catId, name, meta]
+      // Нам нужно превратить это в удобные объекты
+      productsRaw.forEach(row => {
+        const [pId, catId, pName, pMeta] = row;
+        
+        if (!this.productsMap[catId]) this.productsMap[catId] = [];
+        
+        this.productsMap[catId].push({
+          id: pId,
+          name: pName,
+          meta: pMeta
+        });
       });
-      return res;
+    },
+
+    getProducts(catId) {
+      return this.productsMap[catId] || [];
+    },
+
+    search(text) {
+      if (!text) return [];
+      const q = text.toLowerCase();
+      const result = [];
+      // Ищем по всем категориям
+      Object.values(this.productsMap).forEach(list => {
+        list.forEach(p => {
+          if (p.name.toLowerCase().includes(q)) result.push(p);
+        });
+      });
+      return result;
     }
   };
 
-  // 🟢 4. STATE with Persistence Logic
-  const state = {
-    selected: new Set(),
+  /**
+   * ====================================================================
+   * 4. STATE (СОСТОЯНИЕ ПРИЛОЖЕНИЯ)
+   * ====================================================================
+   */
+  const State = {
+    selected: new Set(), // Set ID выбранных товаров
     activeCatId: null,
     searchMode: false,
+    
+    // Для бесконечного скролла
     renderQueue: [],
     renderIndex: 0,
     BATCH_SIZE: 20,
-    currentContainer: null
+    currentContainer: null,
+
+    // Работа с LocalStorage (только для корзины)
+    saveLocal() {
+      const arr = Array.from(this.selected);
+      localStorage.setItem('USER_CART', JSON.stringify(arr));
+    },
+    loadLocal() {
+      try {
+        const raw = localStorage.getItem('USER_CART');
+        if (raw) this.selected = new Set(JSON.parse(raw));
+      } catch(e) {}
+    }
   };
 
-  // --- LocalStorage for Selection ---
-  function loadSelectionFromCache() {
-    try {
-      const saved = localStorage.getItem('ultima_cart_v1');
-      if (saved) {
-        const arr = JSON.parse(saved);
-        state.selected = new Set(arr);
-      }
-    } catch(e) {}
-  }
-
-  function saveSelectionToCache() {
-    try {
-      const arr = Array.from(state.selected);
-      localStorage.setItem('ultima_cart_v1', JSON.stringify(arr));
-    } catch(e) {}
-  }
-
+  // Ссылки на DOM элементы
   const el = {
     catGrid: document.getElementById('catGrid'),
     productList: document.getElementById('productList'),
@@ -423,69 +499,64 @@
     sentinel: document.getElementById('sentinel')
   };
 
-  const tg = window.Telegram?.WebApp;
-  if (tg) {
-    tg.ready();
-    tg.expand();
-    try { tg.setHeaderColor('#050505'); tg.setBackgroundColor('#050505'); } catch(e){}
-    tg.BackButton.onClick(() => {
-      if (state.searchMode) exitSearchMode();
-      else if (state.activeCatId) goBack();
-      else window.location.href = 'router.html'; 
-    });
-  }
+  /**
+   * ====================================================================
+   * 5. UI & RENDER LOGIC
+   * ====================================================================
+   */
 
-  // 🟢 UTILS
-  function haptic(type = 'light') {
-    try {
-      const t = window.Telegram?.WebApp?.HapticFeedback;
-      if (t) type==='light'?t.impactOccurred('light'):type==='medium'?t.impactOccurred('medium'):t.notificationOccurred('success');
-    } catch(e) {}
-  }
-
-  const bump = el => { 
-    if(!el) return; el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); 
-  };
-
-  document.addEventListener('touchstart', (e) => {
-    const el = e.target.closest('.cat-card, .btn-save');
-    if (!el) return;
-    haptic('light'); bump(el);
-  }, {passive: true});
-
-  // 🟢 INIT
-  function init() {
-    loadSelectionFromCache(); // 🔥 Load saved selection
-    
-    DataService.init(); 
-    updateSaveButton();
-    
+  async function initApp() {
+    // Глобальные обработчики
     el.searchInput.addEventListener('input', handleSearch);
     el.searchClear.addEventListener('click', clearSearch);
+    el.btnSave.addEventListener('click', handleMainButton);
     
-    if(tg) tg.BackButton.show();
+    // Настройка кнопки Назад в Telegram
+    if(TG) {
+      TG.BackButton.onClick(() => {
+        if (State.searchMode) exitSearchMode();
+        else if (State.activeCatId) goBackToCats();
+      });
+    }
 
+    // Настройка Infinite Scroll
     const observer = new IntersectionObserver((entries) => {
       if (entries[0].isIntersecting) renderNextBatch();
     }, { rootMargin: '200px' });
     observer.observe(el.sentinel);
+
+    // Загрузка данных
+    await DataService.load();
+    
+    // Первичный рендер
+    renderCategories();
+    updateMainButton();
   }
 
+  // --- Рендер Категорий ---
   function renderCategories() {
     el.catGrid.innerHTML = '';
+    
+    if (DataService.categories.length === 0) {
+      el.catGrid.innerHTML = '<div style="color:#666; text-align:center; grid-column:span 2; padding:20px;">Загрузка каталога...</div>';
+      return;
+    }
+
     DataService.categories.forEach(cat => {
       const products = DataService.getProducts(cat.id);
       const total = products.length;
-      const sel = products.filter(i => state.selected.has(i.id)).length;
+      const sel = products.filter(i => State.selected.has(i.id)).length;
       const progress = total > 0 ? (sel / total) * 100 : 0;
       
       const card = document.createElement('div');
       card.className = 'cat-card';
+      // Добавляем touch эффект
+      card.addEventListener('touchstart', (e) => { haptic('light'); bump(e.currentTarget); }, {passive:true});
       card.onclick = () => openCategory(cat.id);
       
       card.innerHTML = `
         <div>
-          <div class="cat-icon">${cat.icon}</div>
+          <div class="cat-icon">${cat.icon || '📦'}</div>
           <div class="cat-name">${cat.name}</div>
           <div class="cat-meta">${sel} из ${total}</div>
         </div>
@@ -497,51 +568,62 @@
     });
   }
 
+  // --- Переход в категорию ---
   function openCategory(id) {
-    state.activeCatId = id;
+    State.activeCatId = id;
     const cat = DataService.categories.find(c => c.id === id);
     
-    el.catTitle.textContent = cat.name;
+    el.catTitle.textContent = cat ? cat.name : 'Продукты';
     el.productList.style.display = 'flex';
     
     const products = DataService.getProducts(id);
     startInfiniteRender(products, el.productList);
     
     updateSelectAllBtn();
+    
+    // Анимация перехода
     el.viewCats.classList.add('prev');
     el.viewCats.classList.remove('active');
     el.viewList.classList.add('active');
-    el.viewList.classList.remove('next');
-    updateSaveButton(); 
-    if(tg) tg.BackButton.show();
+    
+    updateMainButton(); 
+    if(TG) TG.BackButton.show();
   }
 
-  function goBack() {
-    state.activeCatId = null;
+  function goBackToCats() {
+    State.activeCatId = null;
     el.viewList.classList.remove('active');
     el.viewCats.classList.add('active');
     el.viewCats.classList.remove('prev');
-    setTimeout(renderCategories, 300); 
-    updateSaveButton();
-    if(tg) tg.BackButton.show(); 
+    
+    // Перерисовываем категории, чтобы обновить прогресс-бары
+    setTimeout(renderCategories, 200); 
+    
+    updateMainButton();
+    if(TG) TG.BackButton.hide(); 
   }
 
+  // --- Бесконечный список (Core Logic) ---
   function startInfiniteRender(items, container, isSearch = false) {
     container.innerHTML = '';
-    if (isSearch) {
-        container.style.background = 'transparent'; container.style.border = 'none'; container.style.boxShadow = 'none';
-    } else {
-        container.style = ""; 
-    }
-
-    if (items.length === 0 && isSearch) {
-        container.innerHTML = '<div class="empty-state"><div class="empty-icon">🔍</div><div>Ничего не найдено</div></div>';
-        return;
-    }
-
-    state.renderQueue = items;
-    state.renderIndex = 0;
     
+    // Сброс стилей контейнера для поиска
+    if (isSearch) {
+        container.style.background = 'transparent'; 
+        container.style.border = 'none'; 
+        container.style.boxShadow = 'none';
+        if (items.length === 0) {
+            container.innerHTML = '<div class="empty-state"><div class="empty-icon">🔍</div><div>Ничего не найдено</div></div>';
+            return;
+        }
+    } else {
+        container.style = ""; // Возвращаем CSS классы
+    }
+
+    State.renderQueue = items;
+    State.renderIndex = 0;
+    
+    // Для поиска создаем обертку, чтобы стили списка работали
     let target = container;
     if (isSearch) {
         const wrapper = document.createElement('div');
@@ -549,30 +631,30 @@
         container.appendChild(wrapper);
         target = wrapper;
     }
-    state.currentContainer = target;
+    State.currentContainer = target;
+    
     renderNextBatch(isSearch);
   }
 
   function renderNextBatch(isSearch = false) {
-    if (state.renderIndex >= state.renderQueue.length) return;
+    if (State.renderIndex >= State.renderQueue.length) return;
 
-    const batch = state.renderQueue.slice(state.renderIndex, state.renderIndex + state.BATCH_SIZE);
+    const batch = State.renderQueue.slice(State.renderIndex, State.renderIndex + State.BATCH_SIZE);
     const fragment = document.createDocumentFragment();
 
     batch.forEach((item, i) => {
-      const isSel = state.selected.has(item.id);
+      const isSel = State.selected.has(item.id);
       const row = document.createElement('div');
       row.className = `product-row ${isSel ? 'selected' : ''}`;
       
-      row.addEventListener('touchstart', function() { haptic('light'); bump(this); }, {passive: true});
+      // Обработчики
+      row.addEventListener('touchstart', () => { haptic('light'); bump(row); }, {passive: true});
       row.onclick = () => toggleProduct(item.id, row);
       
+      // Микро-анимация появления (только для обычного списка)
       if (!isSearch) {
         row.style.opacity = '0';
-        row.style.animation = `fadeInUp 0.2s ease forwards ${i * 0.02}s`;
-        setTimeout(() => {
-            row.style.opacity = '1'; row.style.animation = 'none'; row.style.transform = 'none';
-        }, (i * 20) + 300);
+        row.style.animation = `fadeInUp 0.2s ease forwards ${i * 0.03}s`;
       }
       
       row.innerHTML = `
@@ -585,70 +667,130 @@
       fragment.appendChild(row);
     });
 
-    state.currentContainer.appendChild(fragment);
-    state.renderIndex += state.BATCH_SIZE;
+    State.currentContainer.appendChild(fragment);
+    State.renderIndex += State.BATCH_SIZE;
   }
 
+  // CSS для анимации списка
   const styleSheet = document.createElement("style");
   styleSheet.innerText = `@keyframes fadeInUp { to { opacity: 1; transform: translateY(0); } }`;
   document.head.appendChild(styleSheet);
 
+  /**
+   * ====================================================================
+   * 6. ВЗАИМОДЕЙСТВИЕ (ACTIONS)
+   * ====================================================================
+   */
+
   function toggleProduct(id, rowEl) {
-    if (state.selected.has(id)) {
-      state.selected.delete(id);
+    if (State.selected.has(id)) {
+      State.selected.delete(id);
       rowEl.classList.remove('selected');
     } else {
-      state.selected.add(id);
+      State.selected.add(id);
       rowEl.classList.add('selected');
     }
-    saveSelectionToCache(); // 🔥 SAVE ON EVERY CHANGE
-    updateSaveButton();
-    if (state.activeCatId && !state.searchMode) updateSelectAllBtn();
+    
+    State.saveLocal(); // Сохраняем локально сразу
+    updateMainButton();
+    
+    if (State.activeCatId && !State.searchMode) updateSelectAllBtn();
   }
 
-  function updateSaveButton() {
+  // Логика кнопки "Выбрать всё"
+  function updateSelectAllBtn() {
+    if (!State.activeCatId) return;
+    const products = DataService.getProducts(State.activeCatId);
+    
+    const allSelected = products.length > 0 && products.every(i => State.selected.has(i.id));
+    
+    el.btnSelectAll.textContent = allSelected ? 'Снять всё' : 'Выбрать всё';
+    el.btnSelectAll.onclick = () => {
+      haptic('medium');
+      products.forEach(i => {
+        if (!allSelected) State.selected.add(i.id);
+        else State.selected.delete(i.id);
+      });
+      State.saveLocal();
+      
+      // Перерисовка текущего списка
+      startInfiniteRender(products, el.productList); 
+      updateSelectAllBtn();
+      updateMainButton();
+    };
+  }
+
+  // Логика главной плавающей кнопки
+  function updateMainButton() {
     let count = 0;
     let text = '';
+    let isVisible = false;
     
-    if (state.activeCatId) {
-        const products = DataService.getProducts(state.activeCatId);
-        count = products.filter(i => state.selected.has(i.id)).length;
-        if (count > 0) text = `Выбрать (${count})`;
+    if (State.activeCatId) {
+        // Внутри категории кнопка работает как "Назад / Готово"
+        const products = DataService.getProducts(State.activeCatId);
+        const selInCat = products.filter(i => State.selected.has(i.id)).length;
+        
+        if (selInCat > 0) text = `Выбрано (${selInCat})`;
         else text = `Назад`;
-        el.btnSave.classList.add('visible'); // Always visible in category
+        
+        isVisible = true; // Всегда показываем в категории
     } else {
-        count = state.selected.size;
+        // На главном экране кнопка "Сохранить"
+        count = State.selected.size;
         text = `Сохранить (${count})`;
-        if (count > 0) el.btnSave.classList.add('visible');
-        else el.btnSave.classList.remove('visible');
+        isVisible = (count > 0);
     }
+
     el.saveBtnText.textContent = text;
+    if (isVisible) el.btnSave.classList.add('visible');
+    else el.btnSave.classList.remove('visible');
   }
 
-  function updateSelectAllBtn() {
-    if (!state.activeCatId) return;
-    const products = DataService.getProducts(state.activeCatId);
-    const allSelected = products.length > 0 && products.every(i => state.selected.has(i.id));
-    el.btnSelectAll.textContent = allSelected ? 'Снять всё' : 'Выбрать всё';
-    el.btnSelectAll.onclick = () => toggleAllInCategory(products, !allSelected);
+  async function handleMainButton() {
+    haptic('light');
+
+    // Если мы в категории — кнопка работает как "Назад"
+    if (State.activeCatId && !State.searchMode) {
+      goBackToCats();
+      return;
+    }
+
+    // Если мы на главном экране — это сохранение на сервер
+    el.saveBtnText.textContent = "Сохранение...";
+    
+    const selectionArray = Array.from(State.selected);
+    const res = await API.save(selectionArray);
+
+    if (res.ok) {
+        haptic('success');
+        if (TG && TG.showPopup) {
+            TG.showPopup({
+                title: 'Успешно',
+                message: 'Ваш выбор сохранен в облаке',
+                buttons: [{type: 'ok'}]
+            });
+        } else {
+            alert("✅ Сохранено!");
+        }
+    } else {
+        haptic('error');
+        alert("Ошибка сохранения. Проверьте интернет.");
+    }
+    
+    updateMainButton(); // Вернуть текст кнопки
+    if (State.searchMode) exitSearchMode();
   }
 
-  function toggleAllInCategory(products, select) {
-    haptic('medium');
-    products.forEach(i => {
-      if (select) state.selected.add(i.id);
-      else state.selected.delete(i.id);
-    });
-    saveSelectionToCache(); // 🔥 SAVE
-    startInfiniteRender(products, el.productList); 
-    updateSelectAllBtn();
-    updateSaveButton();
-  }
-
+  /**
+   * ====================================================================
+   * 7. ПОИСК
+   * ====================================================================
+   */
   function handleSearch(e) {
     const query = e.target.value.toLowerCase().trim();
     if (query.length > 0) {
-      if (!state.searchMode) enterSearchMode();
+      if (!State.searchMode) enterSearchMode();
       const results = DataService.search(query);
       el.searchResults.style.display = 'block';
       startInfiniteRender(results, el.searchResults, true);
@@ -658,47 +800,32 @@
   }
 
   function enterSearchMode() {
-    state.searchMode = true;
+    State.searchMode = true;
     el.viewCats.classList.remove('active');
     el.viewList.classList.remove('active');
     el.viewSearch.classList.add('active');
-    if(tg) tg.BackButton.show();
+    if(TG) TG.BackButton.show();
   }
 
   function exitSearchMode() {
-    state.searchMode = false;
+    State.searchMode = false;
     el.viewSearch.classList.remove('active');
     el.searchResults.style.display = 'none';
     el.searchInput.value = '';
-    if (state.activeCatId) el.viewList.classList.add('active');
-    else {
-      el.viewCats.classList.add('active');
-      renderCategories();
-      if(tg) tg.BackButton.show(); 
+    
+    if (State.activeCatId) {
+        el.viewList.classList.add('active');
+    } else {
+        el.viewCats.classList.add('active');
+        if(TG) TG.BackButton.hide();
     }
   }
 
   function clearSearch() { exitSearchMode(); }
 
-  function saveSelection() {
-    haptic('success'); 
-    if (state.activeCatId && !state.searchMode) {
-        goBack();
-        return;
-    }
-    if (tg && tg.showPopup) {
-       tg.showPopup({
-          title: 'Сохранено',
-          message: `Выбрано продуктов: ${state.selected.size}`,
-          buttons: [{type: 'ok'}]
-       }, function() { if (state.searchMode) exitSearchMode(); });
-    } else {
-       alert(`Сохранено ${state.selected.size} продуктов!`);
-       if (state.searchMode) exitSearchMode();
-    }
-  }
+  // 🔥 ЗАПУСК ПРИЛОЖЕНИЯ
+  initApp();
 
-  init();
 </script>
 </body>
 </html>
