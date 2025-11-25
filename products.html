@@ -36,7 +36,7 @@
 
   * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
   
-  /* 🔥 Отключаем задержку тапа на iOS */
+  /* 🔥 CRITICAL FOR IOS RESPONSIVENESS */
   html, body, button, .cat-card, .product-row, .btn-save { 
     touch-action: manipulation; 
   }
@@ -151,15 +151,13 @@
     position: relative; cursor: pointer; background: transparent;
     transition: background 0.15s ease;
     will-change: transform;
-    opacity: 1; /* Default visible */
+    opacity: 1;
   }
   
-  /* Active state (Grey flash) */
   .product-row:active { background: rgba(255,255,255,0.05); }
   .product-row.selected { background: transparent; } 
 
-  /* 🔥 KEYFRAMES: BUMP (Пружинка) */
-  /* !important защищает от перекрытия */
+  /* 🔥 ANIMATION: BUMP */
   .bump { animation: bump 0.15s cubic-bezier(0.34, 1.56, 0.64, 1) !important; }
   @keyframes bump { 
     0% { transform: scale(1); } 
@@ -184,7 +182,6 @@
   }
   .product-row.selected .check-square {
     background: linear-gradient(135deg, var(--okA), var(--okB)); border-color: var(--okB);
-    /* Анимация самого чекбокса */
     transform: scale(1.05);
   }
   .product-row.selected .check-square::after { opacity: 1; transform: scale(1); }
@@ -380,15 +377,15 @@
     } catch(e) {}
   }
 
-  // --- ANIMATION LOGIC (SPRING EFFECT) ---
+  // --- ANIMATION LOGIC ---
   const bump = el => { 
     if(!el) return; 
     el.classList.remove('bump'); 
-    void el.offsetWidth; // force reflow
+    void el.offsetWidth; 
     el.classList.add('bump'); 
   };
 
-  // 🔥 GLOBAL LISTENER FOR TOUCHSTART (Backup)
+  // Global listener for category cards and buttons
   document.addEventListener('touchstart', (e) => {
     const el = e.target.closest('.cat-card, .btn-save');
     if (!el) return;
@@ -399,7 +396,6 @@
 
   function init() {
     ['p1', 'p2', 'p15'].forEach(id => state.selected.add(id));
-    
     renderCategories();
     updateSaveButton();
     
@@ -418,7 +414,6 @@
       
       const card = document.createElement('div');
       card.className = 'cat-card';
-      // Click navigation
       card.onclick = () => openCategory(cat.id);
       
       card.innerHTML = `
@@ -449,18 +444,17 @@
     el.viewList.classList.add('active');
     el.viewList.classList.remove('next');
     
+    updateSaveButton(); // Force update for local count
     if(tg) tg.BackButton.show();
   }
 
   function goBack() {
     state.activeCatId = null;
-    
     el.viewList.classList.remove('active');
     el.viewCats.classList.add('active');
     el.viewCats.classList.remove('prev');
-    
     setTimeout(renderCategories, 300); 
-    
+    updateSaveButton(); // Force update for total count
     if(tg) tg.BackButton.show(); 
   }
 
@@ -493,32 +487,26 @@
       const row = document.createElement('div');
       row.className = `product-row ${isSel ? 'selected' : ''}`;
       
-      // 🔥 ATTACH TOUCHSTART DIRECTLY TO ELEMENT FOR INSTANT IOS RESPONSE
       row.addEventListener('touchstart', function() {
           haptic('light');
           bump(this);
       }, {passive: true});
 
-      // Toggle logic on click (after bump)
       row.onclick = () => toggleProduct(item.id, row);
       
       if (!isSearch) {
-        // 1) Ставим начальное состояние (скрыто)
-        row.style.opacity = '0'; 
-        // 2) Запускаем анимацию появления
+        // Init hidden
+        row.style.opacity = '0';
         row.style.animation = `fadeInUp 0.2s ease forwards ${index * 0.02}s`;
         
-        // 3) 🔥 КРИТИЧНО: Очищаем анимацию, чтобы .bump не конфликтовал с opacity:0
-        //    Через (время анимации + задержка + буфер)
-        const delay = (index * 20) + 250; 
+        // 🔥 CLEANUP ANIMATION to allow .bump to work later
         setTimeout(() => {
             row.style.opacity = '1';
-            row.style.animation = ''; 
-            row.style.transform = ''; 
-        }, delay);
+            row.style.animation = 'none';
+            row.style.transform = 'none';
+        }, (index * 20) + 300);
       }
       
-      // LEFT SIDE CHECKBOX
       row.innerHTML = `
         <div class="check-square"></div>
         <div class="prod-info">
@@ -551,11 +539,26 @@
     }
   }
 
+  // 🔥 SMART BUTTON LOGIC
   function updateSaveButton() {
-    const count = state.selected.size;
+    let count = 0;
+    let text = '';
+    
+    if (state.activeCatId) {
+        // Category Mode: Show Local Selection Count
+        const cat = DB.find(c => c.id === state.activeCatId);
+        count = cat.items.filter(i => state.selected.has(i.id)).length;
+        text = `Выбрать (${count})`; // Updated text
+    } else {
+        // Main Mode: Show Total Selection Count
+        count = state.selected.size;
+        text = `Сохранить (${count})`;
+    }
+
+    el.saveBtnText.textContent = text;
+
     if (count > 0) {
       el.btnSave.classList.add('visible');
-      el.saveBtnText.textContent = `Сохранить (${count})`;
     } else {
       el.btnSave.classList.remove('visible');
     }
@@ -564,7 +567,6 @@
   function updateSelectAllBtn(cat) {
     const allSelected = cat.items.every(i => state.selected.has(i.id));
     el.btnSelectAll.textContent = allSelected ? 'Снять всё' : 'Выбрать всё';
-    
     el.btnSelectAll.onclick = () => toggleAllInCategory(cat, !allSelected);
   }
 
@@ -625,9 +627,17 @@
     exitSearchMode();
   }
 
+  // 🔥 DUAL ACTION BUTTON
   function saveSelection() {
-    // Haptic/Bump handled by touchstart on button
+    haptic('success'); // Haptic also on click success
     
+    // 1. If in category -> Go Back (Done)
+    if (state.activeCatId && !state.searchMode) {
+        goBack();
+        return;
+    }
+
+    // 2. If in Main Screen -> Save
     if (tg && tg.showPopup) {
        tg.showPopup({
           title: 'Сохранено',
@@ -635,12 +645,10 @@
           buttons: [{type: 'ok'}]
        }, function() {
            if (state.searchMode) exitSearchMode();
-           if (state.activeCatId) goBack();
        });
     } else {
        alert(`Сохранено ${state.selected.size} продуктов!`);
        if (state.searchMode) exitSearchMode();
-       if (state.activeCatId) goBack();
     }
   }
 
