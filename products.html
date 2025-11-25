@@ -191,24 +191,45 @@
   }
   .product-row.selected .check-square::after { opacity: 1; transform: scale(1); }
 
-  /* --- FLOATING SAVE BUTTON --- */
-  .save-floater { position: absolute; bottom: 34px; left: 0; right: 0; display: flex; justify-content: center; z-index: 30; pointer-events: none; }
+/* --- FLOATING SAVE BUTTON --- */
+  .save-floater { 
+    position: absolute; bottom: 34px; left: 0; right: 0; 
+    display: flex; justify-content: center; z-index: 30; pointer-events: none; 
+  }
   
   .btn-save {
-    pointer-events: auto; background: linear-gradient(135deg, var(--okA), var(--okB));
-    color: #fff; border: none; height: auto; min-width: 160px; padding: 14px 28px;
+    pointer-events: auto; 
+    background: linear-gradient(135deg, var(--okA), var(--okB));
+    color: #fff; 
+    border: none; 
+    height: auto; 
+    min-width: 160px; 
+    padding: 14px 28px;
     font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', Roboto, sans-serif;
-    font-size: 16px; font-weight: 900; border-radius: 14px;
-    box-shadow: 0 8px 32px rgba(10, 132, 255, 0.4); -webkit-font-smoothing: antialiased;
+    font-size: 16px; 
+    font-weight: 600; /* Было 900, сделал тоньше */
+    border-radius: 14px;
+    box-shadow: 0 8px 32px rgba(10, 132, 255, 0.4); 
+    -webkit-font-smoothing: antialiased;
     
-    cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px;
-    transition: opacity 0.2s;
-    transform: translateY(100px); opacity: 0;
-    will-change: transform;
+    cursor: pointer; 
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    transition: all 0.2s ease; /* Плавный переход цветов */
+    
+    /* Кнопка теперь всегда на месте, не уезжает вниз */
+    transform: translateY(0); 
+    opacity: 1;
   }
-  .btn-save.visible { transform: translateY(0); opacity: 1; }
   
-  .btn-save:active { filter: saturate(0.9); } 
+  .btn-save:active { transform: scale(0.98); } 
+
+  /* СТИЛЬ ДЛЯ ОТКЛЮЧЕННОЙ КНОПКИ */
+  .btn-save.disabled {
+    background: var(--surface-dark); /* Темный фон */
+    color: rgba(255, 255, 255, 0.3); /* Тусклый текст */
+    box-shadow: none; /* Убираем свечение */
+    pointer-events: none; /* Запрещаем клик */
+  }
 
   /* --- EMPTY STATE --- */
   .empty-state {
@@ -283,6 +304,7 @@
   // 🔴 ВСТАВЬ СЮДА ССЫЛКУ НА ВЕБ-ПРИЛОЖЕНИЕ (из Google Apps Script)
   const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbybxqI4xOLAUOcMXGReNl0PVjGToGg6_x3ZxlKNnUHg3XcaZGhkbsu61Adgkb4emrkm/exec';
 
+  
 
   const tg = window.Telegram?.WebApp;
   if (tg) {
@@ -293,16 +315,17 @@
       tg.setBackgroundColor('#050505'); 
     } catch(e){}
     
+    // 🔥 ИСПРАВЛЕНИЕ 1: Навигация на router.html
     tg.BackButton.onClick(() => {
       if (state.searchMode) exitSearchMode();
       else if (state.activeCatId) goBack();
-      else tg.close();
+      else window.location.href = 'router.html'; // Возврат в меню
     });
   }
 
   /**
    * ===============================================================
-   * 2. STATE (СОСТОЯНИЕ)
+   * 2. STATE
    * ===============================================================
    */
   const state = {
@@ -333,46 +356,36 @@
 
   /**
    * ===============================================================
-   * 3. DATA SERVICE (С ЛОГИКОЙ ОЧИСТКИ)
+   * 3. DATA SERVICE
    * ===============================================================
    */
   const DataService = {
     categories: [],
     productsMap: {}, 
-    allValidIds: new Set(), // 🔥 Для проверки существования ID
+    allValidIds: new Set(), 
 
     async init() {
-      // 1. Грузим всё из кэша
       this.loadFromCache();
-      
-      // 2. 🔥 ВАЖНО: Чистим корзину от старых ID сразу после загрузки кэша
       this.sanitizeCart(); 
-      
       renderCategories(); 
-      updateSaveButton();
+      updateSaveButton(); // Обновляем состояние кнопки сразу
 
-      // 3. Идем в сеть
       await this.fetchFromServer();
     },
 
     loadFromCache() {
       try {
         const cachedCat = localStorage.getItem('ultima_catalog_v2');
-        if (cachedCat) {
-          this.processCatalogData(JSON.parse(cachedCat));
-        }
+        if (cachedCat) this.processCatalogData(JSON.parse(cachedCat));
         
         const cachedCart = localStorage.getItem('ultima_cart_v1');
-        if (cachedCart) {
-          state.selected = new Set(JSON.parse(cachedCart));
-        }
+        if (cachedCart) state.selected = new Set(JSON.parse(cachedCart));
       } catch(e) { console.error("Cache error", e); }
     },
 
     async fetchFromServer() {
       try {
         const currentVer = localStorage.getItem('ultima_ver') || 0;
-        
         const response = await fetch(BACKEND_URL, {
           method: 'POST',
           body: JSON.stringify({
@@ -385,78 +398,55 @@
         const data = await response.json();
 
         if (data.ok) {
-          // Если пришел новый каталог
           if (data.needUpdate && data.catalog) {
-            console.log("📥 New catalog received");
             this.processCatalogData(data.catalog);
-            
             localStorage.setItem('ultima_catalog_v2', JSON.stringify(data.catalog));
             localStorage.setItem('ultima_ver', data.serverVer);
-            
-            // После обновления каталога снова чистим корзину (вдруг ID сменились)
             this.sanitizeCart();
-            
             if (!state.activeCatId && !state.searchMode) renderCategories();
           }
 
-          // Если сервер прислал свою версию корзины
           if (data.userSelection) {
-            console.log("🛒 Syncing cart");
             try {
-              const parsed = typeof data.userSelection === 'string' 
-                ? JSON.parse(data.userSelection) 
-                : data.userSelection;
-              
+              const parsed = typeof data.userSelection === 'string' ? JSON.parse(data.userSelection) : data.userSelection;
               if (Array.isArray(parsed)) {
                 state.selected = new Set(parsed);
-                this.sanitizeCart(); // Проверяем и серверные данные тоже
+                this.sanitizeCart();
                 saveSelectionToCache();
                 updateSaveButton();
                 if (!state.activeCatId) renderCategories();
               }
-            } catch(e) { console.error("Cart parse error", e); }
+            } catch(e) {}
           }
         }
-      } catch (e) {
-        console.warn("Network error:", e);
-      }
+      } catch (e) {}
     },
 
     processCatalogData(rawCatalog) {
       if (!rawCatalog) return;
       this.categories = rawCatalog.categories || [];
       this.productsMap = {};
-      this.allValidIds.clear(); // Сброс списка валидных ID
+      this.allValidIds.clear();
 
       const rawProds = rawCatalog.products || [];
       rawProds.forEach(row => {
         const [pId, catId, pName, pMeta] = row;
-        
-        // Регистрируем ID как валидный
         this.allValidIds.add(String(pId));
-
         if (!this.productsMap[catId]) this.productsMap[catId] = [];
         this.productsMap[catId].push({ id: pId, name: pName, meta: pMeta });
       });
     },
 
-    // 🔥 ГЛАВНАЯ ФУНКЦИЯ-ЛЕКАРЬ
     sanitizeCart() {
-      if (this.allValidIds.size === 0) return; // Если каталог пуст, не трогаем (вдруг не прогрузился)
-
+      if (this.allValidIds.size === 0) return;
       let changed = false;
-      const initialSize = state.selected.size;
-
-      // Удаляем из выбранного всё, чего нет в каталоге
       state.selected.forEach(id => {
         if (!this.allValidIds.has(String(id))) {
           state.selected.delete(id);
           changed = true;
         }
       });
-
       if (changed) {
-        console.log(`🧹 Cleaned up ${initialSize - state.selected.size} ghost items.`);
         saveSelectionToCache();
         updateSaveButton();
       }
@@ -495,6 +485,9 @@
   document.addEventListener('touchstart', (e) => {
     const el = e.target.closest('.cat-card, .btn-save');
     if (!el) return;
+    // Кнопка Save не должна вибрировать при таче, если она disabled
+    if (el.classList.contains('btn-save') && el.classList.contains('disabled')) return;
+    
     haptic('light'); bump(el);
   }, {passive: true});
 
@@ -505,7 +498,6 @@
    */
   function renderCategories() {
     el.catGrid.innerHTML = '';
-    
     if (DataService.categories.length === 0) {
       el.catGrid.innerHTML = '<div style="grid-column:span 2; text-align:center; padding:40px; color:#666;">Загрузка...</div>';
       return;
@@ -540,7 +532,6 @@
     const cat = DataService.categories.find(c => c.id === id);
     el.catTitle.textContent = cat ? cat.name : 'Продукты';
     el.productList.style.display = 'flex';
-    
     const products = DataService.getProducts(id);
     startInfiniteRender(products, el.productList);
     updateSelectAllBtn();
@@ -563,7 +554,6 @@
     if(tg) tg.BackButton.hide();
   }
 
-  // --- Infinite Scroll ---
   function startInfiniteRender(items, container, isSearch = false) {
     container.innerHTML = '';
     if (isSearch) {
@@ -643,19 +633,29 @@
     if (state.activeCatId && !state.searchMode) updateSelectAllBtn();
   }
 
+  // 🔥 ИСПРАВЛЕНИЕ 2: Логика кнопки Сохранить (Disabled вместо Hidden)
   function updateSaveButton() {
     let count = 0;
     let text = '';
+    
+    // Сбрасываем disabled по умолчанию
+    el.btnSave.classList.remove('disabled');
+
     if (state.activeCatId) {
+        // Внутри категории
         const products = DataService.getProducts(state.activeCatId);
         count = products.filter(i => state.selected.has(i.id)).length;
         text = count > 0 ? `Выбрано (${count})` : `Назад`;
-        el.btnSave.classList.add('visible');
+        // В категории кнопка всегда активна (либо показывает выбор, либо работает как назад)
     } else {
+        // На главной странице
         count = state.selected.size;
         text = `Сохранить (${count})`;
-        if (count > 0) el.btnSave.classList.add('visible');
-        else el.btnSave.classList.remove('visible');
+        
+        // Если ничего не выбрано - дизэйблим
+        if (count === 0) {
+           el.btnSave.classList.add('disabled');
+        }
     }
     el.saveBtnText.textContent = text;
   }
@@ -680,7 +680,6 @@
     updateSaveButton();
   }
 
-  // --- Search ---
   function handleSearch(e) {
     const query = e.target.value.toLowerCase().trim();
     if (query.length > 0) {
@@ -720,13 +719,14 @@
    * ===============================================================
    */
   async function saveSelection() {
-    haptic('success'); 
+    // 🔥 ИСПРАВЛЕНИЕ 3: Мягкая вибрация при нажатии
+    haptic('light'); 
+    
     if (state.activeCatId && !state.searchMode) { goBack(); return; }
 
     const originalText = el.saveBtnText.textContent;
     el.saveBtnText.textContent = "Сохранение...";
     
-    // 🔥 Еще раз чистим перед отправкой, на всякий случай
     DataService.sanitizeCart(); 
     const selectionArray = Array.from(state.selected);
     
@@ -742,24 +742,26 @@
       const res = await response.json();
       
       if (res.ok) {
-        haptic('success');
+        // Успех
         if (tg && tg.showPopup) {
-           tg.showPopup({ title: 'Готово', message: 'Ваш выбор сохранен', buttons: [{type:'ok'}] }, 
-           () => { if (state.searchMode) exitSearchMode(); });
+           tg.showPopup({ 
+             title: 'Готово', 
+             message: 'Ваш выбор сохранен', 
+             buttons: [{type:'ok'}] 
+           }, () => { if (state.searchMode) exitSearchMode(); });
         } else {
            alert(`✅ Сохранено!`);
            if (state.searchMode) exitSearchMode();
         }
       } else { throw new Error("Server error"); }
     } catch(e) {
-      haptic('error');
+      haptic('error'); // При ошибке оставляем более заметную вибрацию
       alert('Ошибка соединения.');
     } finally {
       el.saveBtnText.textContent = originalText;
     }
   }
 
-  // Init
   el.searchInput.addEventListener('input', handleSearch);
   el.searchClear.addEventListener('click', clearSearch);
   const observer = new IntersectionObserver((entries) => {
@@ -768,7 +770,6 @@
   observer.observe(el.sentinel);
 
   DataService.init();
-
 </script>
 </body>
 </html>
