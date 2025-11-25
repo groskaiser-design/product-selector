@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Выбор продуктов Ultima</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    /* --- PALETTE (Ultima Core) --- */
+    --bg-core: #050505;
+    --text-main: #ffffff;
+    --text-muted: rgba(255, 255, 255, 0.55);
+    
+    /* --- GLASS SURFACES --- */
+    --surface-glass: rgba(255, 255, 255, 0.07);
+    --surface-card: rgba(255, 255, 255, 0.04);
+    --surface-border: rgba(255, 255, 255, 0.1);
+    --surface-highlight: rgba(255, 255, 255, 0.25);
+    
+    /* --- ACCENTS --- */
+    --acc-blue: #0a84ff;
+    --acc-green: #30d158;
+    --acc-orange: #ff9f0a;
+    --acc-purple: #5e60ce;
+    
+    /* --- METRICS --- */
+    --radius-l: 24px;
+    --radius-m: 16px;
+    --pad-x: 16px;
+    --bottom-bar-h: 80px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  
+  body {
+    background-color: var(--bg-core);
+    color: var(--text-main);
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', Roboto, sans-serif;
+    height: 100vh;
+    overflow: hidden; /* Скроллим только внутренние контейнеры */
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* --- FX LAYER (Background from Breath/Measurements) --- */
+  .fx-layer { position: fixed; inset: 0; z-index: 0; pointer-events: none; transform: translate3d(0,0,0); }
+  .orb { position: absolute; border-radius: 50%; filter: blur(80px); opacity: 0.6; will-change: transform; }
+  
+  /* Orb 1: Верхний левый, фиолетово-синий */
+  .orb-1 { 
+    width: 90vw; height: 90vw; 
+    background: radial-gradient(circle, rgba(10, 132, 255, 0.5) 0%, transparent 70%); 
+    top: -20%; left: -20%; 
+    animation: float 25s infinite linear;
+  }
+  
+  /* Orb 2: Нижний правый, активный */
+  .orb-2 { 
+    width: 400px; height: 400px; 
+    background: radial-gradient(circle, rgba(94, 96, 206, 0.5) 0%, transparent 70%); 
+    bottom: -100px; right: -100px; 
+    animation: breathe 8s infinite ease-in-out; 
+  }
+
+  .noise { 
+    position: fixed; inset: 0; z-index: 0; opacity: 0.04; 
+    background: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); 
+    pointer-events: none; 
+  }
+
+  @keyframes float { 0% {transform:rotate(0deg)} 100% {transform:rotate(360deg)} }
+  @keyframes breathe { 0%, 100% { transform: scale(1); opacity: 0.5; } 50% { transform: scale(1.1); opacity: 0.7; } }
+
+  /* --- LAYOUT --- */
+  .app-header {
+    position: relative; z-index: 10;
+    padding: 12px var(--pad-x) 12px;
+    background: rgba(5, 5, 5, 0.6); /* Полупрозрачный фон */
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-bottom: 1px solid var(--surface-border);
+    flex-shrink: 0;
+  }
+
+  .title-row {
+    display: flex; align-items: center; justify-content: space-between;
+    height: 44px; margin-bottom: 8px;
+  }
+  .app-title { font-size: 24px; font-weight: 800; letter-spacing: 0.3px; }
+  
+  /* Glass Search Bar */
+  .search-box {
+    position: relative; 
+  }
+  .search-input {
+    width: 100%; height: 44px;
+    background: var(--surface-glass);
+    border: 1px solid var(--surface-border);
+    border-radius: 14px;
+    padding: 0 40px 0 44px;
+    color: #fff; font-size: 16px;
+    transition: all 0.2s ease;
+  }
+  .search-input::placeholder { color: var(--text-muted); }
+  .search-input:focus {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: var(--surface-highlight);
+    outline: none;
+    box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.05);
+  }
+  .search-icon {
+    position: absolute; left: 14px; top: 50%; transform: translateY(-50%);
+    color: var(--text-muted); pointer-events: none;
+  }
+  .search-clear {
+    position: absolute; right: 0; top: 0; bottom: 0; width: 40px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-muted); opacity: 0; pointer-events: none; transition: opacity 0.2s;
+  }
+  .search-input:not(:placeholder-shown) ~ .search-clear { opacity: 1; pointer-events: auto; }
+
+  /* --- VIEW CONTAINER & ANIMATIONS --- */
+  .views-container {
+    position: relative; flex: 1; overflow: hidden; z-index: 1;
+  }
+  
+  .view {
+    position: absolute; inset: 0;
+    overflow-y: auto; overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    padding: 16px var(--pad-x) 100px; /* Отступ под бар */
+    transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.35s ease;
+    opacity: 0; pointer-events: none; transform: translateX(40px);
+    background: transparent;
+  }
+  .view.active { opacity: 1; pointer-events: auto; transform: translateX(0); }
+  .view.prev { transform: translateX(-20%) scale(0.98); opacity: 0; pointer-events: none; }
+
+  /* --- CATEGORY GRID (Glass Cards) --- */
+  .cat-grid {
+    display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;
+  }
+  
+  .cat-card {
+    /* Dark Glass Style */
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-top: 1px solid rgba(255, 255, 255, 0.15); /* Top highlight */
+    border-radius: 20px;
+    
+    padding: 16px;
+    display: flex; flex-direction: column; justify-content: space-between;
+    min-height: 120px;
+    cursor: pointer; position: relative; overflow: hidden;
+    transition: transform 0.15s ease, background 0.2s;
+    
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+  }
+  .cat-card:active { transform: scale(0.96); background: rgba(255,255,255,0.06); }
+  
+  .cat-icon { font-size: 28px; margin-bottom: 12px; filter: drop-shadow(0 4px 8px rgba(0,0,0,0.3)); }
+  .cat-name { font-size: 16px; font-weight: 700; line-height: 1.2; margin-bottom: 4px; color: #fff; }
+  .cat-meta { font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; font-weight: 500; }
+  
+  /* Neon Progress bar */
+  .cat-progress-track {
+    position: absolute; bottom: 0; left: 0; right: 0; height: 3px; 
+    background: rgba(255,255,255,0.05);
+  }
+  .cat-progress-fill {
+    height: 100%; background: var(--acc-blue);
+    width: 0%; transition: width 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    box-shadow: 0 0 10px var(--acc-blue);
+  }
+
+  /* --- PRODUCT LIST --- */
+  .list-header-area {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 16px;
+  }
+  .btn-back {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 15px; font-weight: 600; color: var(--text-muted);
+    background: none; border: none; cursor: pointer;
+    padding: 8px 0;
+  }
+  .btn-select-all {
+    font-size: 13px; font-weight: 700; color: var(--acc-blue);
+    background: rgba(10, 132, 255, 0.15);
+    padding: 8px 14px; border-radius: 12px; border: 1px solid rgba(10, 132, 255, 0.2);
+    cursor: pointer; transition: all 0.2s;
+  }
+  .btn-select-all:active { background: rgba(10, 132, 255, 0.3); transform: scale(0.96); }
+
+  /* Product Row (Ultima List Item) */
+  .product-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px;
+    margin-bottom: 8px;
+    
+    /* Glass List Item */
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 18px;
+    
+    cursor: pointer;
+    transition: all 0.2s ease;
+    position: relative;
+    overflow: hidden;
+  }
+  
+  /* Selected State - Neon Glow */
+  .product-row.selected {
+    background: linear-gradient(90deg, rgba(10, 132, 255, 0.15) 0%, rgba(10, 132, 255, 0.05) 100%);
+    border-color: rgba(10, 132, 255, 0.4);
+    box-shadow: 0 0 20px rgba(10, 132, 255, 0.15) inset; /* Внутреннее свечение */
+  }
+  
+  .prod-info { flex: 1; z-index: 2; }
+  .prod-name { font-size: 15px; font-weight: 600; color: #fff; margin-bottom: 3px; }
+  .prod-meta { font-size: 12px; color: var(--text-muted); font-weight: 500; }
+  
+  /* Checkbox with Animation */
+  .prod-check {
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    border: 2px solid rgba(255,255,255,0.3);
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    background: rgba(0,0,0,0.2);
+    z-index: 2;
+  }
+  
+  .product-row.selected .prod-check {
+    background: var(--acc-blue);
+    border-color: var(--acc-blue);
+    transform: scale(1.1);
+    box-shadow: 0 0 10px var(--acc-blue);
+  }
+  .prod-check svg { opacity: 0; transform: scale(0.5); transition: all 0.2s; }
+  .product-row.selected .prod-check svg { opacity: 1; transform: scale(1); }
+
+  /* --- BOTTOM BAR (Floating Glass) --- */
+  .bottom-bar {
+    position: absolute; bottom: 20px; left: 16px; right: 16px;
+    height: 70px;
+    
+    /* Deep Glass */
+    background: rgba(20, 20, 20, 0.85);
+    backdrop-filter: blur(30px); -webkit-backdrop-filter: blur(30px);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 24px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    
+    padding: 0 16px;
+    display: flex; align-items: center; gap: 16px;
+    z-index: 20;
+    transform: translateY(150%); transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  }
+  .bottom-bar.visible { transform: translateY(0); }
+
+  .bar-info { flex: 1; display: flex; flex-direction: column; justify-content: center; }
+  .bar-count { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; }
+  .bar-val { font-size: 17px; font-weight: 800; color: #fff; }
+
+  .btn-save {
+    background: linear-gradient(135deg, var(--acc-blue), #0066cc);
+    color: #fff; border: none;
+    height: 44px; padding: 0 20px;
+    border-radius: 16px;
+    font-size: 15px; font-weight: 700;
+    box-shadow: 0 4px 15px rgba(10, 132, 255, 0.4);
+    cursor: pointer;
+    display: flex; align-items: center; gap: 8px;
+    transition: transform 0.1s, box-shadow 0.2s;
+  }
+  .btn-save:active { transform: scale(0.96); box-shadow: 0 2px 8px rgba(10, 132, 255, 0.3); }
+
+  /* --- EMPTY STATE --- */
+  .empty-state {
+    text-align: center; margin-top: 60px; color: var(--text-muted);
+  }
+  .empty-icon { font-size: 40px; margin-bottom: 10px; opacity: 0.5; }
+
+</style>
+</head>
+<body>
+
+<!-- Background -->
+<div class="fx-layer">
+  <div class="orb orb-1"></div>
+  <div class="orb orb-2"></div>
+  <div class="noise"></div>
+</div>
+
+<!-- Header -->
+<div class="app-header">
+  <div class="title-row">
+    <div class="app-title">Продукты</div>
+  </div>
+  <div class="search-box">
+    <div class="search-icon">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    </div>
+    <input type="text" class="search-input" placeholder="Поиск..." id="searchInput">
+    <div class="search-clear" id="searchClear">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </div>
+  </div>
+</div>
+
+<!-- Views Container -->
+<div class="views-container">
+  
+  <!-- VIEW 1: Categories Grid -->
+  <div class="view active" id="view-cats">
+    <div class="cat-grid" id="catGrid">
+      <!-- JS Injected -->
+    </div>
+  </div>
+
+  <!-- VIEW 2: Product List -->
+  <div class="view" id="view-list">
+    <div class="list-header-area">
+      <button class="btn-back" onclick="goBack()">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        Назад
+      </button>
+      <button class="btn-select-all" id="btnSelectAll">Выбрать всё</button>
+    </div>
+    <h2 style="margin-bottom: 16px; font-size: 26px; font-weight: 800; letter-spacing: -0.5px;" id="catTitle">Название</h2>
+    <div id="productList"></div>
+  </div>
+
+  <!-- VIEW 3: Search Results -->
+  <div class="view" id="view-search">
+    <div id="searchResults"></div>
+  </div>
+
+</div>
+
+<!-- Floating Bottom Bar -->
+<div class="bottom-bar visible" id="bottomBar">
+  <div class="bar-info">
+    <div class="bar-count">В корзине</div>
+    <div class="bar-val"><span id="totalCount">0</span> продуктов</div>
+  </div>
+  <button class="btn-save" onclick="saveSelection()">
+    <span>Сохранить</span>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+  </button>
+</div>
+
+<script>
+  // --- MOCK DATA ---
+  const DB = [
+    { 
+      id: 'c1', name: 'Белки', icon: '🥩', 
+      items: [
+        { id: 'p1', name: 'Куриная грудка', meta: '113 ккал / 23.6 Б' },
+        { id: 'p2', name: 'Индейка филе', meta: '115 ккал / 24 Б' },
+        { id: 'p3', name: 'Говядина постная', meta: '180 ккал / 20 Б' },
+        { id: 'p4', name: 'Яйцо куриное', meta: '86 ккал / 7 Б' },
+        { id: 'p5', name: 'Творог 5%', meta: '121 ккал / 16 Б' },
+        { id: 'p6', name: 'Лосось', meta: '208 ккал / 20 Б' },
+      ]
+    },
+    { 
+      id: 'c2', name: 'Крупы', icon: '🍚', 
+      items: [
+        { id: 'p9', name: 'Гречка', meta: '313 ккал / 62 У' },
+        { id: 'p10', name: 'Рис Басмати', meta: '350 ккал / 78 У' },
+        { id: 'p11', name: 'Овсянка', meta: '360 ккал / 65 У' },
+        { id: 'p12', name: 'Макароны тв/с', meta: '340 ккал / 70 У' },
+        { id: 'p13', name: 'Киноа', meta: '368 ккал / 64 У' },
+      ]
+    },
+    { 
+      id: 'c3', name: 'Овощи', icon: '🥦', 
+      items: [
+        { id: 'p15', name: 'Огурцы', meta: '15 ккал' },
+        { id: 'p16', name: 'Помидоры', meta: '20 ккал' },
+        { id: 'p17', name: 'Брокколи', meta: '34 ккал' },
+        { id: 'p18', name: 'Шпинат', meta: '23 ккал' },
+        { id: 'p19', name: 'Болгарский перец', meta: '27 ккал' },
+      ]
+    },
+    {
+      id: 'c4', name: 'Фрукты', icon: '🍎',
+      items: [
+        { id: 'p21', name: 'Яблоко', meta: '47 ккал' },
+        { id: 'p22', name: 'Банан', meta: '89 ккал' },
+        { id: 'p23', name: 'Апельсин', meta: '43 ккал' },
+        { id: 'p24', name: 'Голубика', meta: '57 ккал' },
+      ]
+    },
+    {
+      id: 'c5', name: 'Жиры', icon: '🥑',
+      items: [
+        { id: 'p25', name: 'Оливковое масло', meta: '884 ккал' },
+        { id: 'p26', name: 'Авокадо', meta: '160 ккал' },
+        { id: 'p27', name: 'Грецкий орех', meta: '654 ккал' },
+        { id: 'p28', name: 'Миндаль', meta: '579 ккал' },
+      ]
+    },
+    {
+      id: 'c6', name: 'Снеки', icon: '🍫',
+      items: [
+        { id: 'p30', name: 'Протеиновый батончик', meta: '200 ккал' },
+        { id: 'p31', name: 'Хлебцы', meta: '300 ккал' },
+      ]
+    }
+  ];
+
+  // --- STATE ---
+  const state = {
+    selected: new Set(),
+    activeCatId: null,
+    searchMode: false
+  };
+
+  // --- DOM ELEMENTS ---
+  const el = {
+    catGrid: document.getElementById('catGrid'),
+    productList: document.getElementById('productList'),
+    viewCats: document.getElementById('view-cats'),
+    viewList: document.getElementById('view-list'),
+    viewSearch: document.getElementById('view-search'),
+    catTitle: document.getElementById('catTitle'),
+    totalCount: document.getElementById('totalCount'),
+    btnSelectAll: document.getElementById('btnSelectAll'),
+    searchInput: document.getElementById('searchInput'),
+    searchClear: document.getElementById('searchClear'),
+    searchResults: document.getElementById('searchResults'),
+    bottomBar: document.getElementById('bottomBar')
+  };
+
+  // --- INIT ---
+  function init() {
+    // Pre-select some for demo
+    ['p1', 'p2', 'p15'].forEach(id => state.selected.add(id));
+    
+    renderCategories();
+    updateBottomBar();
+    
+    // Listeners
+    el.searchInput.addEventListener('input', handleSearch);
+    el.searchClear.addEventListener('click', clearSearch);
+  }
+
+  // --- RENDER CATEGORIES ---
+  function renderCategories() {
+    el.catGrid.innerHTML = '';
+    
+    DB.forEach(cat => {
+      const totalItems = cat.items.length;
+      const selectedItems = cat.items.filter(i => state.selected.has(i.id)).length;
+      const progress = (selectedItems / totalItems) * 100;
+      
+      const card = document.createElement('div');
+      card.className = 'cat-card';
+      card.onclick = () => openCategory(cat.id);
+      
+      card.innerHTML = `
+        <div>
+          <div class="cat-icon">${cat.icon}</div>
+          <div class="cat-name">${cat.name}</div>
+          <div class="cat-meta">${selectedItems} из ${totalItems}</div>
+        </div>
+        <div class="cat-progress-track">
+          <div class="cat-progress-fill" style="width: ${progress}%"></div>
+        </div>
+      `;
+      el.catGrid.appendChild(card);
+    });
+  }
+
+  // --- NAVIGATION ---
+  function openCategory(id) {
+    state.activeCatId = id;
+    const cat = DB.find(c => c.id === id);
+    
+    el.catTitle.textContent = cat.name;
+    renderProductList(cat.items, el.productList);
+    updateSelectAllBtn(cat);
+
+    // Slide Transition
+    el.viewCats.classList.add('prev');
+    el.viewCats.classList.remove('active');
+    el.viewList.classList.add('active');
+    el.viewList.classList.remove('next');
+  }
+
+  function goBack() {
+    state.activeCatId = null;
+    
+    // Slide Back
+    el.viewList.classList.remove('active');
+    el.viewCats.classList.add('active');
+    el.viewCats.classList.remove('prev');
+    
+    // Re-render to update progress bars
+    setTimeout(renderCategories, 300); 
+  }
+
+  // --- RENDER LIST ---
+  function renderProductList(items, container) {
+    container.innerHTML = '';
+    
+    items.forEach((item, index) => {
+      const isSel = state.selected.has(item.id);
+      const row = document.createElement('div');
+      row.className = `product-row ${isSel ? 'selected' : ''}`;
+      row.onclick = () => toggleProduct(item.id, row);
+      
+      // Stagger animation for list items
+      row.style.animation = `fadeInUp 0.3s ease forwards ${index * 0.03}s`;
+      row.style.opacity = '0';
+      row.style.transform = 'translateY(10px)';
+      
+      row.innerHTML = `
+        <div class="prod-info">
+          <div class="prod-name">${item.name}</div>
+          <div class="prod-meta">${item.meta}</div>
+        </div>
+        <div class="prod-check">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </div>
+      `;
+      container.appendChild(row);
+    });
+  }
+
+  // Add keyframes for staggered list
+  const styleSheet = document.createElement("style");
+  styleSheet.innerText = `
+    @keyframes fadeInUp {
+      to { opacity: 1; transform: translateY(0); }
+    }
+  `;
+  document.head.appendChild(styleSheet);
+
+  // --- INTERACTION ---
+  function toggleProduct(id, rowEl) {
+    if (window.Telegram?.WebApp?.HapticFeedback) {
+      window.Telegram.WebApp.HapticFeedback.selectionChanged();
+    }
+
+    if (state.selected.has(id)) {
+      state.selected.delete(id);
+      rowEl.classList.remove('selected');
+    } else {
+      state.selected.add(id);
+      rowEl.classList.add('selected');
+    }
+    
+    updateBottomBar();
+    
+    if (state.activeCatId && !state.searchMode) {
+        const cat = DB.find(c => c.id === state.activeCatId);
+        updateSelectAllBtn(cat);
+    }
+  }
+
+  function updateBottomBar() {
+    const count = state.selected.size;
+    el.totalCount.textContent = count;
+    
+    // Animate Bar
+    if (count > 0) {
+      el.bottomBar.classList.add('visible');
+    } 
+    // We generally keep it visible if items > 0, mock behavior
+  }
+
+  function updateSelectAllBtn(cat) {
+    const allSelected = cat.items.every(i => state.selected.has(i.id));
+    el.btnSelectAll.textContent = allSelected ? 'Снять всё' : 'Выбрать всё';
+    el.btnSelectAll.onclick = () => toggleAllInCategory(cat, !allSelected);
+  }
+
+  function toggleAllInCategory(cat, select) {
+    if (window.Telegram?.WebApp?.HapticFeedback) {
+      window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+    }
+    cat.items.forEach(i => {
+      if (select) state.selected.add(i.id);
+      else state.selected.delete(i.id);
+    });
+    renderProductList(cat.items, el.productList);
+    updateSelectAllBtn(cat);
+    updateBottomBar();
+  }
+
+  // --- SEARCH ---
+  function handleSearch(e) {
+    const query = e.target.value.toLowerCase().trim();
+    if (query.length > 0) {
+      if (!state.searchMode) enterSearchMode();
+      
+      let results = [];
+      DB.forEach(cat => {
+        const matches = cat.items.filter(i => i.name.toLowerCase().includes(query));
+        results = [...results, ...matches];
+      });
+      
+      if (results.length === 0) {
+        el.searchResults.innerHTML = '<div class="empty-state"><div class="empty-icon">🔍</div><div>Ничего не найдено</div></div>';
+      } else {
+        renderProductList(results, el.searchResults);
+      }
+    } else {
+      exitSearchMode();
+    }
+  }
+
+  function enterSearchMode() {
+    state.searchMode = true;
+    el.viewCats.classList.remove('active');
+    el.viewList.classList.remove('active');
+    el.viewSearch.classList.add('active');
+  }
+
+  function exitSearchMode() {
+    state.searchMode = false;
+    el.viewSearch.classList.remove('active');
+    
+    if (state.activeCatId) {
+      el.viewList.classList.add('active');
+    } else {
+      el.viewCats.classList.add('active');
+      renderCategories();
+    }
+  }
+
+  function clearSearch() {
+    el.searchInput.value = '';
+    exitSearchMode();
+  }
+
+  function saveSelection() {
+    if (window.Telegram?.WebApp?.HapticFeedback) {
+      window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
+    }
+    alert(`Сохранено ${state.selected.size} продуктов!`);
+  }
+
+  init();
+
+</script>
+</body>
+</html>
