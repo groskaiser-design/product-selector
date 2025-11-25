@@ -939,62 +939,52 @@ window.addEventListener('pageshow', (e)=>{
 
 <script>
 /* ============================================================
- *  BLOCK 0: TMA boot + admin detect
- *  Инициализация Telegram WebApp и определение админа
+ * BLOCK 0: TMA boot (FIXED & SAFE)
  * ============================================================ */
-/**
- * Инициализация Telegram Mini App:
- * - готовим WebApp
- * - разворачиваем на весь экран
- * - задаём цвет заголовка
- * - отключаем вертикальные свайпы (жест сворачивания)
- * - настраиваем кнопку "Назад" (возврат на router.html)
- */
 (function initTMA() {
-  const tg = window.Telegram?.WebApp;
-  if (!tg) return; // Если не в Телеграме, выходим
-
   try {
+    const tg = window.Telegram?.WebApp;
+    if (!tg) return; // Если это не Телеграм, просто выходим, не ломая сайт
+
     tg.ready();
     tg.expand();
 
-    // 1. Принудительно красим всё в черный
-    const darkColor = '#050505';
-    tg.setHeaderColor(darkColor); 
-    if (tg.setBackgroundColor) {
-      tg.setBackgroundColor(darkColor);
-    }
-    
-    // 2. Работаем с кнопкой "Назад" строго ПОСЛЕ покраски
-    if (tg.BackButton) {
-      // Сначала сбрасываем всё, чтобы не было глюков
-      tg.BackButton.offClick(); 
-      
-      // Показываем кнопку
-      tg.BackButton.show();
-      
-      // Вешаем обработчик
-      tg.BackButton.onClick(() => {
-        try {
-          // Возврат на router.html (как было в оригинале)
-          window.location.href = 'router.html';
-        } catch (_) {
-          // Если что-то пошло не так, пробуем стандартный браузерный "назад"
-          window.history.back();
-        }
-      });
+    // 1. Красим заголовок (обернуто в защиту, чтобы не ломало загрузку)
+    try {
+      tg.setHeaderColor('#050505'); // Черный цвет
+      if (tg.setBackgroundColor) {
+        tg.setBackgroundColor('#050505');
+      }
+    } catch (e) {
+      console.log('Error setting color:', e);
     }
 
-    // Отключаем свайпы, чтобы приложение не сворачивалось случайно
-    tg.disableVerticalSwipes?.();
-    
-  } catch (e) {
-    console.error('TMA Init Error:', e);
+    // 2. Настраиваем кнопку "Назад"
+    try {
+      if (tg.BackButton) {
+        tg.BackButton.show();
+        // Сначала удаляем старые обработчики, чтобы кнопка не тупила
+        tg.BackButton.offClick(); 
+        // Добавляем переход
+        tg.BackButton.onClick(function() {
+          window.location.href = 'router.html';
+        });
+      }
+    } catch (e) {
+      console.log('Error setting back button:', e);
+    }
+
+    // 3. Отключаем свайпы (если поддерживается)
+    try {
+      if (tg.disableVerticalSwipes) tg.disableVerticalSwipes();
+    } catch (e) {}
+
+  } catch (globalErr) {
+    // Если вообще все упало в TMA, выводим ошибку, но НЕ останавливаем скрипт
+    console.error('Critical TMA Error:', globalErr);
   }
 })();
-
-
-})();
+  
 /**
  * Проверка, является ли текущий пользователь админом
  * @returns {boolean} true, если Telegram user.id совпадает с ID администратора
