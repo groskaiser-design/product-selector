@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Выбор продуктов Ultima</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
+<!-- Firebase SDK -->
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+
 <style>
   :root {
     /* --- PALETTE --- */
@@ -141,6 +145,7 @@
     background: linear-gradient(165deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.02) 100%) !important;
     border: 1px solid rgba(255, 255, 255, 0.1) !important;
     padding: 14px; border-radius: 20px; backdrop-filter: blur(10px);
+    min-height: 50px; /* Чтобы не схлопывалось, если пусто */
   }
 
   /* --- PRODUCT ROW --- */
@@ -213,6 +218,9 @@
     border: 1px solid var(--surface-border); backdrop-filter: blur(10px);
   }
   .empty-icon { font-size: 48px; margin-bottom: 12px; opacity: 0.6; }
+  
+  /* Sentinel for Infinite Scroll */
+  #sentinel { height: 20px; width: 100%; opacity: 0; pointer-events: none; }
 
 </style>
 </head>
@@ -249,8 +257,10 @@
       <h2 class="list-title" id="catTitle">Название</h2>
       <button class="btn-select-all" id="btnSelectAll">Выбрать всё</button>
     </div>
-    <!-- New Container Wrapper -->
+    <!-- Container Wrapper -->
     <div class="product-list-container" id="productList"></div>
+    <!-- Sentinel for Infinite Scroll -->
+    <div id="sentinel"></div>
   </div>
 
   <!-- VIEW 3: Search -->
@@ -268,86 +278,137 @@
 </div>
 
 <script>
-  const tg = window.Telegram?.WebApp;
-  if (tg) {
-    tg.ready();
-    tg.expand();
-    try {
-        tg.setHeaderColor('#050505');
-        tg.setBackgroundColor('#050505');
-    } catch(e){}
-    
-    tg.BackButton.onClick(() => {
-      if (state.searchMode) {
-        exitSearchMode();
-      } else if (state.activeCatId) {
-        goBack();
-      } else {
-        window.location.href = 'router.html'; 
-      }
-    });
-  }
+  // 🟢 1. КОНФИГУРАЦИЯ FIREBASE
+  const firebaseConfig = {
+    // apiKey: "YOUR_API_KEY",
+    // authDomain: "YOUR_PROJECT.firebaseapp.com",
+    // projectId: "YOUR_PROJECT",
+    // storageBucket: "YOUR_PROJECT.appspot.com",
+    // messagingSenderId: "YOUR_SENDER_ID",
+    // appId: "YOUR_APP_ID"
+  };
 
-  const DB = [
-    { 
-      id: 'c1', name: 'Белки', icon: '🥩', 
-      items: [
-        { id: 'p1', name: 'Куриная грудка', meta: '113 ккал · 24Б · 2Ж · 0У' },
-        { id: 'p2', name: 'Индейка филе', meta: '115 ккал · 24Б · 1Ж · 0У' },
-        { id: 'p3', name: 'Говядина постная', meta: '180 ккал · 20Б · 10Ж · 0У' },
-        { id: 'p4', name: 'Яйцо куриное (C0)', meta: '86 ккал · 7Б · 6Ж · 0.5У' },
-        { id: 'p5', name: 'Творог 5%', meta: '121 ккал · 16Б · 5Ж · 3У' },
-        { id: 'p6', name: 'Лосось', meta: '208 ккал · 20Б · 13Ж · 0У' },
-        { id: 'p7', name: 'Тунец (конс.)', meta: '100 ккал · 23Б · 1Ж · 0У' },
-      ]
-    },
-    { 
-      id: 'c2', name: 'Крупы', icon: '🍚', 
-      items: [
-        { id: 'p9', name: 'Гречка (сухая)', meta: '313 ккал · 12Б · 3Ж · 62У' },
-        { id: 'p10', name: 'Рис Басмати', meta: '350 ккал · 7Б · 1Ж · 78У' },
-        { id: 'p11', name: 'Овсянка', meta: '360 ккал · 12Б · 6Ж · 65У' },
-        { id: 'p12', name: 'Макароны тв/с', meta: '340 ккал · 11Б · 1Ж · 70У' },
-        { id: 'p13', name: 'Киноа', meta: '368 ккал · 14Б · 6Ж · 64У' },
-      ]
-    },
-    { 
-      id: 'c3', name: 'Овощи', icon: '🥦', 
-      items: [
-        { id: 'p15', name: 'Огурцы', meta: '15 ккал · 0.8Б · 0Ж · 3У' },
-        { id: 'p16', name: 'Помидоры', meta: '20 ккал · 1Б · 0Ж · 4У' },
-        { id: 'p17', name: 'Брокколи', meta: '34 ккал · 3Б · 0.4Ж · 7У' },
-        { id: 'p18', name: 'Шпинат', meta: '23 ккал · 2.9Б · 0.4Ж · 3.6У' },
-      ]
-    },
-    {
-      id: 'c4', name: 'Фрукты', icon: '🍎',
-      items: [
-        { id: 'p21', name: 'Яблоко', meta: '47 ккал · 0.4Б · 0Ж · 10У' },
-        { id: 'p22', name: 'Банан', meta: '89 ккал · 1Б · 0Ж · 23У' },
-        { id: 'p23', name: 'Апельсин', meta: '43 ккал · 0.9Б · 0.2Ж · 8У' },
-      ]
-    },
-    {
-      id: 'c5', name: 'Жиры', icon: '🥑',
-      items: [
-        { id: 'p25', name: 'Оливковое масло', meta: '884 ккал · 0Б · 100Ж · 0У' },
-        { id: 'p26', name: 'Авокадо', meta: '160 ккал · 2Б · 15Ж · 9У' },
-      ]
-    },
-    {
-      id: 'c6', name: 'Снеки', icon: '🍫',
-      items: [
-        { id: 'p30', name: 'Протеиновый батончик', meta: '200 ккал · 20Б · 8Ж · 10У' },
-        { id: 'p31', name: 'Хлебцы', meta: '300 ккал · 10Б · 2Ж · 60У' },
-      ]
+  let db = null;
+  try {
+    if (firebaseConfig.apiKey) {
+      firebase.initializeApp(firebaseConfig);
+      db = firebase.firestore();
+      // Offline Persistence
+      db.enablePersistence().catch(err => console.log("Persistence error:", err));
     }
+  } catch(e) { console.log("Firebase skipped", e); }
+
+  // 🟢 2. MOCK DATA
+  const MOCK_DB = [
+    { id:'c1', name:'Белки', icon:'🥩', items:[
+      {id:'p1',name:'Куриная грудка',meta:'113 ккал · 24Б · 2Ж · 0У'},
+      {id:'p2',name:'Индейка филе',meta:'115 ккал · 24Б · 1Ж · 0У'},
+      {id:'p3',name:'Говядина постная',meta:'180 ккал · 20Б · 10Ж · 0У'},
+      {id:'p4',name:'Яйцо куриное (C0)',meta:'86 ккал · 7Б · 6Ж · 0.5У'},
+      {id:'p5',name:'Творог 5%',meta:'121 ккал · 16Б · 5Ж · 3У'},
+      {id:'p6',name:'Лосось',meta:'208 ккал · 20Б · 13Ж · 0У'}
+    ]},
+    { id:'c2', name:'Крупы', icon:'🍚', items:[
+      {id:'p9',name:'Гречка (сухая)',meta:'313 ккал · 12Б · 3Ж · 62У'},
+      {id:'p10',name:'Рис Басмати',meta:'350 ккал · 7Б · 1Ж · 78У'},
+      {id:'p11',name:'Овсянка',meta:'360 ккал · 12Б · 6Ж · 65У'}
+    ]},
+    { id:'c3', name:'Овощи', icon:'🥦', items:[
+      {id:'p15',name:'Огурцы',meta:'15 ккал · 0.8Б · 0Ж · 3У'},
+      {id:'p16',name:'Помидоры',meta:'20 ккал · 1Б · 0Ж · 4У'},
+      {id:'p17',name:'Брокколи',meta:'34 ккал · 3Б · 0.4Ж · 7У'}
+    ]},
+    { id:'c4', name:'Фрукты', icon:'🍎', items:[{id:'p21',name:'Яблоко',meta:'47 ккал'}]},
+    { id:'c5', name:'Жиры', icon:'🥑', items:[{id:'p25',name:'Оливковое масло',meta:'884 ккал'}]},
+    { id:'c6', name:'Снеки', icon:'🍫', items:[{id:'p30',name:'Протеиновый батончик',meta:'200 ккал'}]}
   ];
 
+  // 🟢 3. DATA SERVICE
+  const DataService = {
+    categories: [],
+    productsMap: {}, // { catId: [products] }
+    
+    async init() {
+      // 3.1 Cache First
+      const cached = localStorage.getItem('ultima_products_v1');
+      if (cached) {
+        const data = JSON.parse(cached);
+        this.categories = data.categories;
+        this.productsMap = data.productsMap;
+        renderCategories(); 
+      } else {
+        this.loadMock(); 
+        renderCategories();
+      }
+
+      // 3.2 Background Sync
+      if (db) this.fetchFromFirebase();
+    },
+
+    loadMock() {
+      this.categories = MOCK_DB.map(c => ({id:c.id, name:c.name, icon:c.icon}));
+      MOCK_DB.forEach(c => {
+        this.productsMap[c.id] = c.items;
+      });
+    },
+
+    async fetchFromFirebase() {
+      try {
+        const catsSnap = await db.collection('categories').orderBy('order').get();
+        const newCats = [];
+        const newMap = {};
+        
+        if (!catsSnap.empty) {
+            catsSnap.forEach(doc => {
+                const d = doc.data();
+                newCats.push({id: doc.id, name: d.name, icon: d.icon});
+            });
+            
+            const prodsSnap = await db.collectionGroup('products').get();
+            prodsSnap.forEach(doc => {
+               const p = doc.data();
+               if (!newMap[p.categoryId]) newMap[p.categoryId] = [];
+               newMap[p.categoryId].push({id: doc.id, name: p.name, meta: p.meta});
+            });
+
+            this.categories = newCats;
+            this.productsMap = newMap;
+            
+            // Save to Cache
+            localStorage.setItem('ultima_products_v1', JSON.stringify({
+                categories: this.categories,
+                productsMap: this.productsMap
+            }));
+            
+            if (!state.activeCatId && !state.searchMode) renderCategories();
+        }
+      } catch(e) { console.warn("Offline or DB error", e); }
+    },
+
+    getProducts(catId) {
+      return this.productsMap[catId] || [];
+    },
+
+    search(query) {
+      const res = [];
+      const q = query.toLowerCase();
+      Object.values(this.productsMap).flat().forEach(p => {
+        if (p.name.toLowerCase().includes(q)) res.push(p);
+      });
+      return res;
+    }
+  };
+
+  // 🟢 4. APP STATE
   const state = {
     selected: new Set(),
     activeCatId: null,
-    searchMode: false
+    searchMode: false,
+    // Infinite Scroll
+    renderQueue: [],
+    renderIndex: 0,
+    BATCH_SIZE: 20,
+    currentContainer: null
   };
 
   const el = {
@@ -362,55 +423,67 @@
     searchClear: document.getElementById('searchClear'),
     searchResults: document.getElementById('searchResults'),
     btnSave: document.getElementById('btnSave'),
-    saveBtnText: document.getElementById('saveBtnText')
+    saveBtnText: document.getElementById('saveBtnText'),
+    sentinel: document.getElementById('sentinel')
   };
 
+  // 🟢 5. TELEGRAM INIT
+  const tg = window.Telegram?.WebApp;
+  if (tg) {
+    tg.ready();
+    tg.expand();
+    try { tg.setHeaderColor('#050505'); tg.setBackgroundColor('#050505'); } catch(e){}
+    tg.BackButton.onClick(() => {
+      if (state.searchMode) exitSearchMode();
+      else if (state.activeCatId) goBack();
+      else window.location.href = 'router.html'; 
+    });
+  }
+
+  // 🟢 6. UTILS
   function haptic(type = 'light') {
     try {
-      const tg = window.Telegram?.WebApp?.HapticFeedback;
-      if (!tg) return;
-      if (type === 'light') tg.impactOccurred('light');
-      if (type === 'medium') tg.impactOccurred('medium');
-      if (type === 'heavy') tg.impactOccurred('heavy');
-      if (type === 'success') tg.notificationOccurred('success');
-      if (type === 'changed') tg.selectionChanged();
+      const t = window.Telegram?.WebApp?.HapticFeedback;
+      if (t) type==='light'?t.impactOccurred('light'):type==='medium'?t.impactOccurred('medium'):t.notificationOccurred('success');
     } catch(e) {}
   }
 
-  // --- ANIMATION LOGIC ---
   const bump = el => { 
-    if(!el) return; 
-    el.classList.remove('bump'); 
-    void el.offsetWidth; 
-    el.classList.add('bump'); 
+    if(!el) return; el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); 
   };
 
-  // Global listener for category cards and buttons
   document.addEventListener('touchstart', (e) => {
     const el = e.target.closest('.cat-card, .btn-save');
     if (!el) return;
-    haptic('light'); 
-    bump(el);
+    haptic('light'); bump(el);
   }, {passive: true});
 
-
+  // 🟢 7. CORE LOGIC
   function init() {
-    ['p1', 'p2', 'p15'].forEach(id => state.selected.add(id));
-    renderCategories();
+    // Demo pre-select
+    ['p1', 'p2'].forEach(id => state.selected.add(id));
+    
+    DataService.init(); 
     updateSaveButton();
     
     el.searchInput.addEventListener('input', handleSearch);
     el.searchClear.addEventListener('click', clearSearch);
     
     if(tg) tg.BackButton.show();
+
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting) renderNextBatch();
+    }, { rootMargin: '200px' });
+    observer.observe(el.sentinel);
   }
 
   function renderCategories() {
     el.catGrid.innerHTML = '';
-    DB.forEach(cat => {
-      const totalItems = cat.items.length;
-      const selectedItems = cat.items.filter(i => state.selected.has(i.id)).length;
-      const progress = (selectedItems / totalItems) * 100;
+    DataService.categories.forEach(cat => {
+      const products = DataService.getProducts(cat.id);
+      const total = products.length;
+      const sel = products.filter(i => state.selected.has(i.id)).length;
+      const progress = total > 0 ? (sel / total) * 100 : 0;
       
       const card = document.createElement('div');
       card.className = 'cat-card';
@@ -420,7 +493,7 @@
         <div>
           <div class="cat-icon">${cat.icon}</div>
           <div class="cat-name">${cat.name}</div>
-          <div class="cat-meta">${selectedItems} из ${totalItems}</div>
+          <div class="cat-meta">${sel} из ${total}</div>
         </div>
         <div class="cat-progress-track">
           <div class="cat-progress-fill" style="width: ${progress}%"></div>
@@ -432,19 +505,23 @@
 
   function openCategory(id) {
     state.activeCatId = id;
-    const cat = DB.find(c => c.id === id);
+    const cat = DataService.categories.find(c => c.id === id);
     
     el.catTitle.textContent = cat.name;
     el.productList.style.display = 'flex';
-    renderProductList(cat.items, el.productList);
-    updateSelectAllBtn(cat);
+    
+    // Init Infinite Scroll
+    const products = DataService.getProducts(id);
+    startInfiniteRender(products, el.productList);
+    
+    updateSelectAllBtn();
 
     el.viewCats.classList.add('prev');
     el.viewCats.classList.remove('active');
     el.viewList.classList.add('active');
     el.viewList.classList.remove('next');
     
-    updateSaveButton(); // Force update for local count
+    updateSaveButton(); 
     if(tg) tg.BackButton.show();
   }
 
@@ -454,17 +531,15 @@
     el.viewCats.classList.add('active');
     el.viewCats.classList.remove('prev');
     setTimeout(renderCategories, 300); 
-    updateSaveButton(); // Force update for total count
+    updateSaveButton();
     if(tg) tg.BackButton.show(); 
   }
 
-  function renderProductList(items, container, isSearch = false) {
+  // 🟢 8. INFINITE SCROLL RENDERER
+  function startInfiniteRender(items, container, isSearch = false) {
     container.innerHTML = '';
-    
     if (isSearch) {
-        container.style.background = 'transparent';
-        container.style.border = 'none';
-        container.style.boxShadow = 'none';
+        container.style.background = 'transparent'; container.style.border = 'none'; container.style.boxShadow = 'none';
     } else {
         container.style = ""; 
     }
@@ -474,37 +549,43 @@
         return;
     }
 
-    let targetContainer = container;
+    state.renderQueue = items;
+    state.renderIndex = 0;
+    
+    let target = container;
     if (isSearch) {
         const wrapper = document.createElement('div');
         wrapper.className = 'product-list-container';
         container.appendChild(wrapper);
-        targetContainer = wrapper;
+        target = wrapper;
     }
+    state.currentContainer = target;
 
-    items.forEach((item, index) => {
+    renderNextBatch(isSearch);
+  }
+
+  function renderNextBatch(isSearch = false) {
+    if (state.renderIndex >= state.renderQueue.length) return;
+
+    const batch = state.renderQueue.slice(state.renderIndex, state.renderIndex + state.BATCH_SIZE);
+    const fragment = document.createDocumentFragment();
+
+    batch.forEach((item, i) => {
       const isSel = state.selected.has(item.id);
       const row = document.createElement('div');
       row.className = `product-row ${isSel ? 'selected' : ''}`;
       
-      row.addEventListener('touchstart', function() {
-          haptic('light');
-          bump(this);
-      }, {passive: true});
-
+      // Individual Animation Listeners
+      row.addEventListener('touchstart', function() { haptic('light'); bump(this); }, {passive: true});
       row.onclick = () => toggleProduct(item.id, row);
       
       if (!isSearch) {
-        // Init hidden
         row.style.opacity = '0';
-        row.style.animation = `fadeInUp 0.2s ease forwards ${index * 0.02}s`;
-        
-        // 🔥 CLEANUP ANIMATION to allow .bump to work later
+        row.style.animation = `fadeInUp 0.2s ease forwards ${i * 0.02}s`;
+        // Cleanup Animation
         setTimeout(() => {
-            row.style.opacity = '1';
-            row.style.animation = 'none';
-            row.style.transform = 'none';
-        }, (index * 20) + 300);
+            row.style.opacity = '1'; row.style.animation = 'none'; row.style.transform = 'none';
+        }, (i * 20) + 300);
       }
       
       row.innerHTML = `
@@ -514,8 +595,11 @@
           <div class="prod-meta">${item.meta}</div>
         </div>
       `;
-      targetContainer.appendChild(row);
+      fragment.appendChild(row);
     });
+
+    state.currentContainer.appendChild(fragment);
+    state.renderIndex += state.BATCH_SIZE;
   }
 
   const styleSheet = document.createElement("style");
@@ -530,54 +614,60 @@
       state.selected.add(id);
       rowEl.classList.add('selected');
     }
-    
     updateSaveButton();
-    
-    if (state.activeCatId && !state.searchMode) {
-        const cat = DB.find(c => c.id === state.activeCatId);
-        updateSelectAllBtn(cat);
-    }
+    if (state.activeCatId && !state.searchMode) updateSelectAllBtn();
   }
 
-  // 🔥 SMART BUTTON LOGIC
+  // 🔥 SMART BUTTON LOGIC (Updated)
   function updateSaveButton() {
     let count = 0;
     let text = '';
+    let isVisible = false;
     
     if (state.activeCatId) {
-        // Category Mode: Show Local Selection Count
-        const cat = DB.find(c => c.id === state.activeCatId);
-        count = cat.items.filter(i => state.selected.has(i.id)).length;
-        text = `Выбрать (${count})`; // Updated text
+        // Category Mode
+        const products = DataService.getProducts(state.activeCatId);
+        count = products.filter(i => state.selected.has(i.id)).length;
+        
+        if (count > 0) {
+            text = `Выбрать (${count})`;
+        } else {
+            text = `Назад`; // When nothing selected, allow Back
+        }
+        isVisible = true; // Always visible in category
     } else {
-        // Main Mode: Show Total Selection Count
+        // Main Mode
         count = state.selected.size;
         text = `Сохранить (${count})`;
+        isVisible = count > 0; // Only visible if items selected
     }
 
     el.saveBtnText.textContent = text;
-
-    if (count > 0) {
-      el.btnSave.classList.add('visible');
+    
+    if (isVisible) {
+        el.btnSave.classList.add('visible');
     } else {
-      el.btnSave.classList.remove('visible');
+        el.btnSave.classList.remove('visible');
     }
   }
 
-  function updateSelectAllBtn(cat) {
-    const allSelected = cat.items.every(i => state.selected.has(i.id));
+  function updateSelectAllBtn() {
+    if (!state.activeCatId) return;
+    const products = DataService.getProducts(state.activeCatId);
+    const allSelected = products.length > 0 && products.every(i => state.selected.has(i.id));
     el.btnSelectAll.textContent = allSelected ? 'Снять всё' : 'Выбрать всё';
-    el.btnSelectAll.onclick = () => toggleAllInCategory(cat, !allSelected);
+    el.btnSelectAll.onclick = () => toggleAllInCategory(products, !allSelected);
   }
 
-  function toggleAllInCategory(cat, select) {
+  function toggleAllInCategory(products, select) {
     haptic('medium');
-    cat.items.forEach(i => {
+    products.forEach(i => {
       if (select) state.selected.add(i.id);
       else state.selected.delete(i.id);
     });
-    renderProductList(cat.items, el.productList);
-    updateSelectAllBtn(cat);
+    // Simple re-render for Select All safety
+    startInfiniteRender(products, el.productList); 
+    updateSelectAllBtn();
     updateSaveButton();
   }
 
@@ -585,16 +675,9 @@
     const query = e.target.value.toLowerCase().trim();
     if (query.length > 0) {
       if (!state.searchMode) enterSearchMode();
-      
-      let results = [];
-      DB.forEach(cat => {
-        const matches = cat.items.filter(i => i.name.toLowerCase().includes(query));
-        results = [...results, ...matches];
-      });
-      
-      renderProductList(results, el.searchResults, true);
+      const results = DataService.search(query);
       el.searchResults.style.display = 'block';
-      
+      startInfiniteRender(results, el.searchResults, true);
     } else {
       el.searchResults.innerHTML = '';
     }
@@ -627,11 +710,11 @@
     exitSearchMode();
   }
 
-  // 🔥 DUAL ACTION BUTTON
+  // 🔥 DUAL ACTION BUTTON LOGIC
   function saveSelection() {
-    haptic('success'); // Haptic also on click success
+    haptic('success'); 
     
-    // 1. If in category -> Go Back (Done)
+    // 1. If in category -> Just Go Back (Works for both "Select" and "Back")
     if (state.activeCatId && !state.searchMode) {
         goBack();
         return;
