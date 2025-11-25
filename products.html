@@ -45,15 +45,26 @@
     touch-action: manipulation; 
   }
 
+ /* 1. Настройка основного экрана (фиксируем его) */
   body {
     background-color: var(--bg-core) !important;
     color: var(--text-main);
     font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    
+    /* 🔥 ЭТА ЧАСТЬ ВАЖНА ДЛЯ ФИКСАЦИИ */
     height: 100vh;
-    overflow: hidden; 
+    overflow: hidden; /* Запрещаем скролл самой страницы */
     display: flex;
     flex-direction: column;
-    -webkit-font-smoothing: antialiased;
+  }
+
+  /* 2. Контейнер для экранов занимает все свободное место */
+  .views-container {
+    flex: 1; 
+    position: relative;
+    overflow: hidden; 
+    /* z-index не нужен, если layout правильный */
   }
 
   /* --- FX LAYER --- */
@@ -264,6 +275,57 @@
   html, body, .view, .product-list-container {
     scrollbar-width: none !important;
     -ms-overflow-style: none !important;
+  }
+
+/* 3. Делаем экран списка гибким контейнером */
+  #view-list.active {
+    display: flex !important;
+    flex-direction: column;
+    height: 100%;
+    padding: 0;
+    overflow: hidden; 
+  }
+
+  /* 4. Заголовок категории (стоит на месте) */
+  .list-header-area {
+    flex-shrink: 0; 
+    padding: 16px var(--pad-x);
+    background: var(--bg-core);
+    border-bottom: 1px solid var(--surface-border);
+    z-index: 10;
+    /* Убираем старые sticky свойства, если они были, тут они не нужны */
+    position: static; 
+    margin: 0;
+    border-radius: 0;
+  }
+
+  /* 5. Список продуктов (СКРОЛЛИТСЯ) */
+  .product-list-container {
+    /* Если у тебя id="productList", убедись что селектор правильный. 
+       В коде JS ты использовал id="productList" для контейнера */
+    flex: 1; 
+    overflow-y: auto; 
+    padding: 10px var(--pad-x);
+    -webkit-overflow-scrolling: touch;
+    /* Убираем лишние отступы снизу, так как кнопка теперь не летает */
+    padding-bottom: 20px !important; 
+  }
+
+  /* 6. Кнопка внизу (стоит на месте) */
+  .save-floater {
+    position: static; /* Больше не летает */
+    transform: none;  /* Без анимации вылета */
+    opacity: 1;
+    width: 100%;
+    padding: 16px var(--pad-x) 34px; /* 34px снизу - безопасно для iPhone */
+    background: var(--bg-core);
+    border-top: 1px solid var(--surface-border);
+    z-index: 20;
+    display: flex;
+  }
+  
+  .save-floater button {
+      width: 100%; /* Кнопка во всю ширину */
   }
   
 </style>
@@ -691,28 +753,45 @@
   }
 
   // Обновляем состояние кнопки (Disabled логика)
+ // Обновленная логика для фиксированной кнопки
   function updateSaveButton() {
     let count = 0;
     let text = '';
     
-    el.btnSave.classList.remove('disabled'); // Сброс
+    // 1. Сначала делаем кнопку активной (убираем серость)
+    el.btnSave.classList.remove('disabled');
 
+    // Сценарий А: Мы внутри категории (смотрим список товаров)
     if (state.activeCatId) {
-        // В категории
         const products = DataService.getProducts(state.activeCatId);
+        // Считаем, сколько выбрано именно в этой категории
         count = products.filter(i => state.selected.has(i.id)).length;
-        text = count > 0 ? `Выбрано (${count})` : `Назад`;
-    } else {
-        // Главная
-        count = state.selected.size;
+        
+        if (count > 0) {
+           text = `Выбрано (${count})`;
+        } else {
+           text = `Назад`; // Если ничего не выбрали, кнопка работает как "Назад"
+        }
+        
+        // В категории кнопка ВСЕГДА активна (мы либо выбираем, либо возвращаемся)
+    } 
+    
+    // Сценарий Б: Мы на главной (видим список категорий)
+    else {
+        count = state.selected.size; // Общее количество выбранного
         text = `Сохранить (${count})`;
         
-        // Дизэйблим если пусто
+        // Если корзина пуста — делаем кнопку серой (неактивной)
         if (count === 0) {
            el.btnSave.classList.add('disabled');
         }
     }
+
+    // Обновляем текст на кнопке
     el.saveBtnText.textContent = text;
+    
+    // ВАЖНО: Мы больше не добавляем/убираем класс 'visible' или 'hidden'.
+    // Кнопка всегда стоит на месте.
   }
 
   function updateSelectAllBtn() {
