@@ -296,6 +296,7 @@
 </div>
 
 <script>
+  
   /**
    * ===============================================================
    * 1. CONFIG & API
@@ -304,28 +305,9 @@
   // 🔴 ВСТАВЬ СЮДА ССЫЛКУ НА ВЕБ-ПРИЛОЖЕНИЕ (из Google Apps Script)
   const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbybxqI4xOLAUOcMXGReNl0PVjGToGg6_x3ZxlKNnUHg3XcaZGhkbsu61Adgkb4emrkm/exec';
 
-  
-
-  const tg = window.Telegram?.WebApp;
-  if (tg) {
-    tg.ready();
-    tg.expand();
-    try { 
-      tg.setHeaderColor('#050505'); 
-      tg.setBackgroundColor('#050505'); 
-    } catch(e){}
-    
-    // 🔥 ИСПРАВЛЕНИЕ 1: Навигация на router.html
-    tg.BackButton.onClick(() => {
-      if (state.searchMode) exitSearchMode();
-      else if (state.activeCatId) goBack();
-      else window.location.href = 'router.html'; // Возврат в меню
-    });
-  }
-
   /**
    * ===============================================================
-   * 2. STATE
+   * 2. STATE (СОСТОЯНИЕ)
    * ===============================================================
    */
   const state = {
@@ -356,7 +338,57 @@
 
   /**
    * ===============================================================
-   * 3. DATA SERVICE
+   * 3. SAFE BOOT (Твой код + Логика навигации)
+   * ===============================================================
+   */
+  const tg = window.Telegram?.WebApp;
+
+  (function initTMA() {
+    try {
+      if (!tg) return;
+
+      tg.ready();
+      tg.expand();
+
+      // 1. Цвета (Safe)
+      try {
+        tg.setHeaderColor('#050505');
+        if (tg.setBackgroundColor) tg.setBackgroundColor('#050505');
+      } catch (e) { console.log('Color error:', e); }
+
+      // 2. Кнопка Назад (Safe + Logic)
+      try {
+        if (tg.BackButton) {
+          tg.BackButton.show();
+          tg.BackButton.offClick(); // 🔥 Чистим старые клики
+          
+          tg.BackButton.onClick(function() {
+            // УМНАЯ ЛОГИКА НАВИГАЦИИ
+            if (state.searchMode) {
+              exitSearchMode();
+            } else if (state.activeCatId) {
+              goBack();
+            } else {
+              // Если мы на главной - уходим в роутер
+              window.location.href = 'router.html';
+            }
+          });
+        }
+      } catch (e) { console.log('Back button error:', e); }
+
+      // 3. Отключаем свайпы
+      try {
+        if (tg.disableVerticalSwipes) tg.disableVerticalSwipes();
+      } catch (e) {}
+
+    } catch (err) {
+      console.error('Critical TMA Error:', err);
+    }
+  })();
+
+  /**
+   * ===============================================================
+   * 4. DATA SERVICE
    * ===============================================================
    */
   const DataService = {
@@ -368,7 +400,7 @@
       this.loadFromCache();
       this.sanitizeCart(); 
       renderCategories(); 
-      updateSaveButton(); // Обновляем состояние кнопки сразу
+      updateSaveButton(); // Сразу ставим правильное состояние кнопки
 
       await this.fetchFromServer();
     },
@@ -386,12 +418,15 @@
     async fetchFromServer() {
       try {
         const currentVer = localStorage.getItem('ultima_ver') || 0;
+        // Используем tg.initData только если он существует
+        const initDataStr = tg?.initData || ''; 
+        
         const response = await fetch(BACKEND_URL, {
           method: 'POST',
           body: JSON.stringify({
             action: 'init',
             clientVer: currentVer,
-            initData: tg?.initData || ''
+            initData: initDataStr
           })
         });
 
@@ -482,18 +517,18 @@
     if(!el) return; el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); 
   };
 
+  // Слушатель касаний (анимация)
   document.addEventListener('touchstart', (e) => {
     const el = e.target.closest('.cat-card, .btn-save');
     if (!el) return;
-    // Кнопка Save не должна вибрировать при таче, если она disabled
+    // Если кнопка отключена - не вибрируем
     if (el.classList.contains('btn-save') && el.classList.contains('disabled')) return;
-    
     haptic('light'); bump(el);
   }, {passive: true});
 
   /**
    * ===============================================================
-   * 4. RENDER LOGIC
+   * 5. RENDER LOGIC
    * ===============================================================
    */
   function renderCategories() {
@@ -541,7 +576,6 @@
     el.viewList.classList.add('active');
     
     updateSaveButton(); 
-    if(tg) tg.BackButton.show();
   }
 
   function goBack() {
@@ -551,7 +585,6 @@
     el.viewCats.classList.remove('prev');
     setTimeout(renderCategories, 300); 
     updateSaveButton();
-    if(tg) tg.BackButton.hide();
   }
 
   function startInfiniteRender(items, container, isSearch = false) {
@@ -617,7 +650,7 @@
 
   /**
    * ===============================================================
-   * 5. ACTIONS
+   * 6. ACTIONS
    * ===============================================================
    */
   function toggleProduct(id, rowEl) {
@@ -633,26 +666,24 @@
     if (state.activeCatId && !state.searchMode) updateSelectAllBtn();
   }
 
-  // 🔥 ИСПРАВЛЕНИЕ 2: Логика кнопки Сохранить (Disabled вместо Hidden)
+  // Обновляем состояние кнопки (Disabled логика)
   function updateSaveButton() {
     let count = 0;
     let text = '';
     
-    // Сбрасываем disabled по умолчанию
-    el.btnSave.classList.remove('disabled');
+    el.btnSave.classList.remove('disabled'); // Сброс
 
     if (state.activeCatId) {
-        // Внутри категории
+        // В категории
         const products = DataService.getProducts(state.activeCatId);
         count = products.filter(i => state.selected.has(i.id)).length;
         text = count > 0 ? `Выбрано (${count})` : `Назад`;
-        // В категории кнопка всегда активна (либо показывает выбор, либо работает как назад)
     } else {
-        // На главной странице
+        // Главная
         count = state.selected.size;
         text = `Сохранить (${count})`;
         
-        // Если ничего не выбрано - дизэйблим
+        // Дизэйблим если пусто
         if (count === 0) {
            el.btnSave.classList.add('disabled');
         }
@@ -680,6 +711,7 @@
     updateSaveButton();
   }
 
+  // --- Search ---
   function handleSearch(e) {
     const query = e.target.value.toLowerCase().trim();
     if (query.length > 0) {
@@ -695,7 +727,6 @@
     el.viewCats.classList.remove('active');
     el.viewList.classList.remove('active');
     el.viewSearch.classList.add('active');
-    if(tg) tg.BackButton.show();
   }
 
   function exitSearchMode() {
@@ -707,7 +738,6 @@
     else {
       el.viewCats.classList.add('active');
       renderCategories();
-      if(tg) tg.BackButton.hide();
     }
   }
 
@@ -715,12 +745,11 @@
 
   /**
    * ===============================================================
-   * 6. SERVER SAVE
+   * 7. SERVER SAVE
    * ===============================================================
    */
   async function saveSelection() {
-    // 🔥 ИСПРАВЛЕНИЕ 3: Мягкая вибрация при нажатии
-    haptic('light'); 
+    haptic('light'); // Легкая вибрация
     
     if (state.activeCatId && !state.searchMode) { goBack(); return; }
 
@@ -742,7 +771,6 @@
       const res = await response.json();
       
       if (res.ok) {
-        // Успех
         if (tg && tg.showPopup) {
            tg.showPopup({ 
              title: 'Готово', 
@@ -755,13 +783,14 @@
         }
       } else { throw new Error("Server error"); }
     } catch(e) {
-      haptic('error'); // При ошибке оставляем более заметную вибрацию
+      haptic('error');
       alert('Ошибка соединения.');
     } finally {
       el.saveBtnText.textContent = originalText;
     }
   }
 
+  // Init
   el.searchInput.addEventListener('input', handleSearch);
   el.searchClear.addEventListener('click', clearSearch);
   const observer = new IntersectionObserver((entries) => {
