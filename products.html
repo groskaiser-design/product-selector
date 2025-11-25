@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Выбор продуктов Ultima</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<!-- Firebase SDK (Compat version) -->
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+
+<style>
+  :root {
+    /* --- PALETTE --- */
+    --bg-core: #050505;
+    --text-main: #ffffff;
+    --text-muted: rgba(255, 255, 255, 0.55);
+    
+    /* --- GLASS SURFACES --- */
+    --surface-glass: rgba(255, 255, 255, 0.07);
+    --surface-dark: rgba(0, 0, 0, 0.3);
+    --surface-border: rgba(255, 255, 255, 0.1);
+    --surface-border-light: rgba(255, 255, 255, 0.2);
+    
+    /* --- ACCENTS --- */
+    --acc-blue: #0a84ff;
+    --acc-green: #30d158;
+    
+    /* --- KBJU VARS --- */
+    --okA: #4facfe; 
+    --okB: #0a84ff;
+    
+    /* --- METRICS --- */
+    --radius-xl: 28px;
+    --radius-l: 24px;
+    --radius-m: 16px;
+    --pad-x: 16px; 
+    --gap: 8px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  
+  /* 🔥 CRITICAL FOR IOS RESPONSIVENESS */
+  html, body, button, .cat-card, .product-row, .btn-save { 
+    touch-action: manipulation; 
+  }
+
+  body {
+    background-color: var(--bg-core) !important;
+    color: var(--text-main);
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', Roboto, Helvetica, Arial, sans-serif;
+    height: 100vh;
+    overflow: hidden; 
+    display: flex;
+    flex-direction: column;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* --- FX LAYER --- */
+  .fx-layer { position: fixed; inset: 0; z-index: 0; pointer-events: none; transform: translate3d(0,0,0); }
+  .orb { position: absolute; border-radius: 50%; will-change: transform; animation: float 30s infinite linear; }
+  .orb-1 { width: 90vw; height: 90vw; opacity: 0.4; background: radial-gradient(circle, rgba(108, 92, 231, 0.8) 0%, transparent 70%); top: -20%; left: -20%; }
+  .orb-2 { width: 400px; height: 400px; opacity: 0.5; background: radial-gradient(circle, rgba(108, 92, 231, 0.8) 0%, transparent 70%); bottom: -150px; right: -100px; animation: breathe 6s infinite ease-in-out; }
+  .noise { position: fixed; inset: 0; z-index: 0; opacity: 0.04; background: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); pointer-events: none; }
+  @keyframes float { 0% {transform:rotate(0deg)} 100% {transform:rotate(360deg)} }
+  @keyframes breathe { 0%, 100% { transform: scale(1); opacity: 0.4; } 50% { transform: scale(1.1); opacity: 0.6; } }
+
+  /* --- LAYOUT --- */
+  .app-header { position: relative; z-index: 10; padding: 12px var(--pad-x) 4px; background: transparent; flex-shrink: 0; }
+
+  /* Search Bar */
+  .search-box { position: relative; }
+  .search-input {
+    width: 100%; height: 40px; background: var(--surface-dark);
+    border: 1px solid var(--surface-border); border-top: 1px solid var(--surface-border-light);
+    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+    border-radius: 14px; padding: 0 36px 0 40px;
+    color: #fff; font-size: 16px; font-weight: 500;
+    transition: all 0.2s ease; box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  }
+  .search-input::placeholder { color: rgba(255,255,255,0.35); font-weight: 400; }
+  .search-input:focus { background: rgba(0, 0, 0, 0.5); border-color: rgba(255, 255, 255, 0.25); outline: none; }
+  .search-icon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: rgba(255,255,255,0.4); pointer-events: none; }
+  .search-clear {
+    position: absolute; right: 0; top: 0; bottom: 0; width: 36px;
+    display: flex; align-items: center; justify-content: center;
+    color: rgba(255,255,255,0.4); opacity: 0; pointer-events: auto; transition: opacity 0.2s;
+  }
+  .search-input:not(:placeholder-shown) ~ .search-clear { opacity: 1; }
+
+  /* --- VIEW CONTAINER --- */
+  .views-container { position: relative; flex: 1; overflow: hidden; z-index: 1; }
+  
+  .view {
+    position: absolute; inset: 0; overflow-y: auto; overflow-x: hidden;
+    -webkit-overflow-scrolling: touch; padding: 12px var(--pad-x) 140px;
+    transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.3s ease;
+    opacity: 0; pointer-events: none; transform: translateX(30px);
+    background: transparent;
+  }
+  .view.active { opacity: 1; pointer-events: auto; transform: translateX(0); }
+  .view.prev { transform: translateX(-10%) scale(0.98); opacity: 0; pointer-events: none; }
+
+  /* --- CATEGORY GRID --- */
+  .cat-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--gap); }
+  
+  .cat-card {
+    background: var(--surface-dark) !important;
+    border: 1px solid var(--surface-border) !important;
+    border-top: 1px solid var(--surface-border-light) !important;
+    border-radius: var(--radius-l) !important;
+    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.2) !important;
+    padding: 14px;
+    display: flex; flex-direction: column; justify-content: space-between;
+    min-height: 110px;
+    cursor: pointer; position: relative; overflow: hidden;
+    transition: background 0.2s; 
+    will-change: transform;
+  }
+  
+  .cat-card:active { background: rgba(0,0,0,0.4) !important; }
+  
+  .cat-icon { font-size: 24px; margin-bottom: 10px; filter: drop-shadow(0 4px 12px rgba(0,0,0,0.3)); }
+  .cat-name { font-size: 14px; font-weight: 700; line-height: 1.2; margin-bottom: 2px; color: #fff; letter-spacing: 0.3px; }
+  .cat-meta { font-size: 12px; color: rgba(255,255,255,0.55); font-weight: 500; }
+  .cat-progress-track { position: absolute; bottom: 0; left: 0; right: 0; height: 3px; background: rgba(255,255,255,0.05); }
+  .cat-progress-fill {
+    height: 100%; background: var(--acc-blue); width: 0%; 
+    transition: width 0.4s cubic-bezier(0.34, 1.56, 0.64, 1); box-shadow: 0 -1px 8px var(--acc-blue);
+  }
+
+  /* --- HEADER LIST --- */
+  .list-header-area { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; padding: 0 4px; }
+  .list-title { font-size: 20px; font-weight: 800; letter-spacing: 0.3px; color: #fff; }
+  .btn-select-all {
+    font-size: 15px; font-weight: 600; color: var(--acc-blue);
+    background: none; border: none; padding: 6px 0; cursor: pointer; transition: opacity 0.2s;
+  }
+  .btn-select-all:active { opacity: 0.7; }
+
+  /* --- PRODUCT LIST CONTAINER --- */
+  .product-list-container {
+    display: flex; flex-direction: column; gap: 8px;
+    background: linear-gradient(165deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.02) 100%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    padding: 14px; border-radius: 20px; backdrop-filter: blur(10px);
+    min-height: 50px;
+  }
+
+  /* --- PRODUCT ROW --- */
+  .product-row {
+    display: flex; align-items: center; justify-content: flex-start;
+    gap: 12px;
+    padding: 12px 14px; border-radius: 12px;
+    position: relative; cursor: pointer; background: transparent;
+    transition: background 0.15s ease;
+    will-change: transform;
+    opacity: 1;
+  }
+  
+  .product-row:active { background: rgba(255,255,255,0.05); }
+  .product-row.selected { background: transparent; } 
+
+  /* 🔥 ANIMATION: BUMP */
+  .bump { animation: bump 0.15s cubic-bezier(0.34, 1.56, 0.64, 1) !important; }
+  @keyframes bump { 
+    0% { transform: scale(1); } 
+    50% { transform: scale(0.95); } 
+    100% { transform: scale(1); } 
+  }
+
+  .prod-info { flex: 1; z-index: 2; display: flex; flex-direction: column; gap: 3px; }
+  .prod-name { font-size: 15px; font-weight: 600; color: #fff; line-height: 1.3; }
+  .prod-meta { font-size: 12px; color: rgba(255,255,255,0.5); font-weight: 500; letter-spacing: 0.2px; }
+  
+  /* --- CHECKBOX --- */
+  .check-square {
+    width: 22px; height: 22px; border-radius: 6px;
+    border: 2px solid rgba(255,255,255,.65);
+    display: inline-flex; align-items: center; justify-content: center;
+    flex-shrink: 0; transition: all .2s ease; background: transparent;
+  }
+  .check-square::after {
+    content: ""; width: 12px; height: 12px; border-radius: 3px;
+    background: #fff; opacity: 0; transform: scale(.7); transition: all .2s ease;
+  }
+  .product-row.selected .check-square {
+    background: linear-gradient(135deg, var(--okA), var(--okB)); border-color: var(--okB);
+    transform: scale(1.05);
+  }
+  .product-row.selected .check-square::after { opacity: 1; transform: scale(1); }
+
+  /* --- FLOATING SAVE BUTTON --- */
+  .save-floater { position: absolute; bottom: 34px; left: 0; right: 0; display: flex; justify-content: center; z-index: 30; pointer-events: none; }
+  
+  .btn-save {
+    pointer-events: auto; background: linear-gradient(135deg, var(--okA), var(--okB));
+    color: #fff; border: none; height: auto; min-width: 160px; padding: 14px 28px;
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', Roboto, sans-serif;
+    font-size: 16px; font-weight: 900; border-radius: 14px;
+    box-shadow: 0 8px 32px rgba(10, 132, 255, 0.4); -webkit-font-smoothing: antialiased;
+    
+    cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px;
+    transition: opacity 0.2s;
+    transform: translateY(100px); opacity: 0;
+    will-change: transform;
+  }
+  .btn-save.visible { transform: translateY(0); opacity: 1; }
+  
+  .btn-save:active { filter: saturate(0.9); } 
+
+  /* --- EMPTY STATE --- */
+  .empty-state {
+    display: flex; flex-direction: column; align-items: center;
+    margin-top: 60px; color: var(--text-muted); padding: 20px;
+    background: var(--surface-dark); border-radius: 24px;
+    border: 1px solid var(--surface-border); backdrop-filter: blur(10px);
+  }
+  .empty-icon { font-size: 48px; margin-bottom: 12px; opacity: 0.6; }
+  
+  #sentinel { height: 20px; width: 100%; opacity: 0; pointer-events: none; }
+
+</style>
+</head>
+<body>
+
+<div class="fx-layer">
+  <div class="orb orb-1"></div>
+  <div class="orb orb-2"></div>
+  <div class="noise"></div>
+</div>
+
+<div class="app-header">
+  <div class="search-box">
+    <div class="search-icon">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    </div>
+    <input type="text" class="search-input" placeholder="Поиск продуктов..." id="searchInput">
+    <div class="search-clear" id="searchClear">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </div>
+  </div>
+</div>
+
+<div class="views-container">
+  
+  <!-- VIEW 1: Categories -->
+  <div class="view active" id="view-cats">
+    <div class="cat-grid" id="catGrid"></div>
+  </div>
+
+  <!-- VIEW 2: Product List -->
+  <div class="view" id="view-list">
+    <div class="list-header-area">
+      <h2 class="list-title" id="catTitle">Название</h2>
+      <button class="btn-select-all" id="btnSelectAll">Выбрать всё</button>
+    </div>
+    <div class="product-list-container" id="productList"></div>
+    <div id="sentinel"></div>
+  </div>
+
+  <!-- VIEW 3: Search -->
+  <div class="view" id="view-search">
+    <div class="product-list-container" id="searchResults" style="display:none; background:transparent!important; border:none!important; box-shadow:none!important; backdrop-filter:none!important;"></div>
+  </div>
+
+</div>
+
+<!-- Save Button -->
+<div class="save-floater">
+  <button class="btn-save" id="btnSave" onclick="saveSelection()">
+    <span id="saveBtnText">Сохранить</span>
+  </button>
+</div>
+
+<script>
+  // 🟢 1. FIREBASE CONFIG
+  const firebaseConfig = {
+    // apiKey: "YOUR_API_KEY",
+    // authDomain: "YOUR_PROJECT.firebaseapp.com",
+    // projectId: "YOUR_PROJECT",
+    // ...
+  };
+
+  let db = null;
+  try {
+    if (firebaseConfig.apiKey) {
+      firebase.initializeApp(firebaseConfig);
+      db = firebase.firestore();
+      db.enablePersistence().catch(err => console.log("Persistence error:", err));
+    }
+  } catch(e) { console.log("Firebase skipped", e); }
+
+  // 🟢 2. MOCK DATA
+  const MOCK_DB = [
+    { id:'c1', name:'Белки', icon:'🥩', items:[
+      {id:'p1',name:'Куриная грудка',meta:'113 ккал · 24Б · 2Ж · 0У'},
+      {id:'p2',name:'Индейка филе',meta:'115 ккал · 24Б · 1Ж · 0У'},
+      {id:'p3',name:'Говядина постная',meta:'180 ккал · 20Б · 10Ж · 0У'},
+      {id:'p4',name:'Яйцо куриное (C0)',meta:'86 ккал · 7Б · 6Ж · 0.5У'},
+      {id:'p5',name:'Творог 5%',meta:'121 ккал · 16Б · 5Ж · 3У'},
+      {id:'p6',name:'Лосось',meta:'208 ккал · 20Б · 13Ж · 0У'}
+    ]},
+    { id:'c2', name:'Крупы', icon:'🍚', items:[
+      {id:'p9',name:'Гречка (сухая)',meta:'313 ккал · 12Б · 3Ж · 62У'},
+      {id:'p10',name:'Рис Басмати',meta:'350 ккал · 7Б · 1Ж · 78У'},
+      {id:'p11',name:'Овсянка',meta:'360 ккал · 12Б · 6Ж · 65У'}
+    ]},
+    { id:'c3', name:'Овощи', icon:'🥦', items:[
+      {id:'p15',name:'Огурцы',meta:'15 ккал · 0.8Б · 0Ж · 3У'},
+      {id:'p16',name:'Помидоры',meta:'20 ккал · 1Б · 0Ж · 4У'},
+      {id:'p17',name:'Брокколи',meta:'34 ккал · 3Б · 0.4Ж · 7У'}
+    ]},
+    { id:'c4', name:'Фрукты', icon:'🍎', items:[{id:'p21',name:'Яблоко',meta:'47 ккал'}]},
+    { id:'c5', name:'Жиры', icon:'🥑', items:[{id:'p25',name:'Оливковое масло',meta:'884 ккал'}]},
+    { id:'c6', name:'Снеки', icon:'🍫', items:[{id:'p30',name:'Протеиновый батончик',meta:'200 ккал'}]}
+  ];
+
+  // 🟢 3. DATA SERVICE
+  const DataService = {
+    categories: [],
+    productsMap: {},
+    
+    async init() {
+      const cached = localStorage.getItem('ultima_products_v1');
+      if (cached) {
+        const data = JSON.parse(cached);
+        this.categories = data.categories;
+        this.productsMap = data.productsMap;
+        renderCategories(); 
+      } else {
+        this.loadMock(); 
+        renderCategories();
+      }
+      if (db) this.fetchFromFirebase();
+    },
+
+    loadMock() {
+      this.categories = MOCK_DB.map(c => ({id:c.id, name:c.name, icon:c.icon}));
+      MOCK_DB.forEach(c => { this.productsMap[c.id] = c.items; });
+    },
+
+    async fetchFromFirebase() {
+      try {
+        const catsSnap = await db.collection('categories').orderBy('order').get();
+        const newCats = [];
+        const newMap = {};
+        
+        if (!catsSnap.empty) {
+            catsSnap.forEach(doc => {
+                const d = doc.data();
+                newCats.push({id: doc.id, name: d.name, icon: d.icon});
+            });
+            const prodsSnap = await db.collectionGroup('products').get();
+            prodsSnap.forEach(doc => {
+               const p = doc.data();
+               if (!newMap[p.categoryId]) newMap[p.categoryId] = [];
+               newMap[p.categoryId].push({id: doc.id, name: p.name, meta: p.meta});
+            });
+            this.categories = newCats;
+            this.productsMap = newMap;
+            localStorage.setItem('ultima_products_v1', JSON.stringify({
+                categories: this.categories, productsMap: this.productsMap
+            }));
+            if (!state.activeCatId && !state.searchMode) renderCategories();
+        }
+      } catch(e) { console.warn("Offline/DB err", e); }
+    },
+
+    getProducts(catId) { return this.productsMap[catId] || []; },
+    search(query) {
+      const res = []; const q = query.toLowerCase();
+      Object.values(this.productsMap).flat().forEach(p => {
+        if (p.name.toLowerCase().includes(q)) res.push(p);
+      });
+      return res;
+    }
+  };
+
+  // 🟢 4. STATE with Persistence Logic
+  const state = {
+    selected: new Set(),
+    activeCatId: null,
+    searchMode: false,
+    renderQueue: [],
+    renderIndex: 0,
+    BATCH_SIZE: 20,
+    currentContainer: null
+  };
+
+  // --- LocalStorage for Selection ---
+  function loadSelectionFromCache() {
+    try {
+      const saved = localStorage.getItem('ultima_cart_v1');
+      if (saved) {
+        const arr = JSON.parse(saved);
+        state.selected = new Set(arr);
+      }
+    } catch(e) {}
+  }
+
+  function saveSelectionToCache() {
+    try {
+      const arr = Array.from(state.selected);
+      localStorage.setItem('ultima_cart_v1', JSON.stringify(arr));
+    } catch(e) {}
+  }
+
+  const el = {
+    catGrid: document.getElementById('catGrid'),
+    productList: document.getElementById('productList'),
+    viewCats: document.getElementById('view-cats'),
+    viewList: document.getElementById('view-list'),
+    viewSearch: document.getElementById('view-search'),
+    catTitle: document.getElementById('catTitle'),
+    btnSelectAll: document.getElementById('btnSelectAll'),
+    searchInput: document.getElementById('searchInput'),
+    searchClear: document.getElementById('searchClear'),
+    searchResults: document.getElementById('searchResults'),
+    btnSave: document.getElementById('btnSave'),
+    saveBtnText: document.getElementById('saveBtnText'),
+    sentinel: document.getElementById('sentinel')
+  };
+
+  const tg = window.Telegram?.WebApp;
+  if (tg) {
+    tg.ready();
+    tg.expand();
+    try { tg.setHeaderColor('#050505'); tg.setBackgroundColor('#050505'); } catch(e){}
+    tg.BackButton.onClick(() => {
+      if (state.searchMode) exitSearchMode();
+      else if (state.activeCatId) goBack();
+      else window.location.href = 'router.html'; 
+    });
+  }
+
+  // 🟢 UTILS
+  function haptic(type = 'light') {
+    try {
+      const t = window.Telegram?.WebApp?.HapticFeedback;
+      if (t) type==='light'?t.impactOccurred('light'):type==='medium'?t.impactOccurred('medium'):t.notificationOccurred('success');
+    } catch(e) {}
+  }
+
+  const bump = el => { 
+    if(!el) return; el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); 
+  };
+
+  document.addEventListener('touchstart', (e) => {
+    const el = e.target.closest('.cat-card, .btn-save');
+    if (!el) return;
+    haptic('light'); bump(el);
+  }, {passive: true});
+
+  // 🟢 INIT
+  function init() {
+    loadSelectionFromCache(); // 🔥 Load saved selection
+    
+    DataService.init(); 
+    updateSaveButton();
+    
+    el.searchInput.addEventListener('input', handleSearch);
+    el.searchClear.addEventListener('click', clearSearch);
+    
+    if(tg) tg.BackButton.show();
+
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting) renderNextBatch();
+    }, { rootMargin: '200px' });
+    observer.observe(el.sentinel);
+  }
+
+  function renderCategories() {
+    el.catGrid.innerHTML = '';
+    DataService.categories.forEach(cat => {
+      const products = DataService.getProducts(cat.id);
+      const total = products.length;
+      const sel = products.filter(i => state.selected.has(i.id)).length;
+      const progress = total > 0 ? (sel / total) * 100 : 0;
+      
+      const card = document.createElement('div');
+      card.className = 'cat-card';
+      card.onclick = () => openCategory(cat.id);
+      
+      card.innerHTML = `
+        <div>
+          <div class="cat-icon">${cat.icon}</div>
+          <div class="cat-name">${cat.name}</div>
+          <div class="cat-meta">${sel} из ${total}</div>
+        </div>
+        <div class="cat-progress-track">
+          <div class="cat-progress-fill" style="width: ${progress}%"></div>
+        </div>
+      `;
+      el.catGrid.appendChild(card);
+    });
+  }
+
+  function openCategory(id) {
+    state.activeCatId = id;
+    const cat = DataService.categories.find(c => c.id === id);
+    
+    el.catTitle.textContent = cat.name;
+    el.productList.style.display = 'flex';
+    
+    const products = DataService.getProducts(id);
+    startInfiniteRender(products, el.productList);
+    
+    updateSelectAllBtn();
+    el.viewCats.classList.add('prev');
+    el.viewCats.classList.remove('active');
+    el.viewList.classList.add('active');
+    el.viewList.classList.remove('next');
+    updateSaveButton(); 
+    if(tg) tg.BackButton.show();
+  }
+
+  function goBack() {
+    state.activeCatId = null;
+    el.viewList.classList.remove('active');
+    el.viewCats.classList.add('active');
+    el.viewCats.classList.remove('prev');
+    setTimeout(renderCategories, 300); 
+    updateSaveButton();
+    if(tg) tg.BackButton.show(); 
+  }
+
+  function startInfiniteRender(items, container, isSearch = false) {
+    container.innerHTML = '';
+    if (isSearch) {
+        container.style.background = 'transparent'; container.style.border = 'none'; container.style.boxShadow = 'none';
+    } else {
+        container.style = ""; 
+    }
+
+    if (items.length === 0 && isSearch) {
+        container.innerHTML = '<div class="empty-state"><div class="empty-icon">🔍</div><div>Ничего не найдено</div></div>';
+        return;
+    }
+
+    state.renderQueue = items;
+    state.renderIndex = 0;
+    
+    let target = container;
+    if (isSearch) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'product-list-container';
+        container.appendChild(wrapper);
+        target = wrapper;
+    }
+    state.currentContainer = target;
+    renderNextBatch(isSearch);
+  }
+
+  function renderNextBatch(isSearch = false) {
+    if (state.renderIndex >= state.renderQueue.length) return;
+
+    const batch = state.renderQueue.slice(state.renderIndex, state.renderIndex + state.BATCH_SIZE);
+    const fragment = document.createDocumentFragment();
+
+    batch.forEach((item, i) => {
+      const isSel = state.selected.has(item.id);
+      const row = document.createElement('div');
+      row.className = `product-row ${isSel ? 'selected' : ''}`;
+      
+      row.addEventListener('touchstart', function() { haptic('light'); bump(this); }, {passive: true});
+      row.onclick = () => toggleProduct(item.id, row);
+      
+      if (!isSearch) {
+        row.style.opacity = '0';
+        row.style.animation = `fadeInUp 0.2s ease forwards ${i * 0.02}s`;
+        setTimeout(() => {
+            row.style.opacity = '1'; row.style.animation = 'none'; row.style.transform = 'none';
+        }, (i * 20) + 300);
+      }
+      
+      row.innerHTML = `
+        <div class="check-square"></div>
+        <div class="prod-info">
+          <div class="prod-name">${item.name}</div>
+          <div class="prod-meta">${item.meta}</div>
+        </div>
+      `;
+      fragment.appendChild(row);
+    });
+
+    state.currentContainer.appendChild(fragment);
+    state.renderIndex += state.BATCH_SIZE;
+  }
+
+  const styleSheet = document.createElement("style");
+  styleSheet.innerText = `@keyframes fadeInUp { to { opacity: 1; transform: translateY(0); } }`;
+  document.head.appendChild(styleSheet);
+
+  function toggleProduct(id, rowEl) {
+    if (state.selected.has(id)) {
+      state.selected.delete(id);
+      rowEl.classList.remove('selected');
+    } else {
+      state.selected.add(id);
+      rowEl.classList.add('selected');
+    }
+    saveSelectionToCache(); // 🔥 SAVE ON EVERY CHANGE
+    updateSaveButton();
+    if (state.activeCatId && !state.searchMode) updateSelectAllBtn();
+  }
+
+  function updateSaveButton() {
+    let count = 0;
+    let text = '';
+    
+    if (state.activeCatId) {
+        const products = DataService.getProducts(state.activeCatId);
+        count = products.filter(i => state.selected.has(i.id)).length;
+        if (count > 0) text = `Выбрать (${count})`;
+        else text = `Назад`;
+        el.btnSave.classList.add('visible'); // Always visible in category
+    } else {
+        count = state.selected.size;
+        text = `Сохранить (${count})`;
+        if (count > 0) el.btnSave.classList.add('visible');
+        else el.btnSave.classList.remove('visible');
+    }
+    el.saveBtnText.textContent = text;
+  }
+
+  function updateSelectAllBtn() {
+    if (!state.activeCatId) return;
+    const products = DataService.getProducts(state.activeCatId);
+    const allSelected = products.length > 0 && products.every(i => state.selected.has(i.id));
+    el.btnSelectAll.textContent = allSelected ? 'Снять всё' : 'Выбрать всё';
+    el.btnSelectAll.onclick = () => toggleAllInCategory(products, !allSelected);
+  }
+
+  function toggleAllInCategory(products, select) {
+    haptic('medium');
+    products.forEach(i => {
+      if (select) state.selected.add(i.id);
+      else state.selected.delete(i.id);
+    });
+    saveSelectionToCache(); // 🔥 SAVE
+    startInfiniteRender(products, el.productList); 
+    updateSelectAllBtn();
+    updateSaveButton();
+  }
+
+  function handleSearch(e) {
+    const query = e.target.value.toLowerCase().trim();
+    if (query.length > 0) {
+      if (!state.searchMode) enterSearchMode();
+      const results = DataService.search(query);
+      el.searchResults.style.display = 'block';
+      startInfiniteRender(results, el.searchResults, true);
+    } else {
+      el.searchResults.innerHTML = '';
+    }
+  }
+
+  function enterSearchMode() {
+    state.searchMode = true;
+    el.viewCats.classList.remove('active');
+    el.viewList.classList.remove('active');
+    el.viewSearch.classList.add('active');
+    if(tg) tg.BackButton.show();
+  }
+
+  function exitSearchMode() {
+    state.searchMode = false;
+    el.viewSearch.classList.remove('active');
+    el.searchResults.style.display = 'none';
+    el.searchInput.value = '';
+    if (state.activeCatId) el.viewList.classList.add('active');
+    else {
+      el.viewCats.classList.add('active');
+      renderCategories();
+      if(tg) tg.BackButton.show(); 
+    }
+  }
+
+  function clearSearch() { exitSearchMode(); }
+
+  function saveSelection() {
+    haptic('success'); 
+    if (state.activeCatId && !state.searchMode) {
+        goBack();
+        return;
+    }
+    if (tg && tg.showPopup) {
+       tg.showPopup({
+          title: 'Сохранено',
+          message: `Выбрано продуктов: ${state.selected.size}`,
+          buttons: [{type: 'ok'}]
+       }, function() { if (state.searchMode) exitSearchMode(); });
+    } else {
+       alert(`Сохранено ${state.selected.size} продуктов!`);
+       if (state.searchMode) exitSearchMode();
+    }
+  }
+
+  init();
+</script>
+</body>
+</html>
