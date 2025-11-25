@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Выбор продуктов Ultima</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<!-- Firebase SDK -->
+<!-- Firebase SDK (Compat version) -->
 <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
 
@@ -145,7 +145,7 @@
     background: linear-gradient(165deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.02) 100%) !important;
     border: 1px solid rgba(255, 255, 255, 0.1) !important;
     padding: 14px; border-radius: 20px; backdrop-filter: blur(10px);
-    min-height: 50px; /* Чтобы не схлопывалось, если пусто */
+    min-height: 50px;
   }
 
   /* --- PRODUCT ROW --- */
@@ -219,7 +219,6 @@
   }
   .empty-icon { font-size: 48px; margin-bottom: 12px; opacity: 0.6; }
   
-  /* Sentinel for Infinite Scroll */
   #sentinel { height: 20px; width: 100%; opacity: 0; pointer-events: none; }
 
 </style>
@@ -257,9 +256,7 @@
       <h2 class="list-title" id="catTitle">Название</h2>
       <button class="btn-select-all" id="btnSelectAll">Выбрать всё</button>
     </div>
-    <!-- Container Wrapper -->
     <div class="product-list-container" id="productList"></div>
-    <!-- Sentinel for Infinite Scroll -->
     <div id="sentinel"></div>
   </div>
 
@@ -278,14 +275,12 @@
 </div>
 
 <script>
-  // 🟢 1. КОНФИГУРАЦИЯ FIREBASE
+  // 🟢 1. FIREBASE CONFIG
   const firebaseConfig = {
     // apiKey: "YOUR_API_KEY",
     // authDomain: "YOUR_PROJECT.firebaseapp.com",
     // projectId: "YOUR_PROJECT",
-    // storageBucket: "YOUR_PROJECT.appspot.com",
-    // messagingSenderId: "YOUR_SENDER_ID",
-    // appId: "YOUR_APP_ID"
+    // ...
   };
 
   let db = null;
@@ -293,7 +288,6 @@
     if (firebaseConfig.apiKey) {
       firebase.initializeApp(firebaseConfig);
       db = firebase.firestore();
-      // Offline Persistence
       db.enablePersistence().catch(err => console.log("Persistence error:", err));
     }
   } catch(e) { console.log("Firebase skipped", e); }
@@ -326,10 +320,9 @@
   // 🟢 3. DATA SERVICE
   const DataService = {
     categories: [],
-    productsMap: {}, // { catId: [products] }
+    productsMap: {},
     
     async init() {
-      // 3.1 Cache First
       const cached = localStorage.getItem('ultima_products_v1');
       if (cached) {
         const data = JSON.parse(cached);
@@ -340,16 +333,12 @@
         this.loadMock(); 
         renderCategories();
       }
-
-      // 3.2 Background Sync
       if (db) this.fetchFromFirebase();
     },
 
     loadMock() {
       this.categories = MOCK_DB.map(c => ({id:c.id, name:c.name, icon:c.icon}));
-      MOCK_DB.forEach(c => {
-        this.productsMap[c.id] = c.items;
-      });
+      MOCK_DB.forEach(c => { this.productsMap[c.id] = c.items; });
     },
 
     async fetchFromFirebase() {
@@ -363,35 +352,25 @@
                 const d = doc.data();
                 newCats.push({id: doc.id, name: d.name, icon: d.icon});
             });
-            
             const prodsSnap = await db.collectionGroup('products').get();
             prodsSnap.forEach(doc => {
                const p = doc.data();
                if (!newMap[p.categoryId]) newMap[p.categoryId] = [];
                newMap[p.categoryId].push({id: doc.id, name: p.name, meta: p.meta});
             });
-
             this.categories = newCats;
             this.productsMap = newMap;
-            
-            // Save to Cache
             localStorage.setItem('ultima_products_v1', JSON.stringify({
-                categories: this.categories,
-                productsMap: this.productsMap
+                categories: this.categories, productsMap: this.productsMap
             }));
-            
             if (!state.activeCatId && !state.searchMode) renderCategories();
         }
-      } catch(e) { console.warn("Offline or DB error", e); }
+      } catch(e) { console.warn("Offline/DB err", e); }
     },
 
-    getProducts(catId) {
-      return this.productsMap[catId] || [];
-    },
-
+    getProducts(catId) { return this.productsMap[catId] || []; },
     search(query) {
-      const res = [];
-      const q = query.toLowerCase();
+      const res = []; const q = query.toLowerCase();
       Object.values(this.productsMap).flat().forEach(p => {
         if (p.name.toLowerCase().includes(q)) res.push(p);
       });
@@ -399,17 +378,34 @@
     }
   };
 
-  // 🟢 4. APP STATE
+  // 🟢 4. STATE with Persistence Logic
   const state = {
     selected: new Set(),
     activeCatId: null,
     searchMode: false,
-    // Infinite Scroll
     renderQueue: [],
     renderIndex: 0,
     BATCH_SIZE: 20,
     currentContainer: null
   };
+
+  // --- LocalStorage for Selection ---
+  function loadSelectionFromCache() {
+    try {
+      const saved = localStorage.getItem('ultima_cart_v1');
+      if (saved) {
+        const arr = JSON.parse(saved);
+        state.selected = new Set(arr);
+      }
+    } catch(e) {}
+  }
+
+  function saveSelectionToCache() {
+    try {
+      const arr = Array.from(state.selected);
+      localStorage.setItem('ultima_cart_v1', JSON.stringify(arr));
+    } catch(e) {}
+  }
 
   const el = {
     catGrid: document.getElementById('catGrid'),
@@ -427,7 +423,6 @@
     sentinel: document.getElementById('sentinel')
   };
 
-  // 🟢 5. TELEGRAM INIT
   const tg = window.Telegram?.WebApp;
   if (tg) {
     tg.ready();
@@ -440,7 +435,7 @@
     });
   }
 
-  // 🟢 6. UTILS
+  // 🟢 UTILS
   function haptic(type = 'light') {
     try {
       const t = window.Telegram?.WebApp?.HapticFeedback;
@@ -458,10 +453,9 @@
     haptic('light'); bump(el);
   }, {passive: true});
 
-  // 🟢 7. CORE LOGIC
+  // 🟢 INIT
   function init() {
-    // Demo pre-select
-    ['p1', 'p2'].forEach(id => state.selected.add(id));
+    loadSelectionFromCache(); // 🔥 Load saved selection
     
     DataService.init(); 
     updateSaveButton();
@@ -510,17 +504,14 @@
     el.catTitle.textContent = cat.name;
     el.productList.style.display = 'flex';
     
-    // Init Infinite Scroll
     const products = DataService.getProducts(id);
     startInfiniteRender(products, el.productList);
     
     updateSelectAllBtn();
-
     el.viewCats.classList.add('prev');
     el.viewCats.classList.remove('active');
     el.viewList.classList.add('active');
     el.viewList.classList.remove('next');
-    
     updateSaveButton(); 
     if(tg) tg.BackButton.show();
   }
@@ -535,7 +526,6 @@
     if(tg) tg.BackButton.show(); 
   }
 
-  // 🟢 8. INFINITE SCROLL RENDERER
   function startInfiniteRender(items, container, isSearch = false) {
     container.innerHTML = '';
     if (isSearch) {
@@ -560,7 +550,6 @@
         target = wrapper;
     }
     state.currentContainer = target;
-
     renderNextBatch(isSearch);
   }
 
@@ -575,14 +564,12 @@
       const row = document.createElement('div');
       row.className = `product-row ${isSel ? 'selected' : ''}`;
       
-      // Individual Animation Listeners
       row.addEventListener('touchstart', function() { haptic('light'); bump(this); }, {passive: true});
       row.onclick = () => toggleProduct(item.id, row);
       
       if (!isSearch) {
         row.style.opacity = '0';
         row.style.animation = `fadeInUp 0.2s ease forwards ${i * 0.02}s`;
-        // Cleanup Animation
         setTimeout(() => {
             row.style.opacity = '1'; row.style.animation = 'none'; row.style.transform = 'none';
         }, (i * 20) + 300);
@@ -614,41 +601,28 @@
       state.selected.add(id);
       rowEl.classList.add('selected');
     }
+    saveSelectionToCache(); // 🔥 SAVE ON EVERY CHANGE
     updateSaveButton();
     if (state.activeCatId && !state.searchMode) updateSelectAllBtn();
   }
 
-  // 🔥 SMART BUTTON LOGIC (Updated)
   function updateSaveButton() {
     let count = 0;
     let text = '';
-    let isVisible = false;
     
     if (state.activeCatId) {
-        // Category Mode
         const products = DataService.getProducts(state.activeCatId);
         count = products.filter(i => state.selected.has(i.id)).length;
-        
-        if (count > 0) {
-            text = `Выбрать (${count})`;
-        } else {
-            text = `Назад`; // When nothing selected, allow Back
-        }
-        isVisible = true; // Always visible in category
+        if (count > 0) text = `Выбрать (${count})`;
+        else text = `Назад`;
+        el.btnSave.classList.add('visible'); // Always visible in category
     } else {
-        // Main Mode
         count = state.selected.size;
         text = `Сохранить (${count})`;
-        isVisible = count > 0; // Only visible if items selected
+        if (count > 0) el.btnSave.classList.add('visible');
+        else el.btnSave.classList.remove('visible');
     }
-
     el.saveBtnText.textContent = text;
-    
-    if (isVisible) {
-        el.btnSave.classList.add('visible');
-    } else {
-        el.btnSave.classList.remove('visible');
-    }
   }
 
   function updateSelectAllBtn() {
@@ -665,7 +639,7 @@
       if (select) state.selected.add(i.id);
       else state.selected.delete(i.id);
     });
-    // Simple re-render for Select All safety
+    saveSelectionToCache(); // 🔥 SAVE
     startInfiniteRender(products, el.productList); 
     updateSelectAllBtn();
     updateSaveButton();
@@ -696,39 +670,28 @@
     el.viewSearch.classList.remove('active');
     el.searchResults.style.display = 'none';
     el.searchInput.value = '';
-    
-    if (state.activeCatId) {
-      el.viewList.classList.add('active');
-    } else {
+    if (state.activeCatId) el.viewList.classList.add('active');
+    else {
       el.viewCats.classList.add('active');
       renderCategories();
       if(tg) tg.BackButton.show(); 
     }
   }
 
-  function clearSearch() {
-    exitSearchMode();
-  }
+  function clearSearch() { exitSearchMode(); }
 
-  // 🔥 DUAL ACTION BUTTON LOGIC
   function saveSelection() {
     haptic('success'); 
-    
-    // 1. If in category -> Just Go Back (Works for both "Select" and "Back")
     if (state.activeCatId && !state.searchMode) {
         goBack();
         return;
     }
-
-    // 2. If in Main Screen -> Save
     if (tg && tg.showPopup) {
        tg.showPopup({
           title: 'Сохранено',
           message: `Выбрано продуктов: ${state.selected.size}`,
           buttons: [{type: 'ok'}]
-       }, function() {
-           if (state.searchMode) exitSearchMode();
-       });
+       }, function() { if (state.searchMode) exitSearchMode(); });
     } else {
        alert(`Сохранено ${state.selected.size} продуктов!`);
        if (state.searchMode) exitSearchMode();
@@ -736,7 +699,6 @@
   }
 
   init();
-
 </script>
 </body>
 </html>
