@@ -1,452 +1,520 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no,maximum-scale=1" />
-  <title>FoodCam — фото еды</title>
-  <meta name="theme-color" content="#0a7cff" />
-  <style>
-    :root { --bg:#fff; --text:#111827; --muted:#6b7280; --ring:#e5e7eb; --primary:#2563eb; --ok:#16a34a; --danger:#ef4444; }
-    *{box-sizing:border-box} html,body{height:100%}
-    body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,sans-serif;-webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent;touch-action:pan-y pan-x}
-    video,canvas,img{touch-action:none;user-select:none;-webkit-user-select:none}
-    .container{max-width:760px;margin:0 auto;padding:16px}
-    .hidden{display:none!important} .row{display:flex;gap:10px;flex-wrap:wrap}
-    .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:12px 16px;border-radius:14px;border:1px solid var(--ring);background:#fff;font-weight:600;cursor:pointer;font-size:16px}
-    .btn.primary{background:var(--primary);color:#fff;border-color:transparent} .btn[disabled]{opacity:.45;cursor:not-allowed}
-
-    /* Camera viewport */
-    .cam-wrap{position:relative;border:1px solid var(--ring);border-radius:16px;overflow:hidden;background:#000;aspect-ratio:3/4;contain:layout paint}
-    .cam-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
-    .cam-preview{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:none;opacity:0;transition:opacity .3s ease}
-    .cam-photo{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block;background:#000}
-    .cam-overlay{position:absolute;inset:0;pointer-events:none}
-
-    /* Grid lines */
-    .grid{position:absolute;inset:0;opacity:.15;background:
-      linear-gradient(#fff 1px,transparent 1px) 0 calc(33.333% - .5px)/100% 33.333% repeat-y,
-      linear-gradient(#fff 1px,transparent 1px) 0 calc(66.666% - .5px)/100% 33.333% repeat-y,
-      linear-gradient(90deg,#fff 1px,transparent 1px) calc(33.333% - .5px) 0/33.333% 100% repeat-x,
-      linear-gradient(90deg,#fff 1px,transparent 1px) calc(66.666% - .5px) 0/33.333% 100% repeat-x}
-
-    /* Top info chip */
-    .topbar{position:absolute;left:0;right:0;top:16px;display:flex;justify-content:center;gap:10px;z-index:9;padding:0 12px}
-    .chip{pointer-events:auto;display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.25);background:rgba(0,0,0,.65);color:#fff;font-size:13px;backdrop-filter:blur(8px);max-width:calc(100% - 24px);text-align:center}
-
-    /* Uniform top icon buttons (torch & reset) */
-    .top-icon{position:absolute;top:12px;z-index:10;pointer-events:auto;width:40px;height:40px;display:flex;align-items:center;justify-content:center;border-radius:999px;border:1px solid rgba(255,255,255,.35);color:#fff;background:rgba(0,0,0,.48);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);box-shadow:0 2px 8px rgba(0,0,0,.25);cursor:pointer;transition:transform .08s ease,opacity .2s ease}
-    .top-icon:active{transform:scale(.96)}
-    .top-icon[disabled], .top-icon.is-disabled{opacity:.45;cursor:not-allowed}
-    .top-left{left:12px}
-    .top-right{right:12px}
-    .top-icon svg{width:20px;height:20px;display:block}
-    .top-icon:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(255,255,255,.3),0 0 0 5px rgba(37,99,235,.55)}
-
-    /* Permission chip (offset lower to avoid overlap with reset) */
-    .btn-permission{position:absolute;right:12px;top:60px;z-index:10;pointer-events:auto;padding:8px 12px;border-radius:999px;border:1px solid rgba(255,255,255,.3);color:#fff;background:rgba(245,158,11,.85);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);font-size:16px;cursor:pointer;animation:pulse 2s infinite}
-
-    /* Level indicator */
-    .center-level{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
-    .level-outer{position:relative;width:140px;height:140px;border-radius:50%}
-    .level-target{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);border-radius:50%;border:2px solid rgba(255,255,255,.6);background:rgba(0,0,0,.1);width:23px;height:23px}
-    .level-target.ok{border-color:#34d399;background:rgba(34,197,94,.15)}
-    .level-bubble{position:absolute;left:50%;top:50%;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.4)}
-    .level-bubble.ok{background:#22c55e}
-
-    /* Card guide */
-    .card-guide{position:absolute;right:12px;top:50%;transform:translateY(-50%);width:100px;height:160px;border-radius:12px;border:2px dashed rgba(255,255,255,.4);background:rgba(128,128,128,.2);pointer-events:none;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.7);font-size:11px;text-align:center;padding:8px;backdrop-filter:blur(2px)}
-
-    /* Bottom status indicator */
-    .indicators{position:absolute;left:0;right:0;bottom:96px;display:flex;gap:10px;justify-content:center;z-index:9;pointer-events:none}
-    .ind{pointer-events:auto;display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:12px;background:rgba(0,0,0,.6);border:1px solid rgba(255,255,255,.2);color:#fff;backdrop-filter:blur(4px);font-size:13px}
-    .ind .bulb{width:10px;height:10px;border-radius:50%;background:#f59e0b;box-shadow:0 0 0 2px rgba(0,0,0,.3) inset}
-    .ind.ok .bulb{background:#22c55e}
-
-    /* Bottom controls */
-    .controls{position:absolute;left:0;right:0;bottom:0;padding:16px;display:flex;gap:10px;align-items:center;justify-content:center;background:linear-gradient(to top,rgba(0,0,0,.6),rgba(0,0,0,0));color:#fff}
-    .shutter{width:72px;height:72px;border-radius:50%;border:4px solid rgba(255,255,255,.9);background:#fff;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.3);transition:transform .1s}
-    .shutter:active:not([disabled]){transform:scale(.95)} .shutter[disabled]{opacity:.4;cursor:not-allowed;border-color:rgba(255,255,255,.5)}
-
-    /* Meta / form */
-    .meta{color:var(--muted);font-size:13px;margin-top:8px}
-    .field{display:flex;flex-direction:column;gap:6px;margin-top:12px}
-    .textarea{width:100%;min-height:72px;resize:vertical;padding:10px 12px;border:1px solid var(--ring);border-radius:12px;font:inherit;line-height:1.4}
-    .helper{color:var(--muted);font-size:13px}
-
-    /* Error */
-    .error{background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;border-radius:12px;padding:12px;margin:12px 0;font-size:14px}
-
-    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.7}}
-  </style>
-</head>
-<body>
-  <main class="container">
-    <div id="err" class="error hidden"></div>
-
-    <section id="sec-main">
-      <input id="file-cam" type="file" accept="image/*" capture="environment" class="hidden" />
-      <input id="file-gallery" type="file" accept="image/*" class="hidden" />
-
-      <div class="cam-wrap" id="camWrap" aria-label="Камера">
-        <video id="video" class="cam-video" playsinline muted autoplay></video>
-        <canvas id="preview" class="cam-preview" aria-label="Превью камеры" role="img"></canvas>
-        <img id="photo" class="cam-photo hidden" alt="Снимок" />
-
-        <div id="overlay" class="cam-overlay">
-          <div class="grid" aria-hidden="true"></div>
-          <div class="topbar"><div id="chipInfo" class="chip" role="status" aria-live="polite">Открываю камеру…</div></div>
-          <!-- Top icons: left (torch), right (level reset) -->
-          <button id="btnTorch" class="top-icon top-left" aria-label="Фонарик" aria-pressed="false" title="Фонарик">
-            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7 2l9 0-4 7h5l-9 13 3-9H7z"/></svg>
-          </button>
-          <button id="btnLevelReset" class="top-icon top-right" aria-label="Перезапустить уровень" title="Перезапустить уровень">
-            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M12 4a8 8 0 1 0 7.45 5.11h-2.2A6 6 0 1 1 12 6c1.3 0 2.5.42 3.46 1.13L14 8.6h6V2l-2.1 2.1A9.96 9.96 0 0 0 12 4z"/></svg>
-          </button>
-          <button id="btnPermission" class="btn-permission hidden" aria-label="Разрешить датчики">⚠️</button>
-          <div class="center-level" aria-hidden="true">
-            <div class="level-outer" id="levelOuter">
-              <div id="levelTarget" class="level-target"></div>
-              <div id="levelBubble" class="level-bubble"></div>
-            </div>
-          </div>
-          <div class="card-guide"><span>Банковская карта, (опционально, повысит точность)</span></div>
-          <div class="indicators"><div id="indLevel" class="ind"><span class="bulb"></span><span class="label">Ровно</span></div></div>
-        </div>
-
-        <div id="controls" class="controls">
-          <button id="btnShot" class="shutter" aria-label="Сделать снимок" disabled></button>
-        </div>
-      </div>
-
-      <div class="field">
-        <label for="comment" class="helper">Комментарий (опционально, повысит точность)</label>
-        <textarea id="comment" class="textarea" maxlength="200" placeholder="Треска 200г, рис белый 150г"></textarea>
-        <div id="commentWarn" class="helper hidden"></div>
-      </div>
-
-      <div class="row" style="margin-top:12px">
-        <button id="btnRetake" class="btn" disabled>Переснять</button>
-        <button id="btnGallery" class="btn">Галерея</button>
-        <button id="btnSend" class="btn primary" disabled>Отправить</button>
-      </div>
-    </section>
-  </main>
-
-  <script>
-  'use strict';
-  const PERM_KEY = 'fc_motion_perm_v1';
-
-  // ==================== PLATFORM ====================
-  const PLATFORM = {
-    isIOS: /iP(hone|od|ad)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1),
-    isAndroid: /Android/.test(navigator.userAgent),
-    isSafari: /Safari/.test(navigator.userAgent) && !/Chrome/.test(navigator.userAgent),
-    memoryGB: navigator.deviceMemory || 8
-  };
-
-  // ==================== CONFIG ====================
-  const CONFIG = {
-    idealFacing: { facingMode: { ideal: 'environment' }, aspectRatio: { ideal: 3/4 }, height: { ideal: 1920 }, width: { ideal: 1440 } },
-    previewScale: 1, previewFPS: 30, preferImageCapture: !PLATFORM.isIOS,
-    maxPhotoSide: 8192, jpegQuality: 0.95,
-    bubbleRadius: 10, targetRadius: 15, levelRadius: 50,
-    needsPermissionRequest: PLATFORM.isIOS, sensorStaleMs: 4000,
-    orientationStaleMs: 400, tiltSmoothing: 0.15,
-    allowTakePhoto: false
-  };
-
-  // ==================== STATE ====================
-  const STATE = {
-    stream:null, track:null, videoElement:null, imageCapture:null,
-    hasTorch:false, torchOn:false,
-    sensorsEnabled:false, lastSensorTime:0, sensorWatchdog:null,
-    rawNx:0, rawNy:0, smoothNx:0, smoothNy:0, levelOK:false,
-    currentView:'camera', lastBlob:null, capturing:false,
-    wakeLock:null, screenAngle:0,
-    lastCropRect:null,
-    sensorPermission:'unknown', lastOrientationEvent:0,
-    levelRaf:null
-  };
-
-  // ==================== DOM ====================
-  const $ = id => document.getElementById(id);
-  const DOM = {
-    err: $('err'), video: $('video'), preview: $('preview'), photo: $('photo'), overlay: $('overlay'), controls: $('controls'),
-    btnShot: $('btnShot'), btnTorch: $('btnTorch'), btnPermission: $('btnPermission'), btnLevelReset: $('btnLevelReset'), chipInfo: $('chipInfo'), fileCam: $('file-cam'), fileGallery: $('file-gallery'),
-    levelBubble: $('levelBubble'), levelTarget: $('levelTarget'), levelOuter: $('levelOuter'), indLevel: $('indLevel'),  btnRetake: $('btnRetake'), btnGallery: $('btnGallery'), btnSend: $('btnSend'), comment: $('comment'), commentWarn: $('commentWarn'), camWrap: $('camWrap')
-  };
-
-  const previewCtx = DOM.preview.getContext('2d', { alpha:false, desynchronized:true });
-
-  // ==================== UTIL ====================
-  const sleep = ms => new Promise(r => setTimeout(r, ms));
-  function haptic(){ try{ window.Telegram?.WebApp?.HapticFeedback?.impactOccurred?.('light'); }catch{} }
-  function setError(msg){ if(!msg){ DOM.err.classList.add('hidden'); DOM.err.textContent=''; return;} DOM.err.textContent=msg; DOM.err.classList.remove('hidden'); }
-  function sanitizeComment(input){ return String(input||'').slice(0,200).replace(/<[^>]*>/g,'').replace(/[\u0000-\u001F\u007F-\u009F]/g,'').replace(/(javascript:|data:|vbscript:|<script|on\w+=)/gi,'').replace(/[^\w\s\.,!?:;"'()\-\[\]{}#@+/&%А-Яа-яЁё]/g,'').replace(/\s+/g,' ').trim(); }
-  function hasContent(){ return STATE.lastBlob || sanitizeComment(DOM.comment.value).length>0; }
-
-  // ==================== UI ====================
-  function updateButtons(){ DOM.btnRetake.disabled = STATE.currentView==='camera'||STATE.capturing; DOM.btnSend.disabled = !hasContent()||STATE.capturing; DOM.btnShot.disabled = !STATE.levelOK||STATE.capturing; }
-  function syncLevelIndicator(){ DOM.indLevel.classList.toggle('ok',STATE.levelOK); DOM.indLevel.setAttribute('aria-label', STATE.levelOK?'Уровень: OK':'Уровень: наклон'); }
-  function showCameraUI(){
-    STATE.currentView='camera';
-    DOM.video.classList.remove('hidden');
-    DOM.preview.classList.add('hidden');
-    DOM.overlay.classList.remove('hidden');
-    DOM.controls.classList.remove('hidden');
-    DOM.photo.classList.add('hidden');
-    DOM.chipInfo.textContent='Наводите камеру';
-    computeLevelRadiusDeferred();
-    startLevelLoop();
-    startSensorWatchdog();
-    ensureWakeLock(true);
-    updateButtons();
-    syncLevelIndicator();
-  }
-  function showPhotoUI(){
-    STATE.currentView='photo';
-    DOM.preview.classList.add('hidden');
-    DOM.video.classList.add('hidden');
-    DOM.overlay.classList.add('hidden');
-    DOM.controls.classList.add('hidden');
-    DOM.photo.classList.remove('hidden');
-    ensureWakeLock(false);
-    updateButtons();
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Ultima FoodCam</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --bg-core: #050505;
+    --surface-glass: rgba(20, 20, 20, 0.6);
+    --surface-border: rgba(255, 255, 255, 0.15);
+    --acc-green: #30d158;
+    --acc-red: #ff453a;
+    --acc-orange: #ff9f0a;
+    --acc-blue: #0a84ff;
+    --text-main: #ffffff;
+    --text-muted: rgba(255, 255, 255, 0.6);
+    --font-stack: -apple-system, BlinkMacSystemFont, 'SF Pro Text', Roboto, sans-serif;
   }
 
-  // ==================== WAKE LOCK ====================
-  async function ensureWakeLock(enable){ if(!('wakeLock'in navigator))return; try{ if(enable && !STATE.wakeLock){ STATE.wakeLock = await navigator.wakeLock.request('screen'); STATE.wakeLock.addEventListener('release',()=>{STATE.wakeLock=null}); } else if(!enable && STATE.wakeLock){ await STATE.wakeLock.release(); STATE.wakeLock=null; } }catch{ STATE.wakeLock=null; } }
-
-  // ==================== CAMERA ====================
-  async function openCamera(){
-    try{
-      const stream=await navigator.mediaDevices.getUserMedia({ video: CONFIG.idealFacing, audio:false });
-      bindStream(stream);
-      return true;
-    } catch(err){
-      console.warn('Portrait camera failed:',err);
-      try{
-        const stream=await navigator.mediaDevices.getUserMedia({ video:{facingMode:'environment'}, audio:false });
-        bindStream(stream);
-        return true;
-      } catch{
-        return false;
-      }
-    }
-  }
-  function bindStream(stream){
-    stopCamera();
-    STATE.stream=stream;
-    STATE.track=stream.getVideoTracks()[0];
-    const v = DOM.video;
-    STATE.videoElement=v;
-
-    // Ensure attributes for iOS autoplay inline
-    v.setAttribute('playsinline','');
-    v.setAttribute('autoplay','');
-    v.muted = true;
-    v.srcObject=stream;
-
-    // Playback sequencing
-    const onMeta = ()=>{ try{ v.play().catch(()=>{}); }catch{} };
-    const onPlay = () => {DOM.chipInfo.innerHTML = 'Камера готова,<br>держите телефон ровно';};
-    v.addEventListener('loadedmetadata', onMeta, {once:true});
-    v.addEventListener('canplay', ()=>{ DOM.chipInfo.textContent='Наводите камеру'; }, {once:true});
-    v.addEventListener('playing', onPlay, {once:true});
-
-    // Watchdog: пробуем play() ещё раз, если не завёлся
-    let tries = 0;
-    const wd = setInterval(()=>{
-      if(STATE.currentView!=='camera') { clearInterval(wd); return; }
-      if(v.readyState>=2 && v.videoWidth>0){ clearInterval(wd); return; }
-      tries++; if(tries>5){ clearInterval(wd); return; }
-      try{ v.play().catch(()=>{}); }catch{}
-    }, 500);
-
-    // Torch capability (keep button visible for consistent UI; disable if unsupported)
-    const caps=STATE.track.getCapabilities?.()||{};
-    STATE.hasTorch=!!caps.torch; // do not hide on iOS; we'll disable instead
-    if(!STATE.hasTorch){
-      DOM.btnTorch.classList.add('is-disabled');
-      DOM.btnTorch.setAttribute('disabled','true');
-      DOM.btnTorch.title = 'Фонарик недоступен';
-    } else {
-      DOM.btnTorch.classList.remove('is-disabled');
-      DOM.btnTorch.removeAttribute('disabled');
-      DOM.btnTorch.title = 'Фонарик';
-    }
-
-    // ImageCapture reference (for grabFrame/takePhoto)
-    if(typeof ImageCapture!=='undefined'){
-      try{ STATE.imageCapture=new ImageCapture(STATE.track); }catch{}
-    }
-  }
-  function stopCamera(){
-    try{ DOM.video.pause(); DOM.video.srcObject=null; }catch{}
-    try{ STATE.track?.stop(); }catch{}
-    try{ STATE.stream?.getTracks().forEach(t=>t.stop()); }catch{}
-    STATE.stream=null; STATE.track=null; STATE.imageCapture=null; STATE.torchOn=false;
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0; padding: 0;
+    background: #000;
+    color: var(--text-main);
+    font-family: var(--font-stack);
+    height: 100vh; overflow: hidden;
+    display: flex; flex-direction: column;
+    overscroll-behavior-y: none;
   }
 
-  // (Stub kept for tests compatibility)
-  function drawPreviewFrame(){}
+  /* === CAMERA VIEWPORT === */
+  .cam-viewport {
+    position: relative;
+    flex: 1;
+    width: 100%;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #000;
+  }
 
-  // ==================== CAPTURE (WYSIWYG) ====================
-  function canvasToBlob(canvas,quality=CONFIG.jpegQuality){ return new Promise(r=>{ canvas.toBlob(b=>r(b),'image/jpeg',quality); }); }
-  function computeCoverCropByAspect(vw,vh,canvasAspect){ let sx,sy,sw,sh; const videoAspect=vw/vh; if(videoAspect>canvasAspect){ sh=vh; sw=Math.round(sh*canvasAspect); sx=Math.floor((vw-sw)/2); sy=0; } else { sw=vw; sh=Math.round(sw/canvasAspect); sx=0; sy=Math.floor((vh-sh)/2); } return {sx,sy,sw,sh}; }
-  async function captureWysiwygFromVideo(){
-    const video=DOM.video; const vw=video.videoWidth, vh=video.videoHeight; if(!vw||!vh) throw new Error('Video not ready');
-    // 1) Best WYSIWYG: grabFrame from the same preview pipeline
-    if(STATE.imageCapture?.grabFrame){
-      try{
-        const bmp = await STATE.imageCapture.grabFrame();
-        const aspect = DOM.camWrap.clientWidth/DOM.camWrap.clientHeight;
-        const {sx,sy,sw,sh}=computeCoverCropByAspect(bmp.width,bmp.height,aspect);
-        const scale=Math.min(1,CONFIG.maxPhotoSide/Math.max(sw,sh));
-        const outW=Math.max(1,Math.round(sw*scale)), outH=Math.max(1,Math.round(sh*scale));
-        const c=document.createElement('canvas'); c.width=outW; c.height=outH;
-        c.getContext('2d').drawImage(bmp,sx,sy,sw,sh,0,0,outW,outH);
-        bmp.close?.();
-        return canvasToBlob(c);
-      }catch(e){ console.warn('grabFrame failed, fallback to <video>', e); }
-    }
-    // 2) Fallback: draw from <video> element with same crop
-    {
-      const aspect = DOM.camWrap.clientWidth/DOM.camWrap.clientHeight;
-      const {sx,sy,sw,sh}=computeCoverCropByAspect(vw,vh,aspect);
-      const scale=Math.min(1,CONFIG.maxPhotoSide/Math.max(sw,sh));
-      const outW=Math.max(1,Math.round(sw*scale)), outH=Math.max(1,Math.round(sh*scale));
-      const c=document.createElement('canvas'); c.width=outW; c.height=outH;
-      c.getContext('2d').drawImage(video,sx,sy,sw,sh,0,0,outW,outH);
-      return canvasToBlob(c);
-    }
-    // 3) Optional last resort: still photo (disabled by default)
-    if(CONFIG.allowTakePhoto && STATE.imageCapture?.takePhoto){
-      try{
-        const raw=await STATE.imageCapture.takePhoto();
-        const bmp=await createImageBitmap(raw);
-        const aspect = DOM.camWrap.clientWidth/DOM.camWrap.clientHeight;
-        const {sx,sy,sw,sh}=computeCoverCropByAspect(bmp.width,bmp.height,aspect);
-        const scale=Math.min(1,CONFIG.maxPhotoSide/Math.max(sw,sh));
-        const outW=Math.max(1,Math.round(sw*scale)), outH=Math.max(1,Math.round(sh*scale));
-        const c=document.createElement('canvas'); c.width=outW; c.height=outH;
-        c.getContext('2d').drawImage(bmp,sx,sy,sw,sh,0,0,outW,outH);
-        bmp.close?.();
-        return canvasToBlob(c);
-      }catch(e){ console.warn('takePhoto failed as last resort', e); }
-    }
+  /* Video: Используем cover для красоты UI, но захват идет с полного сенсора */
+  video {
+    position: absolute;
+    width: 100%; height: 100%;
+    object-fit: cover; 
+    z-index: 1;
+  }
+
+  /* Canvas: Отрисовка уровня и сетки */
+  #uiCanvas {
+    position: absolute;
+    inset: 0;
+    width: 100%; height: 100%;
+    z-index: 10;
+    pointer-events: none;
+  }
+
+  /* === UI LAYERS === */
+  .ui-layer {
+    position: absolute;
+    inset: 0;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: calc(16px + env(safe-area-inset-top)) 16px calc(32px + env(safe-area-inset-bottom)) 16px;
+    pointer-events: none;
+  }
+
+  /* Top Bar */
+  .top-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    pointer-events: auto;
+  }
+
+  .status-chip {
+    background: var(--surface-glass);
+    border: 1px solid var(--surface-border);
+    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+    padding: 8px 16px;
+    border-radius: 20px;
+    display: flex;
+    align-items: center; gap: 8px;
+    font-size: 13px; font-weight: 600;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    transition: all 0.3s ease;
+  }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--acc-orange); box-shadow: 0 0 8px var(--acc-orange); transition: 0.3s; }
+  .status-dot.ok { background: var(--acc-green); box-shadow: 0 0 8px var(--acc-green); }
+
+  .icon-btn {
+    width: 44px; height: 44px;
+    border-radius: 50%;
+    background: rgba(40,40,40,0.5);
+    border: 1px solid var(--surface-border);
+    backdrop-filter: blur(10px);
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; cursor: pointer;
+    transition: transform 0.1s;
+  }
+  .icon-btn:active { transform: scale(0.9); background: rgba(80,80,80,0.6); }
+
+  /* Guide overlay for card */
+  .card-guide {
+    position: absolute;
+    right: 20px; top: 50%; transform: translateY(-50%);
+    width: 80px; height: 130px; /* Пропорции кредитки вертикально */
+    border: 2px dashed rgba(255,255,255,0.4);
+    border-radius: 12px;
+    background: rgba(255,255,255,0.05);
+    display: flex; align-items: center; justify-content: center;
+    text-align: center;
+    pointer-events: none;
+  }
+  .card-guide span { font-size: 10px; color: rgba(255,255,255,0.7); font-weight: 600; padding: 4px; }
+
+  /* Bottom Controls */
+  .controls-area {
+    display: flex;
+    align-items: center;
+    justify-content: space-between; 
+    pointer-events: auto;
+    position: relative;
+  }
+
+  .shutter-outer {
+    width: 84px; height: 84px;
+    border-radius: 50%;
+    border: 4px solid rgba(255,255,255,0.3);
+    display:flex; align-items:center; justify-content:center;
+    transition: 0.3s;
+  }
+  .shutter-inner {
+    width: 64px; height: 64px;
+    border-radius: 50%;
+    background: #fff;
+    transition: 0.3s;
+    cursor: pointer;
   }
   
-  async function onShutter(){ if(DOM.btnShot.disabled||STATE.capturing) return; STATE.capturing=true; updateButtons(); haptic(); try{ const blob=await captureWysiwygFromVideo(); STATE.lastBlob=blob; const url=URL.createObjectURL(blob); DOM.photo.onload=()=>{ URL.revokeObjectURL(url); }; DOM.photo.src=url; showPhotoUI(); }catch(err){ console.error('Capture failed:',err); setError('Не удалось сделать снимок. Попробуйте ещё раз.'); } finally { STATE.capturing=false; updateButtons(); } }
+  /* Shutter states */
+  .shutter-outer.disabled { opacity: 0.5; border-color: var(--acc-red); }
+  .shutter-outer.disabled .shutter-inner { background: var(--acc-red); transform: scale(0.4); }
+  .shutter-outer.active { border-color: var(--acc-green); transform: scale(1.05); }
+  .shutter-outer:active:not(.disabled) .shutter-inner { transform: scale(0.9); }
 
-  // ==================== TORCH ====================
-  async function toggleTorch(){ if(!STATE.track) return; if(!STATE.hasTorch){ setError('Фонарик недоступен для этой камеры'); return; } try{ STATE.torchOn=!STATE.torchOn; await STATE.track.applyConstraints({advanced:[{torch:STATE.torchOn}]}); DOM.btnTorch.setAttribute('aria-pressed',String(STATE.torchOn)); haptic(); }catch(err){ console.warn('Torch toggle failed:',err); STATE.torchOn=false; setError('Не удалось включить фонарик'); }
+  /* Permission Overlay (iOS) */
+  .perm-overlay {
+    position: absolute; inset: 0; z-index: 100;
+    background: rgba(5,5,5,0.85);
+    backdrop-filter: blur(20px);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; padding: 32px; gap: 24px;
+  }
+  .perm-btn {
+    background: var(--acc-blue); color: #fff;
+    border: none; padding: 16px 32px;
+    border-radius: 16px; font-size: 17px; font-weight: 700;
+    cursor: pointer;
   }
 
-  // ==================== SENSORS ====================
-  function refreshScreenAngle(){ const angle=screen.orientation?.angle??window.orientation??0; STATE.screenAngle=((angle%360)+360)%360; }
-  function mapTilt(pitchDeg,rollDeg){ const maxTilt=30; const pr=Math.max(-1,Math.min(1,pitchDeg/maxTilt)); const rr=Math.max(-1,Math.min(1,rollDeg/maxTilt)); let nx=0,ny=0; switch(STATE.screenAngle){ case 0:nx=rr;ny=pr;break; case 90:nx=-pr;ny=rr;break; case 180:nx=-rr;ny=-pr;break; case 270:nx=pr;ny=-rr;break; } return {nx,ny}; }
-  function onDeviceOrientation(e){ if(STATE.currentView!=='camera') return; const now=performance.now(); STATE.lastSensorTime=now; const pitch=e.beta??0, roll=e.gamma??0; const {nx,ny}=mapTilt(pitch,roll); const a=CONFIG.tiltSmoothing; STATE.smoothNx=STATE.smoothNx + a*(nx-STATE.smoothNx); STATE.smoothNy=STATE.smoothNy + a*(ny-STATE.smoothNy); STATE.rawNx=nx; STATE.rawNy=ny; STATE.lastOrientationEvent=now; }
-  function onDeviceMotion(e){ if(STATE.currentView!=='camera') return; const now=performance.now(); STATE.lastSensorTime=now; if(now - (STATE.lastOrientationEvent||0) <= CONFIG.orientationStaleMs) return; const acc=e.accelerationIncludingGravity||{}; const x=acc.x||0,y=acc.y||0,z=acc.z||0; const pitch=(Math.atan2(-x,Math.sqrt(y*y+z*z))*180/Math.PI)||0; const roll=(Math.atan2(y,z)*180/Math.PI)||0; const {nx,ny}=mapTilt(pitch,roll); const a=CONFIG.tiltSmoothing; STATE.smoothNx=STATE.smoothNx + a*(nx-STATE.smoothNx); STATE.smoothNy=STATE.smoothNy + a*(ny-STATE.smoothNy); STATE.rawNx=nx; STATE.rawNy=ny; }
-  function attachSensorListeners(){ try{ window.addEventListener('deviceorientation',onDeviceOrientation,{capture:true,passive:true}); }catch{ window.addEventListener('deviceorientation',onDeviceOrientation,true); } try{ window.addEventListener('devicemotion',onDeviceMotion,{capture:true,passive:true}); }catch{ window.addEventListener('devicemotion',onDeviceMotion,true); } }
-  function removeSensorListeners(){ window.removeEventListener('deviceorientation',onDeviceOrientation,true); window.removeEventListener('deviceorientation',onDeviceOrientation,{capture:true}); window.removeEventListener('devicemotion',onDeviceMotion,true); window.removeEventListener('devicemotion',onDeviceMotion,{capture:true}); }
-  async function requestSensorPermission(){ let granted=false; try{ if(typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission==='function'){ try{ const r=await DeviceOrientationEvent.requestPermission(); granted=(r==='granted'); }catch{} } if(!granted&&typeof DeviceMotionEvent!=='undefined'&&typeof DeviceMotionEvent.requestPermission==='function'){ try{ const r=await DeviceMotionEvent.requestPermission(); granted=(r==='granted'); }catch{} } }catch{} attachSensorListeners(); if(granted||!CONFIG.needsPermissionRequest){ STATE.sensorsEnabled=true; STATE.lastSensorTime=performance.now(); DOM.btnPermission.classList.add('hidden'); DOM.chipInfo.textContent='Держите телефон ровно'; try{ localStorage.setItem(PERM_KEY,'granted'); }catch{} STATE.sensorPermission='granted'; } else { DOM.btnPermission.classList.remove('hidden'); try{ localStorage.setItem(PERM_KEY,'denied'); }catch{} STATE.sensorPermission='denied'; showSensorHelp(); } return granted; }
-  function showSensorHelp(){ DOM.chipInfo.textContent='iOS: Настройки → Safari → Движение и Ориентация'; DOM.btnPermission.classList.remove('hidden'); }
-  function setupAutoSensorPermission(){ if(!PLATFORM.isIOS) return; try{ STATE.sensorPermission=localStorage.getItem(PERM_KEY)||'unknown'; }catch{ STATE.sensorPermission='unknown'; } const onFirstGesture=()=>{ if(STATE.sensorPermission!=='granted'){ requestSensorPermission(); } document.removeEventListener('pointerdown',onFirstGesture,true); document.removeEventListener('touchstart',onFirstGesture,true); document.removeEventListener('click',onFirstGesture,true); document.removeEventListener('keydown',onFirstGesture,true); }; document.addEventListener('pointerdown',onFirstGesture,true); document.addEventListener('touchstart',onFirstGesture,true); document.addEventListener('click',onFirstGesture,true); document.addEventListener('keydown',onFirstGesture,true); }
-  async function enableSensors(){ if(STATE.sensorsEnabled) return true; if(!CONFIG.needsPermissionRequest){ attachSensorListeners(); STATE.sensorsEnabled=true; STATE.lastSensorTime=performance.now(); return true; } try{ STATE.sensorPermission=localStorage.getItem(PERM_KEY)||STATE.sensorPermission; }catch{} if(STATE.sensorPermission==='granted'){ attachSensorListeners(); STATE.sensorsEnabled=true; STATE.lastSensorTime=performance.now(); DOM.btnPermission.classList.add('hidden'); return true; } DOM.btnPermission.classList.remove('hidden'); return false; }
-  function rebindSensors(){ removeSensorListeners(); attachSensorListeners(); STATE.lastSensorTime=performance.now(); }
-  async function forceResetLevel(){ try{ haptic(); }catch{} DOM.chipInfo.textContent='Перезапускаю уровень…'; STATE.rawNx=0; STATE.rawNy=0; STATE.smoothNx=0; STATE.smoothNy=0; STATE.levelOK=false; updateLevel(); syncLevelIndicator(); removeSensorListeners(); STATE.sensorsEnabled=false; STATE.lastSensorTime=0; STATE.lastOrientationEvent=0; if(PLATFORM.isIOS){ const granted = await requestSensorPermission(); if(!granted){ showSensorHelp(); } } else { attachSensorListeners(); STATE.sensorsEnabled=true; STATE.lastSensorTime=performance.now(); } startSensorWatchdog(); setTimeout(()=>{ DOM.chipInfo.textContent='Наводите камеру'; }, 1200); }
-  function startSensorWatchdog(){ stopSensorWatchdog(); if(!PLATFORM.isIOS)return; STATE.sensorWatchdog=setInterval(()=>{ if(STATE.currentView!=='camera')return; const stale=(performance.now()-STATE.lastSensorTime)>CONFIG.sensorStaleMs; if(stale&&STATE.sensorsEnabled){ rebindSensors(); } },1000); }
-  function stopSensorWatchdog(){ if(STATE.sensorWatchdog){ clearInterval(STATE.sensorWatchdog); STATE.sensorWatchdog=null; } }
+  /* Result Preview */
+  .preview-overlay {
+    position: absolute; inset: 0; z-index: 200;
+    background: #000;
+    display: none; 
+    flex-direction: column;
+  }
+  .preview-img { flex: 1; width: 100%; object-fit: contain; background: #111; }
+  .preview-controls {
+    padding: 24px;
+    display: flex; gap: 16px;
+    background: var(--bg-core);
+    border-top: 1px solid var(--surface-border);
+  }
+  .btn {
+    flex: 1; padding: 14px;
+    border-radius: 14px;
+    font-weight: 600; font-size: 16px;
+    border: 1px solid var(--surface-border);
+    background: var(--surface-glass);
+    color: #fff; cursor: pointer; text-align: center;
+  }
+  .btn.primary { background: var(--acc-blue); border-color: transparent; }
 
-  // ==================== LEVEL UI LOOP ====================
-  function computeLevelRadius(){ const outer = DOM.levelOuter; if (!outer) return; const rect = outer.getBoundingClientRect(); if (!rect.width || !rect.height) return; const rOuter = Math.min(rect.width, rect.height) * 0.5; CONFIG.levelRadius = Math.max(10, Math.floor(rOuter * 0.7)); }
-  function computeLevelRadiusDeferred(){ requestAnimationFrame(()=>requestAnimationFrame(computeLevelRadius)); }
-  function updateLevel(){ const R=CONFIG.levelRadius; const dx=STATE.smoothNx*R, dy=STATE.smoothNy*R; DOM.levelBubble.style.transform=`translate(-50%, -50%) translate(${dx}px, ${dy}px)`; const distance=Math.hypot(dx,dy); const wasOK=STATE.levelOK; STATE.levelOK=(distance+CONFIG.bubbleRadius)<=CONFIG.targetRadius; if(STATE.levelOK!==wasOK){ DOM.levelBubble.classList.toggle('ok',STATE.levelOK); DOM.levelTarget.classList.toggle('ok',STATE.levelOK); syncLevelIndicator(); updateButtons(); } }
-  function startLevelLoop(){ if(STATE.levelRaf)return; const tick=()=>{ if(STATE.currentView==='camera'){ updateLevel(); } STATE.levelRaf=requestAnimationFrame(tick); }; STATE.levelRaf=requestAnimationFrame(tick); }
-  function stopLevelLoop(){ if(STATE.levelRaf){ cancelAnimationFrame(STATE.levelRaf); STATE.levelRaf=null; } }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
 
-  // ==================== FILE PICK ====================
-  async function onFilePicked(e){ const file=e.target?.files?.[0]; if(!file) return; if(!file.type.startsWith('image/')){ setError('Выберите изображение'); return; } STATE.lastBlob=file; const url=URL.createObjectURL(file); DOM.photo.onload=()=>{ URL.revokeObjectURL(url); }; DOM.photo.src=url; showPhotoUI(); updateButtons(); e.target.value=''; }
+  <div class="cam-viewport">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="uiCanvas"></canvas> <div class="ui-layer">
+      
+      <div class="top-bar">
+        <div class="icon-btn" id="btnClose">✕</div>
+        <div class="status-chip" id="lvlChip">
+          <div class="status-dot" id="lvlDot"></div>
+          <span id="lvlText">Уровень</span>
+        </div>
+        <div class="icon-btn" id="btnTorch">⚡</div>
+      </div>
 
-  // ==================== SEND ====================
-  async function onSend(){ const comment=sanitizeComment(DOM.comment.value); if(!STATE.lastBlob && !comment){ setError('Добавьте фото или комментарий'); return; } console.log('Send:',{hasImage:!!STATE.lastBlob, comment, imageSize:STATE.lastBlob?.size}); setError('✅ Отправлено (demo mode)'); setTimeout(()=>{ startCameraFlow(); DOM.comment.value=''; setError(''); },1500); }
+      <div class="card-guide">
+        <span>Карта<br>(Эталон)</span>
+      </div>
 
-  // ==================== STARTUP FLOW ====================
-  async function startCameraFlow(){
-    stopLevelLoop();
-    STATE.lastBlob=null; STATE.capturing=false; STATE.levelOK=false; STATE.rawNx=0; STATE.rawNy=0; STATE.smoothNx=0; STATE.smoothNy=0; STATE.lastOrientationEvent=0; STATE.lastSensorTime=0;
-    updateButtons(); setError('');
-    refreshScreenAngle();
-    if(!navigator.mediaDevices?.getUserMedia){ setError('Камера недоступна в этом браузере'); return; }
-    const opened=await openCamera();
-    if(!opened){ setError('Не удалось открыть камеру. Используйте галерею.'); return; }
-    await enableSensors();
-    showCameraUI();
+      <div class="controls-area">
+        <div class="icon-btn" style="opacity:0; pointer-events:none"></div> <div class="shutter-outer disabled" id="shutterBtn">
+          <div class="shutter-inner"></div>
+        </div>
+
+        <div class="icon-btn" id="btnGallery">🖼️</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="permReq" class="perm-overlay hidden">
+    <div style="font-size:48px; margin-bottom:10px">📐</div>
+    <h2 style="margin:0">Настройка</h2>
+    <p style="color:var(--text-muted)">Для точного расчета нам нужно использовать гироскоп телефона.</p>
+    <button class="perm-btn" onclick="requestSensors()">Разрешить</button>
+  </div>
+
+  <div id="previewScreen" class="preview-overlay">
+    <img id="finalPhoto" class="preview-img">
+    <div class="preview-controls">
+      <button class="btn" onclick="retake()">Переснять</button>
+      <button class="btn primary" id="btnSend" onclick="sendPhoto()">Готово</button>
+    </div>
+  </div>
+
+  <input type="file" id="fileInput" accept="image/*" class="hidden">
+
+<script>
+  // === TELEGRAM INIT ===
+  const tg = window.Telegram?.WebApp;
+  if(tg) {
+    tg.ready(); tg.expand();
+    tg.setHeaderColor('#000000');
+    if(tg.disableVerticalSwipes) tg.disableVerticalSwipes();
   }
 
-  // ==================== EVENT HANDLERS ====================
-  DOM.btnShot.addEventListener('click', onShutter);
-  DOM.btnTorch.addEventListener('click', toggleTorch);
-  DOM.btnPermission.addEventListener('click', requestSensorPermission);
-  DOM.btnLevelReset.addEventListener('click', forceResetLevel);
-  DOM.btnRetake.addEventListener('click', ()=>{ if(!DOM.btnRetake.disabled){ startCameraFlow(); } });
-  DOM.btnGallery.addEventListener('click', ()=>{ DOM.fileGallery?.click(); });
-  DOM.fileGallery.addEventListener('change', onFilePicked);
-  DOM.fileCam.addEventListener('change', onFilePicked);
-  DOM.btnSend.addEventListener('click', onSend);
-  DOM.comment.addEventListener('input', ()=>{ const raw=DOM.comment.value; const safe=sanitizeComment(raw); if(raw!==safe){ DOM.commentWarn.textContent='Некоторые символы удалены'; DOM.commentWarn.classList.remove('hidden'); } else { DOM.commentWarn.classList.add('hidden'); } updateButtons(); });
+  // === CONFIG ===
+  const MAX_TILT = 5; // Допустимый наклон в градусах
+  const TARGET_RES_H = 4096; // Целевая высота (4K)
+  const TARGET_ASPECT = 0.75; // 3:4 (Вертикально)
 
-  // ==================== LIFECYCLE ====================
-  screen.orientation?.addEventListener?.('change', refreshScreenAngle);
-  window.addEventListener('resize', computeLevelRadius);
-  window.addEventListener('pageshow', ()=>{ if(STATE.currentView==='camera'){ STATE.lastSensorTime=0; try{ STATE.sensorPermission=localStorage.getItem(PERM_KEY)||STATE.sensorPermission; }catch{} if(PLATFORM.isIOS && STATE.sensorPermission!=='granted'){ DOM.btnPermission.classList.remove('hidden'); } } });
-  document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible'){ if(STATE.currentView==='camera'){ STATE.lastSensorTime=0; ensureWakeLock(true); } } else { ensureWakeLock(false); } });
-  window.addEventListener('beforeunload', ()=>{ stopLevelLoop(); stopCamera(); removeSensorListeners(); ensureWakeLock(false); });
+  // === STATE ===
+  const state = {
+    stream: null,
+    track: null,
+    imageCapture: null,
+    levelOK: false,
+    angleX: 0,
+    angleY: 0,
+    photoBlob: null
+  };
 
-  // ==================== INIT ====================
-  window.addEventListener('DOMContentLoaded', ()=>{
-    startCameraFlow();
-    setupAutoSensorPermission();
+  const DOM = {
+    video: document.getElementById('video'),
+    canvas: document.getElementById('uiCanvas'),
+    ctx: document.getElementById('uiCanvas').getContext('2d'),
+    shutter: document.getElementById('shutterBtn'),
+    lvlDot: document.getElementById('lvlDot'),
+    lvlText: document.getElementById('lvlText'),
+    permReq: document.getElementById('permReq'),
+    preview: document.getElementById('previewScreen'),
+    finalImg: document.getElementById('finalPhoto'),
+    btnSend: document.getElementById('btnSend'),
+    fileInput: document.getElementById('fileInput')
+  };
 
-    // iOS/Android autoplay policy nudge
-    const nudgePlay = ()=>{ try{ DOM.video.play().catch(()=>{}); }catch{}; document.removeEventListener('pointerdown', nudgePlay, true); document.removeEventListener('touchstart', nudgePlay, true); document.removeEventListener('click', nudgePlay, true); };
-    document.addEventListener('pointerdown', nudgePlay, true);
-    document.addEventListener('touchstart', nudgePlay, true);
-    document.addEventListener('click', nudgePlay, true);
+  // --- 1. CAMERA INIT (HIGH RES / VERTICAL) ---
+  async function initCamera() {
+    try {
+      // Ищем именно задние камеры
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const hasBack = devices.some(d => d.kind === 'videoinput' && d.label.toLowerCase().includes('back'));
+      const facing = hasBack ? { ideal: 'environment' } : 'environment';
 
-    // Observe level circle size
-    try{ if('ResizeObserver' in window){ const ro = new ResizeObserver(()=>computeLevelRadiusDeferred()); ro.observe(DOM.levelOuter); } }catch{}
+      // Constraints:
+      // 1. facingMode: environment (задняя)
+      // 2. aspectRatio: 0.75 (3:4 вертикально) - предотвращает кроп/зум
+      // 3. height: 4096 (макс разрешение)
+      const constraints = {
+        audio: false,
+        video: {
+          facingMode: facing,
+          aspectRatio: { ideal: TARGET_ASPECT },
+          height: { ideal: TARGET_RES_H },
+          width: { ideal: 3072 } 
+        }
+      };
 
-    // Prevent pinch/double-tap zoom inside camera area
-    DOM.camWrap.addEventListener('touchstart', e=>{ if(e.touches.length>1){ e.preventDefault(); } }, {passive:false});
-    DOM.camWrap.addEventListener('touchmove', e=>{ if(e.touches.length>1){ e.preventDefault(); } }, {passive:false});
-    let lastTap=0; DOM.camWrap.addEventListener('touchend', e=>{ const now=Date.now(); if(now-lastTap<300){ e.preventDefault(); } lastTap=now; });
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      state.stream = stream;
+      state.track = stream.getVideoTracks()[0];
+      DOM.video.srcObject = stream;
 
-    // Telegram WebApp integration
-    try{ window.Telegram?.WebApp?.ready?.(); window.Telegram?.WebApp?.expand?.(); }catch{}
+      // Попытка включить непрерывный автофокус
+      const caps = state.track.getCapabilities();
+      if (caps.focusMode && caps.focusMode.includes('continuous')) {
+        try { await state.track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch(e){}
+      }
 
-    // ============= SELF-TESTS (non-fatal) =============
-    (function runSelfTests(){
-      const tests = [];
-      function t(name, fn){ try{ fn(); console.log('✅', name); tests.push({name, ok:true}); } catch(e){ console.warn('❌', name, e); tests.push({name, ok:false, err:e}); } }
-      t('DOM essentials', ()=>{ if(!DOM.video||!DOM.btnShot||!DOM.levelBubble) throw new Error('Missing nodes'); });
-      t('Top icons exist', ()=>{ if(!DOM.btnTorch||!DOM.btnLevelReset) throw new Error('missing top icons'); });
-      t('Top icons share class', ()=>{ if(!DOM.btnTorch.className.includes('top-icon')||!DOM.btnLevelReset.className.includes('top-icon')) throw new Error('icons not uniform'); });
-      t('Video visible for preview', ()=>{ if(DOM.video.classList.contains('hidden')) throw new Error('<video> is hidden'); });
-      t('Canvas not blocking view', ()=>{ if(getComputedStyle(DOM.preview).display !== 'none') throw new Error('canvas should be display:none'); });
-      t('Constraints set', ()=>{ if(!navigator.mediaDevices) throw new Error('No mediaDevices'); });
-      t('computeCoverCropByAspect wide→crop sides', ()=>{ const {sx,sy,sw,sh}=computeCoverCropByAspect(4000,2000,3/4); if(sh!==2000) throw new Error('sh'); if(sw!==1500) throw new Error('sw'); if(sx!==1250||sy!==0) throw new Error('sx/sy'); });
-      t('computeCoverCropByAspect tall→crop top/bottom', ()=>{ const {sx,sy,sw,sh}=computeCoverCropByAspect(2000,4000,3/4); if(sw!==2000) throw new Error('sw'); const exp=Math.round(2000/(3/4)); if(Math.abs(sh-exp)>1) throw new Error('sh approx'); if(sx!==0) throw new Error('sx'); });
-      t('capture fn present', ()=>{ if(typeof captureWysiwygFromVideo!=='function') throw new Error('no capture fn'); });
-      t('allowTakePhoto default false', ()=>{ if(CONFIG.allowTakePhoto!==false) throw new Error('allowTakePhoto not false'); });
-      t('mapTilt bounds', ()=>{ const r0=mapTilt(0,0); if(Math.hypot(r0.nx,r0.ny)>1e-6) throw new Error('center not zero'); const r1=mapTilt(30,30); if(r1.nx<-1||r1.nx>1||r1.ny<-1||r1.ny>1) throw new Error('clamp failed'); });
-      t('updateLevel uses smoothed tilt', ()=>{ CONFIG.levelRadius=50; STATE.smoothNx=1; STATE.smoothNy=0; STATE.rawNx=0; STATE.rawNy=0; updateLevel(); if(!DOM.levelBubble.style.transform.includes('50px')) throw new Error('not using smooth values'); });
-      t('devicemotion ignored when orientation fresh', ()=>{ const prevNx=STATE.smoothNx, prevNy=STATE.smoothNy; STATE.lastOrientationEvent=performance.now(); const e={accelerationIncludingGravity:{x:100,y:100,z:100}}; onDeviceMotion(e); if(STATE.smoothNx!==prevNx||STATE.smoothNy!==prevNy) throw new Error('motion not ignored'); });
-      const failed = tests.some(x=>!x.ok);
-      if(!failed) console.log('✅ All self-tests passed'); else console.warn('⚠️ Some self-tests failed', tests.filter(x=>!x.ok));
-    })();
+      // Android High-Res Capture support
+      if (window.ImageCapture) {
+        state.imageCapture = new ImageCapture(state.track);
+      }
+
+      // Start Loops
+      resizeCanvas();
+      window.addEventListener('resize', resizeCanvas);
+      requestAnimationFrame(drawLoop);
+
+      // Check iOS Sensors
+      checkSensorPerms();
+
+    } catch (e) {
+      console.warn("4K Init failed, retrying basic", e);
+      try {
+         // Fallback для старых устройств
+         const fs = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+         state.stream = fs;
+         state.track = fs.getVideoTracks()[0];
+         DOM.video.srcObject = fs;
+         requestAnimationFrame(drawLoop);
+      } catch(e2){ alert("Ошибка доступа к камере"); }
+    }
+  }
+
+  // --- 2. SENSORS (GYRO) ---
+  function checkSensorPerms() {
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+      DOM.permReq.classList.remove('hidden'); // iOS 13+ требует кнопки
+    } else {
+      window.addEventListener('deviceorientation', handleOrientation); // Android работает сразу
+    }
+  }
+
+  async function requestSensors() {
+    try {
+      const resp = await DeviceOrientationEvent.requestPermission();
+      if (resp === 'granted') {
+        DOM.permReq.classList.add('hidden');
+        window.addEventListener('deviceorientation', handleOrientation);
+      } else {
+        alert("Без гироскопа уровень работать не будет");
+        DOM.permReq.classList.add('hidden');
+      }
+    } catch (e) { alert(e); }
+  }
+
+  function handleOrientation(e) {
+    let x = e.beta;  // Наклон вперед-назад
+    let y = e.gamma; // Наклон влево-вправо
+    if (x === null || y === null) return;
+
+    state.angleX = x;
+    state.angleY = y;
+
+    const tilt = Math.sqrt(x*x + y*y);
+    const isLevel = tilt < MAX_TILT;
+
+    if (state.levelOK !== isLevel) {
+      state.levelOK = isLevel;
+      updateUI();
+      if(isLevel) haptic('medium');
+    }
+  }
+
+  // --- 3. UI LOOPS ---
+  function updateUI() {
+    if (state.levelOK) {
+      DOM.lvlDot.classList.add('ok');
+      DOM.lvlText.textContent = "Ровно";
+      DOM.shutter.classList.remove('disabled');
+      DOM.shutter.classList.add('active');
+    } else {
+      DOM.lvlDot.classList.remove('ok');
+      DOM.lvlText.textContent = "Выровняйте";
+      DOM.shutter.classList.add('disabled');
+      DOM.shutter.classList.remove('active');
+    }
+  }
+
+  function resizeCanvas() {
+    DOM.canvas.width = window.innerWidth;
+    DOM.canvas.height = window.innerHeight;
+  }
+
+  function drawLoop() {
+    const ctx = DOM.ctx;
+    const w = DOM.canvas.width;
+    const h = DOM.canvas.height;
+    ctx.clearRect(0, 0, w, h);
+
+    const cx = w / 2;
+    const cy = h / 2;
+
+    // Отрисовка пузырька уровня
+    const maxOffset = 80;
+    const clamp = (val) => Math.max(-20, Math.min(20, val)); // Ограничиваем чувствительность
+    
+    // Инвертируем Y для естественного поведения пузырька
+    const dx = (clamp(state.angleY) / 20) * maxOffset; 
+    const dy = (clamp(state.angleX) / 20) * maxOffset;
+
+    // Внешний круг
+    ctx.beginPath();
+    ctx.arc(cx, cy, 24, 0, Math.PI * 2);
+    ctx.strokeStyle = state.levelOK ? '#30d158' : 'rgba(255,255,255,0.4)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Пузырек
+    ctx.beginPath();
+    ctx.arc(cx + dx, cy + dy, 14, 0, Math.PI * 2);
+    ctx.fillStyle = state.levelOK ? '#30d158' : '#ffffff';
+    ctx.fill();
+
+    requestAnimationFrame(drawLoop);
+  }
+
+  // --- 4. CAPTURE LOGIC ---
+  DOM.shutter.addEventListener('click', async () => {
+    if (!state.levelOK) { haptic('error'); return; }
+    haptic('heavy');
+    
+    // Анимация кнопки
+    DOM.shutter.style.transform = 'scale(0.9)';
+    setTimeout(()=> DOM.shutter.style.transform = '', 100);
+
+    // ВАРИАНТ А: Native Android Photo (Самое высокое качество)
+    if (state.imageCapture) {
+      try {
+        const blob = await state.imageCapture.takePhoto();
+        showPreview(blob);
+        return;
+      } catch(e) { console.log('ImageCapture failed, fallback to canvas'); }
+    }
+
+    // ВАРИАНТ Б: iOS High-Res Grab (Полный сенсор)
+    // Мы берем видеопоток в его реальном разрешении (например, 3000x4000), 
+    // а не то, что отображается на экране.
+    const vid = DOM.video;
+    const c = document.createElement('canvas');
+    c.width = vid.videoWidth;
+    c.height = vid.videoHeight;
+    c.getContext('2d').drawImage(vid, 0, 0);
+    c.toBlob(blob => showPreview(blob), 'image/jpeg', 0.95);
   });
-  </script>
+
+  function showPreview(blob) {
+    state.photoBlob = blob;
+    DOM.finalImg.src = URL.createObjectURL(blob);
+    DOM.preview.style.display = 'flex';
+  }
+
+  function retake() {
+    DOM.preview.style.display = 'none';
+    if(DOM.finalImg.src) URL.revokeObjectURL(DOM.finalImg.src);
+    DOM.finalImg.src = '';
+    state.photoBlob = null;
+  }
+
+  function sendPhoto() {
+    DOM.btnSend.textContent = 'Отправка...';
+    haptic('light');
+
+    // Здесь будет код отправки на сервер
+    console.log("Photo ready to send:", state.photoBlob.size, "bytes");
+    
+    // Имитация успеха
+    setTimeout(() => {
+        haptic('success');
+        DOM.btnSend.textContent = 'Успешно!';
+        setTimeout(() => { 
+            // window.Telegram.WebApp.close(); // Можно закрыть апп
+            retake(); 
+            DOM.btnSend.textContent = 'Готово';
+        }, 1000);
+    }, 1000);
+  }
+
+  // --- UTILS ---
+  function haptic(style) { if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred(style); }
+  
+  // Torch
+  let torchState = false;
+  document.getElementById('btnTorch').onclick = async () => {
+    if(!state.track) return;
+    torchState = !torchState;
+    try { await state.track.applyConstraints({ advanced: [{ torch: torchState }] }); } catch(e){}
+    haptic('light');
+  };
+
+  // Gallery
+  document.getElementById('btnGallery').onclick = () => DOM.fileInput.click();
+  DOM.fileInput.onchange = (e) => {
+    const file = e.target.files[0];
+    if(file) showPreview(file);
+    e.target.value = '';
+  };
+
+  document.getElementById('btnClose').onclick = () => window.history.back();
+
+  // Start
+  initCamera();
+
+</script>
 </body>
 </html>
