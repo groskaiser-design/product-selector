@@ -42,7 +42,7 @@
     background: #000;
   }
 
-  /* Video: Используем cover для красоты UI, но захват идет с полного сенсора */
+  /* Video: Используем cover для красоты UI */
   video {
     position: absolute;
     width: 100%; height: 100%;
@@ -110,15 +110,16 @@
   .card-guide {
     position: absolute;
     right: 20px; top: 50%; transform: translateY(-50%);
-    width: 80px; height: 130px; /* Пропорции кредитки вертикально */
+    width: 100px; height: 160px; /* Вернули размер из базы */
     border: 2px dashed rgba(255,255,255,0.4);
     border-radius: 12px;
     background: rgba(255,255,255,0.05);
     display: flex; align-items: center; justify-content: center;
     text-align: center;
+    padding: 8px; /* Добавил отступ чтобы текст не прилипал */
     pointer-events: none;
   }
-  .card-guide span { font-size: 10px; color: rgba(255,255,255,0.7); font-weight: 600; padding: 4px; }
+  .card-guide span { font-size: 11px; color: rgba(255,255,255,0.7); font-weight: 600; }
 
   /* Bottom Controls */
   .controls-area {
@@ -208,7 +209,7 @@
       </div>
 
       <div class="card-guide">
-        <span>Карта<br>(Эталон)</span>
+        <span>Банковская карта, (опционально, повысит точность)</span>
       </div>
 
       <div class="controls-area">
@@ -285,10 +286,7 @@
       const hasBack = devices.some(d => d.kind === 'videoinput' && d.label.toLowerCase().includes('back'));
       const facing = hasBack ? { ideal: 'environment' } : 'environment';
 
-      // Constraints:
-      // 1. facingMode: environment (задняя)
-      // 2. aspectRatio: 0.75 (3:4 вертикально) - предотвращает кроп/зум
-      // 3. height: 4096 (макс разрешение)
+      // Constraints
       const constraints = {
         audio: false,
         video: {
@@ -326,7 +324,6 @@
     } catch (e) {
       console.warn("4K Init failed, retrying basic", e);
       try {
-         // Fallback для старых устройств
          const fs = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
          state.stream = fs;
          state.track = fs.getVideoTracks()[0];
@@ -362,12 +359,10 @@
     let x = e.beta;  // Наклон вперед-назад
     let y = e.gamma; // Наклон влево-вправо
     if (x === null || y === null) return;
-
-    // Просто сохраняем углы, решение примет drawLoop
     state.angleX = x;
     state.angleY = y;
   }
-  
+
   // --- 3. UI LOOPS ---
   function updateUI() {
     if (state.levelOK) {
@@ -393,55 +388,49 @@
     const w = DOM.canvas.width;
     const h = DOM.canvas.height;
     ctx.clearRect(0, 0, w, h);
-
     const cx = w / 2;
     const cy = h / 2;
 
-    // === НАСТРОЙКИ РАЗМЕРОВ ===
-    const rBubble = 14;       // Радиус точки
-    const rTarget = 17;       // Радиус цели (всего на 2px больше)
-    // ==========================
-
-    // Параметры чувствительности
-    // maxOffset: насколько далеко улетает шарик при наклоне. 
-    // Чем меньше число, тем "туже" ходит шарик (легче поймать центр).
+    // === НАСТРОЙКИ (16px и 14px) ===
+    const rBubble = 14; 
+    const rTarget = 16;
     const maxOffset = 60; 
+    
+    // Защита от сбоя датчиков
+    const rawX = isNaN(state.angleY) ? 0 : state.angleY;
+    const rawY = isNaN(state.angleX) ? 0 : state.angleX;
     const clamp = (val) => Math.max(-20, Math.min(20, val));
     
-    // Рассчитываем смещение (координаты пузырька)
-    const dx = (clamp(state.angleY) / 20) * maxOffset; 
-    const dy = (clamp(state.angleX) / 20) * maxOffset;
+    const dx = (clamp(rawX) / 20) * maxOffset; 
+    const dy = (clamp(rawY) / 20) * maxOffset;
 
-    // === НОВАЯ СТРОГАЯ ЛОГИКА ===
-    // Считаем дистанцию от центра до центра смещенного пузырька
+    // Логика попадания
     const dist = Math.hypot(dx, dy);
-    
-    // Условие: пузырек целиком внутри круга
-    // (дистанция до центра + радиус пузырька) должно быть меньше радиуса цели
     const isInside = (dist + rBubble) <= rTarget;
 
-    // Обновляем статус, только если он изменился
     if (state.levelOK !== isInside) {
       state.levelOK = isInside;
       updateUI();
       if(isInside) haptic('medium');
     }
-    // ============================
 
-    // 1. Рисуем Внешний круг (Цель)
+    // Тень для видимости на белом
+    ctx.shadowBlur = 4;
+    ctx.shadowColor = 'rgba(0,0,0,0.5)';
+    
+    // 1. Внешний круг (Цель)
     ctx.beginPath();
     ctx.arc(cx, cy, rTarget, 0, Math.PI * 2); 
-    // Если ОК - зеленый, если нет - белый полупрозрачный
-    ctx.strokeStyle = state.levelOK ? '#30d158' : 'rgba(255,255,255,0.5)';
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = state.levelOK ? '#30d158' : 'rgba(255,255,255,0.85)';
+    ctx.lineWidth = 3;
     ctx.stroke();
 
-    // 2. Рисуем Внутренний пузырек
+    // 2. Пузырек
     ctx.beginPath();
     ctx.arc(cx + dx, cy + dy, rBubble, 0, Math.PI * 2); 
-    // Если ОК - зеленый, если нет - белый
     ctx.fillStyle = state.levelOK ? '#30d158' : '#ffffff';
     ctx.fill();
+    ctx.shadowBlur = 0;
 
     requestAnimationFrame(drawLoop);
   }
@@ -451,11 +440,10 @@
     if (!state.levelOK) { haptic('error'); return; }
     haptic('heavy');
     
-    // Анимация кнопки
     DOM.shutter.style.transform = 'scale(0.9)';
     setTimeout(()=> DOM.shutter.style.transform = '', 100);
 
-    // ВАРИАНТ А: Native Android Photo (Самое высокое качество)
+    // ВАРИАНТ А: Native Android Photo
     if (state.imageCapture) {
       try {
         const blob = await state.imageCapture.takePhoto();
@@ -464,9 +452,7 @@
       } catch(e) { console.log('ImageCapture failed, fallback to canvas'); }
     }
 
-    // ВАРИАНТ Б: iOS High-Res Grab (Полный сенсор)
-    // Мы берем видеопоток в его реальном разрешении (например, 3000x4000), 
-    // а не то, что отображается на экране.
+    // ВАРИАНТ Б: iOS High-Res Grab
     const vid = DOM.video;
     const c = document.createElement('canvas');
     c.width = vid.videoWidth;
@@ -500,7 +486,6 @@
         haptic('success');
         DOM.btnSend.textContent = 'Успешно!';
         setTimeout(() => { 
-            // window.Telegram.WebApp.close(); // Можно закрыть апп
             retake(); 
             DOM.btnSend.textContent = 'Готово';
         }, 1000);
