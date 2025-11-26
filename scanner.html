@@ -8,7 +8,13 @@
 <style>
   /* === CORE UTILS === */
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; outline: none; }
-  *::-webkit-scrollbar { display: none; width: 0; height: 0; }
+  
+  /* ГЛАВНОЕ: Скрываем скроллбар визуально, но оставляем функционал.
+     Это работает для Chrome/Safari/Edge 
+  */
+  *::-webkit-scrollbar { display: none; width: 0; height: 0; background: transparent; }
+  /* Для Firefox */
+  * { scrollbar-width: none; }
   
   :root {
     --bg-core: #050505;
@@ -51,7 +57,6 @@
   /* === CALENDAR STICKY HEADER === */
   .calendar-sticky {
     position: sticky; top: 0; z-index: 50;
-    /* Прозрачность и размытие для эффекта стекла */
     background: rgba(20, 20, 20, 0.2); 
     backdrop-filter: blur(50px); -webkit-backdrop-filter: blur(50px);
     border-bottom: 1px solid rgba(255,255,255,0.08);
@@ -72,10 +77,13 @@
     opacity: 0.9;
   }
   
+  /* ОБЛАСТЬ СВАЙПА */
   .calendar-swipe-area {
     width: 100%;
     padding: 0 10px;
-    cursor: grab; /* Курсор для ПК */
+    /* Разрешаем вертикальный скролл страницы, но перехватываем горизонтальный */
+    touch-action: pan-y; 
+    cursor: grab;
   }
   .calendar-swipe-area:active { cursor: grabbing; }
 
@@ -83,70 +91,50 @@
     display: grid; 
     grid-template-columns: repeat(7, 1fr); 
     gap: 4px;
-    transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.2s;
-    will-change: transform, opacity;
+    /* Убираем transition по умолчанию, чтобы мышь управляла позицией напрямую */
+    /* transition добавляется JS-ом только при отпускании */
+    will-change: transform; 
   }
   
-  /* Анимации свайпа */
-  .calendar-grid.anim-left { transform: translateX(-40px); opacity: 0; }
-  .calendar-grid.anim-right { transform: translateX(40px); opacity: 0; }
-  .calendar-grid.hidden { opacity: 0; transition: none; }
+  /* Классы анимации для программного переключения (стрелками или после свайпа) */
+  .calendar-grid.animating { transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.2s; }
+  .calendar-grid.hidden { opacity: 0; }
 
-  /* Ячейка дня */
+  /* Day Cell */
   .day-cell {
     height: 52px;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     border-radius: 12px;
     background: transparent;
-    transition: all 0.2s;
+    transition: background 0.2s, transform 0.1s, box-shadow 0.2s; /* Обновил transition */
     position: relative;
     cursor: pointer;
+    /* Запрещаем выделение текста внутри дня, чтобы не мешало драгу */
+    user-select: none; 
+    -webkit-user-drag: none;
   }
   
-  /* Ховер эффект только для ПК */
   @media (hover: hover) {
     .day-cell:hover:not(.selected) { background: rgba(255,255,255,0.05); }
   }
   .day-cell:active { transform: scale(0.92); }
 
-  .dc-name {
-    font-size: 9px; font-weight: 600; 
-    color: var(--text-muted); 
-    margin-bottom: 3px;
-    text-transform: uppercase;
-  }
-  
-  .dc-num {
-    font-size: 17px; font-weight: 600; 
-    color: #fff;
-    font-variant-numeric: tabular-nums;
-  }
+  .dc-name { font-size: 9px; font-weight: 600; color: var(--text-muted); margin-bottom: 3px; text-transform: uppercase; }
+  .dc-num { font-size: 17px; font-weight: 600; color: #fff; font-variant-numeric: tabular-nums; }
 
-  /* Состояние: Выбран */
-  .day-cell.selected {
-    background: #fff;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-    transform: scale(1);
-  }
+  .day-cell.selected { background: #fff; box-shadow: 0 4px 12px rgba(0,0,0,0.3); transform: scale(1); }
   .day-cell.selected .dc-name { color: rgba(0,0,0,0.5); font-weight: 700; }
   .day-cell.selected .dc-num { color: #000; font-weight: 800; }
 
-  /* Маркер "Сегодня" */
-  .day-cell.is-today::after {
-    content: ''; position: absolute; bottom: 5px;
-    width: 4px; height: 4px; border-radius: 50%;
-    background: var(--acc-blue);
-    box-shadow: 0 0 4px var(--acc-blue);
-  }
+  .day-cell.is-today::after { content: ''; position: absolute; bottom: 5px; width: 4px; height: 4px; border-radius: 50%; background: var(--acc-blue); box-shadow: 0 0 4px var(--acc-blue); }
   .day-cell.selected.is-today::after { background: #000; box-shadow: none; }
 
   /* === SCROLL AREA === */
   .scroll-container {
     flex: 1;
-    overflow-y: auto;
+    overflow-y: auto; /* Вертикальный скролл работает */
     padding-bottom: 120px;
     -webkit-overflow-scrolling: touch;
-    /* Плавное исчезновение контента под хедером */
     mask-image: linear-gradient(to bottom, transparent 0%, black 15px);
     -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 15px);
   }
@@ -170,16 +158,13 @@
     backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
     position: relative; overflow: hidden;
     padding: 16px;
+    user-select: none; /* Чтобы текст не выделялся при драге */
   }
 
   .macros-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; height: 100%; align-items: center; }
   .macro-item { display: flex; flex-direction: column; align-items: center; justify-content: center; }
   
-  .donut-box { 
-    width: 100%; max-width: 62px; aspect-ratio: 1; 
-    position: relative; display: flex; align-items: center; justify-content: center; 
-    margin-bottom: 6px;
-  }
+  .donut-box { width: 100%; max-width: 62px; aspect-ratio: 1; position: relative; display: flex; align-items: center; justify-content: center; margin-bottom: 6px; }
   .mini-donut { width: 100%; height: 100%; transform: rotate(-90deg); filter: drop-shadow(0 2px 4px rgba(0,0,0,0.2)); }
   .md-bg { fill: none; stroke: rgba(255,255,255,0.06); stroke-width: 6; }
   .md-val { fill: none; stroke-width: 6; stroke-linecap: round; stroke-dasharray: 151; transition: stroke-dashoffset 1s ease; }
@@ -193,26 +178,12 @@
   /* Water Widget */
   .widget.water-card { padding: 0; display: flex; flex-direction: column; justify-content: space-between; background: rgba(30, 40, 50, 0.3); }
   .liquid-container { position: absolute; bottom: 0; left: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
-  .liquid {
-    position: absolute; bottom: 0; left: 0; width: 100%; 
-    height: var(--h, 30%); 
-    background: linear-gradient(to top, rgba(10,132,255,0.6), rgba(10,132,255,0.3));
-    transition: height 0.5s ease-out;
-  }
-  .liquid::after {
-    content: ''; position: absolute; top: -10px; left: 0; width: 200%; height: 20px;
-    background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1200 120' preserveAspectRatio='none'%3E%3Cpath d='M321.39,56.44c58-10.79,114.16-30.13,172-41.86,82.39-16.72,168.19-17.73,250.45-.39C823.78,31,906.67,72,985.66,92.83c70.05,18.48,146.53,26.09,214.34,3V0H0V27.35A600.21,600.21,0,0,0,321.39,56.44Z' style='fill:rgba(10,132,255,0.3)'/%3E%3C/svg%3E");
-    background-size: 50% 100%; animation: waveFlow 10s linear infinite;
-  }
+  .liquid { position: absolute; bottom: 0; left: 0; width: 100%; height: var(--h, 30%); background: linear-gradient(to top, rgba(10,132,255,0.6), rgba(10,132,255,0.3)); transition: height 0.5s ease-out; }
+  .liquid::after { content: ''; position: absolute; top: -10px; left: 0; width: 200%; height: 20px; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1200 120' preserveAspectRatio='none'%3E%3Cpath d='M321.39,56.44c58-10.79,114.16-30.13,172-41.86,82.39-16.72,168.19-17.73,250.45-.39C823.78,31,906.67,72,985.66,92.83c70.05,18.48,146.53,26.09,214.34,3V0H0V27.35A600.21,600.21,0,0,0,321.39,56.44Z' style='fill:rgba(10,132,255,0.3)'/%3E%3C/svg%3E"); background-size: 50% 100%; animation: waveFlow 10s linear infinite; }
   @keyframes waveFlow { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
 
   .water-ui { position: relative; z-index: 2; height: 100%; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; }
-  .w-btn-box {
-    width: 44px; height: 44px; border-radius: 12px;
-    background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.1);
-    backdrop-filter: blur(10px); display: flex; align-items: center; justify-content: center;
-    font-size: 22px; color: #fff; font-weight: 300; cursor: pointer; transition: 0.1s;
-  }
+  .w-btn-box { width: 44px; height: 44px; border-radius: 12px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.1); backdrop-filter: blur(10px); display: flex; align-items: center; justify-content: center; font-size: 22px; color: #fff; font-weight: 300; cursor: pointer; transition: 0.1s; }
   .w-btn-box:active { transform: scale(0.9); background: rgba(255,255,255,0.2); }
   .w-center { text-align: center; }
   .w-val { font-size: 32px; font-weight: 800; line-height: 1; text-shadow: 0 2px 10px rgba(0,0,0,0.3); }
@@ -226,12 +197,7 @@
   .timeline { padding: 10px 16px 0 16px; display: flex; flex-direction: column; gap: 10px; }
   .section-title { font-size: 13px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); margin-left: 4px; letter-spacing: 0.5px; }
 
-  .meal-card {
-    background: var(--surface-glass);
-    border-radius: var(--radius-l);
-    border: 1px solid rgba(255,255,255,0.05);
-    padding: 16px; transition: background 0.2s;
-  }
+  .meal-card { background: var(--surface-glass); border-radius: var(--radius-l); border: 1px solid rgba(255,255,255,0.05); padding: 16px; transition: background 0.2s; }
   .meal-card:active { background: rgba(255,255,255,0.1); }
   .meal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.06); }
   .mh-left { display: flex; align-items: center; gap: 8px; }
@@ -246,38 +212,14 @@
   .pi-c { font-weight: 600; min-width: 30px; text-align: right; font-feature-settings: "tnum"; }
 
   /* === OMNI-BAR === */
-  .omni-bar {
-    position: fixed; bottom: 0; left: 0; right: 0;
-    background: rgba(15, 15, 15, 0.9);
-    backdrop-filter: blur(30px); -webkit-backdrop-filter: blur(30px);
-    border-top: 1px solid rgba(255,255,255,0.1);
-    padding: 8px 12px var(--safe-bottom) 12px;
-    z-index: 100; display: flex; align-items: flex-end; gap: 8px;
-  }
-  .icon-btn {
-    width: 40px; height: 40px; flex-shrink: 0;
-    display: flex; align-items: center; justify-content: center;
-    color: #fff; border-radius: 50%; cursor: pointer; transition: 0.2s;
-    margin-bottom: 2px;
-  }
+  .omni-bar { position: fixed; bottom: 0; left: 0; right: 0; background: rgba(15, 15, 15, 0.9); backdrop-filter: blur(30px); -webkit-backdrop-filter: blur(30px); border-top: 1px solid rgba(255,255,255,0.1); padding: 8px 12px var(--safe-bottom) 12px; z-index: 100; display: flex; align-items: flex-end; gap: 8px; }
+  .icon-btn { width: 40px; height: 40px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; color: #fff; border-radius: 50%; cursor: pointer; transition: 0.2s; margin-bottom: 2px; }
   .icon-btn:active { background: rgba(255,255,255,0.15); }
-  
-  .input-wrap {
-    flex: 1; min-height: 42px; background: rgba(255,255,255,0.08); border-radius: 20px;
-    display: flex; align-items: center; padding: 4px 16px; border: 1px solid transparent; transition: 0.2s;
-  }
+  .input-wrap { flex: 1; min-height: 42px; background: rgba(255,255,255,0.08); border-radius: 20px; display: flex; align-items: center; padding: 4px 16px; border: 1px solid transparent; transition: 0.2s; }
   .input-wrap:focus-within { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.15); }
-  
-  textarea {
-    width: 100%; background: transparent; border: none; color: #fff; font-size: 15px; line-height: 20px;
-    padding: 10px 0; margin: 0; resize: none; max-height: 100px; font-family: inherit;
-  }
+  textarea { width: 100%; background: transparent; border: none; color: #fff; font-size: 15px; line-height: 20px; padding: 10px 0; margin: 0; resize: none; max-height: 100px; font-family: inherit; }
   textarea::placeholder { color: rgba(255,255,255,0.35); }
-
-  .action-btn {
-    width: 40px; height: 40px; flex-shrink: 0; border-radius: 50%; display: flex; align-items: center; justify-content: center;
-    transition: 0.2s cubic-bezier(0.34, 1.56, 0.64, 1); cursor: pointer; margin-bottom: 2px;
-  }
+  .action-btn { width: 40px; height: 40px; flex-shrink: 0; border-radius: 50%; display: flex; align-items: center; justify-content: center; transition: 0.2s cubic-bezier(0.34, 1.56, 0.64, 1); cursor: pointer; margin-bottom: 2px; }
   .mode-cam { background: transparent; color: #fff; }
   .mode-cam:active { transform: scale(0.9); opacity: 0.7; }
   .mode-send { background: var(--acc-blue); color: #fff; }
@@ -288,22 +230,11 @@
   .stroke-fats { stroke: url(#grad-fats); }
   .stroke-carb { stroke: url(#grad-carb); }
 
-  .sheet-overlay {
-    position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 200;
-    opacity: 0; pointer-events: none; transition: opacity 0.3s; backdrop-filter: blur(4px);
-  }
+  .sheet-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 200; opacity: 0; pointer-events: none; transition: opacity 0.3s; backdrop-filter: blur(4px); }
   .sheet-overlay.visible { opacity: 1; pointer-events: auto; }
-  .sheet {
-    position: fixed; bottom: 0; left: 0; right: 0; background: #151517; border-radius: 24px 24px 0 0;
-    padding: 24px 16px calc(30px + env(safe-area-inset-bottom)) 16px;
-    transform: translateY(100%); transition: transform 0.3s cubic-bezier(0.1, 0.7, 0.1, 1);
-    border-top: 1px solid rgba(255,255,255,0.15);
-  }
+  .sheet { position: fixed; bottom: 0; left: 0; right: 0; background: #151517; border-radius: 24px 24px 0 0; padding: 24px 16px calc(30px + env(safe-area-inset-bottom)) 16px; transform: translateY(100%); transition: transform 0.3s cubic-bezier(0.1, 0.7, 0.1, 1); border-top: 1px solid rgba(255,255,255,0.15); }
   .sheet-overlay.visible .sheet { transform: translateY(0); }
-  .sheet-item {
-    background: rgba(255,255,255,0.06); border-radius: 16px; padding: 16px;
-    display: flex; align-items: center; gap: 16px; cursor: pointer; margin-bottom: 8px;
-  }
+  .sheet-item { background: rgba(255,255,255,0.06); border-radius: 16px; padding: 16px; display: flex; align-items: center; gap: 16px; cursor: pointer; margin-bottom: 8px; }
   .sheet-item:active { background: rgba(255,255,255,0.12); }
   .sheet-icon { font-size: 24px; }
   .sheet-lbl { font-size: 16px; font-weight: 600; color: #fff; }
@@ -438,22 +369,27 @@
   const tg = window.Telegram?.WebApp;
   if(tg) { tg.ready(); tg.expand(); tg.setHeaderColor('#050505'); tg.setBackgroundColor('#050505'); }
 
-  // === CORRECT HAPTIC LOGIC (Fixing Console Error) ===
   function haptic(type) {
     if(!tg?.HapticFeedback) return;
-    if(type === 'selection') {
-        tg.HapticFeedback.selectionChanged();
-    } else if (['light', 'medium', 'heavy', 'rigid', 'soft'].includes(type)) {
-        tg.HapticFeedback.impactOccurred(type);
-    } else if (['error', 'success', 'warning'].includes(type)) {
-        tg.HapticFeedback.notificationOccurred(type);
-    }
+    if(type === 'selection') tg.HapticFeedback.selectionChanged();
+    else if (['light', 'medium', 'heavy'].includes(type)) tg.HapticFeedback.impactOccurred(type);
+    else if (['error', 'success', 'warning'].includes(type)) tg.HapticFeedback.notificationOccurred(type);
   }
 
-  // === 1. COMPACT CALENDAR LOGIC (Touch & Mouse Support) ===
+  // === 1. КАЛЕНДАРЬ С ЖИВЫМ ПЕРЕТАСКИВАНИЕМ (Live Drag) ===
+  // Используем Pointer Events, чтобы работало и на мышке, и на пальцах одинаково.
+
   let currentWeekStart = getStartOfWeek(new Date());
   let selectedDate = new Date();
-  let isSwipeAction = false; // Флаг, чтобы отличать свайп от клика
+  
+  // Переменные для свайпа
+  let isDragging = false;
+  let startX = 0;
+  let currentTranslate = 0;
+  let isSwipeAction = false; // Чтобы отличить свайп от клика
+
+  const area = document.getElementById('swipeArea');
+  const grid = document.getElementById('calGrid');
 
   function getStartOfWeek(date) {
     const d = new Date(date);
@@ -464,19 +400,25 @@
 
   function initCalendar() {
     renderWeek();
-    setupSwipe();
+    
+    // Pointer Events (Мышь + Тач)
+    area.onpointerdown = handleStart;
+    area.onpointermove = handleMove;
+    area.onpointerup = handleEnd;
+    area.onpointercancel = handleEnd;
+    area.onpointerleave = handleEnd;
   }
 
   function renderWeek() {
-    const grid = document.getElementById('calGrid');
-    const label = document.getElementById('monthLabel');
+    // Если есть текущая анимация сдвига, сбрасываем
+    grid.style.transform = `translateX(0px)`; 
     grid.innerHTML = '';
     
-    // Month Label
+    // Обновляем месяц
     const midWeek = new Date(currentWeekStart);
     midWeek.setDate(midWeek.getDate() + 3);
-    const monthName = midWeek.toLocaleString('ru', { month: 'long', year: 'numeric' });
-    label.textContent = monthName;
+    const label = document.getElementById('monthLabel');
+    label.textContent = midWeek.toLocaleString('ru', { month: 'long', year: 'numeric' });
 
     const weekDays = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
     const today = new Date();
@@ -492,88 +434,132 @@
       el.className = `day-cell ${isSelected ? 'selected' : ''} ${isToday ? 'is-today' : ''}`;
       el.innerHTML = `<div class="dc-name">${weekDays[i]}</div><div class="dc-num">${d.getDate()}</div>`;
       
-      el.onclick = () => {
-        // Если это был свайп (перетаскивание), то клик игнорируем
-        if(isSwipeAction) return; 
-
+      // Блокируем всплытие, если был свайп
+      el.onclick = (e) => {
+        if(isSwipeAction) { e.preventDefault(); return; } 
+        
         document.querySelectorAll('.day-cell').forEach(c => c.classList.remove('selected'));
         el.classList.add('selected');
         selectedDate = new Date(d);
         haptic('selection');
       };
+      
+      // Запрет нативного драга картинок/текста внутри ячейки
+      el.ondragstart = () => false; 
+      
       grid.appendChild(el);
     }
   }
 
+  // === ЛОГИКА ДРАГА (PHYSICS) ===
+  
+  function handleStart(e) {
+    // Разрешаем только левую кнопку мыши
+    if (e.button !== 0) return;
+    
+    isDragging = true;
+    startX = e.clientX;
+    isSwipeAction = false;
+    currentTranslate = 0;
+    
+    // Убираем плавность анимации во время драга, чтобы сетка "прилипла" к пальцу
+    grid.classList.remove('animating');
+    area.setPointerCapture(e.pointerId); // Захват курсора, чтобы не терялся при выходе за пределы
+    area.style.cursor = 'grabbing';
+  }
+
+  function handleMove(e) {
+    if (!isDragging) return;
+    
+    const diff = e.clientX - startX;
+    
+    // Если сдвинули хоть немного, считаем это попыткой свайпа
+    if (Math.abs(diff) > 5) isSwipeAction = true;
+
+    // Двигаем сетку за пальцем (с небольшим сопротивлением)
+    currentTranslate = diff;
+    grid.style.transform = `translateX(${currentTranslate}px)`;
+  }
+
+  function handleEnd(e) {
+    if (!isDragging) return;
+    isDragging = false;
+    area.style.cursor = 'grab';
+    
+    // Возвращаем класс анимации для плавного завершения
+    grid.classList.add('animating');
+
+    // Порог срабатывания смены недели (50px)
+    const threshold = 50;
+    
+    if (currentTranslate > threshold) {
+      // Свайп вправо -> Пред. неделя
+      changeWeek(-1);
+    } else if (currentTranslate < -threshold) {
+      // Свайп влево -> След. неделя
+      changeWeek(1);
+    } else {
+      // Отмена свайпа (возврат на место)
+      grid.style.transform = `translateX(0px)`;
+    }
+  }
+
   function changeWeek(direction) {
-    const grid = document.getElementById('calGrid');
     haptic('light');
     
-    grid.classList.add(direction > 0 ? 'anim-left' : 'anim-right');
+    // Улетаем в сторону направления свайпа
+    const exitX = direction > 0 ? -100 : 100; // Проценты или px, чтобы улетело за экран
+    // Но у нас transform работает в px. Сделаем сдвиг подальше.
+    grid.style.transform = `translateX(${direction > 0 ? -50 : 50}px)`; // Это визуальный фейк, лучше через opacity
+    grid.classList.add('hidden'); // Скрываем
     
     setTimeout(() => {
+      // Меняем дату
       currentWeekStart.setDate(currentWeekStart.getDate() + (direction * 7));
       renderWeek();
-      grid.classList.remove('anim-left', 'anim-right');
-      grid.classList.add('hidden');
-      void grid.offsetWidth; // Force Reflow
+      
+      // Анимация появления: Сначала ставим в противоположную сторону
+      grid.classList.remove('animating'); // Отключаем анимацию для мгновенного перемещения
+      grid.style.transform = `translateX(${direction > 0 ? 50 : -50}px)`;
+      
+      // Форсируем перерисовку
+      void grid.offsetWidth;
+      
+      // Включаем анимацию и возвращаем в центр
       grid.classList.remove('hidden');
+      grid.classList.add('animating');
+      grid.style.transform = `translateX(0px)`;
     }, 200);
   }
 
-  // === SWIPE LOGIC (Touch + Mouse) ===
-  function setupSwipe() {
-    const area = document.getElementById('swipeArea');
-    let startX = 0;
-    let isDragging = false;
-    
-    // Touch Events
-    area.addEventListener('touchstart', (e) => {
-        startX = e.changedTouches[0].screenX;
-        isSwipeAction = false;
-    }, {passive: true});
+  // === 2. CAROUSEL SCROLL (Mouse Drag Support) ===
+  const track = document.getElementById('track');
+  const dots = document.querySelectorAll('.dot');
+  
+  let isDown = false; let startXCarousel; let scrollLeft;
+  
+  track.addEventListener('mousedown', (e) => { 
+    isDown = true; 
+    track.style.cursor = 'grabbing';
+    startXCarousel = e.pageX - track.offsetLeft; 
+    scrollLeft = track.scrollLeft; 
+  });
+  track.addEventListener('mouseleave', () => { isDown = false; track.style.cursor = 'grab'; });
+  track.addEventListener('mouseup', () => { isDown = false; track.style.cursor = 'grab'; });
+  track.addEventListener('mousemove', (e) => { 
+    if(!isDown) return; 
+    e.preventDefault(); 
+    const x = e.pageX - track.offsetLeft; 
+    const walk = (x - startXCarousel) * 2; 
+    track.scrollLeft = scrollLeft - walk; 
+  });
+  
+  track.addEventListener('scroll', () => {
+    const idx = Math.round(track.scrollLeft / track.clientWidth);
+    dots.forEach((d,i) => d.classList.toggle('active', i===idx));
+  });
 
-    area.addEventListener('touchend', (e) => {
-        const diff = startX - e.changedTouches[0].screenX;
-        if(Math.abs(diff) > 40) {
-            isSwipeAction = true;
-            changeWeek(diff > 0 ? 1 : -1);
-        }
-    }, {passive: true});
-
-    // Mouse Events (Desktop)
-    area.addEventListener('mousedown', (e) => {
-        startX = e.clientX;
-        isDragging = true;
-        isSwipeAction = false;
-        area.style.cursor = 'grabbing';
-    });
-
-    area.addEventListener('mousemove', (e) => {
-        if(!isDragging) return;
-        e.preventDefault(); // Запрещаем выделение текста при драге
-        // Можно добавить визуальный сдвиг сетки здесь для красоты
-    });
-
-    area.addEventListener('mouseup', (e) => {
-        if(!isDragging) return;
-        isDragging = false;
-        area.style.cursor = 'grab';
-        const diff = startX - e.clientX;
-        
-        if(Math.abs(diff) > 40) {
-            isSwipeAction = true; // Помечаем, что это был свайп
-            changeWeek(diff > 0 ? 1 : -1);
-        }
-    });
-
-    area.addEventListener('mouseleave', () => {
-        isDragging = false;
-        area.style.cursor = 'grab';
-    });
-  }
-
-  // === 2. WATER LOGIC ===
+  // === 3. OTHER LOGIC ===
   let waterL = 1.25; const maxWater = 3.0;
   function updateWater(delta) {
     haptic(delta > 0 ? 'light' : 'warning');
@@ -582,7 +568,6 @@
     document.getElementById('waterLevel').style.setProperty('--h', Math.max(5, (waterL/maxWater)*100) + '%');
   }
 
-  // === 3. OMNI-BAR LOGIC ===
   const txt = document.getElementById('msgInput');
   const btn = document.getElementById('actionBtn');
   const iCam = document.getElementById('iconCam');
@@ -610,33 +595,6 @@
     haptic('light');
     document.getElementById('sheet').classList.toggle('visible');
   }
-
-  // === 4. CAROUSEL (Touch + Mouse) ===
-  const track = document.getElementById('track');
-  const dots = document.querySelectorAll('.dot');
-  
-  // Mouse Drag for Carousel
-  let isDown = false; let startXCarousel; let scrollLeft;
-  track.addEventListener('mousedown', (e) => { 
-      isDown = true; 
-      startXCarousel = e.pageX - track.offsetLeft; 
-      scrollLeft = track.scrollLeft; 
-      track.style.cursor = 'grabbing';
-  });
-  track.addEventListener('mouseleave', () => { isDown = false; track.style.cursor = 'grab'; });
-  track.addEventListener('mouseup', () => { isDown = false; track.style.cursor = 'grab'; });
-  track.addEventListener('mousemove', (e) => { 
-      if(!isDown) return; 
-      e.preventDefault(); 
-      const x = e.pageX - track.offsetLeft; 
-      const walk = (x - startXCarousel) * 2; // Скорость прокрутки
-      track.scrollLeft = scrollLeft - walk; 
-  });
-
-  track.addEventListener('scroll', () => {
-    const idx = Math.round(track.scrollLeft / track.clientWidth);
-    dots.forEach((d,i) => d.classList.toggle('active', i===idx));
-  });
 
   initCalendar();
 
