@@ -5,12 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Выбор продуктов Ultima</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
 
 <style>
   /* 🔥 СКРЫВАЕМ СКРОЛЛБАР ВЕЗДЕ */
-  
   /* Для Chrome, Safari, iOS, Android */
   *::-webkit-scrollbar {
     display: none;
@@ -514,137 +511,176 @@
 </div>
 
 <script>
-  // 🟢 1. FIREBASE CONFIG
-  const firebaseConfig = {
-    // apiKey: "YOUR_API_KEY",
-    // authDomain: "YOUR_PROJECT.firebaseapp.com",
-    // projectId: "YOUR_PROJECT",
-    // ...
-  };
+  // =========================================================
+  // 🟢 1. CONFIGURATION (IMPORTANT)
+  // ВСТАВЬТЕ СЮДА ВАШ URL ИЗ GOOGLE APPS SCRIPT
+  // =========================================================
+  const API_URL = "https://script.google.com/macros/s/AKfycbybxqI4xOLAUOcMXGReNl0PVjGToGg6_x3ZxlKNnUHg3XcaZGhkbsu61Adgkb4emrkm/exec"; 
 
-  let db = null;
-  try {
-    if (firebaseConfig.apiKey) {
-      firebase.initializeApp(firebaseConfig);
-      db = firebase.firestore();
-      db.enablePersistence().catch(err => console.log("Persistence error:", err));
-    }
-  } catch(e) { console.log("Firebase skipped", e); }
+  // 🟢 2. TELEGRAM INIT
+  const tg = window.Telegram?.WebApp;
+  const TG_INIT_DATA = tg?.initData || "";
 
-  // 🟢 2. MOCK DATA GENERATOR (BIG DATA STRESS TEST)
-  // Генерируем данные программно, чтобы проверить дизайн на больших списках
-  function generateBigData() {
-    // Список из 20 категорий
-    const catsData = [
-      {n:'Белки', i:'🥩'}, {n:'Крупы', i:'🍚'}, {n:'Овощи', i:'🥦'}, 
-      {n:'Фрукты', i:'🍎'}, {n:'Жиры', i:'🥑'}, {n:'Снеки', i:'🍫'},
-      {n:'Молочка', i:'🥛'}, {n:'Выпечка', i:'🥖'}, {n:'Рыба', i:'🐟'},
-      {n:'Напитки', i:'🥤'}, {n:'Заморозка', i:'🧊'}, {n:'Консервы', i:'🥫'},
-      {n:'Специи', i:'🧂'}, {n:'Соусы', i:'🥣'}, {n:'Бытовая', i:'🧹'},
-      {n:'Зоотовары', i:'🐶'}, {n:'Детское', i:'👶'}, {n:'Алкоголь', i:'🍷'},
-      {n:'Паста', i:'🍝'}, {n:'Веган', i:'🥗'}
-    ];
-
-    return catsData.map((cat, idx) => {
-        // Делаем категорию "Овощи" (index 2) огромной - 200 товаров
-        // Остальные категории случайного размера (от 4 до 12)
-        const isHugeCategory = (idx === 2);
-        const itemCount = isHugeCategory ? 200 : Math.floor(Math.random() * 8) + 4;
-        
-        const items = [];
-        for(let i=0; i<itemCount; i++) {
-            // Для стресс-теста верстки делаем некоторые названия очень длинными
-            let name = `${cat.n} Продукт ${i+1}`;
-            if (isHugeCategory && i % 3 === 0) {
-                name = `${cat.n} Экстра Длинное Название Товара №${i+1} (Специальная серия для теста переноса строк)`;
-            }
-
-            items.push({
-                id: `p_${idx}_${i}`,
-                name: name,
-                meta: `${100 + i} ккал · ${10 + (i%10)}Б · ${5 + (i%5)}Ж · ${20 + (i%20)}У`
-            });
-        }
-
-        return {
-            id: `c${idx}`,
-            name: cat.n,
-            icon: cat.i,
-            items: items
-        };
+  if (tg) {
+    tg.ready();
+    tg.expand();
+    try { tg.setHeaderColor('#050505'); tg.setBackgroundColor('#050505'); } catch(e){}
+    
+    // Перехват кнопки Назад (системной)
+    tg.BackButton.onClick(() => {
+      if (state.searchMode) exitSearchMode();
+      else if (state.activeCatId) goBack();
+      else tg.close(); 
     });
   }
 
-  // Инициализируем данные через генератор
-  const MOCK_DB = generateBigData();
-
-
-  // 🟢 3. DATA SERVICE
+  // 🟢 3. DATA SERVICE (GAS INTEGRATION)
   const DataService = {
     categories: [],
-    productsMap: {},
+    productsMap: {}, 
+    serverVer: 0,
     
     async init() {
-      // Для теста дизайна мы всегда загружаем MOCK_DB заново, 
-      // чтобы кэш старых данных не мешал (можно закомментировать очистку, если нужно сохранение)
-      // localStorage.removeItem('ultima_products_v1'); 
+      // Шаг 1: Загрузка из кэша (Мгновенный старт)
+      this.loadFromCache();
+      renderCategories();
+      updateSaveButton();
 
-      const cached = localStorage.getItem('ultima_products_v1');
-      if (cached) {
-        const data = JSON.parse(cached);
-        this.categories = data.categories;
-        this.productsMap = data.productsMap;
-        renderCategories(); 
-      } else {
-        this.loadMock(); 
-        renderCategories();
-      }
-      if (db) this.fetchFromFirebase();
+      // Шаг 2: Фоновая синхронизация с сервером
+      await this.syncWithServer();
     },
 
-    loadMock() {
-      this.categories = MOCK_DB.map(c => ({id:c.id, name:c.name, icon:c.icon}));
-      MOCK_DB.forEach(c => { this.productsMap[c.id] = c.items; });
-    },
-
-    async fetchFromFirebase() {
+    loadFromCache() {
       try {
-        const catsSnap = await db.collection('categories').orderBy('order').get();
-        const newCats = [];
-        const newMap = {};
-        
-        if (!catsSnap.empty) {
-            catsSnap.forEach(doc => {
-                const d = doc.data();
-                newCats.push({id: doc.id, name: d.name, icon: d.icon});
-            });
-            const prodsSnap = await db.collectionGroup('products').get();
-            prodsSnap.forEach(doc => {
-               const p = doc.data();
-               if (!newMap[p.categoryId]) newMap[p.categoryId] = [];
-               newMap[p.categoryId].push({id: doc.id, name: p.name, meta: p.meta});
-            });
-            this.categories = newCats;
-            this.productsMap = newMap;
-            localStorage.setItem('ultima_products_v1', JSON.stringify({
-                categories: this.categories, productsMap: this.productsMap
-            }));
-            if (!state.activeCatId && !state.searchMode) renderCategories();
+        const cached = localStorage.getItem('ultima_data_v2');
+        if (cached) {
+          const data = JSON.parse(cached);
+          this.categories = data.categories || [];
+          this.productsMap = data.productsMap || {};
+          this.serverVer = data.serverVer || 0;
+          
+          const savedSelection = localStorage.getItem('ultima_cart_v1');
+          if (savedSelection) state.selected = new Set(JSON.parse(savedSelection));
         }
-      } catch(e) { console.warn("Offline/DB err", e); }
+      } catch(e) { console.error("Cache load error", e); }
+    },
+
+    async syncWithServer() {
+      try {
+        if (!API_URL.includes("script.google.com")) {
+            console.warn("⚠️ API_URL не настроен! Работаем только на кэше."); 
+            return;
+        }
+
+        const response = await fetch(API_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify({
+                action: 'init',
+                clientVer: this.serverVer,
+                initData: TG_INIT_DATA
+            })
+        });
+
+        const res = await response.json();
+        
+        // A. Обновление каталога (если версия изменилась)
+        if (res.ok && res.needUpdate && res.catalog) {
+            this.processCatalog(res.catalog, res.serverVer);
+        }
+
+        // B. Синхронизация выбора пользователя (User Selection)
+        if (res.ok && res.userSelection) {
+            try {
+                const serverSel = JSON.parse(res.userSelection);
+                state.selected = new Set(serverSel); // Сервер главнее
+                saveSelectionToCache();
+                updateSaveButton();
+                renderCategories();
+            } catch(e) {}
+        }
+
+      } catch(e) { 
+        console.warn("Sync skipped (Offline or Error):", e); 
+      }
+    },
+
+    // 🔥 ПРЕОБРАЗОВАНИЕ ДАННЫХ (БЭК -> ФРОНТ)
+    processCatalog(catalogData, newVer) {
+        // 1. Категории
+        this.categories = catalogData.categories.map(c => ({
+            id: String(c.id), 
+            name: c.name, 
+            icon: c.icon
+        }));
+
+        // 2. Продукты (Массив -> Map)
+        const newMap = {};
+        this.categories.forEach(c => newMap[c.id] = []);
+
+        if (catalogData.products && Array.isArray(catalogData.products)) {
+            catalogData.products.forEach(row => {
+                // row формат с бэка: [0:id, 1:catId, 2:name, 3:macros]
+                const pId = String(row[0]);
+                const cId = String(row[1]);
+                
+                if (!newMap[cId]) newMap[cId] = [];
+                
+                newMap[cId].push({
+                    id: pId,
+                    name: row[2],
+                    meta: row[3] // 🔥 ВАЖНО: Маппинг Macros -> Meta
+                });
+            });
+        }
+
+        this.productsMap = newMap;
+        this.serverVer = newVer;
+
+        // Сохраняем обновленные данные в кэш
+        localStorage.setItem('ultima_data_v2', JSON.stringify({
+            categories: this.categories,
+            productsMap: this.productsMap,
+            serverVer: this.serverVer
+        }));
+        
+        // Перерисовываем UI
+        renderCategories();
     },
 
     getProducts(catId) { return this.productsMap[catId] || []; },
+    
     search(query) {
       const res = []; const q = query.toLowerCase();
       Object.values(this.productsMap).flat().forEach(p => {
         if (p.name.toLowerCase().includes(q)) res.push(p);
       });
       return res;
+    },
+
+    async saveSelectionToServer() {
+        // Сначала сохраняем локально
+        saveSelectionToCache();
+        
+        try {
+            await fetch(API_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                body: JSON.stringify({
+                    action: 'save',
+                    initData: TG_INIT_DATA,
+                    selection: Array.from(state.selected)
+                })
+            });
+            return true;
+        } catch(e) { 
+            console.error(e);
+            return false; 
+        }
     }
   };
 
-  // 🟢 4. STATE with Persistence Logic
+  // 🟢 4. STATE MANAGEMENT
   const state = {
     selected: new Set(),
     activeCatId: null,
@@ -655,22 +691,10 @@
     currentContainer: null
   };
 
-  // --- LocalStorage for Selection ---
-  function loadSelectionFromCache() {
-    try {
-      const saved = localStorage.getItem('ultima_cart_v1');
-      if (saved) {
-        const arr = JSON.parse(saved);
-        state.selected = new Set(arr);
-      }
-    } catch(e) {}
-  }
-
   function saveSelectionToCache() {
-    try {
-      const arr = Array.from(state.selected);
-      localStorage.setItem('ultima_cart_v1', JSON.stringify(arr));
-    } catch(e) {}
+    try { 
+        localStorage.setItem('ultima_cart_v1', JSON.stringify(Array.from(state.selected))); 
+    } catch(e){}
   }
 
   const el = {
@@ -690,73 +714,51 @@
     sentinel: document.getElementById('sentinel')
   };
 
-  const tg = window.Telegram?.WebApp;
-  if (tg) {
-    tg.ready();
-    tg.expand();
-    try { tg.setHeaderColor('#050505'); tg.setBackgroundColor('#050505'); } catch(e){}
-    tg.BackButton.onClick(() => {
-      if (state.searchMode) exitSearchMode();
-      else if (state.activeCatId) goBack();
-      else window.location.href = 'router.html'; 
-    });
-  }
-
-  // 🟢 UTILS
+  // 🟢 5. UTILS & UI LOGIC (ОРИГИНАЛ)
   function haptic(type = 'light') {
-    try {
-      const t = window.Telegram?.WebApp?.HapticFeedback;
-      if (t) type==='light'?t.impactOccurred('light'):type==='medium'?t.impactOccurred('medium'):t.notificationOccurred('success');
-    } catch(e) {}
+    try { 
+        const t = window.Telegram?.WebApp?.HapticFeedback; 
+        if(t) type==='light'?t.impactOccurred('light'):type==='medium'?t.impactOccurred('medium'):t.notificationOccurred('success'); 
+    } catch(e){}
   }
 
   const bump = el => { 
-    if(!el) return; el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); 
+      if(!el) return; 
+      el.classList.remove('bump'); 
+      void el.offsetWidth; 
+      el.classList.add('bump'); 
   };
 
   document.addEventListener('touchstart', (e) => {
     const el = e.target.closest('.cat-card, .btn-save');
-    if (!el) return;
-    haptic('light'); bump(el);
+    if (!el) return; 
+    haptic('light'); 
+    bump(el);
   }, {passive: true});
 
-  // 🟢 INIT
- function init() {
-    // 🔥 ФИКС ФОНА (ЧТОБЫ ШАРЫ НЕ ПРЫГАЛИ ОТ КЛАВИАТУРЫ)
+  function init() {
+    // Fix iOS Background
     let viewportWidth = window.innerWidth;
     const fxLayer = document.querySelector('.fx-layer');
-    
-    // Функция: обновляем высоту фона, только если изменилась ширина (поворот экрана)
-    const fixBackground = () => {
-        fxLayer.style.height = window.innerHeight + 'px';
-        viewportWidth = window.innerWidth; 
-    };
+    const fixBackground = () => { fxLayer.style.height = window.innerHeight + 'px'; viewportWidth = window.innerWidth; };
+    fixBackground(); 
+    window.addEventListener('resize', () => { if (window.innerWidth !== viewportWidth) fixBackground(); });
 
-    fixBackground(); // Запускаем сразу
-
-    window.addEventListener('resize', () => {
-        // Если ширина не поменялась (значит это клавиатура) — ничего не делаем
-        if (window.innerWidth !== viewportWidth) {
-            fixBackground();
-        }
-    });
-
-    // 👇 ТВОЙ СТАРЫЙ КОД ЗАПУСКА
-    loadSelectionFromCache(); 
     DataService.init(); 
-    updateSaveButton();
     
     el.searchInput.addEventListener('input', handleSearch);
     el.searchClear.addEventListener('click', clearSearch);
     
     if(tg) tg.BackButton.show();
 
+    // Infinite Scroll
     const observer = new IntersectionObserver((entries) => {
       if (entries[0].isIntersecting) renderNextBatch();
     }, { rootMargin: '200px' });
     observer.observe(el.sentinel);
   }
 
+  // --- RENDER LOGIC ---
   function renderCategories() {
     el.catGrid.innerHTML = '';
     DataService.categories.forEach(cat => {
@@ -769,18 +771,14 @@
       card.className = 'cat-card';
       card.onclick = () => openCategory(cat.id);
       
-card.innerHTML = `
+      card.innerHTML = `
         <div style="width: 100%">
           <div class="cat-icon">${cat.icon}</div>
           <div class="cat-name">${cat.name}</div>
         </div>
-        
         <div class="cat-meta">
           <span>${sel} из ${total}</span>
-          
-          <div class="mini-track">
-             <div class="mini-fill" style="width: ${progress}%"></div>
-          </div>
+          <div class="mini-track"><div class="mini-fill" style="width: ${progress}%"></div></div>
         </div>
       `;
       el.catGrid.appendChild(card);
@@ -790,7 +788,6 @@ card.innerHTML = `
   function openCategory(id) {
     state.activeCatId = id;
     const cat = DataService.categories.find(c => c.id === id);
-    
     el.catTitle.textContent = cat.name;
     el.productList.style.display = 'flex';
     
@@ -816,45 +813,34 @@ card.innerHTML = `
     if(tg) tg.BackButton.show(); 
   }
 
-function startInfiniteRender(items, container, isSearch = false) {
+  function startInfiniteRender(items, container, isSearch = false) {
     container.innerHTML = '';
-    
-    // 1. Очищаем стили контейнера (убираем старые рамки/фоны)
     container.style.cssText = ''; 
 
-    // 2. ЕСЛИ НИЧЕГО НЕ НАЙДЕНО
     if (items.length === 0 && isSearch) {
-        // Просто вставляем блок с текстом. Никаких рамок, никаких классов product-list-container
         container.innerHTML = '<div class="simple-no-results">Ничего не найдено</div>';
-        return; // И сразу выходим!
+        return; 
     }
 
-    // 3. Если товары ЕСТЬ -> рисуем список
     state.renderQueue = items;
     state.renderIndex = 0;
     
     let target = container;
-    
-    // Если это поиск и есть товары — создаем красивую обертку
     if (isSearch) {
         const wrapper = document.createElement('div');
         wrapper.className = 'product-list-container';
-        // Убираем фон у обертки поиска, чтобы было прозрачно
         wrapper.style.background = 'transparent';
         wrapper.style.border = 'none';
         wrapper.style.boxShadow = 'none';
-        
         container.appendChild(wrapper);
         target = wrapper;
     }
-    
     state.currentContainer = target;
     renderNextBatch(isSearch);
   }
 
   function renderNextBatch(isSearch = false) {
     if (state.renderIndex >= state.renderQueue.length) return;
-
     const batch = state.renderQueue.slice(state.renderIndex, state.renderIndex + state.BATCH_SIZE);
     const fragment = document.createDocumentFragment();
 
@@ -863,15 +849,14 @@ function startInfiniteRender(items, container, isSearch = false) {
       const row = document.createElement('div');
       row.className = `product-row ${isSel ? 'selected' : ''}`;
       
-     row.addEventListener('touchstart', function() { haptic('light'); }, {passive: true});
+      row.addEventListener('touchstart', () => haptic('light'), {passive: true});
       row.onclick = () => toggleProduct(item.id, row);
       
+      // Анимация появления (только для списка)
       if (!isSearch) {
         row.style.opacity = '0';
         row.style.animation = `fadeInUp 0.2s ease forwards ${i * 0.02}s`;
-        setTimeout(() => {
-            row.style.opacity = '1'; row.style.animation = 'none'; row.style.transform = 'none';
-        }, (i * 20) + 300);
+        setTimeout(() => { row.style.opacity = '1'; row.style.animation = 'none'; row.style.transform = 'none'; }, (i * 20) + 300);
       }
       
       row.innerHTML = `
@@ -888,12 +873,12 @@ function startInfiniteRender(items, container, isSearch = false) {
     state.renderIndex += state.BATCH_SIZE;
   }
 
+  // Inject animation styles
   const styleSheet = document.createElement("style");
   styleSheet.innerText = `@keyframes fadeInUp { to { opacity: 1; transform: translateY(0); } }`;
   document.head.appendChild(styleSheet);
 
-function toggleProduct(id, rowEl) {
-    // 1. Ставим/убираем галочку
+  function toggleProduct(id, rowEl) {
     if (state.selected.has(id)) {
       state.selected.delete(id);
       rowEl.classList.remove('selected');
@@ -902,33 +887,23 @@ function toggleProduct(id, rowEl) {
       rowEl.classList.add('selected');
     }
     
-    // 👇 2. ВОТ ЭТОГО КУСКА НЕ ХВАТАЛО: Меняем текст кнопки в поиске
     if (state.searchMode && el.btnSearchCancel) {
-        if (state.selected.size > 0) {
-            el.btnSearchCancel.textContent = 'Выбрать';
-            el.btnSearchCancel.style.fontWeight = '600';
-        } else {
-            el.btnSearchCancel.textContent = 'Отмена';
-            el.btnSearchCancel.style.fontWeight = '500';
-        }
+        el.btnSearchCancel.textContent = state.selected.size > 0 ? 'Выбрать' : 'Отмена';
+        el.btnSearchCancel.style.fontWeight = state.selected.size > 0 ? '600' : '500';
     }
 
-    // 3. Сохраняем и обновляем интерфейс
     saveSelectionToCache(); 
     updateSaveButton();
     if (state.activeCatId && !state.searchMode) updateSelectAllBtn();
   }
 
   function updateSaveButton() {
-    let count = 0;
-    let text = '';
-    
+    let count = 0; let text = '';
     if (state.activeCatId) {
         const products = DataService.getProducts(state.activeCatId);
         count = products.filter(i => state.selected.has(i.id)).length;
-        if (count > 0) text = `Выбрать (${count})`;
-        else text = `Назад`;
-        el.btnSave.classList.add('visible'); // Always visible in category
+        text = count > 0 ? `Выбрать (${count})` : `Назад`;
+        el.btnSave.classList.add('visible'); 
     } else {
         count = state.selected.size;
         text = `Сохранить (${count})`;
@@ -952,7 +927,7 @@ function toggleProduct(id, rowEl) {
       if (select) state.selected.add(i.id);
       else state.selected.delete(i.id);
     });
-    saveSelectionToCache(); // 🔥 SAVE
+    saveSelectionToCache(); 
     startInfiniteRender(products, el.productList); 
     updateSelectAllBtn();
     updateSaveButton();
@@ -972,38 +947,48 @@ function toggleProduct(id, rowEl) {
 
   function clearSearch() { exitSearchMode(); }
 
-  function saveSelection() {
+  // 🟢 6. SAVE & EXIT LOGIC
+  async function saveSelection() {
     haptic('success'); 
+    
+    // Если мы внутри категории - кнопка работает как "Назад"
     if (state.activeCatId && !state.searchMode) {
         goBack();
         return;
     }
-    if (tg && tg.showPopup) {
-       tg.showPopup({
-          title: 'Сохранено',
-          message: `Выбрано продуктов: ${state.selected.size}`,
-          buttons: [{type: 'ok'}]
-       }, function() { if (state.searchMode) exitSearchMode(); });
+    
+    const oldText = el.saveBtnText.textContent;
+    el.saveBtnText.textContent = "Сохранение...";
+    el.btnSave.style.pointerEvents = 'none'; // Блокируем кнопку
+    
+    const ok = await DataService.saveSelectionToServer();
+    
+    el.btnSave.style.pointerEvents = 'auto'; // Разблокируем
+    
+    if (ok) {
+        el.saveBtnText.textContent = "Готово!";
+        setTimeout(() => {
+            if (tg && tg.close) tg.close();
+            else {
+                // Фоллбэк для браузера
+                alert("Данные успешно сохранены в таблицу!");
+                if (state.searchMode) exitSearchMode();
+                el.saveBtnText.textContent = oldText;
+            }
+        }, 800);
     } else {
-       alert(`Сохранено ${state.selected.size} продуктов!`);
-       if (state.searchMode) exitSearchMode();
+        el.saveBtnText.textContent = "Ошибка!";
+        setTimeout(() => el.saveBtnText.textContent = oldText, 2000);
     }
   }
 
-  init();
-
-function enterSearchMode() {
+  function enterSearchMode() {
     state.searchMode = true;
-    
-    // 1. ПРИ ВХОДЕ ВСЕГДА "ОТМЕНА"
     if (el.btnSearchCancel) {
         el.btnSearchCancel.textContent = 'Отмена';
         el.btnSearchCancel.style.fontWeight = '500';
     }
-
-    // 2. Включаем режим (выезжает кнопка справа, скрывается Save)
     document.body.classList.add('search-active');
-    
     el.viewCats.classList.remove('active');
     el.viewList.classList.remove('active');
     el.viewSearch.classList.add('active');
@@ -1012,28 +997,22 @@ function enterSearchMode() {
 
   function exitSearchMode() {
     state.searchMode = false;
-    
-    // 1. Выключаем режим
     document.body.classList.remove('search-active'); 
-    el.searchInput.blur(); // Скрываем клавиатуру
-    
-    // 2. Чистим поле и вид
+    el.searchInput.blur(); 
     el.viewSearch.classList.remove('active');
     el.searchResults.style.display = 'none';
     el.searchInput.value = '';
     
-    // 3. Возвращаемся назад
-    if (state.activeCatId) {
-        el.viewList.classList.add('active');
-    } else {
+    if (state.activeCatId) el.viewList.classList.add('active');
+    else {
         el.viewCats.classList.add('active');
         renderCategories();
     }
-    
-    // 4. 🔥 Обновляем нижнюю кнопку, чтобы она выехала
     updateSaveButton();
   }
-  
+
+  // START APP
+  init();
 </script>
 </body>
 </html>
