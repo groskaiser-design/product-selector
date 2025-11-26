@@ -22,13 +22,12 @@
     --acc-green: #30d158;
     --acc-blue: #0a84ff;
     --acc-red: #ff453a;
-    --acc-water: #30a2ff;
     
     --radius-xl: 26px;
     --radius-l: 18px;
-    --radius-m: 14px;
     
     --safe-bottom: calc(10px + env(safe-area-inset-bottom));
+    --safe-top: calc(10px + env(safe-area-inset-top));
   }
 
   body {
@@ -49,61 +48,91 @@
   .noise { position: fixed; inset: 0; opacity: 0.04; background: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
   @keyframes float { 0%{transform:rotate(0deg)} 50%{transform:rotate(180deg)} 100%{transform:rotate(360deg)} }
 
-  /* === 1. STICKY CALENDAR (UPDATED) === */
+  /* === 1. PREMIUM CALENDAR (GRID & SWIPE) === */
   .calendar-sticky {
     position: sticky; top: 0; z-index: 50;
     background: rgba(5, 5, 5, 0.85);
-    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+    backdrop-filter: blur(25px); -webkit-backdrop-filter: blur(25px);
     border-bottom: 1px solid var(--surface-border);
-    padding-top: calc(6px + env(safe-area-inset-top));
+    padding-top: var(--safe-top);
     padding-bottom: 12px;
+    user-select: none;
+    overflow: hidden;
   }
-  .calendar-strip {
-    display: flex; gap: 6px; padding: 0 16px;
-    overflow-x: auto; scroll-snap-type: x mandatory;
-    scrollbar-width: none; /* Скрываем скроллбар */
-  }
-  .calendar-strip::-webkit-scrollbar { display: none; }
 
-  .day-cap {
-    position: relative; /* Для точки */
-    flex: 0 0 50px; height: 64px;
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    border-radius: 16px;
-    background: transparent;
-    border: 1px solid transparent;
-    transition: all 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94);
-    scroll-snap-align: center;
-    cursor: pointer;
+  /* Header: Month Name */
+  .calendar-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 16px 12px 16px;
+  }
+  .month-label {
+    font-size: 17px; font-weight: 700; color: #fff;
+    text-transform: capitalize; letter-spacing: 0.3px;
   }
   
-  /* Active State (Выбранный день) */
-  .day-cap.active {
+  /* Swipe Container */
+  .calendar-swipe-area {
+    width: 100%;
+    padding: 0 10px;
+    overflow: hidden; /* Hide animation overflow */
+  }
+
+  /* Grid Layout (7 cols) */
+  .calendar-grid {
+    display: grid; 
+    grid-template-columns: repeat(7, 1fr); 
+    gap: 4px;
+    transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.2s;
+    will-change: transform, opacity;
+  }
+  
+  /* Animations for Swipe */
+  .calendar-grid.anim-left { transform: translateX(-30px); opacity: 0; }
+  .calendar-grid.anim-right { transform: translateX(30px); opacity: 0; }
+  .calendar-grid.hidden { opacity: 0; transition: none; }
+
+  /* Day Cell */
+  .day-cell {
+    height: 64px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    border-radius: 14px;
+    background: transparent;
+    transition: background 0.2s, transform 0.1s;
+    position: relative;
+    cursor: pointer;
+  }
+  .day-cell:active { transform: scale(0.95); background: rgba(255,255,255,0.05); }
+
+  .dc-name {
+    font-size: 10px; font-weight: 600; 
+    color: var(--text-muted); 
+    margin-bottom: 4px;
+    text-transform: uppercase;
+  }
+  
+  .dc-num {
+    font-size: 18px; font-weight: 600; 
+    color: #fff;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Selected State */
+  .day-cell.selected {
     background: #fff;
     box-shadow: 0 4px 12px rgba(255,255,255,0.15);
-    transform: scale(1.05);
   }
+  .day-cell.selected .dc-name { color: rgba(0,0,0,0.5); }
+  .day-cell.selected .dc-num { color: #000; font-weight: 700; }
 
-  .day-name { 
-    font-size: 10px; font-weight: 600; text-transform: uppercase; 
-    color: var(--text-muted); margin-bottom: 2px; 
-  }
-  .day-num { 
-    font-size: 18px; font-weight: 700; color: #fff; 
-  }
-
-  /* Инверсия цветов при активном состоянии */
-  .day-cap.active .day-name { color: rgba(0,0,0,0.5); }
-  .day-cap.active .day-num { color: #000; }
-
-  /* Marker: TODAY (Точка снизу) */
-  .day-cap.is-today::after {
-    content: '';
-    position: absolute; bottom: 6px;
+  /* Today Marker */
+  .day-cell.is-today::after {
+    content: ''; position: absolute; bottom: 6px;
     width: 4px; height: 4px; border-radius: 50%;
     background: var(--acc-blue);
-    opacity: 1;
   }
+  /* If selected AND today, dot becomes black for contrast */
+  .day-cell.selected.is-today::after { background: #000; }
+
 
   /* === MAIN SCROLL AREA === */
   .scroll-container {
@@ -120,7 +149,6 @@
     overflow-x: auto; scroll-snap-type: x mandatory; 
   }
   
-  /* Common Widget Style */
   .widget {
     flex: 0 0 calc(100% - 16px); scroll-snap-align: center;
     height: 160px;
@@ -133,7 +161,7 @@
     padding: 16px;
   }
 
-  /* --- MACROS WIDGET (4 RINGS) --- */
+  /* --- MACROS WIDGET --- */
   .macros-grid {
     display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
     height: 100%; align-items: center;
@@ -155,21 +183,18 @@
   .m-nums span { color: var(--text-muted); font-weight: 500; font-size: 10px; }
   .m-lbl { font-size: 9px; font-weight: 600; text-transform: uppercase; color: var(--text-muted); margin-top: 2px; letter-spacing: 0.5px; }
 
-  /* --- WATER WIDGET (FULL FILL) --- */
+  /* --- WATER WIDGET --- */
   .widget.water-card {
-    padding: 0; /* No padding, liquid hits edges */
-    display: flex; flex-direction: column; justify-content: space-between;
-    background: rgba(30, 40, 50, 0.3); /* Darker base */
+    padding: 0; display: flex; flex-direction: column; justify-content: space-between;
+    background: rgba(30, 40, 50, 0.3);
   }
-  
-  /* Liquid Animation */
   .liquid-container {
     position: absolute; bottom: 0; left: 0; width: 100%; height: 100%;
     z-index: 0; pointer-events: none;
   }
   .liquid {
     position: absolute; bottom: 0; left: 0; width: 100%; 
-    height: var(--h, 30%); /* JS controls this */
+    height: var(--h, 30%); 
     background: linear-gradient(to top, rgba(10,132,255,0.6), rgba(10,132,255,0.3));
     transition: height 0.5s ease-out;
   }
@@ -181,29 +206,23 @@
   }
   @keyframes waveFlow { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
 
-  /* Water Controls (Z-index above liquid) */
   .water-ui {
     position: relative; z-index: 2; height: 100%;
     display: flex; align-items: center; justify-content: space-between;
     padding: 0 24px;
   }
-  
   .w-btn-box {
-    width: 48px; height: 48px;
-    border-radius: 14px;
+    width: 48px; height: 48px; border-radius: 14px;
     background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.1);
     backdrop-filter: blur(10px);
     display: flex; align-items: center; justify-content: center;
-    font-size: 24px; color: #fff; font-weight: 300;
-    cursor: pointer; transition: 0.1s;
+    font-size: 24px; color: #fff; font-weight: 300; cursor: pointer; transition: 0.1s;
   }
   .w-btn-box:active { transform: scale(0.9); background: rgba(255,255,255,0.2); }
-  
   .w-center { text-align: center; }
   .w-val { font-size: 36px; font-weight: 800; line-height: 1; text-shadow: 0 2px 10px rgba(0,0,0,0.3); }
   .w-unit { font-size: 14px; font-weight: 600; opacity: 0.7; text-transform: uppercase; letter-spacing: 1px; }
 
-  /* Dots */
   .dots { display: flex; justify-content: center; gap: 6px; margin-top: 8px; }
   .dot { width: 6px; height: 6px; border-radius: 50%; background: rgba(255,255,255,0.2); transition: 0.3s; }
   .dot.active { width: 18px; border-radius: 4px; background: #fff; }
@@ -233,7 +252,7 @@
   .pi-w { color: var(--text-muted); margin-right: 10px; font-feature-settings: "tnum"; }
   .pi-c { font-weight: 600; min-width: 36px; text-align: right; font-feature-settings: "tnum"; }
 
-  /* === 4. OMNI-BAR (TELEGRAM STYLE) === */
+  /* === 4. OMNI-BAR === */
   .omni-bar {
     position: fixed; bottom: 0; left: 0; right: 0;
     background: rgba(15, 15, 15, 0.94);
@@ -248,7 +267,7 @@
     width: 42px; height: 42px; flex-shrink: 0;
     display: flex; align-items: center; justify-content: center;
     color: #fff; border-radius: 50%; cursor: pointer; transition: 0.2s;
-    margin-bottom: 2px; /* Align bottom */
+    margin-bottom: 2px;
   }
   .icon-btn:active { background: rgba(255,255,255,0.15); }
   
@@ -256,8 +275,7 @@
     flex: 1; min-height: 44px;
     background: rgba(255,255,255,0.08);
     border-radius: 22px;
-    display: flex; align-items: center;
-    padding: 4px 16px;
+    display: flex; align-items: center; padding: 4px 16px;
     border: 1px solid transparent; transition: 0.2s;
   }
   .input-wrap:focus-within { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.15); }
@@ -270,7 +288,6 @@
   }
   textarea::placeholder { color: rgba(255,255,255,0.35); }
 
-  /* Action Button (Animates Cam -> Send) */
   .action-btn {
     width: 42px; height: 42px; flex-shrink: 0;
     border-radius: 50%; display: flex; align-items: center; justify-content: center;
@@ -279,17 +296,14 @@
   }
   .mode-cam { background: transparent; color: #fff; }
   .mode-cam:active { transform: scale(0.9); opacity: 0.7; }
-  
-  .mode-send { background: var(--acc-blue); color: #fff; transform: rotate(0deg) scale(1); }
+  .mode-send { background: var(--acc-blue); color: #fff; }
   .mode-send:active { transform: scale(0.92); }
 
-  /* SVG Defs */
   .stroke-kcal { stroke: url(#grad-kcal); }
   .stroke-prot { stroke: url(#grad-prot); }
   .stroke-fats { stroke: url(#grad-fats); }
   .stroke-carb { stroke: url(#grad-carb); }
 
-  /* === ACTION SHEET === */
   .sheet-overlay {
     position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 200;
     opacity: 0; pointer-events: none; transition: opacity 0.3s; backdrop-filter: blur(4px);
@@ -329,7 +343,13 @@
 <div class="fx-layer"><div class="orb orb-1"></div><div class="orb orb-2"></div><div class="noise"></div></div>
 
 <div class="calendar-sticky">
-  <div class="calendar-strip" id="calendarStrip"></div>
+  <div class="calendar-header">
+    <div class="month-label" id="monthLabel">Загрузка...</div>
+  </div>
+  <div class="calendar-swipe-area" id="swipeArea">
+    <div class="calendar-grid" id="calGrid">
+      </div>
+  </div>
 </div>
 
 <div class="scroll-container">
@@ -451,73 +471,119 @@
   const tg = window.Telegram?.WebApp;
   if(tg) { tg.ready(); tg.expand(); tg.setHeaderColor('#050505'); }
 
-  // --- 1. Calendar Logic ---
-  function initCalendar() {
-    const strip = document.getElementById('calendarStrip');
-    const week = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
-    const today = new Date();
-    
-    // -14 days to +14 days
-    for(let i=-14; i<=14; i++) {
-      const d = new Date(); d.setDate(today.getDate() + i);
-      const isToday = (i===0);
-      const el = document.createElement('div');
-      el.className = `day-cap ${isToday ? 'is-today active' : ''}`;
-      el.innerHTML = `<div class="day-name">${week[d.getDay()]}</div><div class="day-num">${d.getDate()}</div>`;
-      el.onclick = () => {
-        document.querySelectorAll('.day-cap').forEach(c=>c.classList.remove('active'));
-        el.classList.add('active');
-        haptic('selection');
-        el.scrollIntoView({behavior:'smooth', inline:'center', block:'nearest'});
-      };
-      strip.appendChild(el);
-    }
-    
-    // Auto scroll to center
-    setTimeout(() => {
-      const active = strip.querySelector('.active');
-      if(active) active.scrollIntoView({behavior:'auto', inline:'center', block:'nearest'});
-    }, 10);
+  function haptic(type) { if(tg?.HapticFeedback) tg.HapticFeedback.impactOccurred(type); }
+
+  // === 1. CALENDAR LOGIC (Infinite Swipe) ===
+  let currentWeekStart = getStartOfWeek(new Date());
+  let selectedDate = new Date();
+
+  function getStartOfWeek(date) {
+    const d = new Date(date);
+    const day = d.getDay();
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+    return new Date(d.setDate(diff));
   }
 
-  // --- 2. Water Logic ---
-  let waterL = 1.25;
-  const maxWater = 3.0;
+  function initCalendar() {
+    renderWeek();
+    setupSwipe();
+  }
+
+  function renderWeek() {
+    const grid = document.getElementById('calGrid');
+    const label = document.getElementById('monthLabel');
+    grid.innerHTML = '';
+    
+    // Set Header Month
+    const midWeek = new Date(currentWeekStart);
+    midWeek.setDate(midWeek.getDate() + 3);
+    const monthName = midWeek.toLocaleString('ru', { month: 'long', year: 'numeric' });
+    label.textContent = monthName.charAt(0).toUpperCase() + monthName.slice(1);
+
+    const weekDays = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+    const today = new Date();
+
+    for(let i=0; i<7; i++) {
+      const d = new Date(currentWeekStart);
+      d.setDate(d.getDate() + i);
+      
+      const isToday = d.toDateString() === today.toDateString();
+      const isSelected = d.toDateString() === selectedDate.toDateString();
+
+      const el = document.createElement('div');
+      el.className = `day-cell ${isSelected ? 'selected' : ''} ${isToday ? 'is-today' : ''}`;
+      el.innerHTML = `<div class="dc-name">${weekDays[i]}</div><div class="dc-num">${d.getDate()}</div>`;
+      
+      el.onclick = () => {
+        document.querySelectorAll('.day-cell').forEach(c => c.classList.remove('selected'));
+        el.classList.add('selected');
+        selectedDate = new Date(d);
+        haptic('selection');
+      };
+      grid.appendChild(el);
+    }
+  }
+
+  function changeWeek(direction) {
+    const grid = document.getElementById('calGrid');
+    haptic('light'); // Bump
+    
+    // Animation OUT
+    grid.classList.add(direction > 0 ? 'anim-left' : 'anim-right');
+    
+    setTimeout(() => {
+      // Logic
+      currentWeekStart.setDate(currentWeekStart.getDate() + (direction * 7));
+      renderWeek();
+      
+      // Reset Animation
+      grid.classList.remove('anim-left', 'anim-right');
+      grid.classList.add('hidden');
+      
+      void grid.offsetWidth; // Force Reflow
+      grid.classList.remove('hidden');
+    }, 200);
+  }
+
+  function setupSwipe() {
+    const area = document.getElementById('swipeArea');
+    let startX = 0;
+    
+    area.addEventListener('touchstart', (e) => startX = e.changedTouches[0].screenX, {passive: true});
+    area.addEventListener('touchend', (e) => {
+      const diff = startX - e.changedTouches[0].screenX;
+      if(Math.abs(diff) > 50) changeWeek(diff > 0 ? 1 : -1);
+    }, {passive: true});
+  }
+
+  // === 2. WATER LOGIC ===
+  let waterL = 1.25; const maxWater = 3.0;
   function updateWater(delta) {
     haptic(delta > 0 ? 'light' : 'warning');
     waterL = Math.max(0, Math.min(maxWater, waterL + delta));
     document.getElementById('waterVal').textContent = waterL.toFixed(2);
-    const pct = Math.max(5, (waterL / maxWater) * 100);
-    document.getElementById('waterLevel').style.setProperty('--h', pct + '%');
+    document.getElementById('waterLevel').style.setProperty('--h', Math.max(5, (waterL/maxWater)*100) + '%');
   }
 
-  // --- 3. Omni-Bar Logic ---
+  // === 3. OMNI-BAR LOGIC ===
   const txt = document.getElementById('msgInput');
   const btn = document.getElementById('actionBtn');
   const iCam = document.getElementById('iconCam');
   const iSend = document.getElementById('iconSend');
 
   txt.addEventListener('input', () => {
-    txt.style.height = 'auto';
-    txt.style.height = Math.min(txt.scrollHeight, 120) + 'px';
-    if(txt.value.trim().length > 0) {
-      btn.classList.remove('mode-cam'); btn.classList.add('mode-send');
-      iCam.style.display='none'; iSend.style.display='block';
-    } else {
-      btn.classList.add('mode-cam'); btn.classList.remove('mode-send');
-      iCam.style.display='block'; iSend.style.display='none';
-    }
+    txt.style.height = 'auto'; txt.style.height = Math.min(txt.scrollHeight, 120) + 'px';
+    const hasText = txt.value.trim().length > 0;
+    if(hasText) { btn.classList.replace('mode-cam','mode-send'); iCam.style.display='none'; iSend.style.display='block'; }
+    else { btn.classList.replace('mode-send','mode-cam'); iCam.style.display='block'; iSend.style.display='none'; }
   });
 
   function handleAction() {
     haptic('light');
     if(txt.value.trim().length > 0) {
       console.log('Sending:', txt.value);
-      txt.value = '';
-      txt.style.height = 'auto';
-      txt.blur();
-      btn.classList.add('mode-cam'); btn.classList.remove('mode-send');
-      iCam.style.display='block'; iSend.style.display='none';
+      txt.value=''; txt.style.height='auto'; txt.blur();
+      btn.classList.replace('mode-send','mode-cam'); iCam.style.display='block'; iSend.style.display='none';
     } else {
       setTimeout(() => window.location.href='cam.html', 50);
     }
@@ -528,15 +594,13 @@
     document.getElementById('sheet').classList.toggle('visible');
   }
 
-  // --- 4. Carousel Scroll ---
+  // === 4. CAROUSEL ===
   const track = document.getElementById('track');
   const dots = document.querySelectorAll('.dot');
   track.addEventListener('scroll', () => {
     const idx = Math.round(track.scrollLeft / track.clientWidth);
     dots.forEach((d,i) => d.classList.toggle('active', i===idx));
   });
-
-  function haptic(type) { if(tg?.HapticFeedback) tg.HapticFeedback.impactOccurred(type); }
 
   initCalendar();
 
