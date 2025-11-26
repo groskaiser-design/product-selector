@@ -454,6 +454,37 @@
     font-weight: 500;
   }
   
+  /* --- LOADER --- */
+  .loader-container {
+    position: fixed; inset: 0; z-index: 9999;
+    background: var(--bg-core); /* Цвет фона приложения */
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    transition: opacity 0.3s ease;
+    opacity: 0; pointer-events: none; /* Скрыт по умолчанию */
+  }
+  
+  /* Класс для показа */
+  .loader-container.active { opacity: 1; pointer-events: auto; }
+  
+  .spinner {
+    width: 36px; height: 36px;
+    border: 3px solid rgba(255, 255, 255, 0.1);
+    border-top-color: var(--acc-blue); /* Синий акцент */
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-bottom: 12px;
+  }
+  
+  .loader-text { 
+    color: var(--text-muted); 
+    font-size: 15px; 
+    font-weight: 500; 
+  }
+  
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  
 </style>
 </head>
 <body>
@@ -462,6 +493,11 @@
   <div class="orb orb-1"></div>
   <div class="orb orb-2"></div>
   <div class="noise"></div>
+</div>
+
+  <div class="loader-container" id="appLoader">
+  <div class="spinner"></div>
+  <div class="loader-text">Загрузка...</div>
 </div>
 
 <div class="app-header">
@@ -541,12 +577,20 @@
     serverVer: 0,
     
     async init() {
-      // Шаг 1: Загрузка из кэша (Мгновенный старт)
-      this.loadFromCache();
-      renderCategories();
+      // 1. Пробуем загрузить кэш
+      const hasCache = this.loadFromCache();
+      
+      if (hasCache) {
+        // Если кэш есть — сразу показываем контент
+        renderCategories();
+      } else {
+        // 🔥 Если кэша нет — включаем Лоадер
+        document.getElementById('appLoader').classList.add('active');
+      }
+      
       updateSaveButton();
 
-      // Шаг 2: Фоновая синхронизация с сервером
+      // 2. Фоновая синхронизация с сервером
       await this.syncWithServer();
     },
 
@@ -561,49 +605,107 @@
           
           const savedSelection = localStorage.getItem('ultima_cart_v1');
           if (savedSelection) state.selected = new Set(JSON.parse(savedSelection));
+          
+          return true; // ✅ Данные есть
         }
       } catch(e) { console.error("Cache load error", e); }
+      return false; // ❌ Данных нет
     },
 
     async syncWithServer() {
       try {
-        if (!API_URL.includes("script.google.com")) {
-            console.warn("⚠️ API_URL не настроен! Работаем только на кэше."); 
-            return;
-        }
+        if (!API_URL.includes("script.google.com")) { console.warn("No API URL"); return; }
 
         const response = await fetch(API_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-            body: JSON.stringify({
-                action: 'init',
-                clientVer: this.serverVer,
-                initData: TG_INIT_DATA
-            })
+            body: JSON.stringify({ action: 'init', clientVer: this.serverVer, initData: TG_INIT_DATA })
         });
 
         const res = await response.json();
         
-        // A. Обновление каталога (если версия изменилась)
         if (res.ok && res.needUpdate && res.catalog) {
             this.processCatalog(res.catalog, res.serverVer);
         }
 
-        // B. Синхронизация выбора пользователя (User Selection)
         if (res.ok && res.userSelection) {
             try {
                 const serverSel = JSON.parse(res.userSelection);
-                state.selected = new Set(serverSel); // Сервер главнее
+                state.selected = new Set(serverSel);
                 saveSelectionToCache();
                 updateSaveButton();
                 renderCategories();
             } catch(e) {}
         }
+        
+        // 🔥 Если лоадер висит — убираем его, даже если обновлений не было
+        document.getElementById('appLoader').classList.remove('active');
 
       } catch(e) { 
-        console.warn("Sync skipped (Offline or Error):", e); 
+         console.warn("Sync skipped:", e); 
+         // Если ошибка сети — тоже убираем лоадер, чтобы не висел вечно
+         document.getElementById('appLoader').classList.remove('active');
       }
     },
+
+    processCatalog(catalogData, newVer) {
+        this.categories = catalogData.categories.map(c => ({
+            id: String(c.id), name: c.name, icon: c.icon
+        }));
+
+        const newMap = {};
+        this.categories.forEach(c => newMap[c.id] = []);
+
+        if (catalogData.products && Array.isArray(catalogData.products)) {
+            catalogData.products.forEach(row => {
+                const pId = String(row[0]);
+                const cId = String(row[1]);
+                if (!newMap[cId]) newMap[cId] = [];
+                newMap[cId].push({ id: pId, name: row[2], meta: row[3] });
+            });
+        }
+
+        this.productsMap = newMap;
+        this.serverVer = newVer;
+
+        localStorage.setItem('ultima_data_v2', JSON.stringify({
+            categories: this.categories,
+            productsMap: this.productsMap,
+            serverVer: this.serverVer
+        }));
+        
+        renderCategories();
+        
+        // 🔥 Данные пришли — выключаем лоадер
+        document.getElementById('appLoader').classList.remove('active');
+    },
+
+    getProducts(catId) { return this.productsMap[catId] || []; },
+    
+    search(query) {
+      const res = []; const q = query.toLowerCase();
+      Object.values(this.productsMap).flat().forEach(p => {
+        if (p.name.toLowerCase().includes(q)) res.push(p);
+      });
+      return res;
+    },
+
+    async saveSelectionToServer() {
+        saveSelectionToCache();
+        try {
+            await fetch(API_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                body: JSON.stringify({
+                    action: 'save',
+                    initData: TG_INIT_DATA,
+                    selection: Array.from(state.selected)
+                })
+            });
+            return true;
+        } catch(e) { return false; }
+    }
+  };
 
     // 🔥 ПРЕОБРАЗОВАНИЕ ДАННЫХ (БЭК -> ФРОНТ)
     processCatalog(catalogData, newVer) {
