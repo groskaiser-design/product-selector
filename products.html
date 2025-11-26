@@ -62,12 +62,11 @@
     background: transparent !important; border: none !important; box-shadow: none !important;
   }
   
-  .header-flex { display: flex; align-items: center; width: 100%; gap: 0; }
+  .header-flex { display: flex; align-items: center; width: 100%; gap: 10px; }
 
   /* Search Bar */
   .search-box { 
     position: relative; flex: 1; 
-    transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
   }
 
   .search-input {
@@ -94,22 +93,27 @@
   }
   .search-input:not(:placeholder-shown) ~ .search-clear { opacity: 1; }
 
-  /* 🔥 ЕДИНАЯ КНОПКА ДЕЙСТВИЯ В ХЕДЕРЕ */
+  /* 🔥 ИСПРАВЛЕННАЯ ЕДИНАЯ КНОПКА (БЕЗ АНИМАЦИИ WIDTH) */
   .header-action-btn {
+    display: none; /* По умолчанию скрыта */
     background: none; border: none;
     color: var(--acc-blue);
     font-size: 17px; font-weight: 500;
-    padding: 0; width: 0; opacity: 0; overflow: hidden; white-space: nowrap;
-    cursor: pointer; transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+    padding: 0 4px; 
+    white-space: nowrap;
+    cursor: pointer;
+    min-width: 60px; /* Резервируем место */
     text-align: right;
   }
 
-  /* Класс .visible делает кнопку видимой и отодвигает инпут */
+  /* Простой класс для показа. Никаких width:0 -> auto */
   .header-action-btn.visible {
-    width: auto; 
-    min-width: 90px; /* Чтобы текст влезал */
-    opacity: 1;
-    padding-left: 12px;
+    display: block; 
+  }
+  
+  /* Принудительно показываем кнопку, если включен режим поиска (страховка) */
+  body.search-active .header-action-btn {
+    display: block !important;
   }
 
   /* --- VIEW CONTAINER --- */
@@ -258,7 +262,7 @@
   <div class="view" id="view-list">
     <div class="list-header-area">
       <h2 class="list-title" id="catTitle">Название</h2>
-      </div>
+    </div>
     <div class="product-list-container" id="productList"></div>
     <div id="sentinel"></div>
   </div>
@@ -277,7 +281,7 @@
 
 <script>
   // 🟢 1. FIREBASE CONFIG
-  const firebaseConfig = {}; // Add config here if needed
+  const firebaseConfig = {}; 
 
   let db = null;
   try {
@@ -405,7 +409,7 @@
     searchInput: document.getElementById('searchInput'),
     searchClear: document.getElementById('searchClear'),
     searchResults: document.getElementById('searchResults'),
-    // 🔥 НОВАЯ ССЫЛКА НА КНОПКУ
+    // 🔥 КНОПКА
     btnHeaderAction: document.getElementById('btnHeaderAction'),
     btnSave: document.getElementById('btnSave'),
     saveBtnText: document.getElementById('saveBtnText'),
@@ -447,9 +451,8 @@
     loadSelectionFromCache(); 
     DataService.init(); 
     
-    // Initial UI Setup
     updateSaveButton();
-    updateHeaderAction(); // 🔥 Инициализируем кнопку
+    updateHeaderAction(); 
     
     el.searchInput.addEventListener('input', handleSearch);
     el.searchClear.addEventListener('click', clearSearch);
@@ -461,22 +464,26 @@
     observer.observe(el.sentinel);
   }
 
-  // 🔥🔥🔥 СТРОГАЯ ЛОГИКА ЕДИНОЙ КНОПКИ (HEADER ACTION) 🔥🔥🔥
+  // 🔥🔥🔥 СТРОЖАЙШАЯ ЛОГИКА КНОПКИ 🔥🔥🔥
   function updateHeaderAction() {
     const btn = el.btnHeaderAction;
-    
-    // Сброс обработчиков, чтобы не накладывались
     btn.onclick = null;
     
-    // 1. Сценарий: ПОИСК (Самый приоритетный)
+    // 1. ПОИСК (Приоритет)
     if (state.searchMode) {
-        btn.classList.add('visible');
-        if (state.selected.size > 0) {
-             btn.textContent = 'Выбрать'; // Выбрано что-то в поиске
+        btn.classList.add('visible'); 
+        
+        // 🔥 ПРОВЕРКА: Если поле ПУСТОЕ — всегда ОТМЕНА (независимо от корзины!)
+        const isEmpty = el.searchInput.value.trim().length === 0;
+
+        if (state.selected.size > 0 && !isEmpty) {
+             // Только если что-то написано И выбрано
+             btn.textContent = 'Выбрать'; 
              btn.style.fontWeight = '600';
              btn.style.color = 'var(--acc-blue)';
              btn.onclick = () => exitSearchMode(); 
         } else {
+             // Во всех остальных случаях — ОТМЕНА
              btn.textContent = 'Отмена';
              btn.style.fontWeight = '500';
              btn.style.color = 'var(--acc-blue)';
@@ -485,7 +492,7 @@
         return;
     }
 
-    // 2. Сценарий: ВНУТРИ КАТЕГОРИИ
+    // 2. ВНУТРИ КАТЕГОРИИ
     if (state.activeCatId) {
         btn.classList.add('visible');
         btn.style.fontWeight = '500';
@@ -493,7 +500,6 @@
         
         const products = DataService.getProducts(state.activeCatId);
         const hasProducts = products.length > 0;
-        // Проверяем, выбраны ли ВСЕ товары ИМЕННО ЭТОЙ категории
         const allSelected = hasProducts && products.every(p => state.selected.has(p.id));
         
         if (allSelected && hasProducts) {
@@ -506,15 +512,13 @@
         return;
     }
 
-    // 3. Сценарий: ГЛАВНАЯ (Home)
-    // Всегда показываем кнопку. Если корзина пуста -> "Выбрать всё" (глобально).
-    // Если есть хоть один товар -> "Убрать всё".
+    // 3. ГЛАВНАЯ (Home)
     btn.classList.add('visible');
     btn.style.fontWeight = '500';
     
     if (state.selected.size > 0) {
         btn.textContent = 'Убрать всё';
-        btn.style.color = 'var(--acc-red)'; // Красный для сброса
+        btn.style.color = 'var(--acc-red)'; 
         btn.onclick = () => toggleGlobalSelection(false);
     } else {
         btn.textContent = 'Выбрать всё';
@@ -523,24 +527,17 @@
     }
   }
 
-  // Логика "Выбрать всё / Убрать всё" ГЛОБАЛЬНО (на главной)
   function toggleGlobalSelection(selectAll) {
     haptic('medium');
-    
     if (selectAll) {
-        // Проходим по всем категориям и добавляем все продукты
         Object.values(DataService.productsMap).flat().forEach(p => state.selected.add(p.id));
     } else {
-        // Очищаем
         if (confirm('Очистить корзину полностью?')) {
             state.selected.clear();
-        } else {
-            return; // Отмена действия
-        }
+        } else { return; }
     }
-    
     saveSelectionToCache();
-    renderCategories(); // Перерисовываем прогресс-бары
+    renderCategories();
     updateSaveButton();
     updateHeaderAction();
   }
@@ -588,7 +585,7 @@
     el.viewList.classList.remove('next');
     
     updateSaveButton(); 
-    updateHeaderAction(); // 🔥 Обновляем хедер
+    updateHeaderAction(); 
     if(tg) tg.BackButton.show();
   }
 
@@ -599,7 +596,7 @@
     el.viewCats.classList.remove('prev');
     setTimeout(renderCategories, 300); 
     updateSaveButton();
-    updateHeaderAction(); // 🔥 Обновляем хедер
+    updateHeaderAction(); 
     if(tg) tg.BackButton.show(); 
   }
 
@@ -657,7 +654,7 @@
     }
     saveSelectionToCache(); 
     updateSaveButton();
-    updateHeaderAction(); // 🔥 Проверяем состояние кнопки при каждом клике
+    updateHeaderAction(); 
   }
 
   function updateSaveButton() {
@@ -686,10 +683,13 @@
     saveSelectionToCache(); 
     startInfiniteRender(products, el.productList); 
     updateSaveButton();
-    updateHeaderAction(); // 🔥 Обновляем хедер
+    updateHeaderAction(); 
   }
 
   function handleSearch(e) {
+    // 🔥 ВАЖНО: При каждом вводе обновляем кнопку!
+    updateHeaderAction();
+    
     const query = e.target.value.toLowerCase().trim();
     if (query.length > 0) {
       if (!state.searchMode) enterSearchMode();
@@ -716,12 +716,12 @@
 
   function enterSearchMode() {
     state.searchMode = true;
+    updateHeaderAction(); // 🔥 Сразу обновляем кнопку на Отмена!
     document.body.classList.add('search-active');
     el.viewCats.classList.remove('active');
     el.viewList.classList.remove('active');
     el.viewSearch.classList.add('active');
     
-    updateHeaderAction(); // 🔥 Показываем "Отмена"
     updateSaveButton();   
     if(tg) tg.BackButton.show();
   }
@@ -740,7 +740,7 @@
         renderCategories();
     }
     updateSaveButton();
-    updateHeaderAction(); // 🔥 Возвращаем кнопку в обычное состояние
+    updateHeaderAction(); 
   }
   
   init();
