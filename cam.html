@@ -363,19 +363,11 @@
     let y = e.gamma; // Наклон влево-вправо
     if (x === null || y === null) return;
 
+    // Просто сохраняем углы, решение примет drawLoop
     state.angleX = x;
     state.angleY = y;
-
-    const tilt = Math.sqrt(x*x + y*y);
-    const isLevel = tilt < MAX_TILT;
-
-    if (state.levelOK !== isLevel) {
-      state.levelOK = isLevel;
-      updateUI();
-      if(isLevel) haptic('medium');
-    }
   }
-
+  
   // --- 3. UI LOOPS ---
   function updateUI() {
     if (state.levelOK) {
@@ -406,29 +398,48 @@
     const cy = h / 2;
 
     // === НАСТРОЙКИ РАЗМЕРОВ ===
-    const rBubble = 14;       // Радиус точки (пузырька)
-    const rTarget = 16;       // Радиус цели (пузырек + 2px)
+    const rBubble = 14;       // Радиус точки
+    const rTarget = 17;       // Радиус цели (всего на 2px больше)
     // ==========================
 
-    const maxOffset = 80;
+    // Параметры чувствительности
+    // maxOffset: насколько далеко улетает шарик при наклоне. 
+    // Чем меньше число, тем "туже" ходит шарик (легче поймать центр).
+    const maxOffset = 60; 
     const clamp = (val) => Math.max(-20, Math.min(20, val));
     
-    // Инверсия координат для естественности
+    // Рассчитываем смещение (координаты пузырька)
     const dx = (clamp(state.angleY) / 20) * maxOffset; 
     const dy = (clamp(state.angleX) / 20) * maxOffset;
 
+    // === НОВАЯ СТРОГАЯ ЛОГИКА ===
+    // Считаем дистанцию от центра до центра смещенного пузырька
+    const dist = Math.hypot(dx, dy);
+    
+    // Условие: пузырек целиком внутри круга
+    // (дистанция до центра + радиус пузырька) должно быть меньше радиуса цели
+    const isInside = (dist + rBubble) <= rTarget;
+
+    // Обновляем статус, только если он изменился
+    if (state.levelOK !== isInside) {
+      state.levelOK = isInside;
+      updateUI();
+      if(isInside) haptic('medium');
+    }
+    // ============================
+
     // 1. Рисуем Внешний круг (Цель)
     ctx.beginPath();
-    // Используем rTarget вместо 24
     ctx.arc(cx, cy, rTarget, 0, Math.PI * 2); 
+    // Если ОК - зеленый, если нет - белый полупрозрачный
     ctx.strokeStyle = state.levelOK ? '#30d158' : 'rgba(255,255,255,0.5)';
-    ctx.lineWidth = 2; // Толщина линии
+    ctx.lineWidth = 2;
     ctx.stroke();
 
     // 2. Рисуем Внутренний пузырек
     ctx.beginPath();
-    // Используем rBubble вместо 14
     ctx.arc(cx + dx, cy + dy, rBubble, 0, Math.PI * 2); 
+    // Если ОК - зеленый, если нет - белый
     ctx.fillStyle = state.levelOK ? '#30d158' : '#ffffff';
     ctx.fill();
 
