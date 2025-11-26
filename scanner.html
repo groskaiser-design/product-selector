@@ -2,9 +2,8 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<!-- FIX 1: Добавили interactive-widget=resizes-content -->
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
-<title>Ultima Scanner v2.18</title>
+<title>Ultima Scanner v2.19</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
   /* === 1. CORE & RESET === */
@@ -19,10 +18,10 @@
     --surface-glass: rgba(255, 255, 255, 0.07);
     --surface-border: rgba(255, 255, 255, 0.1);
     
-    --acc-green: #30d158; /* Carbs */
-    --acc-blue: #0a84ff;  /* Protein */
-    --acc-yellow: #ffcc00; /* Fats */
-    --acc-red: #ff453a;   /* Calories */
+    --acc-green: #30d158;
+    --acc-blue: #0a84ff;
+    --acc-yellow: #ffcc00;
+    --acc-red: #ff453a;
     --acc-over: #00f2ea;
     --acc-over-glow: rgba(0, 242, 234, 0.6);
     
@@ -35,25 +34,19 @@
     --header-height: 340px; 
   }
 
-  /* FIX 2: Жесткая фиксация Body, чтобы не прыгало при скролле */
+  /* === FIX FROM AI.HTML: BODY IS STATIC BACKGROUND === */
   html, body {
-    position: fixed; 
-    top: 0; left: 0; width: 100%;
-    margin: 0; padding: 0;
     background-color: var(--bg-core);
-    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Roboto', sans-serif;
+    margin: 0; padding: 0; width: 100%; height: 100vh;
+    overflow: hidden; 
     color: var(--text-main);
-    height: 100%; /* Высота будет контролироваться JS */
-    display: flex; flex-direction: column;
-    overflow: hidden; /* Запрещаем скролл на уровне body */
-    
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Roboto', sans-serif;
+    position: fixed; top: 0; left: 0; /* Dead fix */
     -webkit-font-smoothing: antialiased; 
-    -moz-osx-font-smoothing: grayscale;
-    text-rendering: optimizeLegibility;
   }
 
-  /* FX BACKGROUND */
-  .fx-layer { position: fixed; inset: 0; z-index: -1; pointer-events: none; }
+  /* FX BACKGROUND (Behind everything) */
+  .fx-layer { position: fixed; inset: 0; z-index: 0; pointer-events: none; }
   .orb { position: absolute; border-radius: 50%; will-change: transform; animation: float 30s infinite linear; }
   .orb-1 { width: 90vw; height: 90vw; opacity: 0.4; background: radial-gradient(circle, rgba(108, 92, 231, 0.8) 0%, transparent 70%); top: -20%; left: -20%; }
   .orb-2 { width: 400px; height: 400px; opacity: 0.5; background: radial-gradient(circle, rgba(10, 132, 255, 0.6) 0%, transparent 70%); bottom: -150px; right: -100px; animation: breathe 6s infinite ease-in-out; }
@@ -61,7 +54,19 @@
   @keyframes float { 0% {transform:rotate(0deg)} 100% {transform:rotate(360deg)} }
   @keyframes breathe { 0%, 100% { transform: scale(1); opacity: 0.4; } 50% { transform: scale(1.1); opacity: 0.6; } }
 
-  /* === NEW FIXED HEADER CONTAINER === */
+  /* === MAIN APP CONTAINER (The one that resizes) === */
+  .app-layout {
+    position: relative; 
+    z-index: 1; 
+    top: 0; left: 0; right: 0;
+    height: 100%; /* Will be set by JS */
+    width: 100%;
+    overflow: hidden;
+    display: flex; 
+    flex-direction: column;
+  }
+
+  /* === HEADER (Absolute inside App Layout) === */
   .fixed-header-group {
     position: absolute; 
     top: 0; left: 0; right: 0;
@@ -83,10 +88,7 @@
   .calendar-header { display: flex; align-items: center; justify-content: space-between; padding: 0 16px 8px 16px; }
   .month-label { font-size: 11px; font-weight: 800; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1.5px; opacity: 0.9; }
   
-  .calendar-swipe-area {
-    width: 100%; height: 52px; overflow: hidden; position: relative;
-    touch-action: pan-y; cursor: grab;
-  }
+  .calendar-swipe-area { width: 100%; height: 52px; overflow: hidden; position: relative; touch-action: pan-y; cursor: grab; }
   .calendar-track { display: flex; width: 300%; height: 100%; transform: translateX(-33.333333%); will-change: transform; }
   .calendar-week { flex: 1; display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; height: 100%; padding: 0 10px; }
 
@@ -154,6 +156,7 @@
     overflow-y: auto; 
     -webkit-overflow-scrolling: touch;
     padding-top: var(--header-height); 
+    /* Dynamic padding will be handled by JS, but keep safe default */
     padding-bottom: 120px;
     mask-image: linear-gradient(to bottom, transparent 0px, black 20px, black 100%);
     -webkit-mask-image: linear-gradient(to bottom, transparent 0px, black 20px, black 100%);
@@ -171,47 +174,27 @@
   }
   .meal-card:active { background: rgba(255,255,255,0.1); }
   
-  /* --- EXCEL STYLE COLUMNS --- */
-  /* Grid Layout: Name (or Time) | Weight | Kcal | P | F | C */
-  .col-headers, .prod-item {
-    display: grid;
-    /* 1fr for name/time, fixed px for numbers */
-    /* KEY FIX: minmax(0, 1fr) prevents the grid item from overflowing */
-    grid-template-columns: minmax(0, 1fr) 34px 30px 22px 22px 22px; 
-    gap: 5px;
-    align-items: center;
-  }
-
-  /* Headers Row (Includes Time now) */
-  .col-headers {
-    margin-bottom: 8px;
-    padding-bottom: 6px;
-    border-bottom: 1px solid rgba(255,255,255,0.08);
-  }
-  
-  /* * NEW: ABSOLUTELY UNIFORM TYPOGRAPHY * */
-  .mh-time, .ch-item, .pi-name, .pi-val, .pi-w, .pi-k, .pi-p, .pi-f, .pi-c {
-    font-size: 13px;
-    font-weight: 400;
-    color: #fff;
-    font-feature-settings: "tnum";
-    white-space: nowrap;
-  }
-
-  /* Alignments */
-  .mh-time { text-align: left; } /* Time takes the left slot */
+  /* Grid Columns */
+  .col-headers, .prod-item { display: grid; grid-template-columns: minmax(0, 1fr) 34px 30px 22px 22px 22px; gap: 5px; align-items: center; }
+  .col-headers { margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+  .mh-time, .ch-item, .pi-name, .pi-val, .pi-w, .pi-k, .pi-p, .pi-f, .pi-c { font-size: 13px; font-weight: 400; color: #fff; font-feature-settings: "tnum"; white-space: nowrap; }
+  .mh-time { text-align: left; } 
   .pi-name { overflow: hidden; text-overflow: ellipsis; }
   .ch-item, .pi-val { text-align: right; }
-
-  /* Product Row */
-  .prod-item { 
-    margin-bottom: 10px;
-    min-height: 20px;
-  }
+  .prod-item { margin-bottom: 10px; min-height: 20px; }
   .prod-item:last-child { margin-bottom: 2px; }
 
-  /* === 5. OMNI-BAR === */
-  .omni-bar { position: fixed; bottom: 0; left: 0; right: 0; background: rgba(10, 10, 10, 0.85); backdrop-filter: blur(30px); border-top: 1px solid var(--surface-border); padding: 8px 12px var(--safe-bottom) 12px; z-index: 100; display: flex; align-items: flex-end; gap: 8px; }
+  /* === 5. OMNI-BAR (CHANGED: ABSOLUTE IN CONTAINER) === */
+  .omni-bar { 
+    position: absolute; /* CRITICAL CHANGE: Not fixed! */
+    bottom: 0; left: 0; right: 0; 
+    background: rgba(10, 10, 10, 0.85); 
+    backdrop-filter: blur(30px); 
+    border-top: 1px solid var(--surface-border); 
+    padding: 8px 12px var(--safe-bottom) 12px; 
+    z-index: 100; 
+    display: flex; align-items: flex-end; gap: 8px; 
+  }
   .icon-btn { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; }
   .input-wrap { flex: 1; min-height: 42px; background: rgba(255,255,255,0.08); border-radius: 20px; padding: 4px 16px; display: flex; align-items: center; }
   textarea { width: 100%; background: transparent; border: none; color: #fff; font-size: 15px; resize: none; font-family: inherit; padding: 10px 0; margin: 0; }
@@ -219,7 +202,7 @@
   .mode-cam { color: #fff; }
   .mode-send { background: var(--acc-blue); color: #fff; box-shadow: 0 0 12px rgba(10,132,255,0.4); }
 
-  /* === 6. SHEET === */
+  /* === 6. SHEET (Outside Container, Fixed to Window) === */
   .sheet-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 200; opacity: 0; pointer-events: none; transition: opacity 0.3s; backdrop-filter: blur(4px); }
   .sheet-overlay.visible { opacity: 1; pointer-events: auto; }
   .sheet { position: fixed; bottom: 0; left: 0; right: 0; background: #151517; border-radius: 24px 24px 0 0; padding: 24px 16px calc(30px + env(safe-area-inset-bottom)) 16px; transform: translateY(100%); transition: transform 0.3s cubic-bezier(0.1, 0.7, 0.1, 1); border-top: 1px solid rgba(255,255,255,0.15); }
@@ -248,193 +231,92 @@
   <div class="noise"></div>
 </div>
 
-<div class="fixed-header-group">
-  <!-- CALENDAR -->
-  <div class="calendar-block">
-    <div class="calendar-header"><div class="month-label" id="monthLabel">...</div></div>
-    <div class="calendar-swipe-area" id="swipeArea">
-      <div class="calendar-track" id="calTrack">
-        <div class="calendar-week" id="weekPrev"></div>
-        <div class="calendar-week" id="weekCurr"></div>
-        <div class="calendar-week" id="weekNext"></div>
-      </div>
-    </div>
-  </div>
-  <!-- WIDGETS -->
-  <div class="carousel-wrap">
-    <div class="carousel-track" id="track">
-      <div class="widget">
-        <div class="macros-grid">
-          <div class="macro-item"><div class="donut-box"><svg class="mini-donut" viewBox="0 0 60 60"><circle class="md-bg" cx="30" cy="30" r="24"/><circle class="md-val stroke-kcal" cx="30" cy="30" r="24" style="stroke-dashoffset: 45px"/></svg><div class="m-icon">🔥</div></div><div class="m-data"><div class="m-nums">1450<span>/2100</span></div><div class="m-lbl">ККАЛ</div></div></div>
-          <div class="macro-item"><div class="donut-box"><svg class="mini-donut" viewBox="0 0 60 60"><circle class="md-bg" cx="30" cy="30" r="24"/><circle class="md-val stroke-prot" cx="30" cy="30" r="24" style="stroke-dashoffset: 100px"/></svg><div class="m-icon">🐓</div></div><div class="m-data"><div class="m-nums">110<span>/160</span></div><div class="m-lbl">БЕЛКИ</div></div></div>
-          <div class="macro-item"><div class="donut-box"><svg class="mini-donut" viewBox="0 0 60 60"><circle class="md-bg" cx="30" cy="30" r="24"/><circle class="md-val stroke-fats" cx="30" cy="30" r="24" style="stroke-dashoffset: 110px"/></svg><div class="m-icon">🥑</div></div><div class="m-data"><div class="m-nums">45<span>/70</span></div><div class="m-lbl">ЖИРЫ</div></div></div>
-          <div class="macro-item"><div class="donut-box"><svg class="mini-donut" viewBox="0 0 60 60"><circle class="md-bg" cx="30" cy="30" r="24"/><circle class="md-val stroke-carb" cx="30" cy="30" r="24" style="stroke-dashoffset: 60px"/></svg><div class="m-icon">🌾</div></div><div class="m-data"><div class="m-nums">180<span>/250</span></div><div class="m-lbl">УГЛИ</div></div></div>
+<!-- APP LAYOUT CONTAINER (Resizes safely) -->
+<div class="app-layout" id="appLayout">
+  
+  <div class="fixed-header-group">
+    <!-- CALENDAR -->
+    <div class="calendar-block">
+      <div class="calendar-header"><div class="month-label" id="monthLabel">...</div></div>
+      <div class="calendar-swipe-area" id="swipeArea">
+        <div class="calendar-track" id="calTrack">
+          <div class="calendar-week" id="weekPrev"></div>
+          <div class="calendar-week" id="weekCurr"></div>
+          <div class="calendar-week" id="weekNext"></div>
         </div>
       </div>
-      <div class="widget water-widget" id="waterCard">
-        <div class="water-header"><div class="water-title">Водный баланс</div><div class="water-percent" id="lbl-pct">0%</div></div>
-        <div class="water-cols"><div class="water-tube"><div class="water-fill" id="c1"></div></div><div class="water-tube"><div class="water-fill" id="c2"></div></div><div class="water-tube"><div class="water-fill" id="c3"></div></div><div class="water-tube"><div class="water-fill" id="c4"></div></div><div class="water-tube"><div class="water-fill" id="c5"></div></div></div>
-        <div class="water-footer"><div class="water-info"><div class="wf-row"><div class="wf-fact" id="lbl-fact">0</div><div class="wf-unit">мл</div></div><div class="wf-plan">Цель: 2500</div></div><div class="water-controls"><div class="water-btn" onclick="updateWater(-250)">−</div><div class="water-btn" onclick="updateWater(250)">+</div></div></div>
-      </div>
     </div>
-    <div class="dots"><div class="dot active"></div><div class="dot"></div></div>
+    <!-- WIDGETS -->
+    <div class="carousel-wrap">
+      <div class="carousel-track" id="track">
+        <div class="widget">
+          <div class="macros-grid">
+            <div class="macro-item"><div class="donut-box"><svg class="mini-donut" viewBox="0 0 60 60"><circle class="md-bg" cx="30" cy="30" r="24"/><circle class="md-val stroke-kcal" cx="30" cy="30" r="24" style="stroke-dashoffset: 45px"/></svg><div class="m-icon">🔥</div></div><div class="m-data"><div class="m-nums">1450<span>/2100</span></div><div class="m-lbl">ККАЛ</div></div></div>
+            <div class="macro-item"><div class="donut-box"><svg class="mini-donut" viewBox="0 0 60 60"><circle class="md-bg" cx="30" cy="30" r="24"/><circle class="md-val stroke-prot" cx="30" cy="30" r="24" style="stroke-dashoffset: 100px"/></svg><div class="m-icon">🐓</div></div><div class="m-data"><div class="m-nums">110<span>/160</span></div><div class="m-lbl">БЕЛКИ</div></div></div>
+            <div class="macro-item"><div class="donut-box"><svg class="mini-donut" viewBox="0 0 60 60"><circle class="md-bg" cx="30" cy="30" r="24"/><circle class="md-val stroke-fats" cx="30" cy="30" r="24" style="stroke-dashoffset: 110px"/></svg><div class="m-icon">🥑</div></div><div class="m-data"><div class="m-nums">45<span>/70</span></div><div class="m-lbl">ЖИРЫ</div></div></div>
+            <div class="macro-item"><div class="donut-box"><svg class="mini-donut" viewBox="0 0 60 60"><circle class="md-bg" cx="30" cy="30" r="24"/><circle class="md-val stroke-carb" cx="30" cy="30" r="24" style="stroke-dashoffset: 60px"/></svg><div class="m-icon">🌾</div></div><div class="m-data"><div class="m-nums">180<span>/250</span></div><div class="m-lbl">УГЛИ</div></div></div>
+          </div>
+        </div>
+        <div class="widget water-widget" id="waterCard">
+          <div class="water-header"><div class="water-title">Водный баланс</div><div class="water-percent" id="lbl-pct">0%</div></div>
+          <div class="water-cols"><div class="water-tube"><div class="water-fill" id="c1"></div></div><div class="water-tube"><div class="water-fill" id="c2"></div></div><div class="water-tube"><div class="water-fill" id="c3"></div></div><div class="water-tube"><div class="water-fill" id="c4"></div></div><div class="water-tube"><div class="water-fill" id="c5"></div></div></div>
+          <div class="water-footer"><div class="water-info"><div class="wf-row"><div class="wf-fact" id="lbl-fact">0</div><div class="wf-unit">мл</div></div><div class="wf-plan">Цель: 2500</div></div><div class="water-controls"><div class="water-btn" onclick="updateWater(-250)">−</div><div class="water-btn" onclick="updateWater(250)">+</div></div></div>
+        </div>
+      </div>
+      <div class="dots"><div class="dot active"></div><div class="dot"></div></div>
+    </div>
   </div>
-</div>
 
-<!-- === SCROLLABLE TIMELINE === -->
-<div class="scroll-container">
-  <div class="timeline">
-    
-    <!-- MEAL 1 -->
-    <div class="meal-card">
-      <!-- Merged Header: Time + Columns -->
-      <div class="col-headers">
-        <div class="mh-time" data-h="9" data-m="00">09:00</div>
-        <div class="ch-item">Вес</div>
-        <div class="ch-item">К</div>
-        <div class="ch-item">Б</div>
-        <div class="ch-item">Ж</div>
-        <div class="ch-item">У</div>
+  <!-- SCROLL CONTAINER -->
+  <div class="scroll-container" id="scrollContainer">
+    <div class="timeline">
+      
+      <!-- MEAL 1 -->
+      <div class="meal-card">
+        <div class="col-headers"><div class="mh-time" data-h="9" data-m="00">09:00</div><div class="ch-item">Вес</div><div class="ch-item">К</div><div class="ch-item">Б</div><div class="ch-item">Ж</div><div class="ch-item">У</div></div>
+        <div class="prod-item"><div class="pi-name">Овсяная каша на молоке с очень длинным названием</div><div class="pi-val pi-w">250</div><div class="pi-val pi-k">220</div><div class="pi-val pi-p">8</div><div class="pi-val pi-f">6</div><div class="pi-val pi-c">32</div></div>
+        <div class="prod-item"><div class="pi-name">Масло сливочное</div><div class="pi-val pi-w">10</div><div class="pi-val pi-k">75</div><div class="pi-val pi-p">0</div><div class="pi-val pi-f">8</div><div class="pi-val pi-c">0</div></div>
+        <div class="prod-item"><div class="pi-name">Кофе с молоком</div><div class="pi-val pi-w">250</div><div class="pi-val pi-k">125</div><div class="pi-val pi-p">3</div><div class="pi-val pi-f">3</div><div class="pi-val pi-c">5</div></div>
       </div>
-      <!-- PRODUCTS -->
-      <div class="prod-item">
-        <div class="pi-name">Овсяная каша на молоке с очень длинным названием для теста</div>
-        <div class="pi-val pi-w">250</div>
-        <div class="pi-val pi-k">220</div>
-        <div class="pi-val pi-p">8</div>
-        <div class="pi-val pi-f">6</div>
-        <div class="pi-val pi-c">32</div>
+
+      <!-- MEAL 2 -->
+      <div class="meal-card">
+        <div class="col-headers"><div class="mh-time" data-h="11" data-m="30">11:30</div><div class="ch-item">Вес</div><div class="ch-item">К</div><div class="ch-item">Б</div><div class="ch-item">Ж</div><div class="ch-item">У</div></div>
+        <div class="prod-item"><div class="pi-name">Творог 5%</div><div class="pi-val pi-w">150</div><div class="pi-val pi-k">120</div><div class="pi-val pi-p">24</div><div class="pi-val pi-f">7</div><div class="pi-val pi-c">3</div></div>
+        <div class="prod-item"><div class="pi-name">Яблоко зеленое</div><div class="pi-val pi-w">120</div><div class="pi-val pi-k">60</div><div class="pi-val pi-p">0</div><div class="pi-val pi-f">0</div><div class="pi-val pi-c">14</div></div>
       </div>
-      <div class="prod-item">
-        <div class="pi-name">Масло сливочное</div>
-        <div class="pi-val pi-w">10</div>
-        <div class="pi-val pi-k">75</div>
-        <div class="pi-val pi-p">0</div>
-        <div class="pi-val pi-f">8</div>
-        <div class="pi-val pi-c">0</div>
+
+      <!-- MEAL 3 -->
+      <div class="meal-card">
+        <div class="col-headers"><div class="mh-time" data-h="13" data-m="30">13:30</div><div class="ch-item">Вес</div><div class="ch-item">К</div><div class="ch-item">Б</div><div class="ch-item">Ж</div><div class="ch-item">У</div></div>
+        <div class="prod-item"><div class="pi-name">Борщ с говядиной</div><div class="pi-val pi-w">300</div><div class="pi-val pi-k">240</div><div class="pi-val pi-p">12</div><div class="pi-val pi-f">8</div><div class="pi-val pi-c">10</div></div>
+        <div class="prod-item"><div class="pi-name">Сметана 20%</div><div class="pi-val pi-w">30</div><div class="pi-val pi-k">62</div><div class="pi-val pi-p">1</div><div class="pi-val pi-f">6</div><div class="pi-val pi-c">1</div></div>
       </div>
-      <div class="prod-item">
-        <div class="pi-name">Кофе с молоком</div>
-        <div class="pi-val pi-w">250</div>
-        <div class="pi-val pi-k">125</div>
-        <div class="pi-val pi-p">3</div>
-        <div class="pi-val pi-f">3</div>
-        <div class="pi-val pi-c">5</div>
+
+      <!-- MEAL 4 -->
+      <div class="meal-card">
+        <div class="col-headers"><div class="mh-time" data-h="17" data-m="00">17:00</div><div class="ch-item">Вес</div><div class="ch-item">К</div><div class="ch-item">Б</div><div class="ch-item">Ж</div><div class="ch-item">У</div></div>
+        <div class="prod-item"><div class="pi-name">Протеиновый батончик</div><div class="pi-val pi-w">50</div><div class="pi-val pi-k">180</div><div class="pi-val pi-p">20</div><div class="pi-val pi-f">8</div><div class="pi-val pi-c">4</div></div>
       </div>
+
+      <!-- MEAL 5 -->
+      <div class="meal-card">
+        <div class="col-headers"><div class="mh-time" data-h="19" data-m="30">19:30</div><div class="ch-item">Вес</div><div class="ch-item">К</div><div class="ch-item">Б</div><div class="ch-item">Ж</div><div class="ch-item">У</div></div>
+        <div class="prod-item"><div class="pi-name">Куриная грудка гриль</div><div class="pi-val pi-w">150</div><div class="pi-val pi-k">240</div><div class="pi-val pi-p">31</div><div class="pi-val pi-f">4</div><div class="pi-val pi-c">0</div></div>
+        <div class="prod-item"><div class="pi-name">Овощной салат</div><div class="pi-val pi-w">200</div><div class="pi-val pi-k">80</div><div class="pi-val pi-p">2</div><div class="pi-val pi-f">1</div><div class="pi-val pi-c">8</div></div>
+      </div>
+
     </div>
-
-    <!-- MEAL 2 -->
-    <div class="meal-card">
-      <div class="col-headers">
-        <div class="mh-time" data-h="11" data-m="30">11:30</div>
-        <div class="ch-item">Вес</div>
-        <div class="ch-item">К</div>
-        <div class="ch-item">Б</div>
-        <div class="ch-item">Ж</div>
-        <div class="ch-item">У</div>
-      </div>
-      <div class="prod-item">
-        <div class="pi-name">Творог 5%</div>
-        <div class="pi-val pi-w">150</div>
-        <div class="pi-val pi-k">120</div>
-        <div class="pi-val pi-p">24</div>
-        <div class="pi-val pi-f">7</div>
-        <div class="pi-val pi-c">3</div>
-      </div>
-      <div class="prod-item">
-        <div class="pi-name">Яблоко зеленое</div>
-        <div class="pi-val pi-w">120</div>
-        <div class="pi-val pi-k">60</div>
-        <div class="pi-val pi-p">0</div>
-        <div class="pi-val pi-f">0</div>
-        <div class="pi-val pi-c">14</div>
-      </div>
-    </div>
-
-    <!-- MEAL 3 -->
-    <div class="meal-card">
-      <div class="col-headers">
-        <div class="mh-time" data-h="13" data-m="30">13:30</div>
-        <div class="ch-item">Вес</div>
-        <div class="ch-item">К</div>
-        <div class="ch-item">Б</div>
-        <div class="ch-item">Ж</div>
-        <div class="ch-item">У</div>
-      </div>
-      <div class="prod-item">
-        <div class="pi-name">Борщ с говядиной</div>
-        <div class="pi-val pi-w">300</div>
-        <div class="pi-val pi-k">240</div>
-        <div class="pi-val pi-p">12</div>
-        <div class="pi-val pi-f">8</div>
-        <div class="pi-val pi-c">10</div>
-      </div>
-      <div class="prod-item">
-        <div class="pi-name">Сметана 20%</div>
-        <div class="pi-val pi-w">30</div>
-        <div class="pi-val pi-k">62</div>
-        <div class="pi-val pi-p">1</div>
-        <div class="pi-val pi-f">6</div>
-        <div class="pi-val pi-c">1</div>
-      </div>
-    </div>
-
-    <!-- MEAL 4 -->
-    <div class="meal-card">
-      <div class="col-headers">
-        <div class="mh-time" data-h="17" data-m="00">17:00</div>
-        <div class="ch-item">Вес</div>
-        <div class="ch-item">К</div>
-        <div class="ch-item">Б</div>
-        <div class="ch-item">Ж</div>
-        <div class="ch-item">У</div>
-      </div>
-      <div class="prod-item">
-        <div class="pi-name">Протеиновый батончик</div>
-        <div class="pi-val pi-w">50</div>
-        <div class="pi-val pi-k">180</div>
-        <div class="pi-val pi-p">20</div>
-        <div class="pi-val pi-f">8</div>
-        <div class="pi-val pi-c">4</div>
-      </div>
-    </div>
-
-    <!-- MEAL 5 -->
-    <div class="meal-card">
-      <div class="col-headers">
-        <div class="mh-time" data-h="19" data-m="30">19:30</div>
-        <div class="ch-item">Вес</div>
-        <div class="ch-item">К</div>
-        <div class="ch-item">Б</div>
-        <div class="ch-item">Ж</div>
-        <div class="ch-item">У</div>
-      </div>
-      <div class="prod-item">
-        <div class="pi-name">Куриная грудка гриль</div>
-        <div class="pi-val pi-w">150</div>
-        <div class="pi-val pi-k">240</div>
-        <div class="pi-val pi-p">31</div>
-        <div class="pi-val pi-f">4</div>
-        <div class="pi-val pi-c">0</div>
-      </div>
-      <div class="prod-item">
-        <div class="pi-name">Овощной салат</div>
-        <div class="pi-val pi-w">200</div>
-        <div class="pi-val pi-k">80</div>
-        <div class="pi-val pi-p">2</div>
-        <div class="pi-val pi-f">1</div>
-        <div class="pi-val pi-c">8</div>
-      </div>
-    </div>
-
   </div>
-</div>
 
-<div class="omni-bar">
-  <div class="icon-btn" onclick="toggleSheet()"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg></div>
-  <div class="input-wrap"><textarea id="msgInput" rows="1" placeholder="Яблоко 200г, кофе..."></textarea></div>
-  <div class="action-btn mode-cam" id="actionBtn" onclick="handleAction()"><svg id="iconCam" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg><svg id="iconSend" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:none"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg></div>
-</div>
+  <!-- OMNI BAR (Absolute inside App Layout) -->
+  <div class="omni-bar" id="omniBar">
+    <div class="icon-btn" onclick="toggleSheet()"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg></div>
+    <div class="input-wrap"><textarea id="msgInput" rows="1" placeholder="Яблоко 200г, кофе..."></textarea></div>
+    <div class="action-btn mode-cam" id="actionBtn" onclick="handleAction()"><svg id="iconCam" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg><svg id="iconSend" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:none"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg></div>
+  </div>
+
+</div> <!-- End App Layout -->
 
 <div class="sheet-overlay" id="sheet" onclick="toggleSheet()">
   <div class="sheet" onclick="event.stopPropagation()">
@@ -459,29 +341,45 @@
   } catch (globalErr) { console.error('Critical TMA Error:', globalErr); }
 })();
 
-// FIX 3: Скрипт стабилизации лейаута при открытии клавиатуры
+// FIX FROM AI.HTML: STABLE LAYOUT ENGINE
 (function initStableLayout() {
-  const app = document.body;
+  const app = document.getElementById('appLayout'); // Target the wrapper, NOT body
+  const omniBar = document.getElementById('omniBar');
+  const scrollContainer = document.getElementById('scrollContainer');
   
   function setHeight() {
     const tg = window.Telegram?.WebApp;
-    // Берем высоту из TG (если есть) или окна
     const h = (tg && tg.viewportHeight) ? tg.viewportHeight : window.innerHeight;
+    
+    // Resize only the container
     app.style.height = `${h}px`;
+    
+    // Dynamic padding for scroll container so content isn't hidden behind omni bar
+    if (omniBar && scrollContainer) {
+        const barHeight = omniBar.offsetHeight;
+        scrollContainer.style.paddingBottom = `${barHeight + 20}px`;
+    }
   }
 
   const tg = window.Telegram?.WebApp;
   if (tg) {
-    // Слушаем событие изменения вьюпорта (клавиатура открылась/закрылась)
     tg.onEvent('viewportChanged', ({ isStateStable }) => {
       setHeight();
+      // Scroll to bottom if needed, or maintain position
+      if (isStateStable) {
+         // Optional: scroll adjustment
+      }
     });
   }
   
-  // Обычный ресайз (для десктопа/тестов)
   window.addEventListener('resize', setHeight);
-  // Инициализация
   setHeight();
+  
+  // Observe text area resize to adjust padding
+  const txt = document.getElementById('msgInput');
+  if(txt) {
+      txt.addEventListener('input', () => requestAnimationFrame(setHeight));
+  }
 })();
   
 function isAdmin() { try { return window.Telegram?.WebApp?.initDataUnsafe?.user?.id === 196047220; } catch (_) { return false; } }
