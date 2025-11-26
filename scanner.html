@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Ultima Scanner v2.9 (Fixed Layout)</title>
+<title>Ultima Scanner v2.11 (TMA Ready)</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
   /* === 1. CORE & RESET === */
@@ -31,8 +31,7 @@
     --safe-bottom: calc(12px + env(safe-area-inset-bottom));
     
     /* Высота фиксированной шапки (Календарь + Виджеты) */
-    /* ~100px календарь + ~200px виджеты */
-    --header-height: 310px; 
+    --header-height: 340px; 
   }
 
   body {
@@ -63,12 +62,9 @@
     position: absolute; /* Фиксируем поверх скролла */
     top: 0; left: 0; right: 0;
     z-index: 50;
-    /* Легкое затемнение фона под шапкой, чтобы контент снизу не мешал читать */
     background: linear-gradient(180deg, rgba(5,5,5,0.95) 0%, rgba(5,5,5,0.85) 70%, rgba(5,5,5,0) 100%);
-    /* Общий блюр для всего, что проплывает снизу */
     backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
-    padding-bottom: 10px;
-    /* Блокируем передачу скролла телу, чтобы свайпались виджеты, а не страница */
+    padding-bottom: 0px; 
     overscroll-behavior: none;
   }
 
@@ -100,8 +96,17 @@
   .day-cell.is-today::after { content: ''; position: absolute; bottom: 5px; width: 4px; height: 4px; border-radius: 50%; background: var(--acc-blue); box-shadow: 0 0 6px var(--acc-blue); }
 
   /* === 3. WIDGETS (Inside Header) === */
-  .carousel-wrap { padding: 20px 0 12px 0; }
-  .carousel-track { display: flex; gap: 12px; padding: 0 16px; overflow-x: auto; scroll-snap-type: x mandatory; cursor: grab; scrollbar-width: none; }
+  .carousel-wrap { padding: 0; }
+  
+  .carousel-track { 
+    display: flex; 
+    gap: 12px; 
+    padding: 30px 16px 40px 16px; 
+    overflow-x: auto; 
+    scroll-snap-type: x mandatory; 
+    cursor: grab; 
+    scrollbar-width: none; 
+  }
   .carousel-track::-webkit-scrollbar { display: none; }
   
   .widget { flex: 0 0 calc(100% - 16px); scroll-snap-align: center; height: 160px; border-radius: var(--radius-xl); background: linear-gradient(165deg, rgba(255,255,255,0.09) 0%, rgba(255,255,255,0.02) 100%); border: 1px solid var(--surface-border); border-top: 1px solid rgba(255,255,255,0.15); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); position: relative; overflow: hidden; padding: 16px 12px; transition: 0.3s ease; }
@@ -147,7 +152,7 @@
   .water-btn:active { background: var(--acc-blue); transform: scale(0.92); }
   .widget.is-overload .water-btn:active { background: var(--acc-over); }
 
-  .dots { display: flex; justify-content: center; gap: 6px; margin-top: 12px; pointer-events: none; }
+  .dots { display: flex; justify-content: center; gap: 6px; margin-top: 0px; pointer-events: none; transform: translateY(-20px); /* Подтянули точки вверх, чтобы компенсировать паддинг трека */ }
   .dot { width: 6px; height: 6px; border-radius: 10px; background: rgba(255,255,255,0.2); transition: 0.3s; }
   .dot.active { width: 20px; background: #fff; }
 
@@ -156,12 +161,8 @@
     flex: 1; 
     overflow-y: auto; 
     -webkit-overflow-scrolling: touch;
-    
-    /* 🔥 ОТСТУП СВЕРХУ ДЛЯ ПРОКРУТКИ ПОД ШАПКОЙ */
     padding-top: var(--header-height); 
     padding-bottom: 120px;
-    
-    /* Градиентная маска, чтобы еда красиво исчезала не резко, а мягко вверху */
     mask-image: linear-gradient(to bottom, transparent 0px, black 20px, black 100%);
     -webkit-mask-image: linear-gradient(to bottom, transparent 0px, black 20px, black 100%);
   }
@@ -359,9 +360,67 @@
 </div>
 
 <script>
-  const tg = window.Telegram?.WebApp;
-  if(tg) { tg.ready(); tg.expand(); tg.setHeaderColor('#050505'); tg.setBackgroundColor('#050505'); }
-  function haptic(type) { if (navigator.vibrate) navigator.vibrate(15); if(tg?.HapticFeedback) tg.HapticFeedback.impactOccurred(type || 'light'); }
+/* ============================================================
+ * BLOCK 0: TMA boot (FIXED & SAFE)
+ * ============================================================ */
+(function initTMA() {
+  try {
+    const tg = window.Telegram?.WebApp;
+    if (!tg) return; // Если это не Телеграм, просто выходим, не ломая сайт
+
+    tg.ready();
+    tg.expand();
+
+    // 1. Красим заголовок (обернуто в защиту, чтобы не ломало загрузку)
+    try {
+      tg.setHeaderColor('#050505'); // Черный цвет
+      if (tg.setBackgroundColor) {
+        tg.setBackgroundColor('#050505');
+      }
+    } catch (e) {
+      console.log('Error setting color:', e);
+    }
+
+    // 2. Настраиваем кнопку "Назад"
+    try {
+      if (tg.BackButton) {
+        tg.BackButton.show();
+        // Сначала удаляем старые обработчики, чтобы кнопка не тупила
+        tg.BackButton.offClick(); 
+        // Добавляем переход
+        tg.BackButton.onClick(function() {
+          window.location.href = 'router.html';
+        });
+      }
+    } catch (e) {
+      console.log('Error setting back button:', e);
+    }
+
+    // 3. Отключаем свайпы (если поддерживается)
+    try {
+      if (tg.disableVerticalSwipes) tg.disableVerticalSwipes();
+    } catch (e) {}
+
+  } catch (globalErr) {
+    // Если вообще все упало в TMA, выводим ошибку, но НЕ останавливаем скрипт
+    console.error('Critical TMA Error:', globalErr);
+  }
+})();
+  
+/**
+ * Проверка, является ли текущий пользователь админом
+ * @returns {boolean} true, если Telegram user.id совпадает с ID администратора
+ */
+function isAdmin() {
+  try {
+    const userId = Number(window.Telegram?.WebApp?.initDataUnsafe?.user?.id);
+    return userId === 196047220;
+  } catch (_) {
+    return false;
+  }
+}
+
+  function haptic(type) { if (navigator.vibrate) navigator.vibrate(15); if(window.Telegram?.WebApp?.HapticFeedback) window.Telegram.WebApp.HapticFeedback.impactOccurred(type || 'light'); }
 
   // === INFINITE CALENDAR ===
   let currentWeekStart = getStartOfWeek(new Date());
@@ -404,6 +463,7 @@
       const el = document.createElement('div');
       el.className = `day-cell ${isSelected ? 'selected' : ''} ${isToday ? 'is-today' : ''}`;
       el.innerHTML = `<div class="dc-name">${weekDays[i]}</div><div class="dc-num">${d.getDate()}</div>`;
+      
       el.onclick = (e) => {
         if(Math.abs(currentTranslate) > 5) return;
         document.querySelectorAll('.day-cell').forEach(c => c.classList.remove('selected'));
