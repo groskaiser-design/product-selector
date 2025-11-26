@@ -271,14 +271,13 @@
     }
   }
 
-  // 🔴 3. DATA SERVICE
+  // 🔴 3. DATA SERVICE (С ФУНКЦИЕЙ ЧИСТКИ МУСОРА)
   const DataService = {
     categories: [],
     productsMap: {}, 
     serverVer: 0,
     
     async init() {
-      // Пытаемся грузить кэш
       const hasCache = this.loadFromCache();
       
       if (hasCache) {
@@ -286,10 +285,7 @@
         hideLoader();
       }
       
-      // Кнопку обновим позже, когда поймем, есть ли изменения
       updateSaveButton();
-
-      // Фоновая загрузка
       await this.syncWithServer();
     },
 
@@ -306,8 +302,11 @@
           if (savedSelection) {
              const parsed = JSON.parse(savedSelection);
              state.selected = new Set(parsed);
-             // 🔥 ЗАПОМИНАЕМ ИСХОДНОЕ СОСТОЯНИЕ (чтобы знать, были ли изменения)
-             state.initialSelected = new Set(parsed);
+             
+             // 🔥 ЧИСТКА 1: Проверяем кэш на мусор
+             this.cleanupZombieProducts();
+             
+             state.initialSelected = new Set(state.selected);
           }
           return true;
         }
@@ -327,16 +326,22 @@
 
         const res = await response.json();
         
+        // 1. Сначала обновляем каталог (если есть обнова)
         if (res.ok && res.needUpdate && res.catalog) {
             this.processCatalog(res.catalog, res.serverVer);
         }
 
+        // 2. Потом обновляем выбор юзера
         if (res.ok && res.userSelection) {
             try {
                 const serverSel = JSON.parse(res.userSelection);
                 state.selected = new Set(serverSel);
-                // 🔥 Обновляем "чистое" состояние сервера
-                state.initialSelected = new Set(serverSel);
+                
+                // 🔥 ЧИСТКА 2: Чистим то, что пришло с сервера, от удаленных продуктов
+                this.cleanupZombieProducts();
+                
+                // Запоминаем "чистое" состояние
+                state.initialSelected = new Set(state.selected);
                 
                 saveSelectionToCache();
                 updateSaveButton();
@@ -349,9 +354,7 @@
       } catch(e) { 
          console.warn("Sync skipped:", e); 
          hideLoader();
-         if (!DataService.categories.length) {
-            alert("Ошибка загрузки данных. Проверьте интернет.");
-         }
+         if (!DataService.categories.length) alert("Ошибка загрузки данных. Проверьте интернет.");
       }
     },
 
@@ -381,8 +384,35 @@
             serverVer: this.serverVer
         }));
         
+        // 🔥 ЧИСТКА 3: Каталог обновился - проверяем, не исчезли ли выбранные продукты
+        this.cleanupZombieProducts();
+        
         renderCategories();
         hideLoader();
+    },
+
+    // 🧹 ГЛАВНАЯ ФУНКЦИЯ-САНИТАР
+    cleanupZombieProducts() {
+        if (!state.selected || state.selected.size === 0) return;
+
+        // 1. Собираем все существующие ID продуктов в одну кучу (Set) для быстрого поиска
+        const validIds = new Set();
+        Object.values(this.productsMap).flat().forEach(p => validIds.add(p.id));
+
+        // 2. Фильтруем выбор пользователя
+        const cleanSet = new Set();
+        state.selected.forEach(id => {
+            if (validIds.has(id)) {
+                cleanSet.add(id); // Оставляем только живые
+            }
+        });
+
+        // 3. Если что-то удалилось, обновляем состояние
+        if (cleanSet.size !== state.selected.size) {
+            console.log(`🧹 Removed ${state.selected.size - cleanSet.size} zombie products`);
+            state.selected = cleanSet;
+            saveSelectionToCache(); // Сохраняем чистый список в кэш
+        }
     },
 
     getProducts(catId) { return this.productsMap[catId] || []; },
@@ -396,6 +426,9 @@
     },
 
     async saveSelectionToServer() {
+        // Перед отправкой на всякий случай еще раз чистим (для надежности)
+        this.cleanupZombieProducts();
+        
         saveSelectionToCache();
         try {
             await fetch(API_URL, {
