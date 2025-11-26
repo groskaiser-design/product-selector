@@ -3,399 +3,195 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Ultima Scanner v2</title>
+<title>Ultima Scanner v2.9 (Fixed Layout)</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
-  /* === 1. CORE & RESET (Dark Glass Style) === */
+  /* === 1. CORE & RESET === */
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; outline: none; }
-  
-  /* Скрываем скроллбар, сохраняя функционал */
   *::-webkit-scrollbar { display: none; width: 0; height: 0; background: transparent; }
   * { scrollbar-width: none; }
   
   :root {
-    /* --- PALETTE (From Measurements) --- */
     --bg-core: #050505;
     --text-main: #ffffff;
     --text-muted: rgba(255, 255, 255, 0.55);
-    
-    /* --- GLASS SURFACES --- */
     --surface-glass: rgba(255, 255, 255, 0.07);
     --surface-border: rgba(255, 255, 255, 0.1);
-    --surface-highlight: rgba(255, 255, 255, 0.25);
     
-    /* --- ACCENTS --- */
-    --acc-orange: #ff9f0a;
     --acc-green: #30d158;
     --acc-blue: #0a84ff;
     --acc-red: #ff453a;
-    --acc-purple: #5e60ce;
+    --acc-over: #00f2ea;
+    --acc-over-glow: rgba(0, 242, 234, 0.6);
     
-    /* --- METRICS --- */
     --radius-xl: 28px;
     --radius-l: 22px;
-    --radius-m: 16px;
     
     --safe-top: calc(12px + env(safe-area-inset-top));
     --safe-bottom: calc(12px + env(safe-area-inset-bottom));
+    
+    /* Высота фиксированной шапки (Календарь + Виджеты) */
+    /* ~100px календарь + ~200px виджеты */
+    --header-height: 310px; 
   }
 
   body {
     margin: 0; padding: 0;
     background-color: var(--bg-core);
-    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', Roboto, sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Roboto', sans-serif;
     color: var(--text-main);
     height: 100vh;
     display: flex; flex-direction: column;
-    overflow: hidden; 
+    overflow: hidden;
+    
+    -webkit-font-smoothing: antialiased; 
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
   }
 
-  /* === 2. FX BACKGROUND (Orbs & Noise) === */
-  .fx-layer { position: fixed; inset: 0; z-index: -1; pointer-events: none; transform: translate3d(0,0,0); }
+  /* FX BACKGROUND */
+  .fx-layer { position: fixed; inset: 0; z-index: -1; pointer-events: none; }
   .orb { position: absolute; border-radius: 50%; will-change: transform; animation: float 30s infinite linear; }
-  .orb-1 { 
-    width: 90vw; height: 90vw; opacity: 0.4; 
-    background: radial-gradient(circle, rgba(108, 92, 231, 0.8) 0%, transparent 70%); 
-    top: -20%; left: -20%; 
-  }
-  .orb-2 { 
-    width: 400px; height: 400px; opacity: 0.5; 
-    background: radial-gradient(circle, rgba(10, 132, 255, 0.6) 0%, transparent 70%); 
-    bottom: -150px; right: -100px; 
-    animation: breathe 6s infinite ease-in-out; 
-  }
-  .noise { 
-    position: fixed; inset: 0; opacity: 0.04; 
-    background: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); 
-    pointer-events: none; 
-  }
+  .orb-1 { width: 90vw; height: 90vw; opacity: 0.4; background: radial-gradient(circle, rgba(108, 92, 231, 0.8) 0%, transparent 70%); top: -20%; left: -20%; }
+  .orb-2 { width: 400px; height: 400px; opacity: 0.5; background: radial-gradient(circle, rgba(10, 132, 255, 0.6) 0%, transparent 70%); bottom: -150px; right: -100px; animation: breathe 6s infinite ease-in-out; }
+  .noise { position: fixed; inset: 0; opacity: 0.04; background: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); pointer-events: none; }
   @keyframes float { 0% {transform:rotate(0deg)} 100% {transform:rotate(360deg)} }
   @keyframes breathe { 0%, 100% { transform: scale(1); opacity: 0.4; } 50% { transform: scale(1.1); opacity: 0.6; } }
 
-  /* === 3. CALENDAR STICKY HEADER (LOGIC PRESERVED) === */
-.calendar-sticky {
-    position: sticky; top: 0; z-index: 50;
-    
-    /* 🔥 ИСПРАВЛЕНО: Было 0.75 (почти черный), стало 0.01 (прозрачный) */
-    /* Используем легчайший белый оттенок для эффекта стекла */
-    background: rgba(255, 255, 255, 0.01); 
-    
-    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
-    border-bottom: 1px solid var(--surface-border);
+  /* === NEW FIXED HEADER CONTAINER === */
+  .fixed-header-group {
+    position: absolute; /* Фиксируем поверх скролла */
+    top: 0; left: 0; right: 0;
+    z-index: 50;
+    /* Легкое затемнение фона под шапкой, чтобы контент снизу не мешал читать */
+    background: linear-gradient(180deg, rgba(5,5,5,0.95) 0%, rgba(5,5,5,0.85) 70%, rgba(5,5,5,0) 100%);
+    /* Общий блюр для всего, что проплывает снизу */
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    padding-bottom: 10px;
+    /* Блокируем передачу скролла телу, чтобы свайпались виджеты, а не страница */
+    overscroll-behavior: none;
+  }
+
+  /* === 2. INFINITE CALENDAR (Inside Header) === */
+  .calendar-block {
     padding-top: var(--safe-top);
     padding-bottom: 8px;
     user-select: none;
     overflow: hidden;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
   }
-
-  .calendar-header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 0 16px 8px 16px;
-  }
+  .calendar-header { display: flex; align-items: center; justify-content: space-between; padding: 0 16px 8px 16px; }
+  .month-label { font-size: 11px; font-weight: 800; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1.5px; opacity: 0.9; }
   
-  .month-label {
-    font-size: 11px; font-weight: 800; color: var(--text-muted);
-    text-transform: uppercase; letter-spacing: 1.5px;
-    opacity: 0.9;
-  }
-  
-  /* ОБЛАСТЬ СВАЙПА */
   .calendar-swipe-area {
-    width: 100%;
-    padding: 0 10px;
-    touch-action: pan-y; 
-    cursor: grab;
+    width: 100%; height: 52px; overflow: hidden; position: relative;
+    touch-action: pan-y; cursor: grab;
   }
-  .calendar-swipe-area:active { cursor: grabbing; }
+  .calendar-track { display: flex; width: 300%; height: 100%; transform: translateX(-33.333333%); will-change: transform; }
+  .calendar-week { flex: 1; display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; height: 100%; padding: 0 10px; }
 
-  .calendar-grid {
-    display: grid; 
-    grid-template-columns: repeat(7, 1fr); 
-    gap: 4px;
-    will-change: transform; 
-  }
-  
-  .calendar-grid.animating { transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.2s; }
-  .calendar-grid.hidden { opacity: 0; }
-
-  /* Day Cell */
-  .day-cell {
-    height: 52px;
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    border-radius: 12px;
-    background: transparent;
-    transition: background 0.2s, transform 0.1s;
-    position: relative;
-    cursor: pointer;
-    user-select: none; 
-    -webkit-user-drag: none;
-  }
-  
+  .day-cell { height: 52px; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 12px; background: transparent; transition: background 0.2s, transform 0.1s; position: relative; cursor: pointer; user-select: none; }
   .day-cell:active { transform: scale(0.92); }
-
   .dc-name { font-size: 9px; font-weight: 600; color: var(--text-muted); margin-bottom: 3px; text-transform: uppercase; }
   .dc-num { font-size: 17px; font-weight: 600; color: #fff; font-variant-numeric: tabular-nums; }
-
-  .day-cell.selected { 
-    background: linear-gradient(135deg, rgba(255,255,255,0.15), rgba(255,255,255,0.05));
-    border: 1px solid rgba(255,255,255,0.2);
-    box-shadow: 0 4px 12px rgba(0,0,0,0.2); 
-    transform: scale(1); 
-  }
+  .day-cell.selected { background: linear-gradient(135deg, rgba(255,255,255,0.15), rgba(255,255,255,0.05)); border: 1px solid rgba(255,255,255,0.2); box-shadow: 0 4px 12px rgba(0,0,0,0.2); transform: scale(1); }
   .day-cell.selected .dc-name { color: #fff; opacity: 0.8; }
   .day-cell.selected .dc-num { color: #fff; font-weight: 700; }
+  .day-cell.is-today::after { content: ''; position: absolute; bottom: 5px; width: 4px; height: 4px; border-radius: 50%; background: var(--acc-blue); box-shadow: 0 0 6px var(--acc-blue); }
 
-  .day-cell.is-today::after { 
-    content: ''; position: absolute; bottom: 5px; 
-    width: 4px; height: 4px; border-radius: 50%; 
-    background: var(--acc-blue); box-shadow: 0 0 6px var(--acc-blue); 
-  }
-
-  /* === 4. SCROLL AREA === */
-  .scroll-container {
-    flex: 1;
-    overflow-y: auto;
-    padding-bottom: 120px;
-    -webkit-overflow-scrolling: touch;
-    /* Мягкая маска снизу */
-    mask-image: linear-gradient(to bottom, transparent 0%, black 15px);
-    -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 15px);
-  }
-
-  /* === 5. WIDGETS (UPDATED MACROS) === */
-  .carousel-wrap { padding: 12px 0 10px 0; }
-  .carousel-track { 
-    display: flex; gap: 12px; padding: 0 16px; 
-    overflow-x: auto; scroll-snap-type: x mandatory; 
-    cursor: grab;
-  }
-  .carousel-track:active { cursor: grabbing; }
+  /* === 3. WIDGETS (Inside Header) === */
+  .carousel-wrap { padding: 20px 0 12px 0; }
+  .carousel-track { display: flex; gap: 12px; padding: 0 16px; overflow-x: auto; scroll-snap-type: x mandatory; cursor: grab; scrollbar-width: none; }
+  .carousel-track::-webkit-scrollbar { display: none; }
   
+  .widget { flex: 0 0 calc(100% - 16px); scroll-snap-align: center; height: 160px; border-radius: var(--radius-xl); background: linear-gradient(165deg, rgba(255,255,255,0.09) 0%, rgba(255,255,255,0.02) 100%); border: 1px solid var(--surface-border); border-top: 1px solid rgba(255,255,255,0.15); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); position: relative; overflow: hidden; padding: 16px 12px; transition: 0.3s ease; }
+  .widget.is-overload { box-shadow: 0 10px 40px -5px rgba(0, 242, 234, 0.25); border-color: rgba(0, 242, 234, 0.3); }
 
- /* Базовый стиль виджета (Dark Glass) */
-
-  .widget {
-    flex: 0 0 calc(100% - 16px); scroll-snap-align: center;
-    height: 160px; /* <--- ТЕПЕРЬ 160px (как в роутере) */
-    border-radius: var(--radius-xl);
-    
-    /* --- ОРИГИНАЛЬНЫЙ ФОН И БЛИК --- */
-    background: linear-gradient(165deg, rgba(255,255,255,0.09) 0%, rgba(255,255,255,0.02) 100%);
-    border: 1px solid var(--surface-border); 
-    border-top: 1px solid rgba(255,255,255,0.15);
-    /* ------------------------------ */
-    
-    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
-    
-    position: relative; overflow: hidden;
-    padding: 16px 12px; 
-    user-select: none;
-  }
-
-  /* Сетка макросов */
-  .macros-grid { 
-    display: grid; 
-    grid-template-columns: repeat(4, 1fr); 
-    gap: 2px; height: 100%; align-items: center; 
-  }
+  /* Macros */
+  .macros-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; height: 100%; align-items: center; }
   .macro-item { display: flex; flex-direction: column; align-items: center; justify-content: center; }
-  
-  /* DONUT STYLES (NEW BIG SIZE) */
-  .donut-box { 
-    width: 100%; max-width: 74px; aspect-ratio: 1; 
-    position: relative; display: flex; align-items: center; justify-content: center; 
-    margin-bottom: 8px; 
-  }
-  .mini-donut { 
-    width: 100%; height: 100%; transform: rotate(-90deg); 
-    filter: drop-shadow(0 4px 8px rgba(0,0,0,0.25)); 
-  }
+  .donut-box { width: 100%; max-width: 74px; aspect-ratio: 1; position: relative; display: flex; align-items: center; justify-content: center; margin-bottom: 8px; }
+  .mini-donut { width: 100%; height: 100%; transform: rotate(-90deg); filter: drop-shadow(0 4px 8px rgba(0,0,0,0.25)); }
   .md-bg { fill: none; stroke: rgba(255,255,255,0.05); stroke-width: 7; }
   .md-val { fill: none; stroke-width: 7; stroke-linecap: round; stroke-dasharray: 151; transition: stroke-dashoffset 1s ease; }
   .m-icon { position: absolute; font-size: 20px; }
+  .m-data { display: flex; flex-direction: column; align-items: center; }
+  .m-nums { font-size: 13px; font-weight: 800; color: #fff; font-variant-numeric: tabular-nums; }
+  .m-nums span { color: rgba(255,255,255,0.45); font-size: 11px; margin-left: 1px; }
+  .m-lbl { font-size: 9px; font-weight: 700; text-transform: uppercase; color: rgba(255,255,255,0.5); margin-top: 2px; }
   
-  /* TEXT STYLES */
-  .m-data { display: flex; flex-direction: column; align-items: center; width: 100%; }
-  .m-nums { 
-    font-size: 13px; font-weight: 800; color: #fff; 
-    font-variant-numeric: tabular-nums; 
-    letter-spacing: -0.3px; line-height: 1.2;
-    white-space: nowrap;
-  }
-  .m-nums span { 
-    color: rgba(255,255,255,0.45); font-weight: 600; font-size: 11px; margin-left: 1px; 
-  }
-  .m-lbl { 
-    font-size: 9px; font-weight: 700; text-transform: uppercase; 
-    color: rgba(255,255,255,0.5); margin-top: 2px; letter-spacing: 0.5px; 
-  }
+  .stroke-kcal { stroke: url(#grad-kcal); }
+  .stroke-prot { stroke: url(#grad-prot); }
+  .stroke-fats { stroke: url(#grad-fats); }
+  .stroke-carb { stroke: url(#grad-carb); }
 
- /* === ZERO GRAVITY WATER WIDGET (FINAL HYPER-LIQUID) === */
-  
-  /* Контейнер виджета */
-  .widget.water-card { 
-    /* Стандартный стеклянный фон */
-    background: linear-gradient(165deg, rgba(255,255,255,0.09) 0%, rgba(255,255,255,0.02) 100%) !important;
-    border: 1px solid var(--surface-border) !important;
-    padding: 0 20px;
-    display: flex; flex-direction: row; align-items: center; justify-content: space-between;
-  }
+  /* Water */
+  .widget.water-widget { display: flex; flex-direction: column; padding: 16px 20px; justify-content: space-between; }
+  .water-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+  .water-title { font-size: 11px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-muted); opacity: 0.8; }
+  .water-percent { font-size: 12px; font-weight: 700; color: var(--acc-blue); transition: color 0.3s; }
+  .widget.is-overload .water-percent { color: var(--acc-over); text-shadow: 0 0 8px var(--acc-over-glow); }
+  .water-cols { display: flex; justify-content: space-between; align-items: flex-end; height: 50px; gap: 6px; margin: 8px 0; }
+  .water-tube { flex: 1; height: 100%; background: rgba(0,0,0,0.4); border-radius: 6px; border: 1px solid rgba(255,255,255,0.06); position: relative; overflow: hidden; }
+  .water-fill { position: absolute; bottom: 0; left: 0; right: 0; height: var(--h, 0%); background: var(--acc-blue); transition: height 0.3s cubic-bezier(0.25, 1, 0.5, 1), background-color 0.3s, box-shadow 0.3s; box-shadow: 0 0 12px rgba(10, 132, 255, 0.5); }
+  .water-fill::after { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: rgba(255,255,255,0.6); opacity: 0.8; }
+  .widget.is-overload .water-fill { background: var(--acc-over); box-shadow: 0 0 15px var(--acc-over-glow); }
+  .water-footer { display: flex; justify-content: space-between; align-items: flex-end; }
+  .water-info { display: flex; flex-direction: column; gap: 2px; }
+  .wf-row { display: flex; align-items: baseline; gap: 4px; }
+  .wf-fact { font-size: 28px; font-weight: 800; color: #fff; line-height: 1; letter-spacing: -0.5px; }
+  .wf-unit { font-size: 12px; font-weight: 600; color: var(--text-muted); }
+  .wf-plan { font-size: 11px; font-weight: 500; color: var(--text-muted); opacity: 0.7; }
+  .water-controls { display: flex; gap: 24px; }
+  .water-btn { width: 54px; height: 44px; border-radius: 14px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); color: #fff; font-size: 22px; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: 0.2s; }
+  .water-btn:active { background: var(--acc-blue); transform: scale(0.92); }
+  .widget.is-overload .water-btn:active { background: var(--acc-over); }
 
-  /* Левая часть (Текст и кнопки) */
-  .w-left-col {
-    display: flex; flex-direction: column; justify-content: center; gap: 8px; z-index: 2;
-  }
-  .w-title { font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--acc-blue); letter-spacing: 1px; }
-  
-  .w-stats-row { display: flex; align-items: baseline; gap: 4px; }
-  .w-current { font-size: 36px; font-weight: 800; color: #fff; letter-spacing: -1px; line-height: 1; }
-  .w-target { font-size: 14px; font-weight: 600; color: rgba(255,255,255,0.4); }
+  .dots { display: flex; justify-content: center; gap: 6px; margin-top: 12px; pointer-events: none; }
+  .dot { width: 6px; height: 6px; border-radius: 10px; background: rgba(255,255,255,0.2); transition: 0.3s; }
+  .dot.active { width: 20px; background: #fff; }
 
-  .w-actions { display: flex; gap: 10px; margin-top: 4px; }
-  .w-circle-btn {
-    width: 40px; height: 40px; border-radius: 50%;
-    background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15);
-    display: flex; align-items: center; justify-content: center;
-    color: #fff; font-size: 20px; cursor: pointer; transition: 0.2s;
-  }
-  .w-circle-btn:active { background: var(--acc-blue); border-color: var(--acc-blue); transform: scale(0.9); }
-
-  /* --- Правая часть (CLEAN GLASS SPHERE) --- */
-  .w-blob-wrap {
-    position: relative;
-    width: 110px; height: 110px;
-    display: flex; align-items: center; justify-content: center;
-    margin-right: -5px;
-  }
-
-  /* СФЕРА (Идеальный круг) */
-  .morph-blob {
-    width: 90px; height: 90px;
-    border-radius: 50%; /* Строгий круг */
+  /* === 4. SCROLL CONTAINER (Timeline Only) === */
+  .scroll-container {
+    flex: 1; 
+    overflow-y: auto; 
+    -webkit-overflow-scrolling: touch;
     
-    /* Эффект толстого стекла */
-    background: rgba(0, 0, 0, 0.2); 
-    border: 2px solid rgba(255, 255, 255, 0.15);
-    box-shadow: 
-      inset 0 20px 20px rgba(255,255,255,0.05), /* Верхний блик */
-      inset 0 -10px 20px rgba(0,0,0,0.3), /* Нижняя тень */
-      0 10px 20px rgba(0,0,0,0.2); /* Внешняя тень */
+    /* 🔥 ОТСТУП СВЕРХУ ДЛЯ ПРОКРУТКИ ПОД ШАПКОЙ */
+    padding-top: var(--header-height); 
+    padding-bottom: 120px;
     
-    position: relative; overflow: hidden; z-index: 1;
-    transform: translateZ(0); /* Фикс для Safari */
+    /* Градиентная маска, чтобы еда красиво исчезала не резко, а мягко вверху */
+    mask-image: linear-gradient(to bottom, transparent 0px, black 20px, black 100%);
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0px, black 20px, black 100%);
   }
 
-  /* ЖИДКОСТЬ */
-  .blob-fill {
-    position: absolute; bottom: 0; left: 0; right: 0;
-    height: var(--h, 50%);
-    
-    /* Яркий неоновый градиент */
-    background: linear-gradient(180deg, #29b6f6 0%, #0288d1 100%);
-    
-    transition: height 0.6s cubic-bezier(0.25, 1, 0.5, 1);
-    box-shadow: 0 0 40px rgba(41, 182, 246, 0.4); /* Свечение воды */
-  }
-  
-  /* БЕЛАЯ ВОЛНА СВЕРХУ */
-  .blob-fill::after {
-    content: ''; 
-    position: absolute; 
-    top: -10px; /* Высота волны */
-    left: 0; 
-    width: 200%; 
-    height: 20px; 
-    
-    /* Белая полупрозрачная волна */
-    background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1200 120' preserveAspectRatio='none'%3E%3Cpath d='M321.39,56.44c58-10.79,114.16-30.13,172-41.86,82.39-16.72,168.19-17.73,250.45-.39C823.78,31,906.67,72,985.66,92.83c70.05,18.48,146.53,26.09,214.34,3V0H0V27.35A600.21,600.21,0,0,0,321.39,56.44Z' style='fill:rgba(255,255,255,0.3)'/%3E%3C/svg%3E");
-    background-size: 50% 100%;
-    
-    animation: wave-scroll 6s linear infinite;
-  }
-
-  /* ВТОРАЯ ВОЛНА (Для объема) */
-  .blob-fill::before {
-    content: ''; position: absolute; top: -6px; left: 0; width: 200%; height: 20px;
-    background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1200 120' preserveAspectRatio='none'%3E%3Cpath d='M321.39,56.44c58-10.79,114.16-30.13,172-41.86,82.39-16.72,168.19-17.73,250.45-.39C823.78,31,906.67,72,985.66,92.83c70.05,18.48,146.53,26.09,214.34,3V0H0V27.35A600.21,600.21,0,0,0,321.39,56.44Z' style='fill:rgba(255,255,255,0.15)'/%3E%3C/svg%3E");
-    background-size: 50% 100%;
-    animation: wave-scroll 9s linear infinite reverse;
-  }
-
-  /* Пузырьки */
-  .blob-bubbles {
-    position: absolute; inset: 0; pointer-events: none;
-  }
-  
-  @keyframes wave-scroll { 
-    0% { transform: translateX(0); } 
-    100% { transform: translateX(-50%); } 
-  }
-  
-  /* Эффект нажатия */
-  .morph-blob:active { transform: scale(0.96); }
-  
-  
-  /* === 6. MEAL TIMELINE === */
-  .timeline { padding: 10px 16px 0 16px; display: flex; flex-direction: column; gap: 10px; }
+  .timeline { padding: 10px 16px 0 16px; display: flex; flex-direction: column; gap: 12px; }
   .section-title { font-size: 13px; font-weight: 800; text-transform: uppercase; color: var(--text-muted); margin-left: 4px; letter-spacing: 0.5px; }
-
-  .meal-card { 
-    background: var(--surface-glass); 
-    border: 1px solid var(--surface-border);
-    border-radius: var(--radius-l); 
-    padding: 16px; 
-    backdrop-filter: blur(12px);
-    transition: background 0.2s; 
-  }
-  .meal-card:active { background: rgba(255,255,255,0.1); }
   
+  .meal-card { background: var(--surface-glass); border: 1px solid var(--surface-border); border-radius: var(--radius-l); padding: 16px; backdrop-filter: blur(12px); transition: background 0.2s; }
+  .meal-card:active { background: rgba(255,255,255,0.1); }
   .meal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.06); }
   .mh-left { display: flex; align-items: center; gap: 8px; }
   .mh-time { font-size: 15px; font-weight: 700; color: #fff; }
   .mh-tag { font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 6px; background: rgba(255,255,255,0.1); color: var(--text-muted); text-transform: uppercase; }
   .mh-cal { font-size: 15px; font-weight: 700; color: var(--acc-green); }
-
   .prod-item { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 6px; }
   .prod-item:last-child { margin-bottom: 0; }
   .pi-name { color: rgba(255,255,255,0.9); flex: 1; }
   .pi-w { color: var(--text-muted); margin-right: 10px; font-feature-settings: "tnum"; font-size: 12px; }
   .pi-c { font-weight: 600; min-width: 30px; text-align: right; font-feature-settings: "tnum"; color: #fff; }
 
-  /* === 7. OMNI-BAR === */
-  .omni-bar { 
-    position: fixed; bottom: 0; left: 0; right: 0; 
-    background: rgba(10, 10, 10, 0.85); 
-    backdrop-filter: blur(30px); -webkit-backdrop-filter: blur(30px); 
-    border-top: 1px solid var(--surface-border); 
-    padding: 8px 12px var(--safe-bottom) 12px; 
-    z-index: 100; display: flex; align-items: flex-end; gap: 8px; 
-  }
-  .icon-btn { width: 40px; height: 40px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; color: #fff; border-radius: 50%; cursor: pointer; transition: 0.2s; margin-bottom: 2px; }
-  .icon-btn:active { background: rgba(255,255,255,0.15); }
-  
-  .input-wrap { 
-    flex: 1; min-height: 42px; 
-    background: rgba(255,255,255,0.08); 
-    border-radius: 20px; display: flex; align-items: center; 
-    padding: 4px 16px; border: 1px solid transparent; transition: 0.2s; 
-  }
-  .input-wrap:focus-within { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.2); }
-  
-  textarea { width: 100%; background: transparent; border: none; color: #fff; font-size: 15px; line-height: 20px; padding: 10px 0; margin: 0; resize: none; max-height: 100px; font-family: inherit; }
-  textarea::placeholder { color: rgba(255,255,255,0.35); }
-  
-  .action-btn { width: 40px; height: 40px; flex-shrink: 0; border-radius: 50%; display: flex; align-items: center; justify-content: center; transition: 0.2s cubic-bezier(0.34, 1.56, 0.64, 1); cursor: pointer; margin-bottom: 2px; }
-  .mode-cam { background: transparent; color: #fff; }
-  .mode-cam:active { transform: scale(0.9); opacity: 0.7; }
+  /* === 5. OMNI-BAR === */
+  .omni-bar { position: fixed; bottom: 0; left: 0; right: 0; background: rgba(10, 10, 10, 0.85); backdrop-filter: blur(30px); border-top: 1px solid var(--surface-border); padding: 8px 12px var(--safe-bottom) 12px; z-index: 100; display: flex; align-items: flex-end; gap: 8px; }
+  .icon-btn { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; }
+  .input-wrap { flex: 1; min-height: 42px; background: rgba(255,255,255,0.08); border-radius: 20px; padding: 4px 16px; display: flex; align-items: center; }
+  textarea { width: 100%; background: transparent; border: none; color: #fff; font-size: 15px; resize: none; font-family: inherit; padding: 10px 0; margin: 0; }
+  .action-btn { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; transition: 0.2s; }
+  .mode-cam { color: #fff; }
   .mode-send { background: var(--acc-blue); color: #fff; box-shadow: 0 0 12px rgba(10,132,255,0.4); }
-  .mode-send:active { transform: scale(0.92); }
 
-  /* Gradient References */
-  .stroke-kcal { stroke: url(#grad-kcal); }
-  .stroke-prot { stroke: url(#grad-prot); }
-  .stroke-fats { stroke: url(#grad-fats); }
-  .stroke-carb { stroke: url(#grad-carb); }
-
+  /* === 6. SHEET === */
   .sheet-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 200; opacity: 0; pointer-events: none; transition: opacity 0.3s; backdrop-filter: blur(4px); }
   .sheet-overlay.visible { opacity: 1; pointer-events: auto; }
   .sheet { position: fixed; bottom: 0; left: 0; right: 0; background: #151517; border-radius: 24px 24px 0 0; padding: 24px 16px calc(30px + env(safe-area-inset-bottom)) 16px; transform: translateY(100%); transition: transform 0.3s cubic-bezier(0.1, 0.7, 0.1, 1); border-top: 1px solid rgba(255,255,255,0.15); }
@@ -411,10 +207,10 @@
 
 <svg width="0" height="0" style="position:absolute">
   <defs>
-    <linearGradient id="grad-kcal" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#ff9f0a"/><stop offset="100%" stop-color="#ff453a"/></linearGradient>
-    <linearGradient id="grad-prot" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#48bfe3"/><stop offset="100%" stop-color="#5e60ce"/></linearGradient>
-    <linearGradient id="grad-fats" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#f1c40f"/><stop offset="100%" stop-color="#e67e22"/></linearGradient>
-    <linearGradient id="grad-carb" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#2ecc71"/><stop offset="100%" stop-color="#1abc9c"/></linearGradient>
+    <linearGradient id="grad-kcal"><stop offset="0%" stop-color="#ff9f0a"/><stop offset="100%" stop-color="#ff453a"/></linearGradient>
+    <linearGradient id="grad-prot"><stop offset="0%" stop-color="#48bfe3"/><stop offset="100%" stop-color="#5e60ce"/></linearGradient>
+    <linearGradient id="grad-fats"><stop offset="0%" stop-color="#f1c40f"/><stop offset="100%" stop-color="#e67e22"/></linearGradient>
+    <linearGradient id="grad-carb"><stop offset="0%" stop-color="#2ecc71"/><stop offset="100%" stop-color="#1abc9c"/></linearGradient>
   </defs>
 </svg>
 
@@ -424,113 +220,58 @@
   <div class="noise"></div>
 </div>
 
-<div class="calendar-sticky">
-  <div class="calendar-header">
-    <div class="month-label" id="monthLabel">...</div>
+<!-- === FIXED HEADER GROUP (Calendar + Widgets) === -->
+<div class="fixed-header-group">
+  <!-- CALENDAR -->
+  <div class="calendar-block">
+    <div class="calendar-header">
+      <div class="month-label" id="monthLabel">...</div>
+    </div>
+    <div class="calendar-swipe-area" id="swipeArea">
+      <div class="calendar-track" id="calTrack">
+        <div class="calendar-week" id="weekPrev"></div>
+        <div class="calendar-week" id="weekCurr"></div>
+        <div class="calendar-week" id="weekNext"></div>
+      </div>
+    </div>
   </div>
-  <div class="calendar-swipe-area" id="swipeArea">
-    <div class="calendar-grid" id="calGrid"></div>
+
+  <!-- WIDGETS CAROUSEL -->
+  <div class="carousel-wrap">
+    <div class="carousel-track" id="track">
+      <!-- Macros Widget -->
+      <div class="widget">
+        <div class="macros-grid">
+          <div class="macro-item"><div class="donut-box"><svg class="mini-donut" viewBox="0 0 60 60"><circle class="md-bg" cx="30" cy="30" r="24"/><circle class="md-val stroke-kcal" cx="30" cy="30" r="24" style="stroke-dashoffset: 45px"/></svg><div class="m-icon">🔥</div></div><div class="m-data"><div class="m-nums">1450<span>/2100</span></div><div class="m-lbl">ККАЛ</div></div></div>
+          <div class="macro-item"><div class="donut-box"><svg class="mini-donut" viewBox="0 0 60 60"><circle class="md-bg" cx="30" cy="30" r="24"/><circle class="md-val stroke-prot" cx="30" cy="30" r="24" style="stroke-dashoffset: 100px"/></svg><div class="m-icon">🐓</div></div><div class="m-data"><div class="m-nums">110<span>/160</span></div><div class="m-lbl">БЕЛКИ</div></div></div>
+          <div class="macro-item"><div class="donut-box"><svg class="mini-donut" viewBox="0 0 60 60"><circle class="md-bg" cx="30" cy="30" r="24"/><circle class="md-val stroke-fats" cx="30" cy="30" r="24" style="stroke-dashoffset: 110px"/></svg><div class="m-icon">🥑</div></div><div class="m-data"><div class="m-nums">45<span>/70</span></div><div class="m-lbl">ЖИРЫ</div></div></div>
+          <div class="macro-item"><div class="donut-box"><svg class="mini-donut" viewBox="0 0 60 60"><circle class="md-bg" cx="30" cy="30" r="24"/><circle class="md-val stroke-carb" cx="30" cy="30" r="24" style="stroke-dashoffset: 60px"/></svg><div class="m-icon">🌾</div></div><div class="m-data"><div class="m-nums">180<span>/250</span></div><div class="m-lbl">УГЛИ</div></div></div>
+        </div>
+      </div>
+      <!-- Water Widget -->
+      <div class="widget water-widget" id="waterCard">
+        <div class="water-header"><div class="water-title">Водный баланс</div><div class="water-percent" id="lbl-pct">0%</div></div>
+        <div class="water-cols">
+          <div class="water-tube"><div class="water-fill" id="c1"></div></div><div class="water-tube"><div class="water-fill" id="c2"></div></div>
+          <div class="water-tube"><div class="water-fill" id="c3"></div></div><div class="water-tube"><div class="water-fill" id="c4"></div></div>
+          <div class="water-tube"><div class="water-fill" id="c5"></div></div>
+        </div>
+        <div class="water-footer">
+          <div class="water-info"><div class="wf-row"><div class="wf-fact" id="lbl-fact">0</div><div class="wf-unit">мл</div></div><div class="wf-plan">Цель: 2500</div></div>
+          <div class="water-controls"><div class="water-btn" onclick="updateWater(-250)">−</div><div class="water-btn" onclick="updateWater(250)">+</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="dots"><div class="dot active"></div><div class="dot"></div></div>
   </div>
 </div>
 
+<!-- === SCROLLABLE TIMELINE === -->
 <div class="scroll-container">
-  
-  <div class="carousel-wrap">
-    <div class="carousel-track" id="track">
-      
-      <div class="widget">
-        <div class="macros-grid">
-          <div class="macro-item">
-            <div class="donut-box">
-              <svg class="mini-donut" viewBox="0 0 60 60">
-                <circle class="md-bg" cx="30" cy="30" r="24"/>
-                <circle class="md-val stroke-kcal" cx="30" cy="30" r="24" style="stroke-dashoffset: 45px"/> 
-              </svg>
-              <div class="m-icon">🔥</div>
-            </div>
-            <div class="m-data">
-              <div class="m-nums">1450<span>/2100</span></div>
-              <div class="m-lbl">ККАЛ</div>
-            </div>
-          </div>
-
-          <div class="macro-item">
-            <div class="donut-box">
-              <svg class="mini-donut" viewBox="0 0 60 60">
-                <circle class="md-bg" cx="30" cy="30" r="24"/>
-                <circle class="md-val stroke-prot" cx="30" cy="30" r="24" style="stroke-dashoffset: 100px"/>
-              </svg>
-              <div class="m-icon">🐓</div>
-            </div>
-            <div class="m-data">
-              <div class="m-nums">110<span>/160</span></div>
-              <div class="m-lbl">БЕЛКИ</div>
-            </div>
-          </div>
-
-          <div class="macro-item">
-            <div class="donut-box">
-              <svg class="mini-donut" viewBox="0 0 60 60">
-                <circle class="md-bg" cx="30" cy="30" r="24"/>
-                <circle class="md-val stroke-fats" cx="30" cy="30" r="24" style="stroke-dashoffset: 110px"/>
-              </svg>
-              <div class="m-icon">🥑</div>
-            </div>
-            <div class="m-data">
-              <div class="m-nums">45<span>/70</span></div>
-              <div class="m-lbl">ЖИРЫ</div>
-            </div>
-          </div>
-
-          <div class="macro-item">
-            <div class="donut-box">
-              <svg class="mini-donut" viewBox="0 0 60 60">
-                <circle class="md-bg" cx="30" cy="30" r="24"/>
-                <circle class="md-val stroke-carb" cx="30" cy="30" r="24" style="stroke-dashoffset: 60px"/>
-              </svg>
-              <div class="m-icon">🌾</div>
-            </div>
-            <div class="m-data">
-              <div class="m-nums">180<span>/250</span></div>
-              <div class="m-lbl">УГЛИ</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-
-<div class="widget water-card">
-        
-        <div class="w-left-col">
-          <div class="w-title">Водный баланс</div>
-          <div class="w-stats-row">
-             <div class="w-current" id="waterFact">1.25</div>
-             <div class="w-target">/ 2.5 л</div>
-          </div>
-          <div class="w-actions">
-             <div class="w-circle-btn" onclick="updateWater(-0.25)">−</div>
-             <div class="w-circle-btn" onclick="updateWater(0.25)">+</div>
-          </div>
-        </div>
-
-        <div class="w-blob-wrap">
-          <div class="morph-blob" id="waterBlob">
-            <div class="blob-fill" id="waterLevel">
-               <div class="blob-bubbles">
-                 <div class="bubble b1"></div><div class="bubble b2"></div>
-                 <div class="bubble b3"></div>
-               </div>
-            </div>
-          </div>
-        </div>
-      </div>
-      
-      
-    <div class="dots"><div class="dot active"></div><div class="dot"></div></div>
-  </div>
-
   <div class="timeline">
     <div class="section-title">Сегодня</div>
+    
+    <!-- MEAL 1 -->
     <div class="meal-card">
       <div class="meal-head">
         <div class="mh-left"><div class="mh-time">09:00</div><div class="mh-tag">Завтрак</div></div>
@@ -540,6 +281,18 @@
       <div class="prod-item"><div class="pi-name">Масло сливочное</div><div class="pi-w">10 г</div><div class="pi-c">75</div></div>
       <div class="prod-item"><div class="pi-name">Кофе с молоком</div><div class="pi-w">250 мл</div><div class="pi-c">125</div></div>
     </div>
+
+    <!-- MEAL 2 -->
+    <div class="meal-card">
+      <div class="meal-head">
+        <div class="mh-left"><div class="mh-time">11:30</div><div class="mh-tag">Перекус</div></div>
+        <div class="mh-cal">180</div>
+      </div>
+      <div class="prod-item"><div class="pi-name">Творог 5%</div><div class="pi-w">150 г</div><div class="pi-c">120</div></div>
+      <div class="prod-item"><div class="pi-name">Яблоко зеленое</div><div class="pi-w">120 г</div><div class="pi-c">60</div></div>
+    </div>
+
+    <!-- MEAL 3 -->
     <div class="meal-card">
       <div class="meal-head">
         <div class="mh-left"><div class="mh-time">13:30</div><div class="mh-tag">Обед</div></div>
@@ -548,27 +301,53 @@
       <div class="prod-item"><div class="pi-name">Борщ с говядиной</div><div class="pi-w">300 г</div><div class="pi-c">240</div></div>
       <div class="prod-item"><div class="pi-name">Сметана 20%</div><div class="pi-w">30 г</div><div class="pi-c">62</div></div>
       <div class="prod-item"><div class="pi-name">Пюре картофельное</div><div class="pi-w">150 г</div><div class="pi-c">160</div></div>
+      <div class="prod-item"><div class="pi-name">Котлета домашняя</div><div class="pi-w">100 г</div><div class="pi-c">188</div></div>
     </div>
-  </div>
 
+    <!-- MEAL 4 -->
+    <div class="meal-card">
+      <div class="meal-head">
+        <div class="mh-left"><div class="mh-time">17:00</div><div class="mh-tag">Полдник</div></div>
+        <div class="mh-cal">210</div>
+      </div>
+      <div class="prod-item"><div class="pi-name">Протеиновый батончик</div><div class="pi-w">50 г</div><div class="pi-c">180</div></div>
+      <div class="prod-item"><div class="pi-name">Чай зеленый</div><div class="pi-w">200 мл</div><div class="pi-c">2</div></div>
+    </div>
+
+    <!-- MEAL 5 -->
+    <div class="meal-card">
+      <div class="meal-head">
+        <div class="mh-left"><div class="mh-time">19:30</div><div class="mh-tag">Ужин</div></div>
+        <div class="mh-cal">380</div>
+      </div>
+      <div class="prod-item"><div class="pi-name">Куриная грудка гриль</div><div class="pi-w">150 г</div><div class="pi-c">240</div></div>
+      <div class="prod-item"><div class="pi-name">Овощной салат</div><div class="pi-w">200 г</div><div class="pi-c">80</div></div>
+      <div class="prod-item"><div class="pi-name">Масло оливковое</div><div class="pi-w">5 г</div><div class="pi-c">60</div></div>
+    </div>
+
+    <!-- MEAL 6 -->
+    <div class="meal-card">
+      <div class="meal-head">
+        <div class="mh-left"><div class="mh-time">21:00</div><div class="mh-tag">Вечер</div></div>
+        <div class="mh-cal">120</div>
+      </div>
+      <div class="prod-item"><div class="pi-name">Кефир 1%</div><div class="pi-w">250 мл</div><div class="pi-c">120</div></div>
+    </div>
+
+  </div>
 </div>
 
+<!-- OMNI BAR -->
 <div class="omni-bar">
-  <div class="icon-btn" onclick="toggleSheet()">
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
-  </div>
-  <div class="input-wrap">
-    <textarea id="msgInput" rows="1" placeholder="Яблоко 200г, кофе..."></textarea>
-  </div>
-  <div class="action-btn mode-cam" id="actionBtn" onclick="handleAction()">
-    <svg id="iconCam" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
-    <svg id="iconSend" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:none"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
-  </div>
+  <div class="icon-btn" onclick="toggleSheet()"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg></div>
+  <div class="input-wrap"><textarea id="msgInput" rows="1" placeholder="Яблоко 200г, кофе..."></textarea></div>
+  <div class="action-btn mode-cam" id="actionBtn" onclick="handleAction()"><svg id="iconCam" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg><svg id="iconSend" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:none"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg></div>
 </div>
 
+<!-- SHEET -->
 <div class="sheet-overlay" id="sheet" onclick="toggleSheet()">
   <div class="sheet" onclick="event.stopPropagation()">
-    <div class="sheet-item" onclick="alert('Логика FatSecret PDF')">
+    <div class="sheet-item" onclick="alert('Logic: Import FatSecret PDF')">
       <div class="sheet-icon" style="color: #30d158">🥗</div>
       <div class="sheet-lbl">FatSecret (PDF)</div>
     </div>
@@ -581,34 +360,19 @@
 
 <script>
   const tg = window.Telegram?.WebApp;
-  if(tg) { 
-    tg.ready(); 
-    tg.expand(); 
-    tg.setHeaderColor('#050505'); 
-    tg.setBackgroundColor('#050505'); 
-  }
+  if(tg) { tg.ready(); tg.expand(); tg.setHeaderColor('#050505'); tg.setBackgroundColor('#050505'); }
+  function haptic(type) { if (navigator.vibrate) navigator.vibrate(15); if(tg?.HapticFeedback) tg.HapticFeedback.impactOccurred(type || 'light'); }
 
-  function haptic(type) {
-    if(!tg?.HapticFeedback) return;
-    if(type === 'selection') tg.HapticFeedback.selectionChanged();
-    else if (['light', 'medium', 'heavy'].includes(type)) tg.HapticFeedback.impactOccurred(type);
-    else if (['error', 'success', 'warning'].includes(type)) tg.HapticFeedback.notificationOccurred(type);
-  }
-
-  // ===========================================
-  // === 1. КАЛЕНДАРЬ (LOGIC UNTOUCHED) ===
-  // ===========================================
+  // === INFINITE CALENDAR ===
   let currentWeekStart = getStartOfWeek(new Date());
   let selectedDate = new Date();
+  let isDragging = false; let startX = 0; let currentTranslate = 0;
   
-  // Переменные для свайпа
-  let isDragging = false;
-  let startX = 0;
-  let currentTranslate = 0;
-  let isSwipeAction = false; 
-
   const area = document.getElementById('swipeArea');
-  const grid = document.getElementById('calGrid');
+  const track = document.getElementById('calTrack');
+  const prevEl = document.getElementById('weekPrev');
+  const currEl = document.getElementById('weekCurr');
+  const nextEl = document.getElementById('weekNext');
 
   function getStartOfWeek(date) {
     const d = new Date(date);
@@ -618,7 +382,7 @@
   }
 
   function initCalendar() {
-    renderWeek();
+    renderAllWeeks();
     area.onpointerdown = handleStart;
     area.onpointermove = handleMove;
     area.onpointerup = handleEnd;
@@ -626,168 +390,126 @@
     area.onpointerleave = handleEnd;
   }
 
-  function renderWeek() {
-    grid.style.transform = `translateX(0px)`; 
-    grid.innerHTML = '';
-    
-    const midWeek = new Date(currentWeekStart);
-    midWeek.setDate(midWeek.getDate() + 3);
-    const label = document.getElementById('monthLabel');
-    label.textContent = midWeek.toLocaleString('ru', { month: 'long', year: 'numeric' });
-
+  function renderWeekData(container, startDate) {
+    container.innerHTML = '';
     const weekDays = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
     const today = new Date();
 
     for(let i=0; i<7; i++) {
-      const d = new Date(currentWeekStart);
+      const d = new Date(startDate);
       d.setDate(d.getDate() + i);
-      
       const isToday = d.toDateString() === today.toDateString();
       const isSelected = d.toDateString() === selectedDate.toDateString();
 
       const el = document.createElement('div');
       el.className = `day-cell ${isSelected ? 'selected' : ''} ${isToday ? 'is-today' : ''}`;
       el.innerHTML = `<div class="dc-name">${weekDays[i]}</div><div class="dc-num">${d.getDate()}</div>`;
-      
       el.onclick = (e) => {
-        if(isSwipeAction) { e.preventDefault(); return; } 
+        if(Math.abs(currentTranslate) > 5) return;
         document.querySelectorAll('.day-cell').forEach(c => c.classList.remove('selected'));
         el.classList.add('selected');
         selectedDate = new Date(d);
         haptic('selection');
+        renderAllWeeks(); 
       };
-      el.ondragstart = () => false; 
-      grid.appendChild(el);
+      container.appendChild(el);
     }
+  }
+
+  function renderAllWeeks() {
+    renderWeekData(currEl, currentWeekStart);
+    const dPrev = new Date(currentWeekStart); dPrev.setDate(dPrev.getDate() - 7); renderWeekData(prevEl, dPrev);
+    const dNext = new Date(currentWeekStart); dNext.setDate(dNext.getDate() + 7); renderWeekData(nextEl, dNext);
+    const mid = new Date(currentWeekStart); mid.setDate(mid.getDate() + 3);
+    document.getElementById('monthLabel').textContent = mid.toLocaleString('ru', { month: 'long', year: 'numeric' });
   }
   
   function handleStart(e) {
     if (e.button !== 0) return;
     isDragging = true;
     startX = e.clientX;
-    isSwipeAction = false;
     currentTranslate = 0;
-    grid.classList.remove('animating');
-    area.setPointerCapture(e.pointerId); 
+    track.style.transition = 'none';
     area.style.cursor = 'grabbing';
   }
 
   function handleMove(e) {
     if (!isDragging) return;
-    const diff = e.clientX - startX;
-    if (Math.abs(diff) > 5) isSwipeAction = true;
-    currentTranslate = diff;
-    grid.style.transform = `translateX(${currentTranslate}px)`;
+    currentTranslate = e.clientX - startX;
+    track.style.transform = `translateX(calc(-33.333333% + ${currentTranslate}px))`;
   }
 
   function handleEnd(e) {
     if (!isDragging) return;
     isDragging = false;
     area.style.cursor = 'grab';
-    grid.classList.add('animating');
-    const threshold = 50;
-    if (currentTranslate > threshold) changeWeek(-1);
-    else if (currentTranslate < -threshold) changeWeek(1);
-    else grid.style.transform = `translateX(0px)`;
+    const threshold = 60;
+    track.style.transition = 'transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1)';
+    if (currentTranslate > threshold) { haptic('light'); track.style.transform = `translateX(0%)`; setTimeout(() => shiftWeeks(-1), 300); } 
+    else if (currentTranslate < -threshold) { haptic('light'); track.style.transform = `translateX(-66.666666%)`; setTimeout(() => shiftWeeks(1), 300); } 
+    else { track.style.transform = `translateX(-33.333333%)`; }
   }
 
-  function changeWeek(direction) {
-    haptic('light');
-    grid.style.transform = `translateX(${direction > 0 ? -50 : 50}px)`; 
-    grid.classList.add('hidden'); 
-    setTimeout(() => {
-      currentWeekStart.setDate(currentWeekStart.getDate() + (direction * 7));
-      renderWeek();
-      grid.classList.remove('animating'); 
-      grid.style.transform = `translateX(${direction > 0 ? 50 : -50}px)`;
-      void grid.offsetWidth;
-      grid.classList.remove('hidden');
-      grid.classList.add('animating');
-      grid.style.transform = `translateX(0px)`;
-    }, 200);
+  function shiftWeeks(direction) {
+    currentWeekStart.setDate(currentWeekStart.getDate() + (direction * 7));
+    track.style.transition = 'none';
+    renderAllWeeks();
+    track.style.transform = `translateX(-33.333333%)`;
   }
 
-  // === 2. CAROUSEL SCROLL ===
-  const track = document.getElementById('track');
+  // === CAROUSEL ===
+  const carTrack = document.getElementById('track');
   const dots = document.querySelectorAll('.dot');
-  let isDown = false; let startXCarousel; let scrollLeft;
-  
-  track.addEventListener('mousedown', (e) => { 
-    isDown = true; 
-    track.style.cursor = 'grabbing';
-    startXCarousel = e.pageX - track.offsetLeft; 
-    scrollLeft = track.scrollLeft; 
-  });
-  track.addEventListener('mouseleave', () => { isDown = false; track.style.cursor = 'grab'; });
-  track.addEventListener('mouseup', () => { isDown = false; track.style.cursor = 'grab'; });
-  track.addEventListener('mousemove', (e) => { 
-    if(!isDown) return; 
-    e.preventDefault(); 
-    const x = e.pageX - track.offsetLeft; 
-    const walk = (x - startXCarousel) * 2; 
-    track.scrollLeft = scrollLeft - walk; 
-  });
-  track.addEventListener('scroll', () => {
-    const idx = Math.round(track.scrollLeft / track.clientWidth);
-    dots.forEach((d,i) => d.classList.toggle('active', i===idx));
-  });
+  let isDown = false; let startXC; let scrollLeft;
+  carTrack.addEventListener('mousedown', (e) => { isDown=true; carTrack.style.cursor='grabbing'; startXC=e.pageX-carTrack.offsetLeft; scrollLeft=carTrack.scrollLeft; });
+  carTrack.addEventListener('mouseleave', () => { isDown=false; carTrack.style.cursor='grab'; });
+  carTrack.addEventListener('mouseup', () => { isDown=false; carTrack.style.cursor='grab'; });
+  carTrack.addEventListener('mousemove', (e) => { if(!isDown) return; e.preventDefault(); const x=e.pageX-carTrack.offsetLeft; const walk=(x-startXC)*2; carTrack.scrollLeft=scrollLeft-walk; });
+  carTrack.addEventListener('scroll', () => { const idx=Math.round(carTrack.scrollLeft/carTrack.clientWidth); dots.forEach((d,i)=>d.classList.toggle('active', i===idx)); });
 
-  // === 3. CLEAN GLASS WATER LOGIC ===
-  let waterL = 1.25; const maxWater = 2.5; 
-
+  // === WATER LOGIC ===
+  let currentMl = 1250; const targetMl = 2500; 
   function updateWater(delta) {
-    haptic(delta > 0 ? 'light' : 'warning');
-    waterL = Math.max(0, Math.min(maxWater, waterL + delta));
-    
-    // Текст
-    document.getElementById('waterFact').textContent = Number.isInteger(waterL) ? waterL : waterL.toFixed(2);
-    
-    // Высота жидкости
-    const pct = (waterL / maxWater) * 100;
-    const fillEl = document.getElementById('waterLevel');
-    fillEl.style.setProperty('--h', Math.max(5, pct) + '%'); // Минимум 5%
-
-    // Эффект пульсации капли
-    const blob = document.getElementById('waterBlob');
-    if(blob) {
-        blob.classList.remove('pulse');
-        void blob.offsetWidth; // Триггер перерисовки
-        blob.classList.add('pulse');
+    haptic('light');
+    currentMl = Math.max(0, currentMl + delta);
+    renderWater();
+  }
+  function renderWater() {
+    document.getElementById('lbl-fact').innerText = currentMl;
+    document.getElementById('lbl-pct').innerText = Math.round((currentMl/targetMl)*100) + '%';
+    const card = document.getElementById('waterCard');
+    if(currentMl > targetMl) card.classList.add('is-overload'); else card.classList.remove('is-overload');
+    for(let i=1; i<=5; i++) {
+      const el = document.getElementById('c'+i);
+      const th = i*(targetMl/5); const prevTh = (i-1)*(targetMl/5);
+      let pct = 0;
+      if(currentMl >= th) pct=100;
+      else if(currentMl > prevTh) pct = ((currentMl-prevTh)/(targetMl/5))*100;
+      el.style.setProperty('--h', Math.min(100, pct)+'%');
     }
   }
 
+  // === OMNI BAR LOGIC ===
   const txt = document.getElementById('msgInput');
   const btn = document.getElementById('actionBtn');
   const iCam = document.getElementById('iconCam');
   const iSend = document.getElementById('iconSend');
-
   txt.addEventListener('input', () => {
     txt.style.height = 'auto'; txt.style.height = Math.min(txt.scrollHeight, 100) + 'px';
     const hasText = txt.value.trim().length > 0;
     if(hasText) { btn.classList.replace('mode-cam','mode-send'); iCam.style.display='none'; iSend.style.display='block'; }
     else { btn.classList.replace('mode-send','mode-cam'); iCam.style.display='block'; iSend.style.display='none'; }
   });
-
   function handleAction() {
     haptic('light');
-    if(txt.value.trim().length > 0) {
-      console.log('Sending:', txt.value);
-      txt.value=''; txt.style.height='auto'; txt.blur();
-      btn.classList.replace('mode-send','mode-cam'); iCam.style.display='block'; iSend.style.display='none';
-    } else {
-      setTimeout(() => window.location.href='cam.html', 50);
-    }
+    if(txt.value.trim().length > 0) { console.log('Send:', txt.value); txt.value=''; txt.style.height='auto'; txt.blur(); btn.classList.replace('mode-send','mode-cam'); iCam.style.display='block'; iSend.style.display='none'; }
+    else { setTimeout(() => window.location.href='cam.html', 50); }
   }
-
-  function toggleSheet() {
-    haptic('light');
-    document.getElementById('sheet').classList.toggle('visible');
-  }
-
+  function toggleSheet() { haptic('light'); document.getElementById('sheet').classList.toggle('visible'); }
+  
   // Init
   initCalendar();
-  updateWater(0);
-
+  renderWater();
 </script>
 </body>
 </html>
