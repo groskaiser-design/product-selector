@@ -1,575 +1,578 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
-  <title>Food AI</title>
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
-
-  <style>
-    /* ============================================================
-       РАЗДЕЛ 1: СТИЛИ ОСНОВНОГО ПРИЛОЖЕНИЯ (measurements + ai)
-       ============================================================ */
-    :root {
-      --bg: linear-gradient(135deg,#667eea 0%,#764ba2 100%);
-      --text-primary: #fff;
-      /* Аккордеоны */
-      --cardA: rgba(255,255,255,.18);
-      --cardB: rgba(255,255,255,.12);
-      --border: rgba(255,255,255,.28);
-      --shadow: 0 8px 28px rgba(0,0,0,.18);
-      /* Цвета UI */
-      --okA: #fbbf24; --okB: #f59e0b;
-      /* Чат */
-      --userBubble: rgba(251,191,36,.25);
-      --userBorder: rgba(251,191,36,.4);
-      --aiBubble: rgba(255,255,255,.18);
-      --aiBorder: rgba(255,255,255,.28);
-      --inputBg: rgba(255,255,255,.12);
-      --inputBorder: rgba(255,255,255,.24);
-    }
-
-    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-    body {
-      min-height: 100vh; color: var(--text-primary); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      position: relative; isolation: isolate;
-    }
-    body::before { content: ""; position: fixed; inset: 0; background: var(--bg); z-index: 0; pointer-events: none; }
-
-    .page { position: relative; z-index: 1; max-width: 560px; margin: 0 auto; padding: 16px 12px; padding-bottom: 80px; }
-
-    /* --- АККОРДЕОН (Точная копия measurements) --- */
-    .section {
-      background: linear-gradient(180deg, var(--cardA), var(--cardB));
-      border: 1px solid var(--border); border-radius: 18px; box-shadow: var(--shadow);
-      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-      overflow: hidden; margin-bottom: 14px; transition: all 0.3s ease;
-    }
-    .section-h { display: flex; align-items: center; gap: 10px; padding: 14px 16px; cursor: pointer; user-select: none; }
-    .section-h h2 { font-size: 1rem; font-weight: 800; flex: 1; }
-    .toggle { width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; opacity: .9; }
-    .toggle svg { transition: transform .18s ease; }
-    .section.collapsed .toggle svg { transform: rotate(-90deg); }
-    .section.collapsed .section-content { display: none; }
-    .section-content { padding: 0; }
-
-    /* --- ЧАТ (Точная копия ai) --- */
-    .chat-container { display: flex; flex-direction: column; height: 480px; background: rgba(0,0,0,0.1); }
-    .chat-messages { flex: 1; overflow-y: auto; padding: 16px 14px; display: flex; flex-direction: column; gap: 12px; -webkit-overflow-scrolling: touch; }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Smart Diary</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  /* === CORE & SCROLLBARS === */
+  *::-webkit-scrollbar { display: none; }
+  * { -ms-overflow-style: none; scrollbar-width: none; box-sizing: border-box; -webkit-tap-highlight-color: transparent; outline: none; }
+  
+  :root {
+    --bg-core: #050505;
+    --text-main: #ffffff;
+    --text-muted: rgba(255, 255, 255, 0.55);
+    --surface-glass: rgba(255, 255, 255, 0.08);
+    --surface-border: rgba(255, 255, 255, 0.12);
+    --surface-active: rgba(255, 255, 255, 0.15);
     
-    .message { display: flex; flex-direction: column; max-width: 85%; animation: slideIn .3s ease; position: relative; }
-    @keyframes slideIn { from{opacity:0; transform:translateY(10px);} to{opacity:1; transform:translateY(0);} }
-    .message.user { align-self: flex-end; align-items: flex-end; }
-    .message.ai { align-self: flex-start; align-items: flex-start; }
-
-    .message-bubble {
-      padding: 12px 16px; border-radius: 18px; backdrop-filter: blur(12px); font-size: 15px; line-height: 1.5; box-shadow: var(--shadow);
-    }
-    .message.user .message-bubble {
-      background: linear-gradient(135deg, var(--userBubble), rgba(251,191,36,.2)); border: 1px solid var(--userBorder); border-bottom-right-radius: 4px;
-    }
-    .message.ai .message-bubble {
-      background: linear-gradient(180deg, var(--aiBubble), rgba(255,255,255,.14)); border: 1px solid var(--aiBorder); border-bottom-left-radius: 4px;
-    }
+    --acc-orange: #ff9f0a;
+    --acc-green: #30d158;
+    --acc-blue: #0a84ff;
+    --acc-red: #ff453a;
     
-    /* Фото внутри сообщения */
-    .msg-img-wrap { border-radius: 12px; overflow: hidden; margin-bottom: 6px; border: 1px solid rgba(255,255,255,0.3); }
-    .msg-img-wrap img { display: block; width: 100%; height: auto; }
+    --radius-xl: 24px;
+    --radius-m: 16px;
+    --radius-s: 12px;
+    
+    --safe-bottom: calc(90px + env(safe-area-inset-bottom));
+  }
 
-    /* --- ВИДЖЕТ ПРОДУКТОВ (ЧЕК) --- */
-    .fw-container { width: 100%; min-width: 220px; }
-    .fw-header { font-weight: 800; font-size: 13px; text-transform: uppercase; opacity: 0.7; margin-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.2); padding-bottom: 4px; }
-    .fw-row { display: flex; justify-content: space-between; margin-bottom: 4px; font-size: 14px; }
-    .fw-total { margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.2); font-weight: 900; color: var(--okA); display: flex; justify-content: space-between; }
-    .fw-btn { margin-top: 12px; width: 100%; padding: 10px; border-radius: 10px; background: linear-gradient(135deg, var(--okA), var(--okB)); border:none; color: white; font-weight: 700; cursor: pointer; font-size: 14px;}
-    .fw-btn.done { background: #22c55e; pointer-events: none; }
+  body {
+    margin: 0; padding: 0;
+    background: var(--bg-core);
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', Roboto, sans-serif;
+    color: var(--text-main);
+    overflow-x: hidden;
+    overscroll-behavior-y: none; /* Блокируем "резинку" всей страницы */
+  }
 
-    /* --- ИНПУТ ПАНЕЛЬ --- */
-    .input-area { padding: 12px 14px; border-top: 1px solid rgba(255,255,255,0.1); display: flex; align-items: flex-end; gap: 10px; }
-    .input-field {
-      flex: 1; min-height: 44px; max-height: 120px; padding: 12px 16px;
-      border: 1px solid var(--inputBorder); border-radius: 22px; background: var(--inputBg);
-      backdrop-filter: blur(8px); color: #fff; font-size: 15px; resize: none; outline: none;
-    }
-    .send-btn {
-      width: 44px; height: 44px; border: 0; border-radius: 50%;
-      background: linear-gradient(135deg, var(--okA), var(--okB)); color: #fff;
-      display: flex; align-items: center; justify-content: center; box-shadow: var(--shadow); flex-shrink: 0; cursor: pointer;
-    }
-    .cam-btn-chat {
-      width: 44px; height: 44px; border: 1px solid var(--inputBorder); border-radius: 50%;
-      background: var(--inputBg); color: #fff; display: flex; align-items: center; justify-content: center; flex-shrink: 0; cursor: pointer; backdrop-filter: blur(8px);
-    }
+  /* === FX BACKGROUND === */
+  .fx-layer { position: fixed; inset: 0; z-index: -1; pointer-events: none; }
+  .orb { position: absolute; border-radius: 50%; filter: blur(80px); opacity: 0.4; will-change: transform; animation: float 20s infinite linear; }
+  .orb-1 { width: 300px; height: 300px; background: #5e60ce; top: -10%; left: -20%; }
+  .orb-2 { width: 250px; height: 250px; background: #0a84ff; bottom: 10%; right: -10%; animation-duration: 25s; animation-direction: reverse; }
+  @keyframes float { 0%{transform:rotate(0deg) translate(0,0)} 50%{transform:rotate(180deg) translate(20px,20px)} 100%{transform:rotate(360deg) translate(0,0)} }
+  .noise { position: fixed; inset: 0; opacity: 0.05; background: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
 
+  /* === LAYOUT === */
+  .main-scroll {
+    height: 100vh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: var(--safe-bottom);
+    position: relative;
+    z-index: 1;
+  }
 
-    /* ============================================================
-       РАЗДЕЛ 2: СТИЛИ КАМЕРЫ (ТОЧНАЯ КОПИЯ cam.html)
-       Вставлены "как есть", но работают внутри #cam-overlay
-       ============================================================ */
-    #cam-overlay {
-      position: fixed; inset: 0; z-index: 9999; background: #000;
-      display: none; /* Скрыто по умолчанию */
-    }
-    #cam-overlay.visible { display: block; }
+  /* === 1. STICKY HEADER (CALENDAR) === */
+  .header-sticky {
+    position: sticky; top: 0; z-index: 50;
+    background: rgba(5, 5, 5, 0.85);
+    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+    border-bottom: 1px solid var(--surface-border);
+    padding-top: env(safe-area-inset-top);
+  }
+  
+  .calendar-strip {
+    display: flex; gap: 8px;
+    padding: 12px 16px;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+  }
+  
+  .day-capsule {
+    flex: 0 0 auto;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    width: 50px; height: 64px;
+    background: var(--surface-glass);
+    border: 1px solid var(--surface-border);
+    border-radius: var(--radius-m);
+    transition: all 0.2s ease;
+    scroll-snap-align: center;
+    cursor: pointer;
+  }
+  .day-capsule.active {
+    background: #fff;
+    border-color: #fff;
+    transform: scale(1.05);
+    box-shadow: 0 4px 12px rgba(255,255,255,0.15);
+  }
+  .day-name { font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--text-muted); margin-bottom: 2px; }
+  .day-capsule.active .day-name { color: #000; opacity: 0.6; }
+  .day-num { font-size: 18px; font-weight: 700; color: #fff; }
+  .day-capsule.active .day-num { color: #000; }
+  
+  .total-summary {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 0 20px 12px 20px;
+    font-size: 13px; font-weight: 500; color: var(--text-muted);
+  }
+  .sum-val { color: #fff; font-weight: 700; }
 
-    /* --- CSS из cam.html --- */
-    .cam-container { max-width: 760px; margin: 0 auto; padding: 16px; height: 100%; display: flex; flex-direction: column; }
-    .hidden { display: none!important } 
-    .row { display: flex; gap: 10px; flex-wrap: wrap }
-    .btn-cam { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 12px 16px; border-radius: 14px; border: 1px solid rgba(255,255,255,0.3); background: rgba(255,255,255,0.1); color: #fff; font-weight: 600; cursor: pointer; font-size: 16px; backdrop-filter: blur(4px); }
-    .btn-cam.primary { background: #2563eb; color: #fff; border-color: transparent } 
-    .btn-cam[disabled] { opacity: .45; cursor: not-allowed }
+  /* === 2. DASHBOARD (MACROS + WATER) === */
+  .dashboard { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 
-    /* Viewport */
-    .cam-wrap { position: relative; border: 1px solid rgba(255,255,255,0.2); border-radius: 16px; overflow: hidden; background: #000; aspect-ratio: 3/4; contain: layout paint; width: 100%; margin: 0 auto; flex-shrink: 0; }
-    .cam-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover }
-    .cam-preview { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: none; opacity: 0; transition: opacity .3s ease }
-    .cam-photo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; background: #000 }
-    .cam-overlay { position: absolute; inset: 0; pointer-events: none }
+  /* Macros Grid */
+  .macros-card {
+    background: var(--surface-glass);
+    border: 1px solid var(--surface-border);
+    border-top: 1px solid rgba(255,255,255,0.2);
+    border-radius: var(--radius-xl);
+    padding: 16px;
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px;
+  }
+  .macro-item { display: flex; flex-direction: column; align-items: center; position: relative; }
+  .donut-box { width: 100%; max-width: 70px; aspect-ratio: 1; position: relative; display: flex; align-items: center; justify-content: center; }
+  .mini-donut { width: 100%; height: 100%; transform: rotate(-90deg); filter: drop-shadow(0 2px 4px rgba(0,0,0,0.2)); }
+  .md-bg { fill: none; stroke: rgba(255,255,255,0.06); stroke-width: 6; }
+  .md-val { fill: none; stroke-width: 6; stroke-linecap: round; stroke-dasharray: 151; transition: stroke-dashoffset 1s ease; }
+  
+  /* Gradients refs via CSS vars or SVG defs at bottom */
+  .stroke-kcal { stroke: url(#grad-kcal); }
+  .stroke-prot { stroke: url(#grad-prot); }
+  .stroke-fats { stroke: url(#grad-fats); }
+  .stroke-carb { stroke: url(#grad-carb); }
+  
+  .m-icon { position: absolute; font-size: 16px; }
+  .m-val { font-size: 13px; font-weight: 800; margin-top: 6px; }
+  .m-lbl { font-size: 10px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; }
 
-    /* Grids & Icons */
-    .grid { position: absolute; inset: 0; opacity: .15; background: linear-gradient(#fff 1px,transparent 1px) 0 calc(33.333% - .5px)/100% 33.333% repeat-y, linear-gradient(#fff 1px,transparent 1px) 0 calc(66.666% - .5px)/100% 33.333% repeat-y, linear-gradient(90deg,#fff 1px,transparent 1px) calc(33.333% - .5px) 0/33.333% 100% repeat-x, linear-gradient(90deg,#fff 1px,transparent 1px) calc(66.666% - .5px) 0/33.333% 100% repeat-x }
-    .topbar { position: absolute; left: 0; right: 0; top: 16px; display: flex; justify-content: center; gap: 10px; z-index: 9; padding: 0 12px }
-    .chip { pointer-events: auto; display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 12px; border: 1px solid rgba(255,255,255,.25); background: rgba(0,0,0,.65); color: #fff; font-size: 13px; backdrop-filter: blur(8px); max-width: calc(100% - 24px); text-align: center }
+  /* Water Tracker Row */
+  .water-row {
+    display: flex; gap: 12px; height: 80px;
+  }
+  .water-widget {
+    flex: 1;
+    background: linear-gradient(135deg, rgba(10,132,255,0.15) 0%, rgba(10,132,255,0.05) 100%);
+    border: 1px solid rgba(10,132,255,0.2);
+    border-radius: var(--radius-l);
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 20px;
+    position: relative; overflow: hidden;
+  }
+  .water-info { z-index: 2; display: flex; flex-direction: column; gap: 4px; }
+  .water-title { font-size: 12px; color: #60a5fa; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+  .water-val { font-size: 22px; font-weight: 800; color: #fff; }
+  .water-val span { font-size: 14px; font-weight: 500; opacity: 0.7; }
+  
+  /* Волны внутри виджета воды */
+  .w-wave-bg {
+    position: absolute; bottom: -10px; right: -20px;
+    width: 100px; height: 100px;
+    background: var(--acc-blue); opacity: 0.3;
+    border-radius: 38%;
+    animation: waveRotate 6s infinite linear;
+    filter: blur(10px);
+  }
+  .w-wave-fg {
+    position: absolute; bottom: -30px; right: -10px;
+    width: 90px; height: 90px;
+    background: var(--acc-blue); opacity: 0.6;
+    border-radius: 40%;
+    animation: waveRotate 4s infinite linear reverse;
+  }
+  @keyframes waveRotate { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
-    .top-icon { position: absolute; top: 12px; z-index: 10; pointer-events: auto; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; border-radius: 999px; border: 1px solid rgba(255,255,255,.35); color: #fff; background: rgba(0,0,0,.48); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); box-shadow: 0 2px 8px rgba(0,0,0,.25); cursor: pointer; transition: transform .08s ease,opacity .2s ease }
-    .top-icon:active { transform: scale(.96) }
-    .top-left { left: 12px }
-    .top-right { right: 12px }
-    /* ДОП: Кнопка закрыть оверлей (слева вверху, вместо фонарика если нужно, или рядом) */
-    .top-close { position: absolute; top: 12px; left: 12px; z-index: 20; width: 40px; height: 40px; background:rgba(239,68,68,0.8); border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:bold; cursor:pointer; border:1px solid rgba(255,255,255,0.3); pointer-events:auto; }
+  .water-actions { display: flex; flex-direction: column; gap: 6px; }
+  .w-btn {
+    width: 56px; height: 37px;
+    background: var(--surface-glass); border: 1px solid var(--surface-border);
+    border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700; color: #fff;
+    transition: transform 0.1s; cursor: pointer;
+  }
+  .w-btn:active { transform: scale(0.95); background: rgba(255,255,255,0.15); }
 
-    /* Level */
-    .center-level { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none }
-    .level-outer { position: relative; width: 140px; height: 140px; border-radius: 50% }
-    .level-target { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); border-radius: 50%; border: 2px solid rgba(255,255,255,.6); background: rgba(0,0,0,.1); width: 23px; height: 23px }
-    .level-target.ok { border-color: #34d399; background: rgba(34,197,94,.15) }
-    .level-bubble { position: absolute; left: 50%; top: 50%; width: 20px; height: 20px; border-radius: 50%; background: #fff; box-shadow: 0 2px 8px rgba(0,0,0,.4) }
-    .level-bubble.ok { background: #22c55e }
+  /* === 3. TIMELINE (MEAL FEED) === */
+  .timeline { padding: 0 16px; display: flex; flex-direction: column; gap: 16px; }
+  .timeline-title { font-size: 17px; font-weight: 700; margin-left: 4px; opacity: 0.9; }
+  
+  .meal-card {
+    background: var(--surface-glass);
+    border-radius: var(--radius-l);
+    padding: 16px;
+    display: flex; align-items: center; gap: 16px;
+    border: 1px solid transparent;
+    transition: background 0.2s;
+  }
+  .meal-card:active { background: var(--surface-active); }
+  
+  .meal-time {
+    font-size: 13px; font-weight: 600; color: var(--text-muted);
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    min-width: 40px;
+  }
+  .meal-line { width: 2px; height: 24px; background: rgba(255,255,255,0.1); border-radius: 2px; margin-top: 4px; }
+  
+  .meal-content { flex: 1; }
+  .meal-name { font-size: 16px; font-weight: 700; color: #fff; margin-bottom: 4px; }
+  .meal-desc { font-size: 13px; color: var(--text-muted); line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  
+  .meal-meta { text-align: right; }
+  .meal-kcal { font-size: 16px; font-weight: 700; color: #fff; }
+  .meal-tag { font-size: 11px; padding: 2px 6px; border-radius: 6px; background: rgba(255,255,255,0.1); color: var(--text-muted); margin-top: 4px; display: inline-block;}
 
-    .card-guide { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); width: 100px; height: 160px; border-radius: 12px; border: 2px dashed rgba(255,255,255,.4); background: rgba(128,128,128,.2); pointer-events: none; display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,.7); font-size: 11px; text-align: center; padding: 8px; backdrop-filter: blur(2px) }
-    .indicators { position: absolute; left: 0; right: 0; bottom: 96px; display: flex; gap: 10px; justify-content: center; z-index: 9; pointer-events: none }
-    .ind { pointer-events: auto; display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 12px; background: rgba(0,0,0,.6); border: 1px solid rgba(255,255,255,.2); color: #fff; backdrop-filter: blur(4px); font-size: 13px }
-    .ind .bulb { width: 10px; height: 10px; border-radius: 50%; background: #f59e0b; box-shadow: 0 0 0 2px rgba(0,0,0,.3) inset }
-    .ind.ok .bulb { background: #22c55e }
+  /* Empty State */
+  .empty-state { text-align: center; padding: 40px 0; opacity: 0.5; }
+  .empty-icon { font-size: 40px; margin-bottom: 10px; filter: grayscale(1); }
 
-    .controls { position: absolute; left: 0; right: 0; bottom: 0; padding: 16px; display: flex; gap: 10px; align-items: center; justify-content: center; background: linear-gradient(to top,rgba(0,0,0,.6),rgba(0,0,0,0)); color: #fff }
-    .shutter { width: 72px; height: 72px; border-radius: 50%; border: 4px solid rgba(255,255,255,.9); background: #fff; cursor: pointer; box-shadow: 0 4px 16px rgba(0,0,0,.3); transition: transform .1s }
-    .shutter:active:not([disabled]) { transform: scale(.95) }
+  /* === 4. OMNI-BAR (SMART DOCK) === */
+  .omni-wrapper {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    background: rgba(10, 10, 10, 0.85);
+    backdrop-filter: blur(30px); -webkit-backdrop-filter: blur(30px);
+    padding: 10px 16px calc(10px + env(safe-area-inset-bottom)) 16px;
+    border-top: 1px solid rgba(255,255,255,0.1);
+    z-index: 100;
+    display: flex; gap: 10px; align-items: center;
+  }
 
-    /* Form elements inside Camera */
-    .meta { color: rgba(255,255,255,0.7); font-size: 13px; margin-top: 8px }
-    .field-cam { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; flex: 1;}
-    .textarea-cam { width: 100%; min-height: 72px; resize: vertical; padding: 10px 12px; border: 1px solid rgba(255,255,255,0.3); border-radius: 12px; font: inherit; line-height: 1.4; background: rgba(0,0,0,0.3); color: white; }
-    .helper { color: rgba(255,255,255,0.6); font-size: 13px }
-  </style>
+  /* Menu Button [+] */
+  .omni-btn {
+    width: 44px; height: 44px; border-radius: 50%; flex-shrink: 0;
+    background: rgba(255,255,255,0.08);
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; transition: 0.2s; cursor: pointer;
+  }
+  .omni-btn:active { background: rgba(255,255,255,0.2); transform: scale(0.95); }
+  .omni-btn svg { width: 24px; height: 24px; }
+
+  /* Camera Button [📸] */
+  .omni-cam {
+    width: 44px; height: 44px; border-radius: 14px; flex-shrink: 0;
+    background: linear-gradient(135deg, var(--acc-blue), #5e60ce);
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 4px 12px rgba(10, 132, 255, 0.3);
+    transition: 0.2s; cursor: pointer;
+  }
+  .omni-cam:active { transform: scale(0.92); filter: brightness(1.1); }
+
+  /* Input Field */
+  .omni-input-box {
+    flex: 1; height: 44px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 22px;
+    display: flex; align-items: center;
+    padding: 0 16px;
+    border: 1px solid transparent;
+    transition: 0.2s;
+  }
+  .omni-input-box:focus-within {
+    background: rgba(255,255,255,0.12);
+    border-color: rgba(255,255,255,0.2);
+  }
+  .omni-input {
+    width: 100%; background: transparent; border: none;
+    color: #fff; font-size: 16px;
+    padding: 0; margin: 0;
+  }
+  .omni-input::placeholder { color: rgba(255,255,255,0.4); }
+
+  /* Send Button (Hidden by default) */
+  .omni-send {
+    width: 36px; height: 36px; border-radius: 50%;
+    background: var(--acc-green);
+    display: flex; align-items: center; justify-content: center;
+    margin-right: -8px;
+    transform: scale(0); transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .omni-input:not(:placeholder-shown) + .omni-send { transform: scale(1); }
+
+  /* === FATSECRET MENU (ACTION SHEET) === */
+  .sheet-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 150;
+    opacity: 0; pointer-events: none; transition: opacity 0.3s;
+    backdrop-filter: blur(4px);
+  }
+  .sheet-overlay.visible { opacity: 1; pointer-events: auto; }
+  
+  .action-sheet {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    background: #1c1c1e;
+    border-radius: 24px 24px 0 0;
+    padding: 24px 16px calc(24px + env(safe-area-inset-bottom)) 16px;
+    transform: translateY(100%); transition: transform 0.3s cubic-bezier(0.1, 0.7, 0.1, 1);
+    z-index: 151;
+    border-top: 1px solid rgba(255,255,255,0.1);
+  }
+  .sheet-overlay.visible .action-sheet { transform: translateY(0); }
+  
+  .sheet-title { font-size: 13px; font-weight: 600; color: var(--text-muted); text-align: center; margin-bottom: 16px; text-transform: uppercase; }
+  .sheet-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  
+  .sheet-btn {
+    background: rgba(255,255,255,0.08);
+    border-radius: 16px;
+    padding: 16px;
+    display: flex; flex-direction: column; align-items: center; gap: 10px;
+    font-size: 14px; font-weight: 600; color: #fff;
+    cursor: pointer;
+  }
+  .sheet-btn:active { background: rgba(255,255,255,0.15); }
+  .sheet-icon { font-size: 24px; }
+
+  /* FatSecret specific style */
+  .fs-btn { border: 1px solid rgba(48, 209, 88, 0.3); background: rgba(48, 209, 88, 0.1); color: var(--acc-green); }
+
+</style>
 </head>
 <body>
 
-<div class="page">
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <linearGradient id="grad-kcal" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#ff9f0a"/><stop offset="100%" stop-color="#ff453a"/></linearGradient>
+    <linearGradient id="grad-prot" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#48bfe3"/><stop offset="100%" stop-color="#5e60ce"/></linearGradient>
+    <linearGradient id="grad-fats" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#f1c40f"/><stop offset="100%" stop-color="#e67e22"/></linearGradient>
+    <linearGradient id="grad-carb" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#2ecc71"/><stop offset="100%" stop-color="#1abc9c"/></linearGradient>
+  </defs>
+</svg>
 
-  <section class="section" id="sec-food">
-    <div class="section-h" onclick="toggleAccordion('sec-food')">
-      <h2>Дневник питания</h2>
-      <div class="toggle">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-          <path d="M8 10l4 4 4-4" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-      </div>
+<div class="fx-layer"><div class="orb orb-1"></div><div class="orb orb-2"></div><div class="noise"></div></div>
+
+<div class="header-sticky">
+  <div class="calendar-strip" id="calendarStrip">
     </div>
-
-    <div class="section-content">
-      <div class="chat-container">
-        
-        <div class="chat-messages" id="chatFeed">
-          <div class="message ai">
-            <div class="message-bubble">
-              Привет! Нажми 📷, чтобы сфоткать еду, или напиши текстом.
-            </div>
-          </div>
-        </div>
-
-        <div class="input-area">
-          <button class="cam-btn-chat" onclick="startCameraFlow()">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
-              <circle cx="12" cy="13" r="4"/>
-            </svg>
-          </button>
-          <textarea id="mainInput" class="input-field" rows="1" placeholder="Опишите еду..."></textarea>
-          <button class="send-btn" id="chatSendBtn" onclick="handleTextSend()">
-            <svg viewBox="0 0 24 24" fill="none" width="20" height="20" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="22" y1="2" x2="11" y2="13"></line>
-              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-            </svg>
-          </button>
-        </div>
-
-      </div>
-    </div>
-  </section>
-
-  <section class="section collapsed" id="sec-stats">
-    <div class="section-h" onclick="toggleAccordion('sec-stats')">
-      <h2>Аналитика</h2>
-      <div class="toggle">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-          <path d="M8 10l4 4 4-4" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-      </div>
-    </div>
-    <div class="section-content" style="padding: 16px;">
-      <div style="text-align:center; opacity:0.7;">Здесь будет аналитика (таблица и графики)</div>
-    </div>
-  </section>
-
+  <div class="total-summary">
+    <span>Итого за сегодня</span>
+    <span class="sum-val">1450 / 2100 ккал</span>
+  </div>
 </div>
 
-<div id="cam-overlay">
-  <div class="top-close" onclick="closeCameraOverlay()">✕</div>
-
-  <div class="cam-container">
-    <div id="err" class="error hidden"></div>
-
-    <section id="sec-main" style="flex:1; display:flex; flex-direction:column;">
-      <input id="file-cam" type="file" accept="image/*" capture="environment" class="hidden" />
-      <input id="file-gallery" type="file" accept="image/*" class="hidden" />
-
-      <div class="cam-wrap" id="camWrap" aria-label="Камера">
-        <video id="video" class="cam-video" playsinline muted autoplay></video>
-        <canvas id="preview" class="cam-preview" aria-label="Превью камеры" role="img"></canvas>
-        <img id="photo" class="cam-photo hidden" alt="Снимок" />
-
-        <div id="overlay" class="cam-overlay">
-          <div class="grid" aria-hidden="true"></div>
-          <div class="topbar"><div id="chipInfo" class="chip" role="status" aria-live="polite">Открываю камеру…</div></div>
-          
-          <button id="btnTorch" class="top-icon" style="right: 60px; top: 12px;" aria-label="Фонарик">
-            <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M7 2l9 0-4 7h5l-9 13 3-9H7z"/></svg>
-          </button>
-          <button id="btnLevelReset" class="top-icon top-right" aria-label="Сброс">
-            <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 4a8 8 0 1 0 7.45 5.11h-2.2A6 6 0 1 1 12 6c1.3 0 2.5.42 3.46 1.13L14 8.6h6V2l-2.1 2.1A9.96 9.96 0 0 0 12 4z"/></svg>
-          </button>
-
-          <button id="btnPermission" class="btn-permission hidden" style="position:absolute; right:12px; top:60px; z-index:10; pointer-events:auto; padding:8px 12px; border-radius:999px; border:1px solid rgba(255,255,255,.3); color:#fff; background:rgba(245,158,11,.85);">⚠️</button>
-          
-          <div class="center-level" aria-hidden="true">
-            <div class="level-outer" id="levelOuter">
-              <div id="levelTarget" class="level-target"></div>
-              <div id="levelBubble" class="level-bubble"></div>
-            </div>
-          </div>
-          <div class="card-guide"><span>Банковская карта, (опционально, повысит точность)</span></div>
-          <div class="indicators"><div id="indLevel" class="ind"><span class="bulb"></span><span class="label">Ровно</span></div></div>
+<div class="main-scroll">
+  
+  <div class="dashboard">
+    <div class="macros-card">
+      <div class="macro-item">
+        <div class="donut-box">
+          <svg class="mini-donut" viewBox="0 0 60 60">
+            <circle class="md-bg" cx="30" cy="30" r="24"/>
+            <circle class="md-val stroke-kcal" cx="30" cy="30" r="24" style="stroke-dashoffset: 40px"/>
+          </svg>
+          <div class="m-icon">🔥</div>
         </div>
+        <div class="m-val">1450</div>
+        <div class="m-lbl">Ккал</div>
+      </div>
+      <div class="macro-item">
+        <div class="donut-box">
+          <svg class="mini-donut" viewBox="0 0 60 60">
+            <circle class="md-bg" cx="30" cy="30" r="24"/>
+            <circle class="md-val stroke-prot" cx="30" cy="30" r="24" style="stroke-dashoffset: 100px"/>
+          </svg>
+          <div class="m-icon">🐓</div>
+        </div>
+        <div class="m-val">150</div>
+        <div class="m-lbl">Белки</div>
+      </div>
+      <div class="macro-item">
+        <div class="donut-box">
+          <svg class="mini-donut" viewBox="0 0 60 60">
+            <circle class="md-bg" cx="30" cy="30" r="24"/>
+            <circle class="md-val stroke-fats" cx="30" cy="30" r="24" style="stroke-dashoffset: 110px"/>
+          </svg>
+          <div class="m-icon">🥑</div>
+        </div>
+        <div class="m-val">45</div>
+        <div class="m-lbl">Жиры</div>
+      </div>
+      <div class="macro-item">
+        <div class="donut-box">
+          <svg class="mini-donut" viewBox="0 0 60 60">
+            <circle class="md-bg" cx="30" cy="30" r="24"/>
+            <circle class="md-val stroke-carb" cx="30" cy="30" r="24" style="stroke-dashoffset: 60px"/>
+          </svg>
+          <div class="m-icon">🌾</div>
+        </div>
+        <div class="m-val">180</div>
+        <div class="m-lbl">Угли</div>
+      </div>
+    </div>
 
-        <div id="controls" class="controls">
-          <button id="btnShot" class="shutter" aria-label="Сделать снимок" disabled></button>
+    <div class="water-row">
+      <div class="water-widget">
+        <div class="w-wave-bg"></div><div class="w-wave-fg"></div>
+        <div class="water-info">
+          <div class="water-title">Вода</div>
+          <div class="water-val" id="waterVal">1.2 <span>л</span></div>
+        </div>
+        <div style="flex:1"></div>
+      </div>
+      <div class="water-actions">
+        <div class="w-btn" onclick="addWater(250)">+250</div>
+        <div class="w-btn" onclick="addWater(500)">+500</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="timeline">
+    <div class="timeline-title">Сегодня</div>
+    
+    <div id="mealFeed">
+      <div class="meal-card">
+        <div class="meal-time"><span>09:00</span><div class="meal-line"></div></div>
+        <div class="meal-content">
+          <div class="meal-name">Овсяная каша</div>
+          <div class="meal-desc">На молоке, с медом и орехами (грецкие 20г)</div>
+        </div>
+        <div class="meal-meta">
+          <div class="meal-kcal">350</div>
+          <div class="meal-tag">Завтрак</div>
         </div>
       </div>
 
-      <div class="field-cam">
-        <label for="comment" class="helper">Комментарий (опционально)</label>
-        <textarea id="comment" class="textarea-cam" maxlength="200" placeholder="Рис белый, куриная грудка..."></textarea>
-        <div id="commentWarn" class="helper hidden"></div>
+      <div class="meal-card">
+        <div class="meal-time"><span>13:30</span><div class="meal-line"></div></div>
+        <div class="meal-content">
+          <div class="meal-name">Бизнес-ланч</div>
+          <div class="meal-desc">Куриный суп, гречка, котлета на пару</div>
+        </div>
+        <div class="meal-meta">
+          <div class="meal-kcal">620</div>
+          <div class="meal-tag">Обед</div>
+        </div>
       </div>
+    </div>
+    
+    <div style="height: 80px;"></div>
+  </div>
+</div>
 
-      <div class="row" style="margin-top:12px; justify-content: space-between;">
-        <button id="btnRetake" class="btn-cam" disabled>Переснять</button>
-        <button id="btnGallery" class="btn-cam">Галерея</button>
-        <button id="camSendBtn" class="btn-cam primary" disabled>Отправить</button>
+<div class="omni-wrapper">
+  <div class="omni-btn" onclick="toggleMenu()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+  </div>
+  
+  <div class="omni-cam" onclick="openCamera()">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+  </div>
+
+  <div class="omni-input-box">
+    <input type="text" class="omni-input" placeholder="Яблоко 200г, кофе..." id="txtInput">
+    <div class="omni-send" onclick="sendText()">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+    </div>
+  </div>
+</div>
+
+<div class="sheet-overlay" id="menuOverlay" onclick="toggleMenu()">
+  <div class="action-sheet" onclick="event.stopPropagation()">
+    <div class="sheet-title">Добавить</div>
+    <div class="sheet-grid">
+      <div class="sheet-btn fs-btn" onclick="openFatSecret()">
+        <div class="sheet-icon">🥗</div>
+        <div>FatSecret (PDF)</div>
       </div>
-    </section>
+      <div class="sheet-btn" onclick="alert('В разработке')">
+        <div class="sheet-icon">🔗</div>
+        <div>Вставить ссылку</div>
+      </div>
+      <div class="sheet-btn" onclick="alert('В разработке')">
+        <div class="sheet-icon">🏷️</div>
+        <div>Штрихкод</div>
+      </div>
+    </div>
   </div>
 </div>
 
 <script>
-/* ============================================================
-   РАЗДЕЛ 6: СКРИПТЫ UI (АККОРДЕОН + ЧАТ)
-   ============================================================ */
-  // Инициализация Telegram
   const tg = window.Telegram?.WebApp;
-  if(tg) { tg.ready(); tg.expand(); }
-
-  // 1. Аккордеон
-  function toggleAccordion(id) {
-    document.getElementById(id).classList.toggle('collapsed');
+  if(tg) {
+    tg.ready(); tg.expand();
+    tg.setHeaderColor('#050505'); tg.setBackgroundColor('#050505');
+    if(tg.disableVerticalSwipes) tg.disableVerticalSwipes();
   }
 
-  // 2. Чат Логика
-  const feed = document.getElementById('chatFeed');
-  const mainInput = document.getElementById('mainInput');
-
-  function scrollToBottom() {
-    feed.parentElement.scrollTop = feed.parentElement.scrollHeight;
-  }
-
-  function addMessage(role, htmlContent) {
-    const msg = document.createElement('div');
-    msg.className = `message ${role}`;
-    const bubble = document.createElement('div');
-    bubble.className = 'message-bubble';
-    bubble.innerHTML = htmlContent;
-    msg.appendChild(bubble);
-    feed.appendChild(msg);
-    scrollToBottom();
-  }
-
-  // Виджет Чека (Mockup)
-  function addFoodWidget(data) {
-    const msg = document.createElement('div');
-    msg.className = 'message ai';
+  // === CALENDAR LOGIC ===
+  function initCalendar() {
+    const container = document.getElementById('calendarStrip');
+    const today = new Date();
+    const weekDays = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
     
-    const bubble = document.createElement('div');
-    bubble.className = 'message-bubble';
-    bubble.style.padding = '0';
-    bubble.style.overflow = 'hidden';
-
-    let listHtml = '';
-    data.items.forEach(item => {
-      listHtml += `<div class="fw-row"><span>${item.name}</span><span>${item.kcal} ккал</span></div>`;
-    });
-
-    const btnId = 'btn_' + Date.now();
-    bubble.innerHTML = `
-      <div class="fw-container" style="padding: 12px 16px;">
-        <div class="fw-header">Распознано</div>
-        ${listHtml}
-        <div class="fw-total"><span>ИТОГО:</span><span>${data.total} ккал</span></div>
-        <button id="${btnId}" class="fw-btn" onclick="saveToLog('${btnId}')">✅ Записать в дневник</button>
-      </div>
-    `;
-    msg.appendChild(bubble);
-    feed.appendChild(msg);
-    scrollToBottom();
+    // Generate ±3 days
+    for(let i=-3; i<=3; i++) {
+      const d = new Date();
+      d.setDate(today.getDate() + i);
+      
+      const isToday = i === 0;
+      const el = document.createElement('div');
+      el.className = `day-capsule ${isToday ? 'active' : ''}`;
+      el.innerHTML = `
+        <div class="day-name">${weekDays[d.getDay()]}</div>
+        <div class="day-num">${d.getDate()}</div>
+      `;
+      el.onclick = () => {
+        document.querySelectorAll('.day-capsule').forEach(c => c.classList.remove('active'));
+        el.classList.add('active');
+        haptic('selection');
+      };
+      container.appendChild(el);
+    }
+    // Scroll to center
+    setTimeout(() => {
+      const center = container.children[3];
+      if(center) center.scrollIntoView({behavior: 'auto', inline: 'center'});
+    }, 10);
   }
 
-  function saveToLog(id) {
-    const btn = document.getElementById(id);
-    btn.innerText = 'Записано ✓';
-    btn.classList.add('done');
-    if(window.Telegram?.WebApp?.HapticFeedback) window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
+  // === WATER LOGIC ===
+  let waterL = 1.2;
+  function addWater(ml) {
+    haptic('medium');
+    waterL += (ml / 1000);
+    document.getElementById('waterVal').innerHTML = `${waterL.toFixed(1)} <span>л</span>`;
+    // Animate wave (visual hack via opacity/speed in real app)
   }
 
-  function handleTextSend() {
-    const txt = mainInput.value.trim();
+  // === NAVIGATION & ACTIONS ===
+  function openCamera() {
+    haptic('light');
+    // Переход на твой файл камеры
+    setTimeout(() => window.location.href = 'cam.html', 50);
+  }
+
+  function sendText() {
+    const inp = document.getElementById('txtInput');
+    const txt = inp.value.trim();
     if(!txt) return;
-    addMessage('user', txt);
-    mainInput.value = '';
     
-    // Симуляция ответа AI
-    setTimeout(() => {
-      addFoodWidget({ total: 200, items: [{name: txt, kcal: 200}] });
-    }, 1000);
-  }
-
-  /* Обработка результата с камеры (вызывается из логики камеры) */
-  function handleCameraResult(blob, comment) {
-    // 1. Создаем URL для превью
-    const url = URL.createObjectURL(blob);
-    let html = `<div class="msg-img-wrap"><img src="${url}"></div>`;
-    if(comment) html += `<div>${comment}</div>`;
+    haptic('light');
+    inp.value = '';
+    inp.blur(); // Hide keyboard
     
-    // 2. Добавляем в чат
-    addMessage('user', html);
+    // Simulating add to timeline
+    const feed = document.getElementById('mealFeed');
+    const card = document.createElement('div');
+    card.className = 'meal-card';
+    const now = new Date();
+    const timeStr = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
     
-    // 3. Симуляция анализа фото
-    setTimeout(() => {
-       addFoodWidget({ total: 450, items: [{name: "Обед по фото", kcal: 450}] });
-    }, 1500);
+    card.innerHTML = `
+        <div class="meal-time"><span>${timeStr}</span><div class="meal-line"></div></div>
+        <div class="meal-content">
+          <div class="meal-name">${txt}</div>
+          <div class="meal-desc">Обработка AI...</div>
+        </div>
+        <div class="meal-meta"><div class="meal-kcal">...</div></div>
+    `;
+    // Insert after first item to keep order or append
+    feed.prepend(card);
   }
 
-
-/* ============================================================
-   РАЗДЕЛ 7: СКРИПТЫ КАМЕРЫ (ТОЧНАЯ КОПИЯ cam.html JS)
-   ============================================================ */
-  'use strict';
-  const PERM_KEY = 'fc_motion_perm_v1';
-  const PLATFORM = { isIOS: /iP(hone|od|ad)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1), isAndroid: /Android/.test(navigator.userAgent) };
-  const CONFIG = { idealFacing: { facingMode: { ideal: 'environment' }, aspectRatio: { ideal: 3/4 } }, maxPhotoSide: 4096, jpegQuality: 0.9, bubbleRadius: 10, targetRadius: 15, levelRadius: 50, needsPermissionRequest: PLATFORM.isIOS, tiltSmoothing: 0.15, allowTakePhoto: false };
-  
-  const STATE = { stream:null, track:null, videoElement:null, imageCapture:null, hasTorch:false, torchOn:false, sensorsEnabled:false, lastSensorTime:0, rawNx:0, rawNy:0, smoothNx:0, smoothNy:0, levelOK:false, currentView:'camera', lastBlob:null, capturing:false, sensorPermission:'unknown', levelRaf:null };
-
-  // DOM Elements (Mapping to IDs inside overlay)
-  const $ = id => document.getElementById(id);
-  const DOM = {
-    overlay: $('cam-overlay'), err: $('err'), video: $('video'), preview: $('preview'), photo: $('photo'), overlayUI: $('overlay'), controls: $('controls'),
-    btnShot: $('btnShot'), btnTorch: $('btnTorch'), btnPermission: $('btnPermission'), btnLevelReset: $('btnLevelReset'), chipInfo: $('chipInfo'), 
-    levelBubble: $('levelBubble'), levelTarget: $('levelTarget'), levelOuter: $('levelOuter'), indLevel: $('indLevel'),
-    btnRetake: $('btnRetake'), btnGallery: $('btnGallery'), btnSend: $('camSendBtn'), comment: $('comment'), commentWarn: $('commentWarn'), camWrap: $('camWrap'),
-    fileGallery: $('file-gallery'), fileCam: $('file-cam')
-  };
-
-  // --- Helpers ---
-  const sleep = ms => new Promise(r => setTimeout(r, ms));
-  function haptic(){ try{ window.Telegram?.WebApp?.HapticFeedback?.impactOccurred?.('light'); }catch{} }
-  function setError(msg){ if(!msg){ DOM.err.classList.add('hidden'); DOM.err.textContent=''; return;} DOM.err.textContent=msg; DOM.err.classList.remove('hidden'); }
-  function sanitizeComment(input){ return String(input||'').slice(0,200).trim(); }
-  function hasContent(){ return STATE.lastBlob || sanitizeComment(DOM.comment.value).length>0; }
-
-  // --- UI Update ---
-  function updateButtons(){ 
-    DOM.btnRetake.disabled = STATE.currentView==='camera'||STATE.capturing; 
-    DOM.btnSend.disabled = !hasContent()||STATE.capturing; 
-    DOM.btnShot.disabled = !STATE.levelOK||STATE.capturing; 
-  }
-  function syncLevelIndicator(){ DOM.indLevel.classList.toggle('ok',STATE.levelOK); }
-
-  function showCameraUI(){
-    STATE.currentView='camera';
-    DOM.video.classList.remove('hidden'); DOM.preview.classList.add('hidden'); DOM.overlayUI.classList.remove('hidden'); DOM.controls.classList.remove('hidden'); DOM.photo.classList.add('hidden');
-    DOM.chipInfo.textContent='Наводите камеру';
-    computeLevelRadiusDeferred(); startLevelLoop();
-    updateButtons(); syncLevelIndicator();
-  }
-  function showPhotoUI(){
-    STATE.currentView='photo';
-    DOM.preview.classList.add('hidden'); DOM.video.classList.add('hidden'); DOM.overlayUI.classList.add('hidden'); DOM.controls.classList.add('hidden'); DOM.photo.classList.remove('hidden');
-    updateButtons();
+  function toggleMenu() {
+    haptic('light');
+    const ov = document.getElementById('menuOverlay');
+    ov.classList.toggle('visible');
   }
 
-  // --- Camera Logic ---
-  async function openCamera(){
-    try{
-      const stream=await navigator.mediaDevices.getUserMedia({ video: CONFIG.idealFacing, audio:false });
-      bindStream(stream);
-      return true;
-    } catch(err){
-      console.warn('Camera failed:',err); return false;
-    }
-  }
-  function bindStream(stream){
-    if(STATE.stream) stopCamera();
-    STATE.stream=stream; STATE.track=stream.getVideoTracks()[0];
-    DOM.video.srcObject=stream;
-    
-    const caps=STATE.track.getCapabilities?.()||{};
-    STATE.hasTorch=!!caps.torch;
-    if(!STATE.hasTorch) DOM.btnTorch.style.opacity = 0.5;
-    
-    if(typeof ImageCapture!=='undefined'){ try{ STATE.imageCapture=new ImageCapture(STATE.track); }catch{} }
-  }
-  function stopCamera(){
-    try{ DOM.video.pause(); DOM.video.srcObject=null; }catch{}
-    try{ STATE.track?.stop(); }catch{}
-    STATE.stream=null; STATE.track=null; STATE.imageCapture=null; STATE.torchOn=false;
+  function openFatSecret() {
+    haptic('light');
+    // Логика загрузки PDF или переход на страницу загрузки
+    alert('Здесь откроется диалог загрузки PDF из FatSecret');
+    toggleMenu();
   }
 
-  // --- Capture ---
-  function canvasToBlob(canvas,quality=CONFIG.jpegQuality){ return new Promise(r=>{ canvas.toBlob(b=>r(b),'image/jpeg',quality); }); }
-  function computeCoverCropByAspect(vw,vh,canvasAspect){ let sx,sy,sw,sh; const videoAspect=vw/vh; if(videoAspect>canvasAspect){ sh=vh; sw=Math.round(sh*canvasAspect); sx=Math.floor((vw-sw)/2); sy=0; } else { sw=vw; sh=Math.round(sw/canvasAspect); sx=0; sy=Math.floor((vh-sh)/2); } return {sx,sy,sw,sh}; }
-
-  async function captureWysiwygFromVideo(){
-    const video=DOM.video; const vw=video.videoWidth, vh=video.videoHeight;
-    const aspect = DOM.camWrap.clientWidth/DOM.camWrap.clientHeight;
-    const {sx,sy,sw,sh}=computeCoverCropByAspect(vw,vh,aspect);
-    const scale=Math.min(1,CONFIG.maxPhotoSide/Math.max(sw,sh));
-    const outW=Math.max(1,Math.round(sw*scale)), outH=Math.max(1,Math.round(sh*scale));
-    const c=document.createElement('canvas'); c.width=outW; c.height=outH;
-    c.getContext('2d').drawImage(video,sx,sy,sw,sh,0,0,outW,outH);
-    return canvasToBlob(c);
-  }
-  
-  async function onShutter(){ 
-    if(DOM.btnShot.disabled||STATE.capturing) return; 
-    STATE.capturing=true; updateButtons(); haptic(); 
-    try{ 
-      const blob=await captureWysiwygFromVideo(); 
-      STATE.lastBlob=blob; 
-      const url=URL.createObjectURL(blob); 
-      DOM.photo.onload=()=>{ URL.revokeObjectURL(url); }; 
-      DOM.photo.src=url; 
-      showPhotoUI(); 
-    }catch(err){ 
-      setError('Ошибка снимка'); 
-    } finally { 
-      STATE.capturing=false; updateButtons(); 
-    } 
+  function haptic(style) {
+    if(tg?.HapticFeedback) tg.HapticFeedback.impactOccurred(style);
   }
 
-  // --- Sensors (Full Tilt Logic) ---
-  function refreshScreenAngle(){ STATE.screenAngle=((window.orientation||0)%360+360)%360; }
-  function mapTilt(pitchDeg,rollDeg){ const maxTilt=30; const pr=Math.max(-1,Math.min(1,pitchDeg/maxTilt)); const rr=Math.max(-1,Math.min(1,rollDeg/maxTilt)); let nx=0,ny=0; switch(STATE.screenAngle){ case 0:nx=rr;ny=pr;break; case 90:nx=-pr;ny=rr;break; case 180:nx=-rr;ny=-pr;break; case 270:nx=pr;ny=-rr;break; } return {nx,ny}; }
-  
-  function onDeviceOrientation(e){ 
-    if(STATE.currentView!=='camera') return; 
-    const {nx,ny}=mapTilt(e.beta||0, e.gamma||0); 
-    const a=CONFIG.tiltSmoothing; 
-    STATE.smoothNx=STATE.smoothNx + a*(nx-STATE.smoothNx); 
-    STATE.smoothNy=STATE.smoothNy + a*(ny-STATE.smoothNy); 
-  }
-  
-  async function requestSensorPermission(){ 
-    if(!CONFIG.needsPermissionRequest){ attachListeners(); return; }
-    if(typeof DeviceOrientationEvent.requestPermission==='function'){
-       try{ const r=await DeviceOrientationEvent.requestPermission(); if(r==='granted') attachListeners(); }catch{}
-    }
-  }
-  function attachListeners(){ window.addEventListener('deviceorientation',onDeviceOrientation,true); DOM.btnPermission.classList.add('hidden'); STATE.sensorsEnabled=true; }
-  function removeListeners(){ window.removeEventListener('deviceorientation',onDeviceOrientation,true); }
-
-  function computeLevelRadius(){ const rect = DOM.levelOuter.getBoundingClientRect(); if(rect.width) CONFIG.levelRadius = Math.max(10, Math.floor(rect.width * 0.35)); }
-  function computeLevelRadiusDeferred(){ requestAnimationFrame(()=>requestAnimationFrame(computeLevelRadius)); }
-  
-  function updateLevel(){ 
-    const R=CONFIG.levelRadius; const dx=STATE.smoothNx*R, dy=STATE.smoothNy*R; 
-    DOM.levelBubble.style.transform=`translate(-50%, -50%) translate(${dx}px, ${dy}px)`; 
-    const dist=Math.hypot(dx,dy); 
-    const wasOK=STATE.levelOK; STATE.levelOK=(dist+CONFIG.bubbleRadius)<=CONFIG.targetRadius; 
-    if(STATE.levelOK!==wasOK){ DOM.levelBubble.classList.toggle('ok',STATE.levelOK); DOM.levelTarget.classList.toggle('ok',STATE.levelOK); syncLevelIndicator(); updateButtons(); } 
-  }
-  function startLevelLoop(){ if(STATE.levelRaf)return; const tick=()=>{ if(STATE.currentView==='camera') updateLevel(); STATE.levelRaf=requestAnimationFrame(tick); }; STATE.levelRaf=requestAnimationFrame(tick); }
-  function stopLevelLoop(){ if(STATE.levelRaf){ cancelAnimationFrame(STATE.levelRaf); STATE.levelRaf=null; } }
-
-  // --- Integration Functions ---
-  async function startCameraFlow(){
-    DOM.overlay.classList.add('visible');
-    stopLevelLoop(); STATE.lastBlob=null; STATE.capturing=false; STATE.levelOK=false;
-    STATE.rawNx=0; STATE.rawNy=0; STATE.smoothNx=0; STATE.smoothNy=0;
-    updateButtons(); setError(''); refreshScreenAngle();
-    
-    const opened=await openCamera();
-    if(!opened){ setError('Камера недоступна'); return; }
-    
-    if(!STATE.sensorsEnabled) requestSensorPermission(); // Auto-req if needed
-    showCameraUI();
-  }
-  
-  function closeCameraOverlay() {
-    DOM.overlay.classList.remove('visible');
-    stopCamera(); stopLevelLoop();
-  }
-
-  // --- Event Listeners ---
-  DOM.btnShot.addEventListener('click', onShutter);
-  DOM.btnRetake.addEventListener('click', startCameraFlow);
-  DOM.btnLevelReset.addEventListener('click', ()=>{ STATE.smoothNx=0; STATE.smoothNy=0; });
-  DOM.btnPermission.addEventListener('click', requestSensorPermission);
-  
-  // Галерея
-  DOM.btnGallery.addEventListener('click', ()=>{ DOM.fileGallery.click(); });
-  DOM.fileGallery.addEventListener('change', (e)=>{ 
-    const file=e.target.files[0]; 
-    if(file){ STATE.lastBlob=file; DOM.photo.src=URL.createObjectURL(file); showPhotoUI(); } 
+  // Init
+  document.addEventListener('DOMContentLoaded', () => {
+    initCalendar();
   });
-
-  // ! ГЛАВНАЯ СВЯЗКА: ОТПРАВИТЬ В ЧАТ !
-  DOM.btnSend.addEventListener('click', ()=>{
-     if(!STATE.lastBlob) return;
-     const comment = sanitizeComment(DOM.comment.value);
-     
-     // 1. Закрываем оверлей
-     closeCameraOverlay();
-     
-     // 2. Передаем данные в чат
-     handleCameraResult(STATE.lastBlob, comment);
-     
-     // 3. Сброс
-     DOM.comment.value = '';
-     DOM.photo.src = '';
-  });
-
-  window.addEventListener('resize', computeLevelRadius);
 
 </script>
 </body>
