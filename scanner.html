@@ -15,7 +15,7 @@
     --text-main: #ffffff;
     --text-muted: rgba(255, 255, 255, 0.55);
     
-    --surface-glass: rgba(255, 255, 255, 0.08); /* Чуть светлее стекло */
+    --surface-glass: rgba(255, 255, 255, 0.08);
     --surface-border: rgba(255, 255, 255, 0.12);
     
     --acc-orange: #ff9f0a;
@@ -43,7 +43,6 @@
   /* === FX BACKGROUND === */
   .fx-layer { position: fixed; inset: 0; z-index: -1; pointer-events: none; }
   .orb { position: absolute; border-radius: 50%; filter: blur(90px); opacity: 0.5; animation: float 25s infinite linear; }
-  /* Поднял шары чуть выше, чтобы они светили под календарем */
   .orb-1 { width: 320px; height: 320px; background: radial-gradient(circle, #5e60ce 0%, transparent 70%); top: -15%; left: -20%; }
   .orb-2 { width: 280px; height: 280px; background: radial-gradient(circle, #0a84ff 0%, transparent 70%); bottom: 10%; right: -10%; animation-direction: reverse; }
   .noise { position: fixed; inset: 0; opacity: 0.05; background: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
@@ -52,7 +51,7 @@
   /* === CALENDAR STICKY HEADER === */
   .calendar-sticky {
     position: sticky; top: 0; z-index: 50;
-    /* Убрал темный фон, сделал матовое стекло */
+    /* Прозрачность и размытие для эффекта стекла */
     background: rgba(20, 20, 20, 0.2); 
     backdrop-filter: blur(50px); -webkit-backdrop-filter: blur(50px);
     border-bottom: 1px solid rgba(255,255,255,0.08);
@@ -76,7 +75,7 @@
   .calendar-swipe-area {
     width: 100%;
     padding: 0 10px;
-    cursor: grab; /* Курсор руки для десктопа */
+    cursor: grab; /* Курсор для ПК */
   }
   .calendar-swipe-area:active { cursor: grabbing; }
 
@@ -88,11 +87,12 @@
     will-change: transform, opacity;
   }
   
+  /* Анимации свайпа */
   .calendar-grid.anim-left { transform: translateX(-40px); opacity: 0; }
   .calendar-grid.anim-right { transform: translateX(40px); opacity: 0; }
   .calendar-grid.hidden { opacity: 0; transition: none; }
 
-  /* Day Cell */
+  /* Ячейка дня */
   .day-cell {
     height: 52px;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -102,7 +102,8 @@
     position: relative;
     cursor: pointer;
   }
-  /* Hover effect for Desktop */
+  
+  /* Ховер эффект только для ПК */
   @media (hover: hover) {
     .day-cell:hover:not(.selected) { background: rgba(255,255,255,0.05); }
   }
@@ -121,16 +122,16 @@
     font-variant-numeric: tabular-nums;
   }
 
-  /* Selected State */
+  /* Состояние: Выбран */
   .day-cell.selected {
     background: #fff;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.3); /* Тень для объема */
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
     transform: scale(1);
   }
   .day-cell.selected .dc-name { color: rgba(0,0,0,0.5); font-weight: 700; }
   .day-cell.selected .dc-num { color: #000; font-weight: 800; }
 
-  /* Today Marker */
+  /* Маркер "Сегодня" */
   .day-cell.is-today::after {
     content: ''; position: absolute; bottom: 5px;
     width: 4px; height: 4px; border-radius: 50%;
@@ -145,6 +146,7 @@
     overflow-y: auto;
     padding-bottom: 120px;
     -webkit-overflow-scrolling: touch;
+    /* Плавное исчезновение контента под хедером */
     mask-image: linear-gradient(to bottom, transparent 0%, black 15px);
     -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 15px);
   }
@@ -451,6 +453,7 @@
   // === 1. COMPACT CALENDAR LOGIC (Touch & Mouse Support) ===
   let currentWeekStart = getStartOfWeek(new Date());
   let selectedDate = new Date();
+  let isSwipeAction = false; // Флаг, чтобы отличать свайп от клика
 
   function getStartOfWeek(date) {
     const d = new Date(date);
@@ -490,6 +493,9 @@
       el.innerHTML = `<div class="dc-name">${weekDays[i]}</div><div class="dc-num">${d.getDate()}</div>`;
       
       el.onclick = () => {
+        // Если это был свайп (перетаскивание), то клик игнорируем
+        if(isSwipeAction) return; 
+
         document.querySelectorAll('.day-cell').forEach(c => c.classList.remove('selected'));
         el.classList.add('selected');
         selectedDate = new Date(d);
@@ -524,23 +530,29 @@
     // Touch Events
     area.addEventListener('touchstart', (e) => {
         startX = e.changedTouches[0].screenX;
+        isSwipeAction = false;
     }, {passive: true});
 
     area.addEventListener('touchend', (e) => {
         const diff = startX - e.changedTouches[0].screenX;
-        if(Math.abs(diff) > 40) changeWeek(diff > 0 ? 1 : -1);
+        if(Math.abs(diff) > 40) {
+            isSwipeAction = true;
+            changeWeek(diff > 0 ? 1 : -1);
+        }
     }, {passive: true});
 
     // Mouse Events (Desktop)
     area.addEventListener('mousedown', (e) => {
         startX = e.clientX;
         isDragging = true;
+        isSwipeAction = false;
         area.style.cursor = 'grabbing';
     });
 
     area.addEventListener('mousemove', (e) => {
         if(!isDragging) return;
-        // Optional: Add visual drag feedback here if desired
+        e.preventDefault(); // Запрещаем выделение текста при драге
+        // Можно добавить визуальный сдвиг сетки здесь для красоты
     });
 
     area.addEventListener('mouseup', (e) => {
@@ -548,7 +560,11 @@
         isDragging = false;
         area.style.cursor = 'grab';
         const diff = startX - e.clientX;
-        if(Math.abs(diff) > 40) changeWeek(diff > 0 ? 1 : -1);
+        
+        if(Math.abs(diff) > 40) {
+            isSwipeAction = true; // Помечаем, что это был свайп
+            changeWeek(diff > 0 ? 1 : -1);
+        }
     });
 
     area.addEventListener('mouseleave', () => {
@@ -600,11 +616,22 @@
   const dots = document.querySelectorAll('.dot');
   
   // Mouse Drag for Carousel
-  let isDown = false; let startX; let scrollLeft;
-  track.addEventListener('mousedown', (e) => { isDown = true; track.classList.add('active'); startX = e.pageX - track.offsetLeft; scrollLeft = track.scrollLeft; });
-  track.addEventListener('mouseleave', () => { isDown = false; track.classList.remove('active'); });
-  track.addEventListener('mouseup', () => { isDown = false; track.classList.remove('active'); });
-  track.addEventListener('mousemove', (e) => { if(!isDown) return; e.preventDefault(); const x = e.pageX - track.offsetLeft; const walk = (x - startX) * 2; track.scrollLeft = scrollLeft - walk; });
+  let isDown = false; let startXCarousel; let scrollLeft;
+  track.addEventListener('mousedown', (e) => { 
+      isDown = true; 
+      startXCarousel = e.pageX - track.offsetLeft; 
+      scrollLeft = track.scrollLeft; 
+      track.style.cursor = 'grabbing';
+  });
+  track.addEventListener('mouseleave', () => { isDown = false; track.style.cursor = 'grab'; });
+  track.addEventListener('mouseup', () => { isDown = false; track.style.cursor = 'grab'; });
+  track.addEventListener('mousemove', (e) => { 
+      if(!isDown) return; 
+      e.preventDefault(); 
+      const x = e.pageX - track.offsetLeft; 
+      const walk = (x - startXCarousel) * 2; // Скорость прокрутки
+      track.scrollLeft = scrollLeft - walk; 
+  });
 
   track.addEventListener('scroll', () => {
     const idx = Math.round(track.scrollLeft / track.clientWidth);
