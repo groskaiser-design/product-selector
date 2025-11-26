@@ -432,6 +432,14 @@
   
   #sentinel { height: 20px; width: 100%; opacity: 0; pointer-events: none; }
 
+/* 🔥 ПРЯЧЕМ НИЖНЮЮ КНОПКУ ПРИ ПОИСКЕ */
+  body.search-active .btn-save {
+    transform: translateY(150px) !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+  }
+
+  
 </style>
 </head>
 <body>
@@ -456,7 +464,7 @@
       </div>
     </div>
 
-    <button class="search-cancel-btn" onclick="exitSearchMode()">Отмена</button>
+    <button class="search-cancel-btn" id="btnSearchCancel" onclick="exitSearchMode()">Отмена</button>
   
   </div>
 </div>
@@ -659,6 +667,7 @@
     searchInput: document.getElementById('searchInput'),
     searchClear: document.getElementById('searchClear'),
     searchResults: document.getElementById('searchResults'),
+    btnSearchCancel: document.getElementById('btnSearchCancel'),
     btnSave: document.getElementById('btnSave'),
     saveBtnText: document.getElementById('saveBtnText'),
     sentinel: document.getElementById('sentinel')
@@ -838,7 +847,8 @@ card.innerHTML = `
   styleSheet.innerText = `@keyframes fadeInUp { to { opacity: 1; transform: translateY(0); } }`;
   document.head.appendChild(styleSheet);
 
-  function toggleProduct(id, rowEl) {
+function toggleProduct(id, rowEl) {
+    // 1. Ставим/убираем галочку
     if (state.selected.has(id)) {
       state.selected.delete(id);
       rowEl.classList.remove('selected');
@@ -846,7 +856,20 @@ card.innerHTML = `
       state.selected.add(id);
       rowEl.classList.add('selected');
     }
-    saveSelectionToCache(); // 🔥 SAVE ON EVERY CHANGE
+    
+    // 👇 2. ВОТ ЭТОГО КУСКА НЕ ХВАТАЛО: Меняем текст кнопки в поиске
+    if (state.searchMode && el.btnSearchCancel) {
+        if (state.selected.size > 0) {
+            el.btnSearchCancel.textContent = 'Выбрать';
+            el.btnSearchCancel.style.fontWeight = '600';
+        } else {
+            el.btnSearchCancel.textContent = 'Отмена';
+            el.btnSearchCancel.style.fontWeight = '500';
+        }
+    }
+
+    // 3. Сохраняем и обновляем интерфейс
+    saveSelectionToCache(); 
     updateSaveButton();
     if (state.activeCatId && !state.searchMode) updateSelectAllBtn();
   }
@@ -902,27 +925,6 @@ card.innerHTML = `
     }
   }
 
-  function enterSearchMode() {
-    state.searchMode = true;
-    el.viewCats.classList.remove('active');
-    el.viewList.classList.remove('active');
-    el.viewSearch.classList.add('active');
-    if(tg) tg.BackButton.show();
-  }
-
-  function exitSearchMode() {
-    state.searchMode = false;
-    el.viewSearch.classList.remove('active');
-    el.searchResults.style.display = 'none';
-    el.searchInput.value = '';
-    if (state.activeCatId) el.viewList.classList.add('active');
-    else {
-      el.viewCats.classList.add('active');
-      renderCategories();
-      if(tg) tg.BackButton.show(); 
-    }
-  }
-
   function clearSearch() { exitSearchMode(); }
 
   function saveSelection() {
@@ -947,8 +949,19 @@ card.innerHTML = `
   function enterSearchMode() {
     state.searchMode = true;
     
-    // 🔥 ВОТ ЭТОЙ СТРОКИ НЕ ХВАТАЛО:
-    document.body.classList.add('search-active'); 
+    // 1. Проверяем: если товары уже выбраны — кнопка сразу "Выбрать"
+    if (el.btnSearchCancel) {
+        if (state.selected.size > 0) {
+            el.btnSearchCancel.textContent = 'Выбрать';
+            el.btnSearchCancel.style.fontWeight = '600';
+        } else {
+            el.btnSearchCancel.textContent = 'Отмена';
+            el.btnSearchCancel.style.fontWeight = '500';
+        }
+    }
+
+    // 2. Включаем режим (выезжает кнопка справа, скрывается Save)
+    document.body.classList.add('search-active');
     
     el.viewCats.classList.remove('active');
     el.viewList.classList.remove('active');
@@ -959,21 +972,25 @@ card.innerHTML = `
   function exitSearchMode() {
     state.searchMode = false;
     
-    // 🔥 И ВОТ ЭТИХ СТРОК НЕ ХВАТАЛО:
-    document.body.classList.remove('search-active'); // Прячем кнопку "Отмена"
-    el.searchInput.blur(); // Принудительно скрываем клавиатуру
+    // 1. Выключаем режим
+    document.body.classList.remove('search-active'); 
+    el.searchInput.blur(); // Скрываем клавиатуру
     
+    // 2. Чистим поле и вид
     el.viewSearch.classList.remove('active');
     el.searchResults.style.display = 'none';
     el.searchInput.value = '';
     
-    if (state.activeCatId) el.viewList.classList.add('active');
-    else {
-      el.viewCats.classList.add('active');
-      renderCategories();
-      // На главной кнопка "Назад" обычно не нужна, если это стартовая страница
-      // if(tg) tg.BackButton.hide(); 
+    // 3. Возвращаемся назад
+    if (state.activeCatId) {
+        el.viewList.classList.add('active');
+    } else {
+        el.viewCats.classList.add('active');
+        renderCategories();
     }
+    
+    // 4. 🔥 Обновляем нижнюю кнопку, чтобы она выехала
+    updateSaveButton();
   }
 </script>
 </body>
