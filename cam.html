@@ -57,6 +57,24 @@
     pointer-events: none;
   }
 
+  /* Focus Box Animation */
+  .focus-box {
+    position: absolute;
+    width: 70px; height: 70px;
+    border: 2px solid var(--acc-orange);
+    border-radius: 8px;
+    transform: translate(-50%, -50%) scale(1.3);
+    opacity: 0;
+    pointer-events: none;
+    z-index: 50;
+    transition: transform 0.2s ease-out, opacity 0.2s ease-out;
+    box-shadow: 0 0 15px rgba(255, 159, 10, 0.4);
+  }
+  .focus-box.active {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+  }
+
   /* === UI LAYERS === */
   .ui-layer {
     position: absolute;
@@ -236,8 +254,7 @@
   <div class="cam-viewport">
     <video id="video" autoplay playsinline muted></video>
     <canvas id="uiCanvas"></canvas>
-    
-    <div class="ui-layer">
+    <div id="focusBox" class="focus-box"></div> <div class="ui-layer">
       <div class="top-bar">
         <div class="icon-btn" id="btnClose">✕</div>
         <div class="status-chip" id="lvlChip">
@@ -322,7 +339,8 @@
     finalImg: document.getElementById('finalPhoto'),
     btnSend: document.getElementById('btnSend'),
     fileInput: document.getElementById('fileInput'),
-    commentInput: document.getElementById('commentInput')
+    commentInput: document.getElementById('commentInput'),
+    focusBox: document.getElementById('focusBox')
   };
 
   // --- 1. CAMERA INIT ---
@@ -337,7 +355,7 @@
         video: {
           facingMode: facing,
           aspectRatio: { ideal: TARGET_ASPECT },
-          width: { ideal: 1920 }, // Full HD достаточно для Smart Burst
+          width: { ideal: 1920 }, // Full HD для Smart Burst
           height: { ideal: 2560 }
         }
       };
@@ -356,6 +374,9 @@
       window.addEventListener('resize', resizeCanvas);
       requestAnimationFrame(drawLoop);
       checkSensorPerms();
+      
+      // Включаем Tap to Focus
+      initTapToFocus();
 
     } catch (e) {
       console.warn("Camera Init Error", e);
@@ -411,7 +432,6 @@
     } else {
       DOM.lvlDot.classList.remove('ok');
       
-      // Умные подсказки причины блокировки
       if (state.shake > MAX_SHAKE) {
           DOM.lvlText.textContent = "Не тряси!";
       } else {
@@ -453,7 +473,7 @@
 
     const dist = Math.hypot(dx, dy);
     
-    // ЛОГИКА ГОТОВНОСТИ: Ровно + Не трясется
+    // ЛОГИКА ГОТОВНОСТИ
     const isLevel = (dist + rBubble) <= rTarget;
     const isStable = state.shake < MAX_SHAKE;
     const isReady = isLevel && isStable;
@@ -484,7 +504,7 @@
     requestAnimationFrame(drawLoop);
   }
 
-  // --- 4. SMART BURST CAPTURE (Серия снимков) ---
+  // --- 4. SMART BURST CAPTURE ---
   DOM.shutter.addEventListener('click', async () => {
     if (state.isCapturing) return; 
     if (!state.levelOK) { 
@@ -499,7 +519,7 @@
         
         DOM.shutter.style.transform = 'scale(0.8)';
         DOM.shutter.style.opacity = '0.5'; 
-        DOM.btnSend.textContent = 'Выбор лучшего...'; // На всякий случай
+        DOM.btnSend.textContent = 'Выбор лучшего...';
 
         const vid = DOM.video;
         const canvas = document.createElement('canvas');
@@ -554,7 +574,7 @@
     state.photoBlob = blob;
     DOM.finalImg.src = URL.createObjectURL(blob);
     DOM.preview.style.display = 'flex';
-    DOM.btnSend.textContent = 'Готово'; // Сброс текста кнопки
+    DOM.btnSend.textContent = 'Готово'; 
     DOM.btnSend.disabled = false;
   }
 
@@ -582,7 +602,6 @@
           let width = img.width;
           let height = img.height;
 
-          // Масштабируем
           if (width > maxWidth) {
             height = Math.round(height * (maxWidth / width));
             width = maxWidth;
@@ -603,8 +622,10 @@
   }
 
   async function sendPhoto() {
-    // !!! ВСТАВЬ СВОЙ URL СЮДА !!!
+    // =========================================================
+    // !!! ВАЖНО: ВСТАВЬ СВОЮ ССЫЛКУ GAS СЮДА !!!
     const GAS_URL = 'ВСТАВЬ_СЮДА_ТВОЙ_GAS_URL'; 
+    // =========================================================
 
     if (GAS_URL.includes('ВСТАВЬ')) {
         alert("Ошибка настройки: не указан URL скрипта!");
@@ -619,7 +640,7 @@
     haptic('light');
 
     try {
-      // Сжимаем (пользователь не видит этого, он видит HD)
+      // Сжимаем для отправки (1280px / 0.8 quality)
       const base64ForServer = await compressImage(state.photoBlob, 1280, 0.8);
       
       btn.textContent = 'Анализ AI...';
@@ -646,7 +667,9 @@
       btn.textContent = 'Успешно!';
       
       setTimeout(() => {
-          retake(); // Или tg.close()
+          // Выбери поведение: закрыть или переснять
+          retake(); 
+          // tg.close(); 
       }, 1500);
 
     } catch (error) {
@@ -658,9 +681,51 @@
     }
   }
 
-  // --- 6. UTILS (Sharpness & Haptic) ---
+  // --- 6. UTILS (Focus, Sharpness, Haptic) ---
 
-  // Алгоритм резкости (Laplacian approximation)
+  // Tap-to-Focus Logic
+  function initTapToFocus() {
+    const box = DOM.focusBox;
+    const viewport = document.querySelector('.cam-viewport');
+
+    viewport.addEventListener('click', async (e) => {
+      // Игнорируем UI
+      if (e.target.closest('.icon-btn') || e.target.closest('.shutter-outer')) return;
+
+      const rect = viewport.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+
+      // Анимация
+      box.style.left = x + 'px';
+      box.style.top = y + 'px';
+      box.classList.add('active');
+      haptic('light');
+
+      setTimeout(() => box.classList.remove('active'), 1500);
+
+      if (!state.track) return;
+
+      try {
+        const capabilities = state.track.getCapabilities();
+        if (capabilities.pointsOfInterest) {
+          // Android API
+          const normX = x / rect.width;
+          const normY = y / rect.height;
+          await state.track.applyConstraints({
+            advanced: [{ pointsOfInterest: [{ x: normX, y: normY }] }]
+          });
+        } else {
+            // iOS Hack (reset focus)
+            await state.track.applyConstraints({ advanced: [{ focusMode: 'manual' }] });
+            setTimeout(async () => {
+                await state.track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
+            }, 200);
+        }
+      } catch (err) { }
+    });
+  }
+
   function getSharpnessScore(ctx, width, height) {
     const w = Math.floor(width / 2);
     const h = Math.floor(height / 2);
