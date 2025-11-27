@@ -288,11 +288,10 @@
 
 <script>
 /* =========================================
-   SCANNER CORE LOGIC
+   SCANNER CORE LOGIC (Оставляем без изменений)
    ========================================= */
 function haptic(type) { if (navigator.vibrate) navigator.vibrate(10); if(window.Telegram?.WebApp?.HapticFeedback) window.Telegram.WebApp.HapticFeedback.impactOccurred(type || 'light'); }
 
-// UI HELPER: Handle text input vs Camera
 const txt = document.getElementById('msgInput');
 const btn = document.getElementById('actionBtn');
 const iCam = document.getElementById('iconCam');
@@ -313,13 +312,12 @@ function handleAction() {
       txt.value=''; txt.blur();
       btn.classList.replace('mode-send','mode-cam'); iCam.style.display='block'; iSend.style.display='none';
    } else {
-      // OPEN CAMERA MODULE
       CamModule.open();
    }
 }
 
 /* =========================================
-   CAMERA MODULE LOGIC
+   CAMERA MODULE v3 (BURST + ACCELEROMETER ONLY)
    ========================================= */
 const CamModule = {
   el: document.getElementById('camModule'),
@@ -329,55 +327,131 @@ const CamModule = {
   shutter: document.getElementById('shutterBtn'),
   preview: document.getElementById('camPreview'),
   finalImg: document.getElementById('camFinalImg'),
+  
+  // State
   stream: null,
-  track: null,
-  imageCapture: null,
   isLevel: false,
-  angleX: 0, angleY: 0,
   loopId: null,
+  
+  // Accelerometer Data
+  accX: 0, accY: 0, // Наклон (Гравитация)
+  shakeScore: 0,    // Тряска (Рывки)
 
   open: async function() {
     this.el.classList.add('visible');
     try {
-       // Init Stream
+       // 1. Video Stream
        const devices = await navigator.mediaDevices.enumerateDevices();
        const hasBack = devices.some(d => d.kind === 'videoinput' && d.label.toLowerCase().includes('back'));
+       
+       // HD разрешение (1080p) - золотая середина для скорости анализа и качества
        const constraints = {
-          video: { facingMode: hasBack ? 'environment' : 'user', height: { ideal: 2160 } }
+          video: { 
+            facingMode: hasBack ? 'environment' : 'user', 
+            width: { ideal: 1920 },
+            height: { ideal: 1080 } 
+          }
        };
        this.stream = await navigator.mediaDevices.getUserMedia(constraints);
-       this.track = this.stream.getVideoTracks()[0];
        this.video.srcObject = this.stream;
        
-       if(window.ImageCapture) this.imageCapture = new ImageCapture(this.track);
+       // 2. ONLY Accelerometer (One sensor for everything)
+       // Используем devicemotion. Оно дает и гравитацию (для уровня), и ускорение (для тряски)
+       if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+           // iOS 13+ requires permission
+           try { await DeviceMotionEvent.requestPermission(); } catch(e){}
+       }
+       window.addEventListener('devicemotion', this.handleMotion);
        
-       // Start Sensors
-       window.addEventListener('deviceorientation', this.handleOrient);
-       
-       // Start UI Loop
        this.resize();
        this.loop();
     } catch(e) {
-       alert('Camera Error: ' + e);
+       alert('Ошибка камеры: ' + e);
        this.close();
     }
   },
 
   close: function() {
     this.el.classList.remove('visible');
-    // Stop Stream to save battery
-    if(this.track) { this.track.stop(); this.track = null; }
-    if(this.stream) { this.stream.getTracks().forEach(t=>t.stop()); this.stream = null; }
-    window.removeEventListener('deviceorientation', this.handleOrient);
+    if(this.stream) { this.stream.getTracks().forEach(t => t.stop()); this.stream = null; }
+    window.removeEventListener('devicemotion', this.handleMotion);
     cancelAnimationFrame(this.loopId);
-    this.retake(); // clear preview
+    this.retake();
   },
 
-  handleOrient: function(e) {
-    if(e.beta !== null) {
-      CamModule.angleX = e.beta; // Tilt Front/Back
-      CamModule.angleY = e.gamma; // Tilt Left/Right
+  // === ЕДИНЫЙ ОБРАБОТЧИК ДАТЧИКОВ ===
+  handleMotion: function(e) {
+    const acc = e.accelerationIncludingGravity;
+    if(!acc) return;
+
+    // 1. ЛОГИКА УРОВНЯ (Low Pass Filter - плавность)
+    // Гравитация ~9.8 м/с². Если телефон лежит плоско: X=0, Y=0, Z=9.8
+    // Мы берем X и Y, чтобы понять наклон.
+    const alpha = 0.2; // Коэффициент сглаживания
+    CamModule.accX = (CamModule.accX * (1-alpha)) + (acc.x * alpha);
+    CamModule.accY = (CamModule.accY * (1-alpha)) + (acc.y * alpha);
+
+    // 2. ЛОГИКА ТРЯСКИ (High Pass Filter - резкость)
+    // e.acceleration (без гравитации) показывает именно рывки руки
+    const pureAcc = e.acceleration; 
+    if(pureAcc) {
+        const jerk = Math.abs(pureAcc.x) + Math.abs(pureAcc.y) + Math.abs(pureAcc.z);
+        CamModule.shakeScore = (CamModule.shakeScore * 0.8) + (jerk * 2);
     }
+  },
+
+  // === ВИЗУАЛИЗАЦИЯ ===
+  loop: function() {
+     const w = CamModule.canvas.width; const h = CamModule.canvas.height;
+     CamModule.ctx.clearRect(0,0,w,h);
+     
+     const cx = w/2; const cy = h/2;
+     
+     // Рисуем уровень на основе Акселерометра
+     // Умножаем на 40, чтобы усилить визуальное смещение пузырька
+     const dx = -CamModule.accX * 40; 
+     const dy = CamModule.accY * 40;
+     const dist = Math.hypot(dx,dy);
+     
+     // Порог: если отклонение < 15px и тряска небольшая
+     CamModule.isLevel = (dist < 20); 
+
+     // Цвет кольца: Зеленый (ОК) / Желтый (Тряска) / Белый (Криво)
+     let color = 'rgba(255,255,255,0.7)';
+     if (CamModule.isLevel) {
+        color = (CamModule.shakeScore > 2) ? '#ffcc00' : '#30d158'; // Желтый если трясет, Зеленый если идеал
+     }
+
+     // Рисуем UI
+     CamModule.ctx.beginPath();
+     CamModule.ctx.arc(cx, cy, 20, 0, Math.PI*2);
+     CamModule.ctx.strokeStyle = color;
+     CamModule.ctx.lineWidth = 4;
+     CamModule.ctx.stroke();
+     
+     CamModule.ctx.beginPath();
+     // Ограничиваем движение пузырька кругом
+     const limit = 20;
+     const angle = Math.atan2(dy, dx);
+     const r = Math.min(dist, limit);
+     CamModule.ctx.arc(cx + Math.cos(angle)*r, cy + Math.sin(angle)*r, 12, 0, Math.PI*2);
+     CamModule.ctx.fillStyle = color;
+     CamModule.ctx.fill();
+
+     // Обновляем кнопку
+     const dot = document.getElementById('lvlDot');
+     const txt = document.getElementById('lvlText');
+     if(CamModule.isLevel) {
+        dot.classList.add('ok'); 
+        txt.innerText = (CamModule.shakeScore > 2) ? "Замрите..." : "Отлично";
+        CamModule.shutter.classList.remove('disabled');
+     } else {
+        dot.classList.remove('ok'); 
+        txt.innerText = "Выровняйте";
+        CamModule.shutter.classList.add('disabled');
+     }
+
+     CamModule.loopId = requestAnimationFrame(CamModule.loop);
   },
 
   resize: function() {
@@ -385,66 +459,81 @@ const CamModule = {
      this.canvas.height = window.innerHeight;
   },
 
-  loop: function() {
-     const w = CamModule.canvas.width; const h = CamModule.canvas.height;
-     CamModule.ctx.clearRect(0,0,w,h);
-     
-     // Level Logic
-     const cx = w/2; const cy = h/2;
-     const maxOff = 60;
-     const dx = (Math.max(-20, Math.min(20, CamModule.angleY))/20) * maxOff;
-     const dy = (Math.max(-20, Math.min(20, CamModule.angleX))/20) * maxOff;
-     const dist = Math.hypot(dx,dy);
-     
-     CamModule.isLevel = dist < 5; // Tolerance
-     
-     // Draw UI
-     CamModule.ctx.beginPath();
-     CamModule.ctx.arc(cx, cy, 16, 0, Math.PI*2);
-     CamModule.ctx.strokeStyle = CamModule.isLevel ? '#30d158' : 'rgba(255,255,255,0.7)';
-     CamModule.ctx.lineWidth = 3;
-     CamModule.ctx.stroke();
-     
-     CamModule.ctx.beginPath();
-     CamModule.ctx.arc(cx+dx, cy+dy, 12, 0, Math.PI*2);
-     CamModule.ctx.fillStyle = CamModule.isLevel ? '#30d158' : 'rgba(255,255,255,0.7)';
-     CamModule.ctx.fill();
-
-     // Update DOM UI
-     const dot = document.getElementById('lvlDot');
-     const txt = document.getElementById('lvlText');
-     if(CamModule.isLevel) {
-        dot.classList.add('ok'); txt.innerText = "Ровно";
-        CamModule.shutter.classList.remove('disabled');
-        CamModule.shutter.classList.add('active');
-     } else {
-        dot.classList.remove('ok'); txt.innerText = "Выровняйте";
-        CamModule.shutter.classList.add('disabled');
-        CamModule.shutter.classList.remove('active');
-     }
-
-     CamModule.loopId = requestAnimationFrame(CamModule.loop);
+  // === АЛГОРИТМ РЕЗКОСТИ (Edge Detection) ===
+  getSharpnessScore: function(ctx, w, h) {
+      // Анализируем только центр кадра (50% ширины/высоты), там обычно еда
+      const centerW = w * 0.5;
+      const centerH = h * 0.5;
+      const startX = (w - centerW) / 2;
+      const startY = (h - centerH) / 2;
+      
+      const imageData = ctx.getImageData(startX, startY, centerW, centerH);
+      const data = imageData.data;
+      let score = 0;
+      
+      // Проходим с шагом 8 (для скорости), сравниваем соседние пиксели
+      // Чем больше разница между соседями, тем резче границы
+      for (let i = 0; i < data.length; i += 32) { 
+          const r = data[i];
+          const g = data[i+1];
+          const b = data[i+2];
+          
+          // Сравниваем с пикселем, который на 4 шага дальше
+          if (i + 16 < data.length) {
+             const r2 = data[i+16];
+             const g2 = data[i+17];
+             const b2 = data[i+18];
+             score += Math.abs(r - r2) + Math.abs(g - g2) + Math.abs(b - b2);
+          }
+      }
+      return score;
   },
 
+  // === BURST SHOOTING (СЕРИЙНАЯ СЪЕМКА) ===
   snap: async function() {
      if(!this.isLevel) { haptic('error'); return; }
-     haptic('heavy');
+     haptic('medium'); // Тактильный отклик начала серии
      
-     // Capture
-     let blob = null;
-     if(this.imageCapture) {
-        try { blob = await this.imageCapture.takePhoto(); } catch(e){}
-     }
-     if(!blob) {
-        // Fallback: Canvas
-        const c = document.createElement('canvas');
-        c.width = this.video.videoWidth; c.height = this.video.videoHeight;
-        c.getContext('2d').drawImage(this.video,0,0);
-        blob = await new Promise(r => c.toBlob(r, 'image/jpeg'));
+     // Блокируем кнопку
+     this.shutter.classList.add('disabled');
+     
+     const shots = [];
+     const tempCanvas = document.createElement('canvas');
+     tempCanvas.width = this.video.videoWidth;
+     tempCanvas.height = this.video.videoHeight;
+     const tCtx = tempCanvas.getContext('2d');
+     
+     // Делаем 3 снимка с паузой 80мс
+     // 1. Сразу (может быть смаз от нажатия)
+     // 2. Через 80мс (стабилизация)
+     // 3. Через 160мс (контрольный)
+     for(let i=0; i<3; i++) {
+        tCtx.drawImage(this.video, 0, 0);
+        
+        // Считаем резкость
+        const sharpness = this.getSharpnessScore(tCtx, tempCanvas.width, tempCanvas.height);
+        
+        // Сохраняем Blob
+        const blob = await new Promise(r => tempCanvas.toBlob(r, 'image/jpeg', 0.85));
+        
+        shots.push({ blob, sharpness });
+        console.log(`Shot ${i+1}: Sharpness Score = ${sharpness}`);
+        
+        await new Promise(r => setTimeout(r, 80)); // Пауза
      }
      
-     this.finalImg.src = URL.createObjectURL(blob);
+     // Выбираем победителя (самый большой score)
+     shots.sort((a, b) => b.sharpness - a.sharpness);
+     const bestShot = shots[0];
+     
+     console.log('Winner:', bestShot);
+     
+     // Показываем результат
+     this.finalImg.src = URL.createObjectURL(bestShot.blob);
      this.preview.style.display = 'flex';
+     haptic('success'); // Подтверждение успеха
+     
+     this.shutter.classList.remove('disabled');
   },
 
   retake: function() {
@@ -455,104 +544,48 @@ const CamModule = {
 
   send: function() {
      haptic('success');
-     const comment = document.getElementById('camComment').value;
-     console.log("Photo + Comment:", comment);
-     
-     // 1. Close Camera
      this.close();
-     
-     // 2. Start AI Flow (The "Army of Bots")
      startProcessingFlow();
   }
 };
 
-// Shutter Click
 CamModule.shutter.addEventListener('click', () => CamModule.snap());
 
-
-/* =========================================
-   AI PROCESS FLOW (Your existing logic)
-   ========================================= */
+// === AI PROCESSING & STARTUP ===
 function startProcessingFlow() {
   document.getElementById('procOverlay').classList.add('active');
-  
-  // Simulation Steps
   const steps = [1,2,3,4];
   let delay = 1000;
-  
   steps.forEach(i => {
      setTimeout(() => {
         const el = document.getElementById('step-'+i);
         if(el) { el.classList.remove('pending'); el.classList.add('active'); }
         haptic('light');
-        if(i>1) {
-           const prev = document.getElementById('step-'+(i-1));
-           prev.classList.remove('active'); prev.classList.add('done');
-        }
+        if(i>1) { document.getElementById('step-'+(i-1)).classList.replace('active','done'); }
      }, delay);
      delay += 1500;
   });
-
-  setTimeout(() => {
-     closeProcessing();
-     openDraftSheet();
-  }, delay + 500);
+  setTimeout(() => { closeProcessing(); openDraftSheet(); }, delay + 500);
 }
 
-function closeProcessing() {
-   document.getElementById('procOverlay').classList.remove('active');
-   // Reset steps
-   setTimeout(() => {
-     document.querySelectorAll('.step').forEach(el => {
-        el.className = 'step pending';
-     });
-   }, 500);
-}
+function closeProcessing() { document.getElementById('procOverlay').classList.remove('active'); setTimeout(() => { document.querySelectorAll('.step').forEach(el => el.className='step pending'); }, 500); }
 
 function openDraftSheet() {
    const list = document.getElementById('draftList');
-   // Mock Data from Synthesizer
-   const items = [
-      { name: "Куриная грудка", w: 145 },
-      { name: "Рис белый", w: 200 },
-      { name: "Соус карри", w: 30 }
-   ];
-   
-   list.innerHTML = items.map(i => `
-      <div class="draft-item">
-         <div style="font-size:20px">🍽️</div>
-         <div class="di-inputs"><input class="di-name" value="${i.name}"></div>
-         <input class="di-weight" type="number" value="${i.w}">
-         <div style="font-size:12px;color:#666">г</div>
-      </div>
-   `).join('');
-
-   document.getElementById('draftOverlay').classList.add('visible');
-   haptic('success');
+   list.innerHTML = `
+      <div class="draft-item"><div style="font-size:20px">🍗</div><div class="di-inputs"><input class="di-name" value="Куриная грудка"></div><input class="di-weight" type="number" value="145"><div style="font-size:12px;color:#666">г</div></div>
+      <div class="draft-item"><div style="font-size:20px">🍚</div><div class="di-inputs"><input class="di-name" value="Рис белый"></div><input class="di-weight" type="number" value="200"><div style="font-size:12px;color:#666">г</div></div>`;
+   document.getElementById('draftOverlay').classList.add('visible'); haptic('success');
 }
-
 function closeDraft() { document.getElementById('draftOverlay').classList.remove('visible'); }
-
-function confirmDraft() {
-   closeDraft();
-   haptic('heavy');
-   // Add to feed (Nutritionist Output)
+function confirmDraft() { closeDraft(); haptic('heavy'); 
    const feed = document.getElementById('feed');
-   const html = `
-     <div class="meal-card">
-        <div class="col-headers"><div class="mh-time">Just now</div><div>Вес</div><div>К</div><div>Б</div><div>Ж</div><div>У</div></div>
-        <div class="prod-item"><div class="pi-name">Куриная грудка</div><div class="pi-val">145</div><div class="pi-val">239</div><div class="pi-val">45</div><div class="pi-val">5</div><div class="pi-val">0</div></div>
-        <div class="prod-item"><div class="pi-name">Рис белый</div><div class="pi-val">200</div><div class="pi-val">260</div><div class="pi-val">5</div><div class="pi-val">0</div><div class="pi-val">56</div></div>
-     </div>
-   `;
-   feed.insertAdjacentHTML('afterbegin', html);
+   feed.insertAdjacentHTML('afterbegin', `<div class="meal-card"><div class="col-headers"><div class="mh-time">Сейчас</div><div>Вес</div><div>К</div><div>Б</div><div>Ж</div><div>У</div></div><div class="prod-item"><div class="pi-name">Куриная грудка</div><div class="pi-val">145</div><div class="pi-val">239</div><div class="pi-val">45</div><div class="pi-val">5</div><div class="pi-val">0</div></div><div class="prod-item"><div class="pi-name">Рис белый</div><div class="pi-val">200</div><div class="pi-val">260</div><div class="pi-val">5</div><div class="pi-val">0</div><div class="pi-val">56</div></div></div>`);
 }
 
-// === BOOT ===
-// Fix layout size
 function setSize() { document.getElementById('appLayout').style.height = window.innerHeight + 'px'; }
-window.addEventListener('resize', setSize);
-setSize();
+window.addEventListener('resize', setSize); setSize();
 </script>
+  
 </body>
 </html>
