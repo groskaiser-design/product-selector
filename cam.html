@@ -315,7 +315,7 @@
     angleX: 0,
     angleY: 0,
     photoBlob: null,
-    isCapturing: false 
+    isCapturing: false // <--- НОВЫЙ ФЛАГ БЛОКИРОВКИ
   };
 
   const DOM = {
@@ -413,6 +413,7 @@
 
   // --- 3. UI LOOPS ---
   function updateUI() {
+    // Если идет съемка - не меняем UI, чтобы не сбивать
     if (state.isCapturing) return;
 
     if (state.levelOK) {
@@ -429,6 +430,7 @@
   }
 
   function resizeCanvas() {
+    // ЗАЩИТА ОТ МЕРЦАНИЯ: Меняем размер только если он реально изменился
     const w = window.innerWidth;
     const h = window.innerHeight;
     if (DOM.canvas.width !== w || DOM.canvas.height !== h) {
@@ -449,6 +451,7 @@
     const rTarget = 16;
     const maxOffset = 60; 
     
+    // Защита от NaN (если датчики "отвалились" при тряске)
     const rawX = (isNaN(state.angleY) || state.angleY === null) ? 0 : state.angleY;
     const rawY = (isNaN(state.angleX) || state.angleX === null) ? 0 : state.angleX;
     
@@ -459,6 +462,7 @@
     const dist = Math.hypot(dx, dy);
     const isInside = (dist + rBubble) <= rTarget;
 
+    // Обновляем статус только если мы НЕ снимаем в данный момент
     if (state.levelOK !== isInside && !state.isCapturing) {
       state.levelOK = isInside;
       updateUI();
@@ -468,13 +472,16 @@
     ctx.shadowBlur = 4;
     ctx.shadowColor = 'rgba(0,0,0,0.5)';
     
+    // Внешний круг
     ctx.beginPath();
     ctx.arc(cx, cy, rTarget, 0, Math.PI * 2); 
+    // Если идет съемка - держим зеленым, иначе по факту
     const color = (state.levelOK || state.isCapturing) ? '#30d158' : 'rgba(255,255,255,0.85)';
     ctx.strokeStyle = color;
     ctx.lineWidth = 3;
     ctx.stroke();
 
+    // Пузырек
     ctx.beginPath();
     ctx.arc(cx + dx, cy + dy, rBubble, 0, Math.PI * 2); 
     ctx.fillStyle = color;
@@ -484,18 +491,21 @@
     requestAnimationFrame(drawLoop);
   }
 
-  // --- 4. CAPTURE LOGIC ---
+  // --- 4. CAPTURE LOGIC (FIXED) ---
   DOM.shutter.addEventListener('click', async () => {
+    // 1. БЛОКИРОВКА ПОВТОРНЫХ НАЖАТИЙ
     if (state.isCapturing) return; 
     if (!state.levelOK) { haptic('error'); return; }
 
     try {
-        state.isCapturing = true; 
+        state.isCapturing = true; // Блокируем
         haptic('heavy');
         
+        // Визуальная реакция
         DOM.shutter.style.transform = 'scale(0.8)';
-        DOM.shutter.style.opacity = '0.5'; 
+        DOM.shutter.style.opacity = '0.5'; // Показываем, что занято
 
+        // Пауза, чтобы дать анимации проиграться перед тяжелой задачей
         await new Promise(r => setTimeout(r, 50));
 
         if (state.imageCapture) {
@@ -512,6 +522,7 @@
         c.height = vid.videoHeight;
         c.getContext('2d').drawImage(vid, 0, 0);
         
+        // Ждем конвертации (Promise wrapper)
         await new Promise(resolve => {
             c.toBlob(blob => {
                 showPreview(blob);
@@ -524,10 +535,11 @@
         haptic('error');
         alert("Не удалось сделать фото. Держите телефон стабильнее.");
     } finally {
+        // РАЗБЛОКИРОВКА (всегда, даже при ошибке)
         state.isCapturing = false;
         DOM.shutter.style.transform = '';
         DOM.shutter.style.opacity = '';
-        updateUI(); 
+        updateUI(); // Возвращаем актуальный цвет
     }
   });
 
@@ -544,107 +556,26 @@
     DOM.finalImg.src = '';
     state.photoBlob = null;
     DOM.commentInput.value = ''; 
-    DOM.btnSend.textContent = 'Готово';
-    DOM.btnSend.disabled = false;
   }
 
-  // --- 5. COMPRESSION & SENDING LOGIC (NEW) ---
-
-  // Функция умного сжатия
-  function compressImage(blob, maxWidth, quality) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(blob);
-      reader.onload = event => {
-        const img = new Image();
-        img.src = event.target.result;
-        img.onload = () => {
-          const elem = document.createElement('canvas');
-          let width = img.width;
-          let height = img.height;
-
-          // Масштабируем
-          if (width > maxWidth) {
-            height = Math.round(height * (maxWidth / width));
-            width = maxWidth;
-          }
-
-          elem.width = width;
-          elem.height = height;
-          const ctx = elem.getContext('2d');
-          ctx.drawImage(img, 0, 0, width, height);
-
-          // Получаем легкий Base64
-          const dataUrl = elem.toDataURL('image/jpeg', quality);
-          resolve(dataUrl.split(',')[1]); 
-        };
-        img.onerror = error => reject(error);
-      };
-      reader.onerror = error => reject(error);
-    });
-  }
-
-  async function sendPhoto() {
-    // !!! ВАЖНО: ВСТАВЬ СЮДА СВОЮ ССЫЛКУ ОТ GOOGLE APPS SCRIPT !!!
-    const GAS_URL = 'ВСТАВЬ_СЮДА_ТВОЙ_GAS_URL'; 
-
+  function sendPhoto() {
     const comment = DOM.commentInput.value.trim();
-    const btn = DOM.btnSend;
-    
-    // Блокируем UI
-    btn.textContent = 'Обработка...';
-    btn.disabled = true;
+    DOM.btnSend.textContent = 'Отправка...';
     haptic('light');
 
-    try {
-      console.log("Начинаем сжатие...");
-      // Сжимаем копию для отправки (оригинал на экране остается красивым)
-      const base64ForServer = await compressImage(state.photoBlob, 1280, 0.8);
-      
-      console.log("Готово к отправке, размер:", base64ForServer.length);
-      btn.textContent = 'Анализ AI...';
-
-      const payload = {
-          action: "analyze_food", 
-          image_base64: base64ForServer,
-          user_comment: comment,
-          user_id: tg?.initDataUnsafe?.user?.id || 'debug_user'
-      };
-
-      // Отправляем
-      const response = await fetch(GAS_URL, {
-          method: 'POST',
-          // text/plain нужен для обхода CORS в GAS
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify(payload)
-      });
-
-      const result = await response.json();
-
-      if (!result.success) throw new Error(result.error || "Ошибка сервера");
-
-      // Успех
-      console.log("Ответ сервера:", result.data);
-      haptic('success');
-      btn.textContent = 'Успешно!';
-      
-      // Автоматическое закрытие через 1.5 сек
-      setTimeout(() => {
-          // Выбери один из вариантов:
-          // tg.close(); // 1. Закрыть приложение
-          retake();   // 2. Или просто сбросить экран для нового фото
-          
-          btn.textContent = 'Готово';
-          btn.disabled = false;
-      }, 1500);
-
-    } catch (error) {
-      console.error(error);
-      btn.textContent = 'Ошибка';
-      haptic('error');
-      alert("Не удалось отправить: " + error.message);
-      btn.disabled = false;
-    }
+    console.log("SENDING:", {
+        blobSize: state.photoBlob.size,
+        comment: comment
+    });
+    
+    setTimeout(() => {
+        haptic('success');
+        DOM.btnSend.textContent = 'Успешно!';
+        setTimeout(() => { 
+            retake(); 
+            DOM.btnSend.textContent = 'Готово';
+        }, 1000);
+    }, 1500);
   }
 
   function haptic(style) { if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred(style); }
