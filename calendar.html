@@ -1,1 +1,507 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Ultima Coach Calendar</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  /* === CORE STYLES === */
+  :root {
+    --bg-core: #000000; /* Pure Black as in reference */
+    --text-main: #ffffff;
+    --text-muted: #8E8E93; /* iOS Gray */
+    
+    --surface-glass: rgba(255, 255, 255, 0.07);
+    --surface-border: rgba(255, 255, 255, 0.1);
+    
+    --acc-blue: #0a84ff;
+    --acc-red: #ff453a;
+    --acc-green: #30d158;
+    
+    --grid-h: 60px;
+    --safe-top: env(safe-area-inset-top);
+    --safe-bottom: env(safe-area-inset-bottom);
+  }
 
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; outline: none; }
+  *::-webkit-scrollbar { display: none; }
+
+  body {
+    background-color: var(--bg-core);
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', Roboto, sans-serif;
+    color: var(--text-main);
+    height: 100vh;
+    overflow: hidden;
+    display: flex; flex-direction: column;
+    user-select: none;
+  }
+
+  /* FX LAYER (Subtle) */
+  .fx-layer { position: fixed; inset: 0; z-index: -1; pointer-events: none; }
+  .noise { position: fixed; inset: 0; opacity: 0.03; background: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+
+  /* === HEADER AREA (PIXEL PERFECT COPY) === */
+  .top-area {
+    background: #000000;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    padding-top: calc(14px + var(--safe-top));
+    z-index: 10;
+    flex-shrink: 0;
+    display: flex; flex-direction: column;
+  }
+
+  /* Month Label Row */
+  .header-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 0 16px 12px 16px;
+  }
+  
+  .month-label { 
+    font-family: 'SF Pro Display', sans-serif;
+    font-size: 13px; 
+    font-weight: 700; 
+    color: #8E8E93; /* Muted Grey */
+    text-transform: uppercase; 
+    letter-spacing: 1.5px;
+  }
+
+  .tools-row { display: flex; gap: 20px; }
+  
+  .icon-btn { 
+    width: 24px; height: 24px; 
+    display: flex; align-items: center; justify-content: center; 
+    color: #ffffff; /* White Icons */
+    transition: opacity 0.2s; 
+    cursor: pointer;
+  }
+  .icon-btn:active { opacity: 0.5; }
+  .icon-btn svg { stroke-width: 2.2; }
+
+  /* === CALENDAR STRIP === */
+  .calendar-swipe-area {
+    width: 100%; height: 68px; /* Slightly taller for the bg */
+    overflow: hidden; position: relative;
+    touch-action: pan-y; cursor: grab;
+    margin-bottom: 6px;
+  }
+  .calendar-track {
+    display: flex; width: 300%; height: 100%;
+    transform: translateX(-33.333333%);
+    will-change: transform;
+  }
+  .calendar-week {
+    flex: 1; display: grid; grid-template-columns: repeat(7, 1fr);
+    gap: 0px; height: 100%; padding: 0 6px;
+  }
+  
+  .day-cell {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    border-radius: 12px; 
+    background: transparent;
+    transition: background 0.1s;
+    position: relative; cursor: pointer;
+    margin: 2px; /* Gap between selections */
+  }
+  
+  .dc-name { 
+    font-size: 11px; 
+    font-weight: 600; 
+    color: #8E8E93; 
+    margin-bottom: 2px; 
+    text-transform: uppercase; 
+    letter-spacing: 0.3px;
+  }
+  .dc-num { 
+    font-family: 'SF Pro Display', sans-serif;
+    font-size: 21px; 
+    font-weight: 500; 
+    color: #ffffff; 
+    font-variant-numeric: tabular-nums; 
+    line-height: 1.1;
+  }
+  
+  /* SELECTED STATE (Dark Grey Box) */
+  .day-cell.selected {
+    background: rgba(255,255,255,0.14); /* Dark grey glass */
+  }
+  
+  .day-cell.selected .dc-name { color: rgba(255,255,255,0.6); }
+  .day-cell.selected .dc-num { color: #ffffff; font-weight: 600; }
+
+  /* BLUE DOT (Only on selected, as per image) */
+  .day-cell.selected::after {
+    content: ''; position: absolute; bottom: 5px;
+    width: 4px; height: 4px; border-radius: 50%;
+    background: var(--acc-blue);
+    box-shadow: 0 0 4px rgba(10, 132, 255, 0.4);
+  }
+
+  /* === TIMELINE GRID === */
+  .timeline-container {
+    flex: 1;
+    overflow-y: auto;
+    position: relative;
+    background: transparent;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Grid Lines */
+  .grid-hour {
+    height: var(--grid-h);
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    position: relative;
+    box-sizing: border-box;
+  }
+  .grid-hour::after {
+    content: attr(data-time);
+    position: absolute;
+    top: -7px; left: 16px;
+    font-size: 11px;
+    color: #636366;
+    font-weight: 500;
+  }
+  
+  .grid-hour.off-hours {
+    background: repeating-linear-gradient(45deg, rgba(255,255,255,0.015), rgba(255,255,255,0.015) 10px, transparent 10px, transparent 20px);
+  }
+
+  /* Current Time Line */
+  .current-time-line {
+    position: absolute; left: 50px; right: 0;
+    height: 1px; background: var(--acc-red);
+    z-index: 5; pointer-events: none;
+  }
+  .current-time-line::before {
+    content: ''; position: absolute; left: -4px; top: -3.5px;
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--acc-red);
+  }
+  .current-time-line span {
+    position: absolute; left: -45px; top: -7px;
+    font-size: 11px; font-weight: 600; color: var(--acc-red);
+    width: 40px; text-align: right;
+  }
+
+  /* Session Blocks (Desaturated for minimalist look) */
+  .events-layer {
+    position: absolute; top: 0; left: 56px; right: 8px; bottom: 0;
+    pointer-events: none;
+  }
+  
+  .session-block {
+    position: absolute; width: 100%;
+    background: #1C1C1E; /* iOS Card Color */
+    border-left: 3px solid #3A3A3C;
+    border-radius: 4px;
+    padding: 6px 10px;
+    pointer-events: auto;
+    overflow: hidden;
+    cursor: pointer;
+    border: 1px solid rgba(255,255,255,0.05);
+    z-index: 2;
+  }
+  .session-block:active { background: #2C2C2E; }
+  
+  .sb-title { font-size: 13px; font-weight: 600; color: #fff; margin-bottom: 2px; }
+  .sb-time { font-size: 11px; color: #8E8E93; }
+  .sb-status { position: absolute; top: 6px; right: 6px; font-size: 10px; }
+  
+  /* Status Colors */
+  .session-block.planned { border-left-color: var(--acc-blue); }
+  .session-block.done { border-left-color: var(--acc-green); opacity: 0.7; }
+  .session-block.personal { border-left-color: #BF5AF2; }
+
+  /* === SHEETS & FORMS (Minimalist) === */
+  .sheet-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+    z-index: 50; opacity: 0; pointer-events: none; transition: 0.3s;
+    backdrop-filter: blur(2px);
+  }
+  .sheet-overlay.active { opacity: 1; pointer-events: auto; }
+  
+  .sheet {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    background: #1C1C1E;
+    border-radius: 20px 20px 0 0;
+    padding: 24px 16px calc(24px + var(--safe-bottom)) 16px;
+    transform: translateY(110%);
+    transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+    z-index: 51;
+  }
+  .sheet.open { transform: translateY(0); }
+
+  .sheet-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+  .sh-title { font-size: 18px; font-weight: 700; color: #fff; }
+  .sh-close { color: var(--acc-blue); font-size: 16px; font-weight: 500; }
+
+  .form-group { margin-bottom: 16px; }
+  .form-label { font-size: 12px; color: #8E8E93; margin-bottom: 6px; margin-left: 2px; text-transform: uppercase; }
+  
+  .input-box {
+    width: 100%;
+    background: #2C2C2E;
+    border: none;
+    border-radius: 10px;
+    padding: 12px;
+    color: #fff; font-size: 16px;
+    appearance: none;
+  }
+  .input-row { display: flex; gap: 12px; }
+  
+  select.input-box {
+    background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    background-size: 16px;
+  }
+
+  .btn-primary {
+    width: 100%; padding: 14px;
+    background: #fff;
+    color: #000; font-weight: 600; font-size: 16px;
+    border-radius: 12px; border: none;
+    margin-top: 12px;
+  }
+  .btn-danger { background: rgba(255, 69, 58, 0.15); color: var(--acc-red); }
+
+</style>
+</head>
+<body>
+
+<div class="fx-layer">
+  <div class="noise"></div>
+</div>
+
+<div class="top-area">
+  <!-- Header Row: Title Left, Icons Right -->
+  <div class="header-row">
+    <div class="month-label" id="headerMonth">НОЯБРЬ 2025 Г.</div>
+    
+    <div class="tools-row">
+      <!-- Settings (White) -->
+      <div class="icon-btn" onclick="openSettings()">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+      </div>
+      <!-- Add (White) -->
+      <div class="icon-btn" onclick="openAddSession()">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- SWIPE CALENDAR STRIP -->
+  <div class="calendar-swipe-area" id="swipeArea">
+    <div class="calendar-track" id="calTrack">
+      <div class="calendar-week" id="weekPrev"></div>
+      <div class="calendar-week" id="weekCurr"></div>
+      <div class="calendar-week" id="weekNext"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Vertical Timeline -->
+<div class="timeline-container" id="timeline">
+  <div class="current-time-line" id="timeLine" style="top: 0px">
+    <span id="timeLineText">00:00</span>
+  </div>
+  <div class="events-layer" id="eventsLayer"></div>
+  <div id="gridLayer"></div>
+</div>
+
+<!-- OVERLAY & SHEETS -->
+<div class="sheet-overlay" id="overlay" onclick="closeAllSheets()"></div>
+
+<div class="sheet" id="sessionSheet">
+  <div class="sheet-header">
+    <div class="sh-title" id="sheetTitle">Тренировка</div>
+    <div class="sh-close" onclick="closeAllSheets()">Отмена</div>
+  </div>
+  
+  <div class="form-group">
+    <div class="form-label">Клиент</div>
+    <select class="input-box" id="inpClient">
+      <option value="Алиса В.">Алиса В.</option>
+      <option value="Марк Д.">Марк Д.</option>
+      <option value="Елена К.">Елена К.</option>
+      <option value="Гость">Гость</option>
+    </select>
+  </div>
+
+  <div class="input-row">
+    <div class="form-group" style="flex:1">
+      <div class="form-label">Начало</div>
+      <input type="time" class="input-box" id="inpStart">
+    </div>
+    <div class="form-group" style="flex:1">
+      <div class="form-label">Конец</div>
+      <input type="time" class="input-box" id="inpEnd">
+    </div>
+  </div>
+
+  <div class="form-group">
+    <div class="form-label">Заметка</div>
+    <input type="text" class="input-box" id="inpNote" placeholder="Например: День ног">
+  </div>
+
+  <button class="btn-primary" onclick="saveSession()">Сохранить</button>
+  <button class="btn-primary btn-danger" id="btnDelete" style="display:none" onclick="deleteSession()">Удалить</button>
+</div>
+
+<div class="sheet" id="settingsSheet">
+  <div class="sheet-header">
+    <div class="sh-title">Настройки</div>
+    <div class="sh-close" onclick="closeAllSheets()">Готово</div>
+  </div>
+  <div class="form-group">
+    <div class="form-label">Начало дня</div>
+    <input type="time" class="input-box" id="setStart" value="08:00" onchange="renderGrid()">
+  </div>
+  <div class="form-group">
+    <div class="form-label">Конец дня</div>
+    <input type="time" class="input-box" id="setEnd" value="22:00" onchange="renderGrid()">
+  </div>
+</div>
+
+<script>
+  const GRID_H = 60; 
+  const tg = window.Telegram?.WebApp;
+  
+  // Logic Vars
+  let currentWeekStart = getStartOfWeek(new Date()); 
+  let selectedDate = new Date(); 
+  let isDragging = false, startX = 0, currentTranslate = 0;
+  
+  const area = document.getElementById('swipeArea'); 
+  const track = document.getElementById('calTrack'); 
+  const prevEl = document.getElementById('weekPrev'); 
+  const currEl = document.getElementById('weekCurr'); 
+  const nextEl = document.getElementById('weekNext');
+
+  function getStartOfWeek(date) { 
+    const d = new Date(date); 
+    const day = d.getDay(); 
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1); 
+    return new Date(d.setDate(diff)); 
+  }
+
+  function getDateStr(offset) {
+    const d = new Date(); d.setDate(d.getDate() + offset);
+    return d.toISOString().split('T')[0];
+  }
+
+  let sessions = [
+    { id: 101, dateStr: getDateStr(0), client: 'Алиса В.', start: '09:00', end: '10:00', note: 'Кардио', status: 'done', type: 'planned' },
+    { id: 102, dateStr: getDateStr(0), client: 'Марк Д.', start: '10:30', end: '12:00', note: 'Силовая', status: 'planned', type: 'personal' },
+    { id: 201, dateStr: getDateStr(1), client: 'Иван П.', start: '16:00', end: '17:30', note: 'Ноги', status: 'planned', type: 'personal' }
+  ];
+  let editingId = null; 
+
+  function init() {
+    if(tg) { tg.ready(); tg.expand(); tg.setHeaderColor('#000000'); tg.setBackgroundColor('#000000'); }
+    renderAllWeeks(); initSwipe(); renderGrid(); renderEvents(); startClock();
+    document.getElementById('timeline').scrollTop = 7.5 * GRID_H;
+  }
+
+  function initSwipe() {
+    area.onpointerdown = start; area.onpointermove = move; 
+    area.onpointerup = end; area.onpointercancel = end; area.onpointerleave = end;
+  }
+
+  function renderWeekData(container, startDate) {
+    container.innerHTML = ''; 
+    const weekDays = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+    for(let i=0; i<7; i++) {
+      const d = new Date(startDate); d.setDate(d.getDate() + i);
+      const isSelected = d.toDateString() === selectedDate.toDateString();
+      const el = document.createElement('div'); 
+      el.className = `day-cell ${isSelected ? 'selected' : ''}`;
+      el.innerHTML = `<div class="dc-name">${weekDays[i]}</div><div class="dc-num">${d.getDate()}</div>`;
+      el.onclick = () => { if(Math.abs(currentTranslate) > 5) return; selectedDate = new Date(d); haptic(); renderAllWeeks(); renderEvents(); }; 
+      container.appendChild(el);
+    }
+  }
+
+  function renderAllWeeks() { 
+    renderWeekData(currEl, currentWeekStart); 
+    const dP = new Date(currentWeekStart); dP.setDate(dP.getDate() - 7); renderWeekData(prevEl, dP); 
+    const dN = new Date(currentWeekStart); dN.setDate(dN.getDate() + 7); renderWeekData(nextEl, dN); 
+    
+    // Update Header: "НОЯБРЬ 2025 Г." format
+    const mid = new Date(currentWeekStart); mid.setDate(mid.getDate() + 3); 
+    const m = mid.toLocaleString('ru', { month: 'long' }).toUpperCase();
+    const y = mid.getFullYear();
+    document.getElementById('headerMonth').textContent = `${m} ${y} Г.`;
+  }
+
+  function start(e) { if(e.button!==0)return; isDragging=true; startX=e.clientX; currentTranslate=0; track.style.transition='none'; }
+  function move(e) { if(!isDragging)return; currentTranslate=e.clientX-startX; track.style.transform=`translateX(calc(-33.333333% + ${currentTranslate}px))`; }
+  function end() { 
+    if(!isDragging)return; isDragging=false; track.style.transition='transform 0.3s ease'; 
+    if(currentTranslate > 60) { track.style.transform=`translateX(0%)`; setTimeout(()=>shift(-1),300); }
+    else if(currentTranslate < -60) { track.style.transform=`translateX(-66.666666%)`; setTimeout(()=>shift(1),300); }
+    else track.style.transform=`translateX(-33.333333%)`; 
+  }
+  function shift(dir) { currentWeekStart.setDate(currentWeekStart.getDate() + dir*7); track.style.transition='none'; renderAllWeeks(); track.style.transform=`translateX(-33.333333%)`; }
+
+  function renderGrid() {
+    const layer = document.getElementById('gridLayer'); layer.innerHTML = '';
+    const s = parseInt(document.getElementById('setStart').value); const e = parseInt(document.getElementById('setEnd').value);
+    for(let i=0; i<24; i++) {
+      const d = document.createElement('div'); d.className = `grid-hour ${ (i<s || i>=e) ? 'off-hours' : ''}`;
+      d.setAttribute('data-time', `${String(i).padStart(2,'0')}:00`);
+      layer.appendChild(d);
+    }
+  }
+
+  function renderEvents() {
+    const layer = document.getElementById('eventsLayer'); layer.innerHTML = '';
+    const key = selectedDate.toISOString().split('T')[0];
+    sessions.filter(s=>s.dateStr===key).forEach(s => {
+      const top = timeToPx(s.start); const h = Math.max(timeToPx(s.end)-top, 20);
+      const el = document.createElement('div'); el.className = `session-block ${s.status} ${s.type}`;
+      el.style.top = `${top}px`; el.style.height = `${h}px`;
+      el.innerHTML = `<div class="sb-title">${s.client}</div><div class="sb-time">${s.start} - ${s.end}</div>`;
+      el.onclick = (e) => { e.stopPropagation(); openEdit(s); };
+      layer.appendChild(el);
+    });
+  }
+
+  function startClock() {
+    const line = document.getElementById('timeLine'), txt = document.getElementById('timeLineText');
+    setInterval(() => {
+      const now = new Date(), px = (now.getHours()*GRID_H) + (now.getMinutes()/60*GRID_H);
+      line.style.top = `${px}px`; txt.textContent = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+      line.style.display = (selectedDate.toISOString().split('T')[0] === now.toISOString().split('T')[0]) ? 'block' : 'none';
+    }, 1000);
+  }
+
+  function timeToPx(t) { const [h,m] = t.split(':').map(Number); return (h*GRID_H)+(m/60*GRID_H); }
+  function haptic() { tg?.HapticFeedback?.impactOccurred('light'); }
+  
+  function openAddSession() { 
+    editingId = null; document.getElementById('sheetTitle').textContent='Новая'; document.getElementById('btnDelete').style.display='none';
+    const n=new Date(); const nh=n.getHours()+1; 
+    document.getElementById('inpStart').value=`${String(nh).padStart(2,'0')}:00`; document.getElementById('inpEnd').value=`${String(nh+1).padStart(2,'0')}:00`;
+    openSheet('sessionSheet'); 
+  }
+  function openEdit(s) { 
+    editingId = s.id; document.getElementById('sheetTitle').textContent='Редактировать'; document.getElementById('btnDelete').style.display='block';
+    document.getElementById('inpClient').value=s.client; document.getElementById('inpStart').value=s.start; document.getElementById('inpEnd').value=s.end; document.getElementById('inpNote').value=s.note;
+    openSheet('sessionSheet'); 
+  }
+  function saveSession() {
+    const client=document.getElementById('inpClient').value, start=document.getElementById('inpStart').value, end=document.getElementById('inpEnd').value, note=document.getElementById('inpNote').value;
+    if(editingId) { const idx=sessions.findIndex(s=>s.id===editingId); if(idx!==-1) sessions[idx]={...sessions[idx], client, start, end, note}; }
+    else sessions.push({ id:Date.now(), dateStr:selectedDate.toISOString().split('T')[0], client, start, end, note, status:'planned', type:'personal' });
+    closeAllSheets(); renderEvents();
+  }
+  function deleteSession() { sessions=sessions.filter(s=>s.id!==editingId); closeAllSheets(); renderEvents(); }
+  function openSettings() { openSheet('settingsSheet'); }
+  function openSheet(id) { document.getElementById('overlay').classList.add('active'); document.getElementById(id).classList.add('open'); }
+  function closeAllSheets() { document.getElementById('overlay').classList.remove('active'); document.querySelectorAll('.sheet').forEach(s=>s.classList.remove('open')); }
+
+  document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>
