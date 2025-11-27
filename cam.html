@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Ultima FoodCam Pro</title>
+<title>Ultima FoodCam Final</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
   :root {
@@ -158,7 +158,7 @@
   .controls-area {
     display: flex;
     align-items: center;
-    justify-content: center;
+    justify-content: center; /* Центрируем кнопку */
     pointer-events: auto;
     position: relative;
     padding-bottom: 20px;
@@ -522,11 +522,11 @@
     requestAnimationFrame(drawLoop);
   }
 
-  // --- 4. SMART BURST CAPTURE (NO ROTATION) ---
+  // --- 4. CAPTURE LOGIC (FIXED: RELIABLE CANVAS METHOD) ---
   DOM.shutter.addEventListener('click', async () => {
     if (state.isCapturing) return; 
     
-    // БЛОКИРОВКА ЕСЛИ ТРЯСЕТСЯ
+    // Проверка уровня и тряски
     if (!state.levelOK) { 
         haptic('error');
         if (state.shake > MAX_SHAKE) alert("Слишком сильная тряска! Замрите.");
@@ -537,51 +537,35 @@
         state.isCapturing = true; 
         haptic('heavy');
         
+        // Визуализация нажатия
         DOM.shutter.style.transform = 'scale(0.8)';
         DOM.shutter.style.opacity = '0.5'; 
-        DOM.btnSend.textContent = 'Обработка...';
 
+        // Микро-пауза (UI update)
+        await new Promise(r => setTimeout(r, 50));
+
+        // ИСПОЛЬЗУЕМ 100% НАДЕЖНЫЙ МЕТОД: Копия видео-элемента
+        // Это гарантирует, что фото будет таким же, как на экране
         const vid = DOM.video;
         const canvas = document.createElement('canvas');
-        
-        // 1:1 PIXEL MAPPING (Берем как есть)
         canvas.width = vid.videoWidth;
         canvas.height = vid.videoHeight;
-
-        const ctx = canvas.getContext('2d', { willReadFrequently: true });
-
-        const BURST_COUNT = 5; 
-        const BURST_DELAY = 50; 
-        let bestScore = -1;
-        let bestBlob = null;
-
-        for (let i = 0; i < BURST_COUNT; i++) {
-            // Рисуем кадр без поворотов
-            ctx.drawImage(vid, 0, 0);
-
-            const score = getSharpnessScore(ctx, canvas.width, canvas.height);
-            console.log(`Кадр ${i+1}: Резкость ${score}`);
-
-            if (score > bestScore) {
-                bestScore = score;
-                await new Promise(resolve => {
-                    canvas.toBlob(blob => {
-                        bestBlob = blob;
-                        resolve();
-                    }, 'image/jpeg', 0.95);
-                });
-            }
-            await new Promise(r => setTimeout(r, BURST_DELAY));
-        }
+        const ctx = canvas.getContext('2d');
         
-        if (bestBlob) {
-            showPreview(bestBlob);
-        } else {
-            throw new Error("Не удалось сделать снимок");
-        }
+        // Рисуем текущий кадр
+        ctx.drawImage(vid, 0, 0);
+        
+        // Конвертируем в файл
+        await new Promise(resolve => {
+            c = canvas; // Для краткости
+            c.toBlob(blob => {
+                showPreview(blob);
+                resolve();
+            }, 'image/jpeg', 0.95);
+        });
 
     } catch(err) {
-        console.error("Burst error:", err);
+        console.error("Capture error:", err);
         haptic('error');
         alert("Ошибка: " + err.message);
     } finally {
@@ -739,28 +723,6 @@
         }
       } catch (err) { }
     });
-  }
-
-  function getSharpnessScore(ctx, width, height) {
-    const w = Math.floor(width / 2);
-    const h = Math.floor(height / 2);
-    const offsetX = Math.floor(width / 4);
-    const offsetY = Math.floor(height / 4);
-
-    const imageData = ctx.getImageData(offsetX, offsetY, w, h);
-    const data = imageData.data;
-    let score = 0;
-
-    for (let y = 0; y < h; y += 4) {
-      for (let x = 0; x < w; x += 4) {
-        const i = (y * w + x) * 4;
-        const lum = (data[i] + data[i+1] + data[i+2]) / 3;
-        const right = (data[i+4] + data[i+5] + data[i+6]) / 3 || lum;
-        const bottom = (data[i + w*4] + data[i + w*4 + 1] + data[i + w*4 + 2]) / 3 || lum;
-        score += Math.abs(lum - right) + Math.abs(lum - bottom);
-      }
-    }
-    return score;
   }
 
   function haptic(style) { if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred(style); }
