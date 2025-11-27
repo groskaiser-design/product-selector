@@ -3,603 +3,556 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Ultima FoodCam</title>
+<title>Ultima Scanner v3.0 (Merged)</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
+  /* =========================================
+     CORE STYLES (SCANNER)
+     ========================================= */
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; outline: none; }
+  *::-webkit-scrollbar { display: none; width: 0; height: 0; background: transparent; }
+  
   :root {
     --bg-core: #050505;
-    --surface-glass: rgba(20, 20, 20, 0.6);
-    --surface-border: rgba(255, 255, 255, 0.15);
-    --acc-green: #30d158;
-    --acc-red: #ff453a;
-    --acc-orange: #ff9f0a;
-    --acc-blue: #0a84ff;
     --text-main: #ffffff;
-    --text-muted: rgba(255, 255, 255, 0.6);
-    --font-stack: -apple-system, BlinkMacSystemFont, 'SF Pro Text', Roboto, sans-serif;
+    --text-muted: rgba(255, 255, 255, 0.55);
+    --surface-glass: rgba(255, 255, 255, 0.07);
+    --surface-border: rgba(255, 255, 255, 0.1);
+    --acc-green: #30d158;
+    --acc-blue: #0a84ff;
+    --acc-yellow: #ffcc00;
+    --acc-red: #ff453a;
+    --acc-over: #00f2ea;
+    --acc-over-glow: rgba(0, 242, 234, 0.6);
+    --radius-xl: 28px;
+    --radius-l: 22px;
+    --safe-top: calc(12px + env(safe-area-inset-top));
+    --safe-bottom: calc(12px + env(safe-area-inset-bottom));
+    --header-height: 340px; 
   }
 
-  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body {
-    margin: 0; padding: 0;
-    background: #000;
+    background-color: var(--bg-core);
+    margin: 0; padding: 0; width: 100%; height: 100vh;
+    overflow: hidden; 
     color: var(--text-main);
-    font-family: var(--font-stack);
-    height: 100vh; overflow: hidden;
-    display: flex; flex-direction: column;
-    overscroll-behavior-y: none;
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Roboto', sans-serif;
+    position: fixed; top: 0; left: 0;
+    -webkit-font-smoothing: antialiased; 
   }
 
-  /* === CAMERA VIEWPORT === */
-  .cam-viewport {
-    position: relative;
-    flex: 1;
-    width: 100%;
-    overflow: hidden;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+  /* FX LAYER */
+  .fx-layer { position: fixed; inset: 0; z-index: 0; pointer-events: none; }
+  .orb { position: absolute; border-radius: 50%; animation: float 30s infinite linear; }
+  .orb-1 { width: 90vw; height: 90vw; opacity: 0.4; background: radial-gradient(circle, rgba(108, 92, 231, 0.8) 0%, transparent 70%); top: -20%; left: -20%; }
+  .orb-2 { width: 400px; height: 400px; opacity: 0.5; background: radial-gradient(circle, rgba(10, 132, 255, 0.6) 0%, transparent 70%); bottom: -150px; right: -100px; animation: breathe 6s infinite ease-in-out; }
+  .noise { position: fixed; inset: 0; opacity: 0.04; background: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); pointer-events: none; }
+  @keyframes float { 0% {transform:rotate(0deg)} 100% {transform:rotate(360deg)} }
+  @keyframes breathe { 0%, 100% { transform: scale(1); opacity: 0.4; } 50% { transform: scale(1.1); opacity: 0.6; } }
+
+  /* SCANNER LAYOUT */
+  .app-layout { position: relative; z-index: 1; height: 100%; display: flex; flex-direction: column; }
+  .fixed-header-group { position: absolute; top: 0; left: 0; right: 0; z-index: 50; background: linear-gradient(180deg, rgba(5,5,5,0.95) 0%, rgba(5,5,5,0.85) 70%, rgba(5,5,5,0) 100%); backdrop-filter: blur(10px); }
+  
+  /* CALENDAR & WIDGETS (Condensed for brevity) */
+  .calendar-block { padding-top: var(--safe-top); padding-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+  .calendar-header { display: flex; justify-content: space-between; padding: 0 16px 8px; }
+  .month-label { font-size: 11px; font-weight: 800; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1.5px; }
+  .calendar-swipe-area { height: 52px; overflow: hidden; position: relative; }
+  .calendar-track { display: flex; width: 300%; height: 100%; transform: translateX(-33.333%); will-change: transform; }
+  .calendar-week { flex: 1; display: grid; grid-template-columns: repeat(7, 1fr); padding: 0 10px; }
+  .day-cell { display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 12px; height: 52px; }
+  .day-cell.selected { background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); }
+  .dc-name { font-size: 9px; color: var(--text-muted); margin-bottom: 3px; }
+  .dc-num { font-size: 17px; font-weight: 600; }
+  
+  .carousel-wrap { padding: 0; }
+  .carousel-track { display: flex; gap: 12px; padding: 30px 16px 40px; overflow-x: auto; scrollbar-width: none; }
+  .widget { flex: 0 0 calc(100% - 16px); height: 160px; border-radius: 28px; background: rgba(255,255,255,0.05); border: 1px solid var(--surface-border); padding: 16px; position: relative; }
+  
+  /* MACROS WIDGET */
+  .macros-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; height: 100%; align-items: center; }
+  .macro-item { display: flex; flex-direction: column; align-items: center; }
+  .donut-box { width: 100%; max-width: 74px; aspect-ratio: 1; position: relative; display: flex; align-items: center; justify-content: center; margin-bottom: 8px; }
+  .mini-donut { width: 100%; height: 100%; transform: rotate(-90deg); }
+  .md-bg { fill: none; stroke: rgba(255,255,255,0.05); stroke-width: 7; }
+  .md-val { fill: none; stroke-width: 7; stroke-linecap: round; stroke-dasharray: 151; }
+  .m-icon { position: absolute; font-size: 20px; }
+  .m-nums { font-size: 13px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .m-lbl { font-size: 9px; font-weight: 700; color: rgba(255,255,255,0.5); }
+
+  /* WATER WIDGET */
+  .water-widget { display: flex; flex-direction: column; justify-content: space-between; }
+  .water-header { display: flex; justify-content: space-between; align-items: center; }
+  .water-title { font-size: 11px; font-weight: 800; text-transform: uppercase; color: var(--text-muted); }
+  .water-percent { font-size: 12px; font-weight: 700; color: var(--acc-blue); }
+  .water-cols { display: flex; gap: 6px; height: 50px; align-items: flex-end; margin: 8px 0; }
+  .water-tube { flex: 1; height: 100%; background: rgba(0,0,0,0.4); border-radius: 6px; overflow: hidden; position: relative; }
+  .water-fill { position: absolute; bottom: 0; width: 100%; background: var(--acc-blue); transition: height 0.3s; }
+  .water-footer { display: flex; justify-content: space-between; align-items: flex-end; }
+  .wf-fact { font-size: 28px; font-weight: 800; line-height: 1; }
+  .water-btn { width: 54px; height: 44px; border-radius: 14px; background: rgba(255,255,255,0.06); display: flex; align-items: center; justify-content: center; font-size: 22px; }
+
+  /* SCROLL & MEAL CARDS */
+  .scroll-container { flex: 1; overflow-y: auto; padding-top: var(--header-height); padding-bottom: 120px; }
+  .timeline { padding: 10px 16px; display: flex; flex-direction: column; gap: 12px; }
+  .meal-card { background: var(--surface-glass); border: 1px solid var(--surface-border); border-radius: var(--radius-l); padding: 14px; animation: slideIn 0.4s ease; }
+  
+  .col-headers, .prod-item { display: grid; grid-template-columns: minmax(0, 1fr) 34px 30px 22px 22px 22px; gap: 5px; align-items: center; font-size: 13px; }
+  .col-headers { margin-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 6px; }
+  .pi-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pi-val { text-align: right; }
+
+  /* OMNI BAR */
+  .omni-bar { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(10,10,10,0.85); backdrop-filter: blur(30px); border-top: 1px solid var(--surface-border); padding: 8px 12px var(--safe-bottom) 12px; z-index: 100; display: flex; align-items: flex-end; gap: 8px; }
+  .icon-btn-omni { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; }
+  .input-wrap { flex: 1; min-height: 42px; background: rgba(255,255,255,0.08); border-radius: 20px; padding: 4px 16px; display: flex; align-items: center; }
+  textarea { width: 100%; background: transparent; border: none; color: #fff; font-size: 15px; resize: none; padding: 10px 0; }
+  .action-btn { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
+  .mode-cam { color: #fff; }
+  .mode-send { background: var(--acc-blue); color: #fff; }
+
+  /* =========================================
+     CAMERA MODULE STYLES (INTEGRATED)
+     ========================================= */
+  .camera-module {
+    position: fixed; inset: 0; z-index: 2000;
     background: #000;
+    display: flex; flex-direction: column;
+    transform: translateY(100%); transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
   }
+  .camera-module.visible { transform: translateY(0); }
 
-  /* Video */
-  video {
-    position: absolute;
-    width: 100%; height: 100%;
-    object-fit: cover; 
-    z-index: 1;
-  }
-
-  /* Canvas */
-  #uiCanvas {
-    position: absolute;
-    inset: 0;
-    width: 100%; height: 100%;
-    z-index: 10;
-    pointer-events: none;
-  }
-
-  /* === UI LAYERS === */
-  .ui-layer {
-    position: absolute;
-    inset: 0;
-    z-index: 20;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-    padding: calc(16px + env(safe-area-inset-top)) 16px calc(32px + env(safe-area-inset-bottom)) 16px;
-    pointer-events: none;
-  }
-
-  /* Top Bar */
-  .top-bar {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    pointer-events: auto;
-  }
-
-  .status-chip {
-    background: var(--surface-glass);
-    border: 1px solid var(--surface-border);
-    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
-    padding: 8px 16px;
-    border-radius: 20px;
-    display: flex;
-    align-items: center; gap: 8px;
-    font-size: 13px; font-weight: 600;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-    transition: all 0.3s ease;
-  }
-  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--acc-orange); box-shadow: 0 0 8px var(--acc-orange); transition: 0.3s; }
+  .cam-viewport { position: relative; flex: 1; width: 100%; overflow: hidden; display: flex; align-items: center; justify-content: center; background: #000; }
+  .cam-video { position: absolute; width: 100%; height: 100%; object-fit: cover; z-index: 1; }
+  .cam-canvas { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none; }
+  
+  .cam-ui-layer { position: absolute; inset: 0; z-index: 20; display: flex; flex-direction: column; justify-content: space-between; padding: calc(16px + env(safe-area-inset-top)) 16px calc(32px + env(safe-area-inset-bottom)) 16px; pointer-events: none; }
+  
+  .cam-top-bar { display: flex; justify-content: space-between; align-items: flex-start; pointer-events: auto; }
+  .status-chip { background: rgba(20,20,20,0.6); border: 1px solid rgba(255,255,255,0.15); backdrop-filter: blur(20px); padding: 8px 16px; border-radius: 20px; display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--acc-yellow); box-shadow: 0 0 8px var(--acc-yellow); transition: 0.3s; }
   .status-dot.ok { background: var(--acc-green); box-shadow: 0 0 8px var(--acc-green); }
 
-  .icon-btn {
-    width: 44px; height: 44px;
-    border-radius: 50%;
-    background: rgba(40,40,40,0.5);
-    border: 1px solid var(--surface-border);
-    backdrop-filter: blur(10px);
-    display: flex; align-items: center; justify-content: center;
-    color: #fff; cursor: pointer;
-    transition: transform 0.1s;
-  }
-  .icon-btn:active { transform: scale(0.9); background: rgba(80,80,80,0.6); }
-
-  /* Guide overlay for card */
-  .card-guide {
-    position: absolute;
-    right: 20px; top: 50%; transform: translateY(-50%);
-    width: 100px; height: 160px; 
-    border: 2px dashed rgba(255,255,255,0.4);
-    border-radius: 12px;
-    background: rgba(255,255,255,0.05);
-    display: flex; align-items: center; justify-content: center;
-    text-align: center;
-    padding: 8px; 
-    pointer-events: none;
-  }
-  .card-guide span { font-size: 11px; color: rgba(255,255,255,0.7); font-weight: 600; }
-
-  /* Bottom Controls */
-  .controls-area {
-    display: flex;
-    align-items: center;
-    justify-content: space-between; 
-    pointer-events: auto;
-    position: relative;
-  }
-
-  .shutter-outer {
-    width: 84px; height: 84px;
-    border-radius: 50%;
-    border: 4px solid rgba(255,255,255,0.3);
-    display:flex; align-items:center; justify-content:center;
-    transition: 0.3s;
-  }
-  .shutter-inner {
-    width: 64px; height: 64px;
-    border-radius: 50%;
-    background: #fff;
-    transition: 0.3s;
-    cursor: pointer;
-  }
+  .cam-icon-btn { width: 44px; height: 44px; border-radius: 50%; background: rgba(40,40,40,0.5); border: 1px solid rgba(255,255,255,0.15); backdrop-filter: blur(10px); display: flex; align-items: center; justify-content: center; color: #fff; cursor: pointer; }
   
-  .shutter-outer.disabled { opacity: 0.5; border-color: var(--acc-red); }
-  .shutter-outer.disabled .shutter-inner { background: var(--acc-red); transform: scale(0.4); }
+  .cam-controls { display: flex; align-items: center; justify-content: space-between; pointer-events: auto; }
+  .shutter-outer { width: 84px; height: 84px; border-radius: 50%; border: 4px solid rgba(255,255,255,0.3); display:flex; align-items:center; justify-content:center; transition: 0.3s; cursor: pointer;}
+  .shutter-inner { width: 64px; height: 64px; border-radius: 50%; background: #fff; transition: 0.3s; }
   .shutter-outer.active { border-color: var(--acc-green); transform: scale(1.05); }
-  .shutter-outer:active:not(.disabled) .shutter-inner { transform: scale(0.9); }
-
-  /* Permission Overlay (iOS) */
-  .perm-overlay {
-    position: absolute; inset: 0; z-index: 100;
-    background: rgba(5,5,5,0.85);
-    backdrop-filter: blur(20px);
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    text-align: center; padding: 32px; gap: 24px;
-  }
-  .perm-btn {
-    background: var(--acc-blue); color: #fff;
-    border: none; padding: 16px 32px;
-    border-radius: 16px; font-size: 17px; font-weight: 700;
-    cursor: pointer;
-  }
-
-  /* === RESULT PREVIEW (UPDATED) === */
-  .preview-overlay {
-    position: absolute; inset: 0; z-index: 200;
-    background: #000;
-    display: none; 
-    flex-direction: column;
-  }
+  .shutter-outer.disabled { opacity: 0.5; border-color: var(--acc-red); pointer-events: none; }
   
-  /* Изображение занимает все свободное место сверху */
-  .preview-img { 
-    flex: 1; 
-    width: 100%; 
-    min-height: 0; /* Важно для flex контейнера */
-    object-fit: contain; 
-    background: #111; 
-    margin-bottom: 12px;
-  }
+  /* PREVIEW IN CAM */
+  .cam-preview-overlay { position: absolute; inset: 0; z-index: 2010; background: #000; display: none; flex-direction: column; }
+  .cam-preview-img { flex: 1; width: 100%; object-fit: contain; background: #111; margin-bottom: 12px; }
+  .cam-comment-wrap { padding: 0 24px 16px; }
+  .cam-comment-input { width: 100%; height: 80px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.15); border-radius: 16px; padding: 12px; color: #fff; font-size: 16px; resize: none; }
+  .cam-preview-controls { padding: 0 24px 34px; display: flex; gap: 16px; }
+  .cam-btn { flex: 1; padding: 14px; border-radius: 14px; font-weight: 600; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.07); color: #fff; }
+  .cam-btn.primary { background: var(--acc-blue); border-color: transparent; }
 
-  /* Секция комментария */
-  .comment-wrap {
-    padding: 0 24px 16px 24px;
-    width: 100%;
-  }
+  /* =========================================
+     AI PROCESSING & DRAFT STYLES
+     ========================================= */
+  .processing-overlay { position: fixed; inset: 0; z-index: 3000; background: rgba(5,5,5,0.6); backdrop-filter: blur(15px); display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: 0.4s; }
+  .processing-overlay.active { opacity: 1; pointer-events: auto; }
+  .proc-card { width: 90%; max-width: 320px; background: rgba(30,30,30,0.6); border: 1px solid rgba(255,255,255,0.1); border-radius: 24px; padding: 30px 20px; display: flex; flex-direction: column; align-items: center; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
+  .proc-visual { position: relative; width: 60px; height: 60px; margin-bottom: 20px; }
+  .proc-orb { position: absolute; inset: 0; border-radius: 50%; background: radial-gradient(circle, #0a84ff 0%, transparent 70%); animation: pulse-ai 2s infinite; }
+  .proc-ring { position: absolute; inset: -10px; border-radius: 50%; border: 2px solid rgba(10,132,255,0.3); border-top-color: #0a84ff; animation: spin-ai 1.5s infinite linear; }
+  @keyframes pulse-ai { 0% { opacity: 0.5; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1.1); } 100% { opacity: 0.5; transform: scale(0.8); } }
+  @keyframes spin-ai { 100% { transform: rotate(360deg); } }
+  .proc-steps { width: 100%; display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px; }
+  .step { display: flex; align-items: center; gap: 10px; opacity: 0.4; transition: 0.3s; transform: translateX(-10px); }
+  .step.active { opacity: 1; transform: translateX(0); font-weight: 600; }
+  .step.done { opacity: 0.5; transform: translateX(0); color: var(--acc-green); }
   
-  .comment-label {
-    display: block;
-    color: var(--text-muted);
-    font-size: 13px;
-    margin-bottom: 8px;
-    margin-left: 4px;
-    font-weight: 500;
-  }
-
-  .comment-input {
-    width: 100%;
-    height: 80px;
-    background: rgba(255,255,255,0.1);
-    border: 1px solid var(--surface-border);
-    border-radius: 16px;
-    padding: 12px 16px;
-    color: #fff;
-    font-size: 16px;
-    font-family: var(--font-stack);
-    resize: none;
-    outline: none;
-    -webkit-appearance: none;
-    transition: 0.2s;
-  }
-  .comment-input::placeholder { color: rgba(255,255,255,0.3); }
-  .comment-input:focus { 
-    background: rgba(255,255,255,0.15); 
-    border-color: var(--acc-blue); 
-  }
-
-  /* Кнопки снизу */
-  .preview-controls {
-    padding: 0 24px 34px 24px; /* padding bottom safe area */
-    display: flex; gap: 16px;
-    background: #000;
-  }
+  .draft-overlay { position: fixed; inset: 0; z-index: 3100; background: rgba(0,0,0,0.5); display: flex; flex-direction: column; justify-content: flex-end; opacity: 0; pointer-events: none; transition: 0.3s; }
+  .draft-overlay.visible { opacity: 1; pointer-events: auto; }
+  .draft-sheet { background: #1c1c1e; border-radius: 24px 24px 0 0; padding: 24px 20px calc(20px + env(safe-area-inset-bottom)); transform: translateY(100%); transition: transform 0.3s; }
+  .draft-overlay.visible .draft-sheet { transform: translateY(0); }
+  .draft-item { display: flex; align-items: center; gap: 10px; background: rgba(255,255,255,0.06); padding: 12px; border-radius: 16px; margin-bottom: 10px; }
+  .di-inputs { flex: 1; }
+  .di-name { background: transparent; border: none; color: #fff; width: 100%; font-weight: 600; }
+  .di-weight { background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; color: var(--acc-blue); width: 60px; text-align: center; font-weight: 700; }
   
-  .btn {
-    flex: 1; padding: 14px;
-    border-radius: 14px;
-    font-weight: 600; font-size: 16px;
-    border: 1px solid var(--surface-border);
-    background: var(--surface-glass);
-    color: #fff; cursor: pointer; text-align: center;
-  }
-  .btn.primary { background: var(--acc-blue); border-color: transparent; }
-
+  @keyframes slideIn { from { opacity: 0; transform: translateY(-20px) scale(0.95); } to { opacity: 1; transform: translateY(0) scale(1); } }
   .hidden { display: none !important; }
 </style>
 </head>
 <body>
 
+<svg width="0" height="0" style="position:absolute"><defs>
+  <linearGradient id="grad-kcal"><stop offset="0%" stop-color="#ff9f0a"/><stop offset="100%" stop-color="#ff453a"/></linearGradient>
+  <linearGradient id="grad-prot"><stop offset="0%" stop-color="#48bfe3"/><stop offset="100%" stop-color="#5e60ce"/></linearGradient>
+  <linearGradient id="grad-fats"><stop offset="0%" stop-color="#f1c40f"/><stop offset="100%" stop-color="#e67e22"/></linearGradient>
+  <linearGradient id="grad-carb"><stop offset="0%" stop-color="#2ecc71"/><stop offset="100%" stop-color="#1abc9c"/></linearGradient>
+</defs></svg>
+
+<div class="fx-layer"><div class="orb orb-1"></div><div class="orb orb-2"></div><div class="noise"></div></div>
+
+<div class="app-layout" id="appLayout">
+  <div class="fixed-header-group">
+    <div class="calendar-block">
+      <div class="calendar-header"><div class="month-label" id="monthLabel">...</div></div>
+      <div class="calendar-swipe-area" id="swipeArea"><div class="calendar-track" id="calTrack"><div class="calendar-week" id="weekPrev"></div><div class="calendar-week" id="weekCurr"></div><div class="calendar-week" id="weekNext"></div></div></div>
+    </div>
+    <div class="carousel-wrap"><div class="carousel-track" id="track">
+      <div class="widget"><div class="macros-grid">
+         <div class="macro-item"><div class="donut-box"><svg class="mini-donut" viewBox="0 0 60 60"><circle class="md-bg" cx="30" cy="30" r="24"/><circle class="md-val stroke-kcal" cx="30" cy="30" r="24" style="stroke-dashoffset: 45px"/></svg><div class="m-nums">1450</div><div class="m-lbl">ККАЛ</div></div></div>
+         <div class="macro-item"><div class="donut-box"><svg class="mini-donut" viewBox="0 0 60 60"><circle class="md-bg" cx="30" cy="30" r="24"/><circle class="md-val stroke-prot" cx="30" cy="30" r="24" style="stroke-dashoffset: 100px"/></svg><div class="m-nums">110</div><div class="m-lbl">БЕЛКИ</div></div></div>
+         <div class="macro-item"><div class="donut-box"><svg class="mini-donut" viewBox="0 0 60 60"><circle class="md-bg" cx="30" cy="30" r="24"/><circle class="md-val stroke-fats" cx="30" cy="30" r="24" style="stroke-dashoffset: 110px"/></svg><div class="m-nums">45</div><div class="m-lbl">ЖИРЫ</div></div></div>
+         <div class="macro-item"><div class="donut-box"><svg class="mini-donut" viewBox="0 0 60 60"><circle class="md-bg" cx="30" cy="30" r="24"/><circle class="md-val stroke-carb" cx="30" cy="30" r="24" style="stroke-dashoffset: 60px"/></svg><div class="m-nums">180</div><div class="m-lbl">УГЛИ</div></div></div>
+      </div></div>
+      <div class="widget water-widget" id="waterCard">
+         <div class="water-header"><div class="water-title">Вода</div><div class="water-percent" id="lbl-pct">50%</div></div>
+         <div class="water-cols"><div class="water-tube"><div class="water-fill" style="height:50%"></div></div><div class="water-tube"><div class="water-fill" style="height:20%"></div></div><div class="water-tube"><div class="water-fill"></div></div></div>
+         <div class="water-footer"><div class="wf-fact">1250</div><div class="water-btn" onclick="updateWater(250)">+</div></div>
+      </div>
+    </div></div>
+  </div>
+
+  <div class="scroll-container" id="scrollContainer">
+    <div class="timeline" id="feed">
+      <div class="meal-card">
+        <div class="col-headers"><div class="mh-time">09:00</div><div>Вес</div><div>К</div><div>Б</div><div>Ж</div><div>У</div></div>
+        <div class="prod-item"><div class="pi-name">Овсянка</div><div class="pi-val">250</div><div class="pi-val">220</div><div class="pi-val">8</div><div class="pi-val">6</div><div class="pi-val">32</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="omni-bar" id="omniBar">
+    <div class="icon-btn-omni">📁</div>
+    <div class="input-wrap"><textarea id="msgInput" rows="1" placeholder="Яблоко 200г..."></textarea></div>
+    <div class="action-btn mode-cam" id="actionBtn" onclick="handleAction()">
+       <svg id="iconCam" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+       <svg id="iconSend" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" style="display:none"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+    </div>
+  </div>
+</div>
+
+<div class="camera-module" id="camModule">
   <div class="cam-viewport">
-    <video id="video" autoplay playsinline muted></video>
-    <canvas id="uiCanvas"></canvas>
-    
-    <div class="ui-layer">
-      <div class="top-bar">
-        <div class="icon-btn" id="btnClose">✕</div>
-        <div class="status-chip" id="lvlChip">
-          <div class="status-dot" id="lvlDot"></div>
-          <span id="lvlText">Уровень</span>
-        </div>
-        <div class="icon-btn" id="btnTorch">⚡</div>
+    <video id="camVideo" class="cam-video" autoplay playsinline muted></video>
+    <canvas id="camCanvas" class="cam-canvas"></canvas>
+    <div class="cam-ui-layer">
+      <div class="cam-top-bar">
+        <div class="cam-icon-btn" onclick="CamModule.close()">✕</div>
+        <div class="status-chip"><div class="status-dot" id="lvlDot"></div><span id="lvlText">Уровень</span></div>
+        <div class="cam-icon-btn" id="btnTorch">⚡</div>
       </div>
-
-      <div class="card-guide">
-        <span>Банковская карта, (опционально, повысит точность)</span>
-      </div>
-
-      <div class="controls-area">
-        <div class="icon-btn" style="opacity:0; pointer-events:none"></div>
-        <div class="shutter-outer disabled" id="shutterBtn">
-          <div class="shutter-inner"></div>
-        </div>
-        <div class="icon-btn" id="btnGallery">🖼️</div>
+      <div class="cam-controls">
+        <div style="width:44px"></div>
+        <div class="shutter-outer disabled" id="shutterBtn"><div class="shutter-inner"></div></div>
+        <div class="cam-icon-btn">🖼️</div>
       </div>
     </div>
   </div>
-
-  <div id="permReq" class="perm-overlay hidden">
-    <div style="font-size:48px; margin-bottom:10px">📐</div>
-    <h2 style="margin:0">Настройка</h2>
-    <p style="color:var(--text-muted)">Для точного расчета нам нужно использовать гироскоп телефона.</p>
-    <button class="perm-btn" onclick="requestSensors()">Разрешить</button>
-  </div>
-
-  <div id="previewScreen" class="preview-overlay">
-    <img id="finalPhoto" class="preview-img">
-    
-    <div class="comment-wrap">
-      <label class="comment-label">Комментарий (например: вес, состав)</label>
-      <textarea id="commentInput" class="comment-input" placeholder="Треска 200г, рис белый 150г..."></textarea>
+  <div class="cam-preview-overlay" id="camPreview">
+    <img id="camFinalImg" class="cam-preview-img">
+    <div class="cam-comment-wrap">
+      <textarea id="camComment" class="cam-comment-input" placeholder="Комментарий (состав, вес)..."></textarea>
     </div>
-
-    <div class="preview-controls">
-      <button class="btn" onclick="retake()">Переснять</button>
-      <button class="btn primary" id="btnSend" onclick="sendPhoto()">Готово</button>
+    <div class="cam-preview-controls">
+      <button class="cam-btn" onclick="CamModule.retake()">Переснять</button>
+      <button class="cam-btn primary" onclick="CamModule.send()">Готово</button>
     </div>
   </div>
+</div>
 
-  <input type="file" id="fileInput" accept="image/*" class="hidden">
+<div class="processing-overlay" id="procOverlay">
+  <div class="proc-card">
+    <div class="proc-visual"><div class="proc-orb"></div><div class="proc-ring"></div></div>
+    <div style="color:#fff; font-weight:700; margin-bottom:20px">Анализ снимка</div>
+    <div class="proc-steps" id="procSteps">
+      <div class="step pending" id="step-1">🛡️ Gatekeeper: Проверка...</div>
+      <div class="step pending" id="step-2">🕵️ Detective: Ингредиенты...</div>
+      <div class="step pending" id="step-3">📐 Physicist: Объем...</div>
+      <div class="step pending" id="step-4">🍳 Technologist: Жирность...</div>
+    </div>
+    <div style="color:#666; font-size:13px; margin-top:10px" onclick="closeProcessing()">Отмена</div>
+  </div>
+</div>
+
+<div class="draft-overlay" id="draftOverlay">
+  <div class="draft-sheet">
+    <div style="font-size:20px; font-weight:800; color:#fff; margin-bottom:5px">Проверь данные</div>
+    <div style="color:#888; font-size:13px; margin-bottom:20px">AI определил состав. Исправь если нужно.</div>
+    <div id="draftList"></div>
+    <div style="display:flex; gap:12px; margin-top:20px">
+      <button class="cam-btn" onclick="closeDraft()">Отмена</button>
+      <button class="cam-btn primary" onclick="confirmDraft()">В дневник</button>
+    </div>
+  </div>
+</div>
 
 <script>
-  // === TELEGRAM INIT ===
-  const tg = window.Telegram?.WebApp;
-  if(tg) {
-    tg.ready(); tg.expand();
-    tg.setHeaderColor('#000000');
-    if(tg.disableVerticalSwipes) tg.disableVerticalSwipes();
-  }
+/* =========================================
+   SCANNER CORE LOGIC
+   ========================================= */
+function haptic(type) { if (navigator.vibrate) navigator.vibrate(10); if(window.Telegram?.WebApp?.HapticFeedback) window.Telegram.WebApp.HapticFeedback.impactOccurred(type || 'light'); }
 
-  // === CONFIG ===
-  const MAX_TILT = 5; 
-  const TARGET_RES_H = 4096;
-  const TARGET_ASPECT = 0.75; 
+// UI HELPER: Handle text input vs Camera
+const txt = document.getElementById('msgInput');
+const btn = document.getElementById('actionBtn');
+const iCam = document.getElementById('iconCam');
+const iSend = document.getElementById('iconSend');
 
-  // === STATE ===
-  const state = {
-    stream: null,
-    track: null,
-    imageCapture: null,
-    levelOK: false,
-    angleX: 0,
-    angleY: 0,
-    photoBlob: null,
-    isCapturing: false // <--- НОВЫЙ ФЛАГ БЛОКИРОВКИ
-  };
+txt.addEventListener('input', () => {
+   if(txt.value.trim().length > 0) {
+      btn.classList.replace('mode-cam','mode-send'); iCam.style.display='none'; iSend.style.display='block';
+   } else {
+      btn.classList.replace('mode-send','mode-cam'); iCam.style.display='block'; iSend.style.display='none';
+   }
+});
 
-  const DOM = {
-    video: document.getElementById('video'),
-    canvas: document.getElementById('uiCanvas'),
-    ctx: document.getElementById('uiCanvas').getContext('2d'),
-    shutter: document.getElementById('shutterBtn'),
-    lvlDot: document.getElementById('lvlDot'),
-    lvlText: document.getElementById('lvlText'),
-    permReq: document.getElementById('permReq'),
-    preview: document.getElementById('previewScreen'),
-    finalImg: document.getElementById('finalPhoto'),
-    btnSend: document.getElementById('btnSend'),
-    fileInput: document.getElementById('fileInput'),
-    commentInput: document.getElementById('commentInput')
-  };
+function handleAction() {
+   haptic('light');
+   if(txt.value.trim().length > 0) {
+      console.log('Text send:', txt.value);
+      txt.value=''; txt.blur();
+      btn.classList.replace('mode-send','mode-cam'); iCam.style.display='block'; iSend.style.display='none';
+   } else {
+      // OPEN CAMERA MODULE
+      CamModule.open();
+   }
+}
 
-  // --- 1. CAMERA INIT ---
-  async function initCamera() {
+/* =========================================
+   CAMERA MODULE LOGIC
+   ========================================= */
+const CamModule = {
+  el: document.getElementById('camModule'),
+  video: document.getElementById('camVideo'),
+  canvas: document.getElementById('camCanvas'),
+  ctx: document.getElementById('camCanvas').getContext('2d'),
+  shutter: document.getElementById('shutterBtn'),
+  preview: document.getElementById('camPreview'),
+  finalImg: document.getElementById('camFinalImg'),
+  stream: null,
+  track: null,
+  imageCapture: null,
+  isLevel: false,
+  angleX: 0, angleY: 0,
+  loopId: null,
+
+  open: async function() {
+    this.el.classList.add('visible');
     try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const hasBack = devices.some(d => d.kind === 'videoinput' && d.label.toLowerCase().includes('back'));
-      const facing = hasBack ? { ideal: 'environment' } : 'environment';
-
-      const constraints = {
-        audio: false,
-        video: {
-          facingMode: facing,
-          aspectRatio: { ideal: TARGET_ASPECT },
-          height: { ideal: TARGET_RES_H },
-          width: { ideal: 3072 } 
-        }
-      };
-
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      state.stream = stream;
-      state.track = stream.getVideoTracks()[0];
-      DOM.video.srcObject = stream;
-
-      const caps = state.track.getCapabilities();
-      if (caps.focusMode && caps.focusMode.includes('continuous')) {
-        try { await state.track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch(e){}
-      }
-
-      if (window.ImageCapture) {
-        state.imageCapture = new ImageCapture(state.track);
-      }
-
-      resizeCanvas();
-      window.addEventListener('resize', resizeCanvas);
-      requestAnimationFrame(drawLoop);
-      checkSensorPerms();
-
-    } catch (e) {
-      console.warn("Camera fallback", e);
-      try {
-         const fs = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-         state.stream = fs;
-         state.track = fs.getVideoTracks()[0];
-         DOM.video.srcObject = fs;
-         requestAnimationFrame(drawLoop);
-      } catch(e2){ alert("Ошибка доступа к камере"); }
+       // Init Stream
+       const devices = await navigator.mediaDevices.enumerateDevices();
+       const hasBack = devices.some(d => d.kind === 'videoinput' && d.label.toLowerCase().includes('back'));
+       const constraints = {
+          video: { facingMode: hasBack ? 'environment' : 'user', height: { ideal: 2160 } }
+       };
+       this.stream = await navigator.mediaDevices.getUserMedia(constraints);
+       this.track = this.stream.getVideoTracks()[0];
+       this.video.srcObject = this.stream;
+       
+       if(window.ImageCapture) this.imageCapture = new ImageCapture(this.track);
+       
+       // Start Sensors
+       window.addEventListener('deviceorientation', this.handleOrient);
+       
+       // Start UI Loop
+       this.resize();
+       this.loop();
+    } catch(e) {
+       alert('Camera Error: ' + e);
+       this.close();
     }
-  }
+  },
 
-  // --- 2. SENSORS ---
-  function checkSensorPerms() {
-    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-      DOM.permReq.classList.remove('hidden'); 
-    } else {
-      window.addEventListener('deviceorientation', handleOrientation);
+  close: function() {
+    this.el.classList.remove('visible');
+    // Stop Stream to save battery
+    if(this.track) { this.track.stop(); this.track = null; }
+    if(this.stream) { this.stream.getTracks().forEach(t=>t.stop()); this.stream = null; }
+    window.removeEventListener('deviceorientation', this.handleOrient);
+    cancelAnimationFrame(this.loopId);
+    this.retake(); // clear preview
+  },
+
+  handleOrient: function(e) {
+    if(e.beta !== null) {
+      CamModule.angleX = e.beta; // Tilt Front/Back
+      CamModule.angleY = e.gamma; // Tilt Left/Right
     }
-  }
+  },
 
-  async function requestSensors() {
-    try {
-      const resp = await DeviceOrientationEvent.requestPermission();
-      if (resp === 'granted') {
-        DOM.permReq.classList.add('hidden');
-        window.addEventListener('deviceorientation', handleOrientation);
-      } else {
-        alert("Без гироскопа уровень работать не будет");
-        DOM.permReq.classList.add('hidden');
-      }
-    } catch (e) { alert(e); }
-  }
+  resize: function() {
+     this.canvas.width = window.innerWidth;
+     this.canvas.height = window.innerHeight;
+  },
 
-  function handleOrientation(e) {
-    let x = e.beta; 
-    let y = e.gamma; 
-    if (x === null || y === null) return;
-    state.angleX = x;
-    state.angleY = y;
-  }
+  loop: function() {
+     const w = CamModule.canvas.width; const h = CamModule.canvas.height;
+     CamModule.ctx.clearRect(0,0,w,h);
+     
+     // Level Logic
+     const cx = w/2; const cy = h/2;
+     const maxOff = 60;
+     const dx = (Math.max(-20, Math.min(20, CamModule.angleY))/20) * maxOff;
+     const dy = (Math.max(-20, Math.min(20, CamModule.angleX))/20) * maxOff;
+     const dist = Math.hypot(dx,dy);
+     
+     CamModule.isLevel = dist < 5; // Tolerance
+     
+     // Draw UI
+     CamModule.ctx.beginPath();
+     CamModule.ctx.arc(cx, cy, 16, 0, Math.PI*2);
+     CamModule.ctx.strokeStyle = CamModule.isLevel ? '#30d158' : 'rgba(255,255,255,0.7)';
+     CamModule.ctx.lineWidth = 3;
+     CamModule.ctx.stroke();
+     
+     CamModule.ctx.beginPath();
+     CamModule.ctx.arc(cx+dx, cy+dy, 12, 0, Math.PI*2);
+     CamModule.ctx.fillStyle = CamModule.isLevel ? '#30d158' : 'rgba(255,255,255,0.7)';
+     CamModule.ctx.fill();
 
-  // --- 3. UI LOOPS ---
-  function updateUI() {
-    // Если идет съемка - не меняем UI, чтобы не сбивать
-    if (state.isCapturing) return;
+     // Update DOM UI
+     const dot = document.getElementById('lvlDot');
+     const txt = document.getElementById('lvlText');
+     if(CamModule.isLevel) {
+        dot.classList.add('ok'); txt.innerText = "Ровно";
+        CamModule.shutter.classList.remove('disabled');
+        CamModule.shutter.classList.add('active');
+     } else {
+        dot.classList.remove('ok'); txt.innerText = "Выровняйте";
+        CamModule.shutter.classList.add('disabled');
+        CamModule.shutter.classList.remove('active');
+     }
 
-    if (state.levelOK) {
-      DOM.lvlDot.classList.add('ok');
-      DOM.lvlText.textContent = "Ровно";
-      DOM.shutter.classList.remove('disabled');
-      DOM.shutter.classList.add('active');
-    } else {
-      DOM.lvlDot.classList.remove('ok');
-      DOM.lvlText.textContent = "Выровняйте";
-      DOM.shutter.classList.add('disabled');
-      DOM.shutter.classList.remove('active');
-    }
-  }
+     CamModule.loopId = requestAnimationFrame(CamModule.loop);
+  },
 
-  function resizeCanvas() {
-    // ЗАЩИТА ОТ МЕРЦАНИЯ: Меняем размер только если он реально изменился
-    const w = window.innerWidth;
-    const h = window.innerHeight;
-    if (DOM.canvas.width !== w || DOM.canvas.height !== h) {
-        DOM.canvas.width = w;
-        DOM.canvas.height = h;
-    }
-  }
-
-  function drawLoop() {
-    const ctx = DOM.ctx;
-    const w = DOM.canvas.width;
-    const h = DOM.canvas.height;
-    ctx.clearRect(0, 0, w, h);
-    const cx = w / 2;
-    const cy = h / 2;
-
-    const rBubble = 14; 
-    const rTarget = 16;
-    const maxOffset = 60; 
-    
-    // Защита от NaN (если датчики "отвалились" при тряске)
-    const rawX = (isNaN(state.angleY) || state.angleY === null) ? 0 : state.angleY;
-    const rawY = (isNaN(state.angleX) || state.angleX === null) ? 0 : state.angleX;
-    
-    const clamp = (val) => Math.max(-20, Math.min(20, val));
-    const dx = (clamp(rawX) / 20) * maxOffset; 
-    const dy = (clamp(rawY) / 20) * maxOffset;
-
-    const dist = Math.hypot(dx, dy);
-    const isInside = (dist + rBubble) <= rTarget;
-
-    // Обновляем статус только если мы НЕ снимаем в данный момент
-    if (state.levelOK !== isInside && !state.isCapturing) {
-      state.levelOK = isInside;
-      updateUI();
-      if(isInside) haptic('medium');
-    }
-
-    ctx.shadowBlur = 4;
-    ctx.shadowColor = 'rgba(0,0,0,0.5)';
-    
-    // Внешний круг
-    ctx.beginPath();
-    ctx.arc(cx, cy, rTarget, 0, Math.PI * 2); 
-    // Если идет съемка - держим зеленым, иначе по факту
-    const color = (state.levelOK || state.isCapturing) ? '#30d158' : 'rgba(255,255,255,0.85)';
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 3;
-    ctx.stroke();
-
-    // Пузырек
-    ctx.beginPath();
-    ctx.arc(cx + dx, cy + dy, rBubble, 0, Math.PI * 2); 
-    ctx.fillStyle = color;
-    ctx.fill();
-    ctx.shadowBlur = 0;
-
-    requestAnimationFrame(drawLoop);
-  }
-
-  // --- 4. CAPTURE LOGIC (FIXED) ---
-  DOM.shutter.addEventListener('click', async () => {
-    // 1. БЛОКИРОВКА ПОВТОРНЫХ НАЖАТИЙ
-    if (state.isCapturing) return; 
-    if (!state.levelOK) { haptic('error'); return; }
-
-    try {
-        state.isCapturing = true; // Блокируем
-        haptic('heavy');
-        
-        // Визуальная реакция
-        DOM.shutter.style.transform = 'scale(0.8)';
-        DOM.shutter.style.opacity = '0.5'; // Показываем, что занято
-
-        // Пауза, чтобы дать анимации проиграться перед тяжелой задачей
-        await new Promise(r => setTimeout(r, 50));
-
-        if (state.imageCapture) {
-          try {
-            const blob = await state.imageCapture.takePhoto();
-            showPreview(blob);
-            return;
-          } catch(e) { console.log('ImageCapture error, trying fallback'); }
-        }
-
-        const vid = DOM.video;
+  snap: async function() {
+     if(!this.isLevel) { haptic('error'); return; }
+     haptic('heavy');
+     
+     // Capture
+     let blob = null;
+     if(this.imageCapture) {
+        try { blob = await this.imageCapture.takePhoto(); } catch(e){}
+     }
+     if(!blob) {
+        // Fallback: Canvas
         const c = document.createElement('canvas');
-        c.width = vid.videoWidth;
-        c.height = vid.videoHeight;
-        c.getContext('2d').drawImage(vid, 0, 0);
-        
-        // Ждем конвертации (Promise wrapper)
-        await new Promise(resolve => {
-            c.toBlob(blob => {
-                showPreview(blob);
-                resolve();
-            }, 'image/jpeg', 0.95);
-        });
+        c.width = this.video.videoWidth; c.height = this.video.videoHeight;
+        c.getContext('2d').drawImage(this.video,0,0);
+        blob = await new Promise(r => c.toBlob(r, 'image/jpeg'));
+     }
+     
+     this.finalImg.src = URL.createObjectURL(blob);
+     this.preview.style.display = 'flex';
+  },
 
-    } catch(err) {
-        console.error("Capture failed:", err);
-        haptic('error');
-        alert("Не удалось сделать фото. Держите телефон стабильнее.");
-    } finally {
-        // РАЗБЛОКИРОВКА (всегда, даже при ошибке)
-        state.isCapturing = false;
-        DOM.shutter.style.transform = '';
-        DOM.shutter.style.opacity = '';
-        updateUI(); // Возвращаем актуальный цвет
-    }
+  retake: function() {
+     this.preview.style.display = 'none';
+     this.finalImg.src = '';
+     document.getElementById('camComment').value = '';
+  },
+
+  send: function() {
+     haptic('success');
+     const comment = document.getElementById('camComment').value;
+     console.log("Photo + Comment:", comment);
+     
+     // 1. Close Camera
+     this.close();
+     
+     // 2. Start AI Flow (The "Army of Bots")
+     startProcessingFlow();
+  }
+};
+
+// Shutter Click
+CamModule.shutter.addEventListener('click', () => CamModule.snap());
+
+
+/* =========================================
+   AI PROCESS FLOW (Your existing logic)
+   ========================================= */
+function startProcessingFlow() {
+  document.getElementById('procOverlay').classList.add('active');
+  
+  // Simulation Steps
+  const steps = [1,2,3,4];
+  let delay = 1000;
+  
+  steps.forEach(i => {
+     setTimeout(() => {
+        const el = document.getElementById('step-'+i);
+        if(el) { el.classList.remove('pending'); el.classList.add('active'); }
+        haptic('light');
+        if(i>1) {
+           const prev = document.getElementById('step-'+(i-1));
+           prev.classList.remove('active'); prev.classList.add('done');
+        }
+     }, delay);
+     delay += 1500;
   });
 
-  function showPreview(blob) {
-    if(!blob) return;
-    state.photoBlob = blob;
-    DOM.finalImg.src = URL.createObjectURL(blob);
-    DOM.preview.style.display = 'flex';
-  }
+  setTimeout(() => {
+     closeProcessing();
+     openDraftSheet();
+  }, delay + 500);
+}
 
-  function retake() {
-    DOM.preview.style.display = 'none';
-    if(DOM.finalImg.src) URL.revokeObjectURL(DOM.finalImg.src);
-    DOM.finalImg.src = '';
-    state.photoBlob = null;
-    DOM.commentInput.value = ''; 
-  }
+function closeProcessing() {
+   document.getElementById('procOverlay').classList.remove('active');
+   // Reset steps
+   setTimeout(() => {
+     document.querySelectorAll('.step').forEach(el => {
+        el.className = 'step pending';
+     });
+   }, 500);
+}
 
-  function sendPhoto() {
-    const comment = DOM.commentInput.value.trim();
-    DOM.btnSend.textContent = 'Отправка...';
-    haptic('light');
+function openDraftSheet() {
+   const list = document.getElementById('draftList');
+   // Mock Data from Synthesizer
+   const items = [
+      { name: "Куриная грудка", w: 145 },
+      { name: "Рис белый", w: 200 },
+      { name: "Соус карри", w: 30 }
+   ];
+   
+   list.innerHTML = items.map(i => `
+      <div class="draft-item">
+         <div style="font-size:20px">🍽️</div>
+         <div class="di-inputs"><input class="di-name" value="${i.name}"></div>
+         <input class="di-weight" type="number" value="${i.w}">
+         <div style="font-size:12px;color:#666">г</div>
+      </div>
+   `).join('');
 
-    console.log("SENDING:", {
-        blobSize: state.photoBlob.size,
-        comment: comment
-    });
-    
-    setTimeout(() => {
-        haptic('success');
-        DOM.btnSend.textContent = 'Успешно!';
-        setTimeout(() => { 
-            retake(); 
-            DOM.btnSend.textContent = 'Готово';
-        }, 1000);
-    }, 1500);
-  }
+   document.getElementById('draftOverlay').classList.add('visible');
+   haptic('success');
+}
 
-  function haptic(style) { if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred(style); }
-  
-  let torchState = false;
-  document.getElementById('btnTorch').onclick = async () => {
-    if(!state.track) return;
-    torchState = !torchState;
-    try { await state.track.applyConstraints({ advanced: [{ torch: torchState }] }); } catch(e){}
-    haptic('light');
-  };
+function closeDraft() { document.getElementById('draftOverlay').classList.remove('visible'); }
 
-  document.getElementById('btnGallery').onclick = () => DOM.fileInput.click();
-  DOM.fileInput.onchange = (e) => {
-    const file = e.target.files[0];
-    if(file) showPreview(file);
-    e.target.value = '';
-  };
+function confirmDraft() {
+   closeDraft();
+   haptic('heavy');
+   // Add to feed (Nutritionist Output)
+   const feed = document.getElementById('feed');
+   const html = `
+     <div class="meal-card">
+        <div class="col-headers"><div class="mh-time">Just now</div><div>Вес</div><div>К</div><div>Б</div><div>Ж</div><div>У</div></div>
+        <div class="prod-item"><div class="pi-name">Куриная грудка</div><div class="pi-val">145</div><div class="pi-val">239</div><div class="pi-val">45</div><div class="pi-val">5</div><div class="pi-val">0</div></div>
+        <div class="prod-item"><div class="pi-name">Рис белый</div><div class="pi-val">200</div><div class="pi-val">260</div><div class="pi-val">5</div><div class="pi-val">0</div><div class="pi-val">56</div></div>
+     </div>
+   `;
+   feed.insertAdjacentHTML('afterbegin', html);
+}
 
-  document.getElementById('btnClose').onclick = () => window.history.back();
-
-  initCamera();
-
+// === BOOT ===
+// Fix layout size
+function setSize() { document.getElementById('appLayout').style.height = window.innerHeight + 'px'; }
+window.addEventListener('resize', setSize);
+setSize();
 </script>
-
 </body>
 </html>
