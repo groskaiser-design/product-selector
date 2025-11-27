@@ -75,6 +75,23 @@
     opacity: 1;
   }
 
+  /* Hint Overlay */
+  .focus-hint {
+    position: absolute;
+    top: 20%; left: 50%; transform: translateX(-50%);
+    background: rgba(0,0,0,0.4);
+    backdrop-filter: blur(4px);
+    padding: 8px 16px;
+    border-radius: 12px;
+    color: rgba(255,255,255,0.8);
+    font-size: 14px;
+    pointer-events: none;
+    z-index: 60;
+    opacity: 0;
+    transition: opacity 0.5s;
+  }
+  .focus-hint.show { opacity: 1; }
+
   /* === UI LAYERS === */
   .ui-layer {
     position: absolute;
@@ -141,9 +158,10 @@
   .controls-area {
     display: flex;
     align-items: center;
-    justify-content: space-between; 
+    justify-content: center;
     pointer-events: auto;
     position: relative;
+    padding-bottom: 20px;
   }
 
   .shutter-outer {
@@ -254,7 +272,10 @@
   <div class="cam-viewport">
     <video id="video" autoplay playsinline muted></video>
     <canvas id="uiCanvas"></canvas>
-    <div id="focusBox" class="focus-box"></div> <div class="ui-layer">
+    <div id="focusBox" class="focus-box"></div> 
+    <div id="focusHint" class="focus-hint">Нажмите для фокуса</div>
+    
+    <div class="ui-layer">
       <div class="top-bar">
         <div class="icon-btn" id="btnClose">✕</div>
         <div class="status-chip" id="lvlChip">
@@ -265,15 +286,13 @@
       </div>
 
       <div class="card-guide">
-        <span>Банковская карта (для масштаба)</span>
+        <span>Банковская карта, (опционально, повысит точность)</span>
       </div>
 
       <div class="controls-area">
-        <div class="icon-btn" style="opacity:0; pointer-events:none"></div>
         <div class="shutter-outer disabled" id="shutterBtn">
           <div class="shutter-inner"></div>
         </div>
-        <div class="icon-btn" id="btnGallery">🖼️</div>
       </div>
     </div>
   </div>
@@ -299,8 +318,6 @@
     </div>
   </div>
 
-  <input type="file" id="fileInput" accept="image/*" class="hidden">
-
 <script>
   // === TELEGRAM INIT ===
   const tg = window.Telegram?.WebApp;
@@ -312,7 +329,7 @@
 
   // === CONFIG ===
   const MAX_TILT = 5; 
-  const MAX_SHAKE = 2.0; // Порог тряски (меньше = строже)
+  const MAX_SHAKE = 2.0; 
   const TARGET_ASPECT = 0.75; 
 
   // === STATE ===
@@ -338,9 +355,9 @@
     preview: document.getElementById('previewScreen'),
     finalImg: document.getElementById('finalPhoto'),
     btnSend: document.getElementById('btnSend'),
-    fileInput: document.getElementById('fileInput'),
     commentInput: document.getElementById('commentInput'),
-    focusBox: document.getElementById('focusBox')
+    focusBox: document.getElementById('focusBox'),
+    focusHint: document.getElementById('focusHint')
   };
 
   // --- 1. CAMERA INIT ---
@@ -355,7 +372,7 @@
         video: {
           facingMode: facing,
           aspectRatio: { ideal: TARGET_ASPECT },
-          width: { ideal: 1920 }, // Full HD для Smart Burst
+          width: { ideal: 1920 }, 
           height: { ideal: 2560 }
         }
       };
@@ -375,8 +392,11 @@
       requestAnimationFrame(drawLoop);
       checkSensorPerms();
       
-      // Включаем Tap to Focus
       initTapToFocus();
+
+      // Показываем подсказку фокуса на 4 сек
+      DOM.focusHint.classList.add('show');
+      setTimeout(() => DOM.focusHint.classList.remove('show'), 4000);
 
     } catch (e) {
       console.warn("Camera Init Error", e);
@@ -384,7 +404,7 @@
     }
   }
 
-  // --- 2. SENSORS (Motion & Orientation) ---
+  // --- 2. SENSORS ---
   function checkSensorPerms() {
     if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
       DOM.permReq.classList.remove('hidden'); 
@@ -473,7 +493,6 @@
 
     const dist = Math.hypot(dx, dy);
     
-    // ЛОГИКА ГОТОВНОСТИ
     const isLevel = (dist + rBubble) <= rTarget;
     const isStable = state.shake < MAX_SHAKE;
     const isReady = isLevel && isStable;
@@ -484,7 +503,6 @@
       if(isReady) haptic('medium');
     }
 
-    // Отрисовка уровня
     ctx.shadowBlur = 4;
     ctx.shadowColor = 'rgba(0,0,0,0.5)';
     
@@ -504,12 +522,14 @@
     requestAnimationFrame(drawLoop);
   }
 
-  // --- 4. SMART BURST CAPTURE ---
+  // --- 4. SMART BURST CAPTURE (NO ROTATION) ---
   DOM.shutter.addEventListener('click', async () => {
     if (state.isCapturing) return; 
+    
+    // БЛОКИРОВКА ЕСЛИ ТРЯСЕТСЯ
     if (!state.levelOK) { 
-        haptic('error'); 
-        if (state.shake > MAX_SHAKE) alert("Держите телефон неподвижно!");
+        haptic('error');
+        if (state.shake > MAX_SHAKE) alert("Слишком сильная тряска! Замрите.");
         return; 
     }
 
@@ -519,12 +539,15 @@
         
         DOM.shutter.style.transform = 'scale(0.8)';
         DOM.shutter.style.opacity = '0.5'; 
-        DOM.btnSend.textContent = 'Выбор лучшего...';
+        DOM.btnSend.textContent = 'Обработка...';
 
         const vid = DOM.video;
         const canvas = document.createElement('canvas');
-        canvas.width = vid.videoWidth; 
+        
+        // 1:1 PIXEL MAPPING (Берем как есть)
+        canvas.width = vid.videoWidth;
         canvas.height = vid.videoHeight;
+
         const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
         const BURST_COUNT = 5; 
@@ -532,15 +555,15 @@
         let bestScore = -1;
         let bestBlob = null;
 
-        // Серия снимков
         for (let i = 0; i < BURST_COUNT; i++) {
+            // Рисуем кадр без поворотов
             ctx.drawImage(vid, 0, 0);
+
             const score = getSharpnessScore(ctx, canvas.width, canvas.height);
             console.log(`Кадр ${i+1}: Резкость ${score}`);
 
             if (score > bestScore) {
                 bestScore = score;
-                // Сохраняем лидера
                 await new Promise(resolve => {
                     canvas.toBlob(blob => {
                         bestBlob = blob;
@@ -623,7 +646,7 @@
 
   async function sendPhoto() {
     // =========================================================
-    // !!! ВАЖНО: ВСТАВЬ СВОЮ ССЫЛКУ GAS СЮДА !!!
+    // !!! ВАЖНО: ВСТАВЬ СЮДА ССЫЛКУ GAS !!!
     const GAS_URL = 'ВСТАВЬ_СЮДА_ТВОЙ_GAS_URL'; 
     // =========================================================
 
@@ -640,7 +663,6 @@
     haptic('light');
 
     try {
-      // Сжимаем для отправки (1280px / 0.8 quality)
       const base64ForServer = await compressImage(state.photoBlob, 1280, 0.8);
       
       btn.textContent = 'Анализ AI...';
@@ -667,9 +689,7 @@
       btn.textContent = 'Успешно!';
       
       setTimeout(() => {
-          // Выбери поведение: закрыть или переснять
           retake(); 
-          // tg.close(); 
       }, 1500);
 
     } catch (error) {
@@ -681,22 +701,19 @@
     }
   }
 
-  // --- 6. UTILS (Focus, Sharpness, Haptic) ---
+  // --- 6. UTILS ---
 
-  // Tap-to-Focus Logic
   function initTapToFocus() {
     const box = DOM.focusBox;
     const viewport = document.querySelector('.cam-viewport');
 
     viewport.addEventListener('click', async (e) => {
-      // Игнорируем UI
       if (e.target.closest('.icon-btn') || e.target.closest('.shutter-outer')) return;
 
       const rect = viewport.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
 
-      // Анимация
       box.style.left = x + 'px';
       box.style.top = y + 'px';
       box.classList.add('active');
@@ -709,14 +726,12 @@
       try {
         const capabilities = state.track.getCapabilities();
         if (capabilities.pointsOfInterest) {
-          // Android API
           const normX = x / rect.width;
           const normY = y / rect.height;
           await state.track.applyConstraints({
             advanced: [{ pointsOfInterest: [{ x: normX, y: normY }] }]
           });
         } else {
-            // iOS Hack (reset focus)
             await state.track.applyConstraints({ advanced: [{ focusMode: 'manual' }] });
             setTimeout(async () => {
                 await state.track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
@@ -756,13 +771,6 @@
     torchState = !torchState;
     try { await state.track.applyConstraints({ advanced: [{ torch: torchState }] }); } catch(e){}
     haptic('light');
-  };
-
-  document.getElementById('btnGallery').onclick = () => DOM.fileInput.click();
-  DOM.fileInput.onchange = (e) => {
-    const file = e.target.files[0];
-    if(file) showPreview(file);
-    e.target.value = '';
   };
 
   document.getElementById('btnClose').onclick = () => window.history.back();
