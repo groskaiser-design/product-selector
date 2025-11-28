@@ -3,11 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Ultima FoodCam Square</title>
+<title>Ultima FoodCam</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
   :root {
-    --bg-core: #000000;
+    --bg-core: #050505;
     --surface-glass: rgba(20, 20, 20, 0.6);
     --surface-border: rgba(255, 255, 255, 0.15);
     --acc-green: #30d158;
@@ -22,7 +22,7 @@
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body {
     margin: 0; padding: 0;
-    background: var(--bg-core);
+    background: #000;
     color: var(--text-main);
     font-family: var(--font-stack);
     height: 100vh; overflow: hidden;
@@ -36,6 +36,7 @@
     padding: 16px;
     display: flex; justify-content: space-between; align-items: flex-start;
     z-index: 20;
+    background: linear-gradient(to bottom, rgba(0,0,0,0.5), transparent);
   }
 
   /* Область камеры - СТРОГИЙ КВАДРАТ */
@@ -43,17 +44,16 @@
     width: 100%;
     position: relative;
     display: flex; align-items: center; justify-content: center;
-    /* Это делает контейнер квадратным относительно ширины экрана */
     aspect-ratio: 1 / 1; 
-    background: #111;
+    background: #000;
     overflow: hidden;
-    margin: auto 0; /* Центрируем по вертикали между хедером и футером */
+    margin: auto 0; 
   }
 
   video {
     position: absolute;
     width: 100%; height: 100%;
-    /* ВАЖНО: cover заполняет квадрат, обрезая высоту, но сохраняя ширину */
+    /* cover заполнит квадрат, обрезая лишнее сверху/снизу, но мы берем 4:3 поток, так что потерь будет минимум */
     object-fit: cover; 
     z-index: 1;
   }
@@ -66,24 +66,28 @@
   .card-guide {
     position: absolute;
     right: 20px; top: 50%; transform: translateY(-50%);
-    width: 80px; height: 120px; 
+    width: 100px; height: 160px; 
     border: 2px dashed rgba(255,255,255,0.4);
-    border-radius: 8px;
+    border-radius: 12px;
     background: rgba(255,255,255,0.05);
     display: flex; align-items: center; justify-content: center;
-    text-align: center; padding: 4px; pointer-events: none; z-index: 15;
+    text-align: center; padding: 8px; pointer-events: none; z-index: 15;
   }
-  .card-guide span { font-size: 10px; color: rgba(255,255,255,0.7); font-weight: 600; }
+  .card-guide span { font-size: 11px; color: rgba(255,255,255,0.7); font-weight: 600; }
 
-  /* Нижняя панель управления */
+  /* Нижняя панель */
   .controls-area {
     padding: 32px 24px;
     display: grid;
     grid-template-columns: 44px 1fr 44px;
     align-items: center; justify-items: center;
     z-index: 20;
-    background: #000; /* Подложка, чтобы не сливалось */
+    background: #000;
   }
+  /* Выравнивание левой кнопки */
+  .controls-area > :first-child { justify-self: start; }
+  /* Выравнивание правой кнопки (если бы она была) */
+  .controls-area > :last-child { justify-self: end; }
 
   /* === UI ELEMENTS === */
   .status-chip {
@@ -139,7 +143,7 @@
     display: none; flex-direction: column;
   }
   .preview-img { 
-    width: 100%; aspect-ratio: 1/1; /* Превью тоже квадратное */
+    width: 100%; aspect-ratio: 1/1; /* Превью квадратное */
     object-fit: contain; background: #111; margin: auto 0;
   }
   .comment-wrap { padding: 0 24px 16px 24px; width: 100%; }
@@ -158,8 +162,9 @@
   }
   .btn.primary { background: var(--acc-blue); border-color: transparent; }
 
+  /* Toast */
   .toast-msg {
-    position: absolute; top: 70px; left: 50%; transform: translateX(-50%) translateY(-20px);
+    position: absolute; top: 80px; left: 50%; transform: translateX(-50%) translateY(-20px);
     background: rgba(30, 30, 30, 0.9); backdrop-filter: blur(10px);
     border: 1px solid rgba(255, 255, 255, 0.1); color: #fff;
     padding: 8px 20px; border-radius: 30px; font-size: 14px; font-weight: 600;
@@ -179,14 +184,14 @@
       <div class="status-dot" id="lvlDot"></div>
       <span id="lvlText">Уровень</span>
     </div>
-    <div class="icon-btn" id="btnTorch">⚡</div>
+    <div class="icon-btn hidden" id="btnTorch">⚡</div>
   </div>
 
   <div class="cam-wrapper">
     <video id="video" autoplay playsinline muted></video>
     <canvas id="uiCanvas"></canvas>
     <div class="card-guide">
-      <span>Банковская карта</span>
+      <span>Банковская карта, (опционально, повысит точность)</span>
     </div>
   </div>
 
@@ -215,8 +220,8 @@
   <div id="previewScreen" class="preview-overlay">
     <img id="finalPhoto" class="preview-img">
     <div class="comment-wrap">
-      <label class="comment-label">Комментарий</label>
-      <textarea id="commentInput" class="comment-input" placeholder="Вес, состав..."></textarea>
+      <label class="comment-label">Комментарий (например: вес, состав)</label>
+      <textarea id="commentInput" class="comment-input" placeholder="Треска 200г, рис белый 150г..."></textarea>
     </div>
     <div class="preview-controls">
       <button id="btnRetake" class="btn" onclick="retake()">Переснять</button>
@@ -233,14 +238,15 @@
   }
 
   // Настройки
-  const COMPRESS_MAX_SIZE = 1024; // Размер квадрата 1024x1024
+  const COMPRESS_MAX_SIZE = 1024; // Финальный размер квадрата
   const COMPRESS_QUALITY = 0.6; 
 
   const state = {
     stream: null, track: null, imageCapture: null,
     levelOK: false, angleX: 0, angleY: 0,
     photoBlob: null, isCapturing: false,
-    facingMode: 'environment', isLoopRunning: false
+    facingMode: 'environment', isLoopRunning: false,
+    torchOn: false
   };
 
   const DOM = {
@@ -270,7 +276,7 @@
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     
-    // Сжимаем квадрат (он уже квадратный после Capture)
+    // Рисуем уже обрезанный квадрат
     canvas.width = maxWidth;
     canvas.height = maxWidth;
     ctx.drawImage(img, 0, 0, maxWidth, maxWidth);
@@ -286,6 +292,7 @@
   }
 
   async function initCamera(mode = 'environment') {
+    // Чистка перед сменой
     if (state.stream) {
         state.stream.getTracks().forEach(track => track.stop());
         state.stream = null;
@@ -298,10 +305,9 @@
         audio: false,
         video: {
           facingMode: mode, 
-          // Запрашиваем 1:1, но если не дадут - возьмем что есть (обычно 4:3)
-          aspectRatio: { ideal: 1 }, 
-          height: { ideal: 2160 }, // Просим высокое качество
-          width: { ideal: 2160 } 
+          // FIX ZOOM: Просим 4:3 (стандарт сенсора), чтобы не было кропа 16:9
+          aspectRatio: { ideal: 1.333 }, 
+          width: { ideal: 1920 }, // Высокое качество
         }
       };
 
@@ -319,8 +325,13 @@
         try { await state.track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch(e){}
       }
 
-      // Кнопка вспышки
-      DOM.btnTorch.style.display = (mode === 'user') ? 'none' : 'flex';
+      // FIX TORCH: Надежная проверка
+      state.torchOn = false;
+      if (mode === 'environment' && caps.torch) {
+          DOM.btnTorch.classList.remove('hidden');
+      } else {
+          DOM.btnTorch.classList.add('hidden');
+      }
 
       if (window.ImageCapture) state.imageCapture = new ImageCapture(state.track);
 
@@ -367,7 +378,6 @@
     }
   }
   function resizeCanvas() {
-    // Канвас уровня должен совпадать с размером ВИДЕО БЛОКА (Квадрата)
     const wrapper = document.querySelector('.cam-wrapper');
     if (wrapper && (DOM.canvas.width !== wrapper.clientWidth)) {
         DOM.canvas.width = wrapper.clientWidth;
@@ -403,7 +413,7 @@
     requestAnimationFrame(drawLoop);
   }
 
-  // --- CAPTURE: КВАДРАТНАЯ ОБРЕЗКА (CROP) ---
+  // --- CAPTURE: SQUARE CROP FIX ---
   DOM.shutter.addEventListener('click', async () => {
     if (state.isCapturing || !state.levelOK) { if(!state.levelOK) haptic('error'); return; }
 
@@ -412,32 +422,21 @@
         DOM.shutter.style.transform = 'scale(0.8)'; DOM.shutter.style.opacity = '0.5'; 
         await new Promise(r => setTimeout(r, 50));
 
-        // 1. Берем кадр
         const vid = DOM.video;
-        // Создаем канвас размером с ВИДЕО (исходное разрешение)
         const c = document.createElement('canvas');
         const vW = vid.videoWidth;
         const vH = vid.videoHeight;
         
-        // 2. Вычисляем квадрат по центру
-        // Мы хотим сохранить ширину (minSize берет меньшее, но если вертикальное видео - ширина меньше)
-        // В портретном режиме ширина < высоты. Мы берем ширину как сторону квадрата.
+        // Берем центральный квадрат. 
+        // Так как мы запросили 4:3, потери будут минимальны, а угол обзора - максимальным для квадрата.
         const size = Math.min(vW, vH);
-        const startX = (vW - size) / 2; // Центрируем по X (если видео широкое)
-        const startY = (vH - size) / 2; // Центрируем по Y (если видео высокое)
+        const startX = (vW - size) / 2;
+        const startY = (vH - size) / 2;
 
-        // Канвас будет строго квадратный
         c.width = size;
         c.height = size;
         const ctx = c.getContext('2d');
 
-        // Зеркалим если фронталка
-        /* if (state.facingMode === 'user') {
-             ctx.translate(size, 0); ctx.scale(-1, 1);
-        } */ // Пока отключил, чтобы текст на продуктах читался
-
-        // 3. РИСУЕМ ТОЛЬКО ЦЕНТРАЛЬНУЮ ЧАСТЬ (CROP)
-        // drawImage(source, sx, sy, sw, sh, dx, dy, dw, dh)
         ctx.drawImage(vid, startX, startY, size, size, 0, 0, size, size);
 
         const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.95));
@@ -494,6 +493,7 @@
     }
   }
 
+  // --- CONTROLS ---
   DOM.btnSwitch.onclick = () => {
     haptic('medium');
     const icon = DOM.btnSwitch.querySelector('svg');
@@ -503,11 +503,21 @@
     initCamera(newMode);
     showToast(newMode === 'environment' ? "Основная камера" : "Фронтальная камера");
   };
+
   DOM.btnTorch.onclick = async () => {
     if(!state.track) return;
-    try { await state.track.applyConstraints({ advanced: [{ torch: true }] }); haptic('light'); }
-    catch(e){ try{ await state.track.applyConstraints({ advanced: [{ torch: false }] }); }catch(e2){} showToast("Фонарик недоступен"); }
+    state.torchOn = !state.torchOn;
+    try { 
+        await state.track.applyConstraints({ advanced: [{ torch: state.torchOn }] }); 
+        haptic('light');
+    } catch(e){ 
+        // Если advanced не сработал (бывает на Android), пробуем переполучить трек
+        console.warn("Torch failed, trying fallback");
+        state.torchOn = !state.torchOn; // Revert
+        showToast("Не удалось включить фонарик");
+    }
   };
+  
   document.getElementById('btnClose').onclick = () => { if (tg) tg.close(); else window.history.back(); };
   function haptic(style) { if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred(style); }
 
