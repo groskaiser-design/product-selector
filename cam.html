@@ -7,7 +7,7 @@
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
   :root {
-    --bg-core: #000000;
+    --bg-core: #050505;
     --surface-glass: rgba(20, 20, 20, 0.6);
     --surface-border: rgba(255, 255, 255, 0.15);
     --acc-green: #30d158;
@@ -22,7 +22,7 @@
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body {
     margin: 0; padding: 0;
-    background: var(--bg-core);
+    background: #000;
     color: var(--text-main);
     font-family: var(--font-stack);
     height: 100vh; overflow: hidden;
@@ -42,15 +42,18 @@
     background: #000;
   }
 
-  /* ВАЖНО: contain убирает зум, добавляя полосы */
+  /* Video */
   video {
     position: absolute;
     width: 100%; height: 100%;
-    object-fit: contain; 
+    object-fit: cover; 
     z-index: 1;
+    transform: scaleX(1); /* Для фронталки будем менять зеркально в JS если нужно, но обычно видеопоток сам ок */
   }
+  
+  /* Если фронталка, можно добавить класс mirror для зеркалирования видео, но пока оставим стандарт */
 
-  /* Canvas для уровня */
+  /* Canvas */
   #uiCanvas {
     position: absolute;
     inset: 0;
@@ -88,6 +91,7 @@
     display: flex;
     align-items: center; gap: 8px;
     font-size: 13px; font-weight: 600;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
     transition: all 0.3s ease;
   }
   .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--acc-orange); box-shadow: 0 0 8px var(--acc-orange); transition: 0.3s; }
@@ -102,11 +106,10 @@
     display: flex; align-items: center; justify-content: center;
     color: #fff; cursor: pointer;
     transition: transform 0.1s;
-    font-size: 18px;
   }
   .icon-btn:active { transform: scale(0.9); background: rgba(80,80,80,0.6); }
 
-  /* Guide overlay */
+  /* Guide overlay for card */
   .card-guide {
     position: absolute;
     right: 20px; top: 50%; transform: translateY(-50%);
@@ -125,9 +128,9 @@
   .controls-area {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: space-between; 
     pointer-events: auto;
-    padding: 0 20px;
+    position: relative;
   }
 
   .shutter-outer {
@@ -150,7 +153,7 @@
   .shutter-outer.active { border-color: var(--acc-green); transform: scale(1.05); }
   .shutter-outer:active:not(.disabled) .shutter-inner { transform: scale(0.9); }
 
-  /* Permission Overlay */
+  /* Permission Overlay (iOS) */
   .perm-overlay {
     position: absolute; inset: 0; z-index: 100;
     background: rgba(5,5,5,0.85);
@@ -174,24 +177,48 @@
   }
   
   .preview-img { 
-    flex: 1; width: 100%; min-height: 0;
-    object-fit: contain; background: #111; 
+    flex: 1; 
+    width: 100%; 
+    min-height: 0;
+    object-fit: contain; 
+    background: #111; 
     margin-bottom: 12px;
   }
 
-  .comment-wrap { padding: 0 24px 16px 24px; width: 100%; }
-  .comment-label { display: block; color: var(--text-muted); font-size: 13px; margin-bottom: 8px; margin-left: 4px; font-weight: 500; }
+  .comment-wrap {
+    padding: 0 24px 16px 24px;
+    width: 100%;
+  }
+  
+  .comment-label {
+    display: block;
+    color: var(--text-muted);
+    font-size: 13px;
+    margin-bottom: 8px;
+    margin-left: 4px;
+    font-weight: 500;
+  }
 
   .comment-input {
-    width: 100%; height: 80px;
+    width: 100%;
+    height: 80px;
     background: rgba(255,255,255,0.1);
-    border: 1px solid var(--surface-border); border-radius: 16px;
-    padding: 12px 16px; color: #fff; font-size: 16px;
+    border: 1px solid var(--surface-border);
+    border-radius: 16px;
+    padding: 12px 16px;
+    color: #fff;
+    font-size: 16px;
     font-family: var(--font-stack);
-    resize: none; outline: none; -webkit-appearance: none;
+    resize: none;
+    outline: none;
+    -webkit-appearance: none;
     transition: 0.2s;
   }
-  .comment-input:focus { background: rgba(255,255,255,0.15); border-color: var(--acc-blue); }
+  .comment-input::placeholder { color: rgba(255,255,255,0.3); }
+  .comment-input:focus { 
+    background: rgba(255,255,255,0.15); 
+    border-color: var(--acc-blue); 
+  }
 
   .preview-controls {
     padding: 0 24px 34px 24px;
@@ -208,11 +235,40 @@
     color: #fff; cursor: pointer; text-align: center;
   }
   .btn.primary { background: var(--acc-blue); border-color: transparent; }
-  .hidden { display: none !important; }
 
+  /* === TOAST NOTIFICATION (NEW) === */
+  .toast-msg {
+    position: absolute;
+    top: 90px;
+    left: 50%;
+    transform: translateX(-50%) translateY(-20px);
+    background: rgba(30, 30, 30, 0.85);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #fff;
+    padding: 10px 24px;
+    border-radius: 30px;
+    font-size: 14px;
+    font-weight: 600;
+    pointer-events: none;
+    opacity: 0;
+    transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    z-index: 300;
+    display: flex; align-items: center; gap: 8px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  }
+
+  .toast-msg.visible {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  .hidden { display: none !important; }
 </style>
 </head>
 <body>
+
+  <div id="toast" class="toast-msg">Смена камеры</div>
 
   <div class="cam-viewport">
     <video id="video" autoplay playsinline muted></video>
@@ -229,17 +285,23 @@
       </div>
 
       <div class="card-guide">
-        <span>Карта для масштаба</span>
+        <span>Банковская карта, (опционально, повысит точность)</span>
       </div>
 
       <div class="controls-area">
-        <div style="width: 44px"></div>
-        
+        <div class="icon-btn" id="btnSwitch">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M23 4v6h-6"></path>
+                <path d="M1 20v-6h6"></path>
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"></path>
+                <path d="M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+            </svg>
+        </div>
+
         <div class="shutter-outer disabled" id="shutterBtn">
           <div class="shutter-inner"></div>
         </div>
-
-        <div class="icon-btn" id="btnSwitchCam" style="display:none">🔄</div>
+        <div class="icon-btn" id="btnGallery">🖼️</div>
       </div>
     </div>
   </div>
@@ -247,7 +309,7 @@
   <div id="permReq" class="perm-overlay hidden">
     <div style="font-size:48px; margin-bottom:10px">📐</div>
     <h2 style="margin:0">Настройка</h2>
-    <p style="color:var(--text-muted)">Разрешите доступ к датчикам для уровня.</p>
+    <p style="color:var(--text-muted)">Для точного расчета нам нужно использовать гироскоп телефона.</p>
     <button class="perm-btn" onclick="requestSensors()">Разрешить</button>
   </div>
 
@@ -255,8 +317,8 @@
     <img id="finalPhoto" class="preview-img">
     
     <div class="comment-wrap">
-      <label class="comment-label">Комментарий</label>
-      <textarea id="commentInput" class="comment-input" placeholder="Вес, состав..."></textarea>
+      <label class="comment-label">Комментарий (например: вес, состав)</label>
+      <textarea id="commentInput" class="comment-input" placeholder="Треска 200г, рис белый 150г..."></textarea>
     </div>
 
     <div class="preview-controls">
@@ -265,8 +327,10 @@
     </div>
   </div>
 
+  <input type="file" id="fileInput" accept="image/*" class="hidden">
+
 <script>
-  // === 0. INIT ===
+  // === TELEGRAM INIT ===
   const tg = window.Telegram?.WebApp;
   if(tg) {
     tg.ready(); tg.expand();
@@ -274,8 +338,12 @@
     if(tg.disableVerticalSwipes) tg.disableVerticalSwipes();
   }
 
-  // === 1. CONFIG & STATE ===
-  const STORAGE_KEY = 'ultima_cam_id_final';
+  // === CONFIG ===
+  const MAX_TILT = 5; 
+  const TARGET_RES_H = 4096;
+  const TARGET_ASPECT = 0.75; 
+
+  // === STATE ===
   const state = {
     stream: null,
     track: null,
@@ -285,9 +353,8 @@
     angleY: 0,
     photoBlob: null,
     isCapturing: false,
-    
-    videoDevices: [],
-    currentCamIndex: 0
+    facingMode: 'environment', // 'environment' = задняя, 'user' = передняя
+    isLoopRunning: false
   };
 
   const DOM = {
@@ -301,113 +368,82 @@
     preview: document.getElementById('previewScreen'),
     finalImg: document.getElementById('finalPhoto'),
     btnSend: document.getElementById('btnSend'),
+    fileInput: document.getElementById('fileInput'),
     commentInput: document.getElementById('commentInput'),
-    btnSwitch: document.getElementById('btnSwitchCam')
+    btnSwitch: document.getElementById('btnSwitch'),
+    toast: document.getElementById('toast'),
+    btnTorch: document.getElementById('btnTorch')
   };
 
-  // === 2. CAMERA LOGIC (THE BRAIN) ===
-  async function initCamera() {
+  // --- 1. CAMERA INIT ---
+  async function initCamera(mode = 'environment') {
+    // 1. Останавливаем старый поток
+    if (state.stream) {
+        state.stream.getTracks().forEach(track => track.stop());
+    }
+
     try {
-      // 1. Пробуем восстановить сохраненную камеру
-      const savedId = localStorage.getItem(STORAGE_KEY);
-      let constraints = { audio: false };
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      // Пробуем найти камеры (опционально, но полезно для отладки)
+      
+      const constraints = {
+        audio: false,
+        video: {
+          facingMode: mode, 
+          aspectRatio: { ideal: TARGET_ASPECT },
+          height: { ideal: TARGET_RES_H },
+          width: { ideal: 3072 } 
+        }
+      };
 
-      if (savedId) {
-        constraints.video = { deviceId: { exact: savedId } };
-      } else {
-        // Если нет сохранения, просим заднюю (важно для iOS)
-        constraints.video = { facingMode: 'environment' };
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      state.stream = stream;
+      state.track = stream.getVideoTracks()[0];
+      state.facingMode = mode;
+      DOM.video.srcObject = stream;
+
+      // Применяем настройки (фокус только для задней)
+      const caps = state.track.getCapabilities();
+      if (mode === 'environment' && caps.focusMode && caps.focusMode.includes('continuous')) {
+        try { await state.track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch(e){}
       }
 
-      // 2. Запускаем поток
-      try {
-          const stream = await navigator.mediaDevices.getUserMedia(constraints);
-          applyStream(stream);
-      } catch (e) {
-          // Если сохраненный ID сломался - сбрас и рестарт
-          if (savedId) {
-              localStorage.removeItem(STORAGE_KEY);
-              initCamera(); 
-              return;
-          }
-          throw e;
+      if (window.ImageCapture) {
+        state.imageCapture = new ImageCapture(state.track);
       }
+      
+      // Скрываем фонарик на фронталке
+      if (mode === 'user') DOM.btnTorch.style.display = 'none';
+      else DOM.btnTorch.style.display = 'flex';
 
-      // 3. Сканируем устройства для кнопки переключения
-      await scanDevices();
+      // Запускаем отрисовку и листенеры один раз
+      if (!state.isLoopRunning) {
+          resizeCanvas();
+          window.addEventListener('resize', resizeCanvas);
+          requestAnimationFrame(drawLoop);
+          checkSensorPerms();
+          state.isLoopRunning = true;
+      }
 
     } catch (e) {
-      alert("Ошибка камеры: " + e.message);
+      console.warn("Camera fallback or error", e);
+      // Fallback: пробуем любую камеру, если запрошенная не открылась
+      try {
+         const fs = await navigator.mediaDevices.getUserMedia({ video: true });
+         state.stream = fs;
+         state.track = fs.getVideoTracks()[0];
+         DOM.video.srcObject = fs;
+         if(!state.isLoopRunning) {
+             requestAnimationFrame(drawLoop);
+             state.isLoopRunning = true;
+         }
+      } catch(e2){ 
+          alert("Ошибка доступа к камере. Проверьте настройки."); 
+      }
     }
   }
 
-  function applyStream(stream) {
-    if(state.stream) state.stream.getTracks().forEach(t => t.stop());
-    
-    state.stream = stream;
-    state.track = stream.getVideoTracks()[0];
-    DOM.video.srcObject = stream;
-
-    if (window.ImageCapture) {
-        state.imageCapture = new ImageCapture(state.track);
-    }
-
-    // Запуск визуализации
-    resizeCanvas();
-    window.addEventListener('resize', resizeCanvas);
-    requestAnimationFrame(drawLoop);
-    checkSensorPerms();
-  }
-
-  async function scanDevices() {
-    try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const videoInputs = devices.filter(d => d.kind === 'videoinput');
-
-        // Фильтр: убираем фронталки
-        const backCams = videoInputs.filter(d => {
-            const l = d.label.toLowerCase();
-            return !l.includes('front') && !l.includes('user') && !l.includes('selfie');
-        });
-
-        // Если задних не нашли (бывает баг), берем все
-        state.videoDevices = backCams.length > 0 ? backCams : videoInputs;
-
-        // Если камер > 1, включаем кнопку смены
-        if (state.videoDevices.length > 1) {
-            DOM.btnSwitch.style.display = 'flex';
-            
-            // Находим текущий индекс
-            const currentId = state.track.getSettings().deviceId;
-            const idx = state.videoDevices.findIndex(d => d.deviceId === currentId);
-            if(idx !== -1) state.currentCamIndex = idx;
-        }
-    } catch(e) { console.error(e); }
-  }
-
-  // === 3. SWITCH HANDLER ===
-  DOM.btnSwitch.onclick = async () => {
-    if (state.videoDevices.length < 2) return;
-    haptic('selection');
-
-    // Следующая камера
-    state.currentCamIndex = (state.currentCamIndex + 1) % state.videoDevices.length;
-    const nextCam = state.videoDevices[state.currentCamIndex];
-
-    // Сохраняем выбор
-    localStorage.setItem(STORAGE_KEY, nextCam.deviceId);
-
-    // Перезапуск
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-            audio: false,
-            video: { deviceId: { exact: nextCam.deviceId } }
-        });
-        applyStream(stream);
-    } catch(e) { alert("Смена не удалась"); }
-  };
-
-  // === 4. LEVEL & SENSORS ===
+  // --- 2. SENSORS ---
   function checkSensorPerms() {
     if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
       DOM.permReq.classList.remove('hidden'); 
@@ -423,75 +459,24 @@
         DOM.permReq.classList.add('hidden');
         window.addEventListener('deviceorientation', handleOrientation);
       } else {
-        alert("Уровень не будет работать без прав");
+        alert("Без гироскопа уровень работать не будет");
         DOM.permReq.classList.add('hidden');
       }
     } catch (e) { alert(e); }
   }
 
   function handleOrientation(e) {
-    if (e.beta !== null) {
-        state.angleX = e.gamma; 
-        state.angleY = e.beta;  
-    }
+    let x = e.beta; 
+    let y = e.gamma; 
+    if (x === null || y === null) return;
+    state.angleX = x;
+    state.angleY = y;
   }
 
-  // === 5. DRAWING LOOP ===
-  function drawLoop() {
-    const ctx = DOM.ctx;
-    const w = DOM.canvas.width;
-    const h = DOM.canvas.height;
-    ctx.clearRect(0, 0, w, h);
-    
-    // Центр
-    const cx = w / 2;
-    const cy = h / 2;
-
-    // Параметры уровня
-    const rBubble = 14; 
-    const rTarget = 16;
-    const sensitivity = 4; // Чувствительность
-    
-    const rawX = state.angleX || 0;
-    const rawY = state.angleY || 0;
-    
-    const clamp = (val, max) => Math.max(-max, Math.min(max, val));
-    const dx = clamp(rawX * sensitivity, 50);
-    const dy = clamp(rawY * sensitivity, 50);
-
-    const dist = Math.hypot(dx, dy);
-    const isInside = dist <= 20; // Допуск
-
-    if (state.levelOK !== isInside && !state.isCapturing) {
-      state.levelOK = isInside;
-      updateUI();
-      if(isInside) haptic('medium');
-    }
-
-    // Рисуем
-    ctx.shadowBlur = 4;
-    ctx.shadowColor = 'rgba(0,0,0,0.5)';
-    
-    // Кольцо
-    ctx.beginPath();
-    ctx.arc(cx, cy, rTarget, 0, Math.PI * 2); 
-    const color = (state.levelOK || state.isCapturing) ? '#30d158' : 'rgba(255,255,255,0.85)';
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 3;
-    ctx.stroke();
-
-    // Пузырек
-    ctx.beginPath();
-    ctx.arc(cx + dx, cy + dy, rBubble, 0, Math.PI * 2); 
-    ctx.fillStyle = color;
-    ctx.fill();
-    ctx.shadowBlur = 0;
-
-    requestAnimationFrame(drawLoop);
-  }
-  
+  // --- 3. UI LOOPS ---
   function updateUI() {
     if (state.isCapturing) return;
+
     if (state.levelOK) {
       DOM.lvlDot.classList.add('ok');
       DOM.lvlText.textContent = "Ровно";
@@ -506,54 +491,147 @@
   }
 
   function resizeCanvas() {
-    if (DOM.canvas.width !== window.innerWidth) {
-        DOM.canvas.width = window.innerWidth;
-        DOM.canvas.height = window.innerHeight;
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    if (DOM.canvas.width !== w || DOM.canvas.height !== h) {
+        DOM.canvas.width = w;
+        DOM.canvas.height = h;
     }
   }
 
-  // === 6. CAPTURE ===
-  DOM.shutter.onclick = async () => {
+  function drawLoop() {
+    const ctx = DOM.ctx;
+    const w = DOM.canvas.width;
+    const h = DOM.canvas.height;
+    ctx.clearRect(0, 0, w, h);
+    const cx = w / 2;
+    const cy = h / 2;
+
+    const rBubble = 14; 
+    const rTarget = 16;
+    const maxOffset = 60; 
+    
+    const rawX = (isNaN(state.angleY) || state.angleY === null) ? 0 : state.angleY;
+    const rawY = (isNaN(state.angleX) || state.angleX === null) ? 0 : state.angleX;
+    
+    const clamp = (val) => Math.max(-20, Math.min(20, val));
+    const dx = (clamp(rawX) / 20) * maxOffset; 
+    const dy = (clamp(rawY) / 20) * maxOffset;
+
+    const dist = Math.hypot(dx, dy);
+    const isInside = (dist + rBubble) <= rTarget;
+
+    if (state.levelOK !== isInside && !state.isCapturing) {
+      state.levelOK = isInside;
+      updateUI();
+      if(isInside) haptic('medium');
+    }
+
+    ctx.shadowBlur = 4;
+    ctx.shadowColor = 'rgba(0,0,0,0.5)';
+    
+    ctx.beginPath();
+    ctx.arc(cx, cy, rTarget, 0, Math.PI * 2); 
+    const color = (state.levelOK || state.isCapturing) ? '#30d158' : 'rgba(255,255,255,0.85)';
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(cx + dx, cy + dy, rBubble, 0, Math.PI * 2); 
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    requestAnimationFrame(drawLoop);
+  }
+
+  // --- 4. CAPTURE LOGIC ---
+  DOM.shutter.addEventListener('click', async () => {
     if (state.isCapturing) return; 
     if (!state.levelOK) { haptic('error'); return; }
 
     try {
         state.isCapturing = true; 
         haptic('heavy');
-        DOM.shutter.style.opacity = '0.5';
+        
+        DOM.shutter.style.transform = 'scale(0.8)';
+        DOM.shutter.style.opacity = '0.5'; 
 
         await new Promise(r => setTimeout(r, 50));
 
-        // 1. ImageCapture
         if (state.imageCapture) {
           try {
             const blob = await state.imageCapture.takePhoto();
             showPreview(blob);
             return;
-          } catch(e) {}
+          } catch(e) { console.log('ImageCapture error, trying fallback'); }
         }
 
-        // 2. Canvas Fallback
+        const vid = DOM.video;
         const c = document.createElement('canvas');
-        // Важно: берем реальные размеры видео, а не экрана
-        c.width = DOM.video.videoWidth;
-        c.height = DOM.video.videoHeight;
-        c.getContext('2d').drawImage(DOM.video, 0, 0);
+        c.width = vid.videoWidth;
+        c.height = vid.videoHeight;
+        const ctx = c.getContext('2d');
         
-        c.toBlob(blob => {
-            showPreview(blob);
-        }, 'image/jpeg', 0.95);
+        // Зеркалирование для фронталки при сохранении (опционально)
+        if (state.facingMode === 'user') {
+             ctx.translate(c.width, 0);
+             ctx.scale(-1, 1);
+        }
 
-    } catch(e) {
+        ctx.drawImage(vid, 0, 0);
+        
+        await new Promise(resolve => {
+            c.toBlob(blob => {
+                showPreview(blob);
+                resolve();
+            }, 'image/jpeg', 0.95);
+        });
+
+    } catch(err) {
+        console.error("Capture failed:", err);
         haptic('error');
+        alert("Не удалось сделать фото. Держите телефон стабильнее.");
     } finally {
         state.isCapturing = false;
+        DOM.shutter.style.transform = '';
         DOM.shutter.style.opacity = '';
-        updateUI();
+        updateUI(); 
     }
+  });
+
+  // --- 5. SWITCH CAMERA LOGIC ---
+  DOM.btnSwitch.onclick = () => {
+    haptic('medium');
+    
+    // Анимация иконки
+    const icon = DOM.btnSwitch.querySelector('svg');
+    icon.style.transition = 'transform 0.5s ease';
+    icon.style.transform = 'rotate(180deg)';
+    setTimeout(() => icon.style.transform = '', 500);
+
+    // Логика
+    const newMode = state.facingMode === 'environment' ? 'user' : 'environment';
+    initCamera(newMode);
+
+    // Toast
+    showToast(newMode === 'environment' ? "Основная камера" : "Фронтальная камера");
   };
 
+  let toastTimeout;
+  function showToast(text) {
+    DOM.toast.textContent = text;
+    DOM.toast.classList.add('visible');
+    
+    clearTimeout(toastTimeout);
+    toastTimeout = setTimeout(() => {
+      DOM.toast.classList.remove('visible');
+    }, 2000);
+  }
+
   function showPreview(blob) {
+    if(!blob) return;
     state.photoBlob = blob;
     DOM.finalImg.src = URL.createObjectURL(blob);
     DOM.preview.style.display = 'flex';
@@ -561,31 +639,47 @@
 
   function retake() {
     DOM.preview.style.display = 'none';
-    URL.revokeObjectURL(DOM.finalImg.src);
+    if(DOM.finalImg.src) URL.revokeObjectURL(DOM.finalImg.src);
     DOM.finalImg.src = '';
+    state.photoBlob = null;
+    DOM.commentInput.value = ''; 
   }
 
   function sendPhoto() {
-    haptic('success');
-    DOM.btnSend.textContent = 'Готово!';
-    setTimeout(() => { tg.close(); }, 500);
-  }
-
-  function haptic(style) { 
-      if (tg?.HapticFeedback) {
-         if(style==='selection') tg.HapticFeedback.selectionChanged();
-         else if(style==='success'||style==='error') tg.HapticFeedback.notificationOccurred(style);
-         else tg.HapticFeedback.impactOccurred(style);
-      }
-  }
-
-  // Torch
-  let torchOn = false;
-  document.getElementById('btnTorch').onclick = async () => {
-    if(!state.track) return;
-    torchOn = !torchOn;
-    try { await state.track.applyConstraints({ advanced: [{ torch: torchOn }] }); } catch(e){}
+    const comment = DOM.commentInput.value.trim();
+    DOM.btnSend.textContent = 'Отправка...';
     haptic('light');
+
+    console.log("SENDING:", {
+        blobSize: state.photoBlob.size,
+        comment: comment
+    });
+    
+    setTimeout(() => {
+        haptic('success');
+        DOM.btnSend.textContent = 'Успешно!';
+        setTimeout(() => { 
+            retake(); 
+            DOM.btnSend.textContent = 'Готово';
+        }, 1000);
+    }, 1500);
+  }
+
+  function haptic(style) { if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred(style); }
+  
+  let torchState = false;
+  DOM.btnTorch.onclick = async () => {
+    if(!state.track) return;
+    torchState = !torchState;
+    try { await state.track.applyConstraints({ advanced: [{ torch: torchState }] }); } catch(e){}
+    haptic('light');
+  };
+
+  document.getElementById('btnGallery').onclick = () => DOM.fileInput.click();
+  DOM.fileInput.onchange = (e) => {
+    const file = e.target.files[0];
+    if(file) showPreview(file);
+    e.target.value = '';
   };
 
   document.getElementById('btnClose').onclick = () => window.history.back();
@@ -594,5 +688,6 @@
   initCamera();
 
 </script>
+
 </body>
 </html>
