@@ -3,24 +3,26 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Ultima Coach Calendar</title>
+<title>Ultima Coach Week View</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
   /* === CORE STYLES === */
   :root {
     --bg-core: #050505; 
+    --bg-panel: #1C1C1E;
     --text-main: #ffffff;
     --text-muted: #8E8E93;
     
-    --surface-glass: rgba(255, 255, 255, 0.07);
-    --surface-border: rgba(255, 255, 255, 0.1);
+    --line-color: rgba(255, 255, 255, 0.08);
+    --time-col-width: 50px;
+    --day-col-min-width: 65px; 
     
     --acc-blue: #0a84ff;
     --acc-red: #ff453a;
     --acc-green: #30d158;
     --acc-purple: #5e60ce;
     
-    --grid-h: 60px;
+    --grid-h: 60px; /* Высота одного часа */
     --safe-top: env(safe-area-inset-top);
     --safe-bottom: env(safe-area-inset-bottom);
   }
@@ -39,232 +41,198 @@
   }
 
   /* === FX LAYER === */
-  .fx-layer { position: fixed; inset: 0; z-index: -1; pointer-events: none; }
-  .orb { position: absolute; border-radius: 50%; filter: blur(80px); opacity: 0.4; will-change: transform; }
-  
-  .orb-1 { 
-    width: 300px; height: 300px; 
-    background: var(--acc-purple); 
-    top: -50px; left: -100px; 
-    animation: float 20s infinite ease-in-out; 
-  }
-  
-  .orb-2 { 
-    width: 250px; height: 250px; 
-    background: var(--acc-blue); 
-    bottom: -50px; right: -50px; 
-    animation: float 15s infinite ease-in-out reverse; 
-  }
-
-  .noise { 
-    position: fixed; inset: 0; opacity: 0.04; 
-    background: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); 
-  }
-
-  @keyframes float { 
-    0%, 100% { transform: translate(0, 0); } 
-    50% { transform: translate(30px, 50px); } 
-  }
+  .fx-layer { position: fixed; inset: 0; z-index: 0; pointer-events: none; }
+  .orb { position: absolute; border-radius: 50%; filter: blur(80px); opacity: 0.5; will-change: transform; }
+  .orb-1 { width: 300px; height: 300px; background: var(--acc-purple); top: -50px; left: -100px; animation: float 20s infinite ease-in-out; }
+  .orb-2 { width: 250px; height: 250px; background: var(--acc-blue); bottom: -50px; right: -50px; animation: float 15s infinite ease-in-out reverse; }
+  .noise { position: fixed; inset: 0; opacity: 0.04; background: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+  @keyframes float { 0%, 100% { transform: translate(0, 0); } 50% { transform: translate(30px, 50px); } }
 
   /* === HEADER AREA === */
   .top-area {
-    background: rgba(0, 0, 0, 0.7); 
+    background: rgba(0, 0, 0, 0.3); 
     backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
-    border-bottom: 1px solid rgba(255,255,255,0.08);
-    padding-top: calc(14px + var(--safe-top));
-    z-index: 10;
+    border-bottom: 1px solid var(--line-color);
+    padding-top: calc(10px + var(--safe-top));
+    padding-bottom: 4px;
+    z-index: 20;
     flex-shrink: 0;
-    display: flex; flex-direction: column;
   }
 
-  /* Month Label Row */
   .header-row {
     display: flex; justify-content: space-between; align-items: center;
-    padding: 0 16px 12px 16px;
+    padding: 0 16px;
+    margin-bottom: 10px;
   }
   
   .month-label { 
     font-family: 'SF Pro Display', sans-serif;
-    font-size: 13px; 
-    font-weight: 700; 
-    color: #8E8E93; 
-    text-transform: uppercase; 
-    letter-spacing: 1.5px;
-  }
-
-  .tools-row { display: flex; gap: 20px; }
-  
-  .icon-btn { 
-    width: 24px; height: 24px; 
-    display: flex; align-items: center; justify-content: center; 
-    color: #ffffff; 
-    transition: opacity 0.2s; 
-    cursor: pointer;
-  }
-  .icon-btn:active { opacity: 0.5; }
-  .icon-btn svg { stroke-width: 2.2; }
-
-  /* === CALENDAR STRIP === */
-  .calendar-swipe-area {
-    width: 100%; height: 68px;
-    overflow: hidden; position: relative;
-    touch-action: pan-y; cursor: grab;
-    margin-bottom: 6px;
-  }
-  .calendar-track {
-    display: flex; width: 300%; height: 100%;
-    transform: translateX(-33.333333%);
-    will-change: transform;
-  }
-  .calendar-week {
-    flex: 1; display: grid; grid-template-columns: repeat(7, 1fr);
-    gap: 0px; height: 100%; padding: 0 6px;
+    font-size: 15px; font-weight: 700; color: #fff; 
+    text-transform: uppercase; letter-spacing: 1px;
+    text-shadow: 0 2px 10px rgba(0,0,0,0.5);
   }
   
-  .day-cell {
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    border-radius: 12px; 
-    background: transparent;
-    transition: background 0.1s;
-    position: relative; cursor: pointer;
-    margin: 2px;
-  }
+  .week-controls { display: flex; gap: 16px; align-items: center; }
+  .icon-btn { width: 24px; height: 24px; color: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center;}
   
-  .dc-name { 
-    font-size: 11px; 
-    font-weight: 600; 
-    color: #8E8E93; 
-    margin-bottom: 2px; 
-    text-transform: uppercase; 
-    letter-spacing: 0.3px;
-  }
-  .dc-num { 
-    font-family: 'SF Pro Display', sans-serif;
-    font-size: 21px; 
-    font-weight: 500; 
-    color: #ffffff; 
-    font-variant-numeric: tabular-nums; 
-    line-height: 1.1;
-  }
-  
-  .day-cell.selected {
-    background: rgba(255,255,255,0.14);
-  }
-  
-  .day-cell.selected .dc-name { color: rgba(255,255,255,0.6); }
-  .day-cell.selected .dc-num { color: #ffffff; font-weight: 600; }
-
-  .day-cell.selected::after {
-    content: ''; position: absolute; bottom: 5px;
-    width: 4px; height: 4px; border-radius: 50%;
-    background: var(--acc-blue);
-    box-shadow: 0 0 4px rgba(10, 132, 255, 0.4);
-  }
-
-  /* === TIMELINE GRID === */
-  .timeline-container {
+  /* === MATRIX LAYOUT === */
+  .matrix-viewport {
     flex: 1;
-    overflow-y: auto;
+    overflow: auto;
     position: relative;
-    background: transparent;
     -webkit-overflow-scrolling: touch;
+    display: flex;
+    flex-direction: column;
+    z-index: 10;
   }
 
-  .grid-hour {
-    height: var(--grid-h);
-    border-bottom: 1px solid rgba(255,255,255,0.08);
-    position: relative;
-    box-sizing: border-box;
-  }
-  .grid-hour::after {
-    content: attr(data-time);
-    position: absolute;
-    top: -7px; left: 16px;
-    font-size: 11px;
-    color: #636366;
-    font-weight: 500;
-  }
-  
-  .grid-hour.off-hours {
-    background-color: rgba(255, 255, 255, 0.02);
-    background-image: repeating-linear-gradient(
-      -45deg,
-      rgba(255, 255, 255, 0.08) 0px,
-      rgba(255, 255, 255, 0.08) 1px,
-      transparent 1px,
-      transparent 8px
-    );
+  /* Header Row for Days (Sticky Top) */
+  .matrix-header-row {
+    display: flex;
+    position: sticky;
+    top: 0;
+    z-index: 15;
+    background: rgba(0, 0, 0, 0.25);
+    backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px);
+    border-bottom: 1px solid var(--line-color);
+    width: fit-content;
+    min-width: 100%;
   }
 
-  /* === NEW iOS STYLE TIME LINE === */
-  .current-time-line {
-    position: absolute; 
-    left: 56px; /* Отодвинули линию вправо, чтобы не перекрывала "пилюлю" */
-    right: 0;
-    height: 1px; 
-    background: var(--acc-red);
-    z-index: 10; 
-    pointer-events: none;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.3);
+  .corner-cell {
+    width: var(--time-col-width);
+    flex-shrink: 0;
+    position: sticky;
+    left: 0;
+    z-index: 16;
+    background: inherit; 
+    backdrop-filter: inherit; -webkit-backdrop-filter: inherit;
+    border-right: 1px solid var(--line-color);
   }
 
-  /* Удаляем старую точку */
-  .current-time-line::before { display: none; }
+  .days-header-track { 
+    display: flex; 
+    flex: 1; 
+    touch-action: pan-x pan-y;
+  }
 
-  /* Стилизуем время как "красную пилюлю" */
-  .current-time-line span {
-    position: absolute; 
-    left: -50px; /* Позиционируем слева от линии */
-    top: -9px;   /* Центрируем по вертикали относительно линии (высота пилюли ~18px) */
-    
-    background: var(--acc-red);
-    color: #ffffff;
-    font-size: 11px;
-    font-weight: 700;
-    font-variant-numeric: tabular-nums;
-    
-    padding: 2px 5px;
-    border-radius: 6px;
-    min-width: 44px;
+  /* --- DAY HEADER STYLING --- */
+  .day-col-header {
+    min-width: var(--day-col-min-width);
+    flex: 1;
     text-align: center;
-    
-    /* Тень для объема, как в iOS */
-    box-shadow: 0 2px 6px rgba(0,0,0,0.4);
-    z-index: 11;
+    height: 52px; 
+    padding: 8px 0 0 0;
+    font-size: 11px;
+    color: var(--text-muted);
+    border-right: 1px solid var(--line-color);
+    display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
+    gap: 4px;
+    position: relative;
+    transition: color 0.2s;
+  }
+  
+  .dch-day { font-weight: 600; text-transform: uppercase; line-height: 1; }
+  .dch-num { font-size: 16px; font-weight: 500; color: #fff; line-height: 1; }
+
+  /* Today State */
+  .day-col-header.today { color: var(--acc-blue); }
+  .day-col-header.today .dch-day { color: var(--acc-blue); }
+  
+  /* The DOT Indicator */
+  .day-col-header::after {
+    content: '';
+    width: 4px; height: 4px;
+    border-radius: 50%;
+    background: transparent;
+    margin-top: 4px;
+    transition: background 0.2s;
+  }
+  
+  .day-col-header.today::after {
+    background: var(--acc-blue);
+    box-shadow: 0 0 6px var(--acc-blue);
   }
 
-  /* Session Blocks */
-  .events-layer {
-    position: absolute; top: 0; left: 56px; right: 8px; bottom: 0;
-    pointer-events: none;
+  /* Body */
+  .matrix-body {
+    display: flex;
+    position: relative;
+    width: fit-content;
+    min-width: 100%;
   }
-  
-  .session-block {
-    position: absolute; width: 100%;
-    background: rgba(28, 28, 30, 0.85); 
-    backdrop-filter: blur(10px);
-    border-left: 3px solid #3A3A3C;
-    border-radius: 4px;
-    padding: 6px 10px;
-    pointer-events: auto;
-    overflow: hidden;
-    cursor: pointer;
-    border: 1px solid rgba(255,255,255,0.08);
-    z-index: 2;
-  }
-  .session-block:active { background: rgba(44, 44, 46, 0.9); }
-  
-  .sb-title { font-size: 13px; font-weight: 600; color: #fff; margin-bottom: 2px; }
-  .sb-time { font-size: 11px; color: #8E8E93; }
-  .sb-status { position: absolute; top: 6px; right: 6px; font-size: 10px; }
-  
-  .session-block.planned { border-left-color: var(--acc-blue); }
-  .session-block.done { border-left-color: var(--acc-green); opacity: 0.7; }
-  .session-block.personal { border-left-color: #BF5AF2; }
 
-  /* === SHEETS & FORMS === */
+  /* Time Column */
+  .time-column {
+    width: var(--time-col-width);
+    flex-shrink: 0;
+    position: sticky;
+    left: 0;
+    z-index: 14;
+    background: rgba(0, 0, 0, 0.25);
+    backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px);
+    border-right: 1px solid var(--line-color);
+    padding-bottom: 20px;
+  }
+
+  .time-label { height: var(--grid-h); position: relative; }
+  .time-label span {
+    position: absolute; top: -7px; right: 6px;
+    font-size: 11px; font-weight: 500; color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+    padding: 0 2px;
+  }
+  .time-label:first-child span { top: 2px; }
+
+  /* Grid Columns */
+  .grid-columns-container { display: flex; flex: 1; position: relative; }
+
+  .global-time-line {
+    position: absolute; left: 0; width: 100%; height: 1px;
+    background: var(--acc-red); z-index: 10; pointer-events: none;
+    box-shadow: 0 0 6px rgba(255, 69, 58, 0.6); display: none;
+  }
+  .global-time-line::before {
+    content: ''; position: absolute; left: -3px; top: -3px;
+    width: 7px; height: 7px; background: var(--acc-red);
+    border-radius: 50%; box-shadow: 0 0 6px rgba(255, 69, 58, 0.6);
+  }
+
+  .day-column {
+    min-width: var(--day-col-min-width); flex: 1;
+    border-right: 1px solid var(--line-color); position: relative;
+    background-image: linear-gradient(to bottom, var(--line-color) 1px, transparent 1px);
+    background-size: 100% var(--grid-h);
+    padding-bottom: 20px;
+    cursor: pointer; /* Hint that it's clickable */
+  }
+  
+  /* Tap highlight effect for better feedback */
+  .day-column:active {
+    background-color: rgba(255, 255, 255, 0.03);
+  }
+
+  /* Events */
+  .event-card {
+    position: absolute; left: 2px; right: 2px; border-radius: 4px; padding: 3px 5px;
+    overflow: hidden; border-left: 2px solid;
+    background: rgba(28, 28, 30, 0.6); backdrop-filter: blur(5px);
+    cursor: pointer; z-index: 5;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    border-top: 1px solid rgba(255,255,255,0.05);
+    border-right: 1px solid rgba(255,255,255,0.05);
+    border-bottom: 1px solid rgba(0,0,0,0.2);
+  }
+  .ev-title { font-size: 10px; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.2; text-shadow: 0 1px 2px rgba(0,0,0,0.5); }
+  .ev-time { font-size: 9px; color: rgba(255,255,255,0.8); margin-top: 1px; }
+  .event-card.personal { border-left-color: #BF5AF2; background: rgba(191, 90, 242, 0.25); border: 1px solid rgba(191,90,242, 0.3); border-left-width: 3px; }
+  .event-card.client { border-left-color: var(--acc-blue); background: rgba(10, 132, 255, 0.25); border: 1px solid rgba(10,132,255, 0.3); border-left-width: 3px; }
+  .event-card.done { opacity: 0.7; filter: grayscale(0.3); }
+
+  /* Sheets */
   .sheet-overlay {
-    position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+    position: fixed; inset: 0; background: rgba(0,0,0,0.6);
     z-index: 50; opacity: 0; pointer-events: none; transition: 0.3s;
     backdrop-filter: blur(4px);
   }
@@ -272,48 +240,25 @@
   
   .sheet {
     position: fixed; bottom: 0; left: 0; right: 0;
-    background: #1C1C1E;
+    background: rgba(28, 28, 30, 0.95); backdrop-filter: blur(30px);
     border-radius: 20px 20px 0 0;
     padding: 24px 16px calc(24px + var(--safe-bottom)) 16px;
-    transform: translateY(110%);
-    transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
-    z-index: 51;
-    border-top: 1px solid rgba(255,255,255,0.1);
+    transform: translateY(110%); transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+    z-index: 51; border-top: 1px solid rgba(255,255,255,0.1);
+    box-shadow: 0 -10px 40px rgba(0,0,0,0.5);
   }
   .sheet.open { transform: translateY(0); }
 
   .sheet-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
   .sh-title { font-size: 18px; font-weight: 700; color: #fff; }
-  .sh-close { color: var(--acc-blue); font-size: 16px; font-weight: 500; }
+  .sh-close { color: var(--acc-blue); font-size: 16px; font-weight: 500; cursor: pointer; }
 
   .form-group { margin-bottom: 16px; }
   .form-label { font-size: 12px; color: #8E8E93; margin-bottom: 6px; margin-left: 2px; text-transform: uppercase; }
-  
-  .input-box {
-    width: 100%;
-    background: #2C2C2E;
-    border: none;
-    border-radius: 10px;
-    padding: 12px;
-    color: #fff; font-size: 16px;
-    appearance: none;
-  }
+  .input-box { width: 100%; background: rgba(118, 118, 128, 0.24); border: none; border-radius: 10px; padding: 12px; color: #fff; font-size: 16px; appearance: none; }
   .input-row { display: flex; gap: 12px; }
-  
-  select.input-box {
-    background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
-    background-repeat: no-repeat;
-    background-position: right 12px center;
-    background-size: 16px;
-  }
 
-  .btn-primary {
-    width: 100%; padding: 14px;
-    background: #fff;
-    color: #000; font-weight: 600; font-size: 16px;
-    border-radius: 12px; border: none;
-    margin-top: 12px;
-  }
+  .btn-primary { width: 100%; padding: 14px; background: #fff; color: #000; font-weight: 600; font-size: 16px; border-radius: 12px; border: none; margin-top: 12px; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
   .btn-danger { background: rgba(255, 69, 58, 0.15); color: var(--acc-red); }
 
 </style>
@@ -326,45 +271,55 @@
   <div class="noise"></div>
 </div>
 
+<!-- Header -->
 <div class="top-area">
-  <!-- Header Row: Title Left, Icons Right -->
   <div class="header-row">
-    <div class="month-label" id="headerMonth">НОЯБРЬ 2025 Г.</div>
+    <div class="month-label" id="headerMonth">НОЯБРЬ 2025</div>
     
-    <div class="tools-row">
-      <!-- Settings (White) -->
+    <div class="week-controls">
+      <!-- Settings Only -->
       <div class="icon-btn" onclick="openSettings()">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
       </div>
-      <!-- Add (White) -->
-      <div class="icon-btn" onclick="openAddSession()">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-      </div>
-    </div>
-  </div>
-
-  <!-- SWIPE CALENDAR STRIP -->
-  <div class="calendar-swipe-area" id="swipeArea">
-    <div class="calendar-track" id="calTrack">
-      <div class="calendar-week" id="weekPrev"></div>
-      <div class="calendar-week" id="weekCurr"></div>
-      <div class="calendar-week" id="weekNext"></div>
+      
+      <!-- No Add Button Here anymore -->
     </div>
   </div>
 </div>
 
-<!-- Vertical Timeline -->
-<div class="timeline-container" id="timeline">
-  <div class="current-time-line" id="timeLine" style="top: 0px">
-    <span id="timeLineText">00:00</span>
+<!-- Matrix Viewport -->
+<div class="matrix-viewport" id="matrixViewport">
+  
+  <!-- Sticky Header Row: Time spacer + 7 Days + SWIPE AREA -->
+  <div class="matrix-header-row" id="swipeHeaderZone">
+    <div class="corner-cell"></div>
+    <div class="days-header-track" id="daysHeaderTrack">
+      <!-- Generated by JS -->
+    </div>
   </div>
-  <div class="events-layer" id="eventsLayer"></div>
-  <div id="gridLayer"></div>
+
+  <!-- Scrollable Body: Time column + Grid columns -->
+  <div class="matrix-body">
+    <!-- Time Column -->
+    <div class="time-column" id="timeColumn">
+      <!-- Generated by JS -->
+    </div>
+
+    <!-- Main Grid -->
+    <div class="grid-columns-container" id="gridColumns">
+      <!-- GLOBAL TIME LINE: spans all columns -->
+      <div class="global-time-line" id="globalTimeLine"></div>
+      
+      <!-- Columns generated by JS -->
+    </div>
+  </div>
+
 </div>
 
-<!-- OVERLAY & SHEETS -->
+<!-- Overlays -->
 <div class="sheet-overlay" id="overlay" onclick="closeAllSheets()"></div>
 
+<!-- Session Form -->
 <div class="sheet" id="sessionSheet">
   <div class="sheet-header">
     <div class="sh-title" id="sheetTitle">Тренировка</div>
@@ -380,6 +335,11 @@
       <option value="Гость">Гость</option>
     </select>
   </div>
+  
+  <div class="form-group">
+    <div class="form-label">Дата</div>
+    <input type="date" class="input-box" id="inpDate">
+  </div>
 
   <div class="input-row">
     <div class="form-group" style="flex:1">
@@ -394,7 +354,7 @@
 
   <div class="form-group">
     <div class="form-label">Заметка</div>
-    <input type="text" class="input-box" id="inpNote" placeholder="Например: День ног">
+    <input type="text" class="input-box" id="inpNote" placeholder="Тип тренировки...">
   </div>
 
   <button class="btn-primary" onclick="saveSession()">Сохранить</button>
@@ -407,214 +367,303 @@
     <div class="sh-close" onclick="closeAllSheets()">Готово</div>
   </div>
   <div class="form-group">
-    <div class="form-label">Начало дня</div>
-    <input type="time" class="input-box" id="setStart" value="08:00" onchange="renderGrid()">
-  </div>
-  <div class="form-group">
-    <div class="form-label">Конец дня</div>
-    <input type="time" class="input-box" id="setEnd" value="22:00" onchange="renderGrid()">
+    <div class="form-label">Инструкция</div>
+    <div style="color:#8E8E93; font-size:14px; padding:10px 0; line-height: 1.5;">
+      • <b>Создать:</b> Нажмите на пустую ячейку в сетке.<br>
+      • <b>Изменить:</b> Нажмите на карточку тренировки.<br>
+      • <b>Навигация:</b> Свайп по датам (вверху) переключает неделю.
+    </div>
   </div>
 </div>
 
 <script>
-/* ============================================================
- * BLOCK 0: TMA boot (FIXED & SAFE)
- * ============================================================ */
-(function initTMA() {
-  try {
-    const tg = window.Telegram?.WebApp;
-    if (!tg) return; // Если это не Телеграм, просто выходим, не ломая сайт
-
-    tg.ready();
-    tg.expand();
-
-    // 1. Красим заголовок (обернуто в защиту, чтобы не ломало загрузку)
-    try {
-      tg.setHeaderColor('#050505'); // Черный цвет
-      if (tg.setBackgroundColor) {
-        tg.setBackgroundColor('#050505');
-      }
-    } catch (e) {
-      console.log('Error setting color:', e);
-    }
-
-    // 2. Настраиваем кнопку "Назад"
-    try {
-      if (tg.BackButton) {
-        tg.BackButton.show();
-        // Сначала удаляем старые обработчики, чтобы кнопка не тупила
-        tg.BackButton.offClick(); 
-        // Добавляем переход
-        tg.BackButton.onClick(function() {
-          window.location.href = 'router.html';
-        });
-      }
-    } catch (e) {
-      console.log('Error setting back button:', e);
-    }
-
-    // 3. Отключаем свайпы (если поддерживается)
-    try {
-      if (tg.disableVerticalSwipes) tg.disableVerticalSwipes();
-    } catch (e) {}
-
-  } catch (globalErr) {
-    // Если вообще все упало в TMA, выводим ошибку, но НЕ останавливаем скрипт
-    console.error('Critical TMA Error:', globalErr);
-  }
-})();
-  
-/**
- * Проверка, является ли текущий пользователь админом
- * @returns {boolean} true, если Telegram user.id совпадает с ID администратора
- */
-function isAdmin() {
-  try {
-    const userId = Number(window.Telegram?.WebApp?.initDataUnsafe?.user?.id);
-    return userId === 196047220;
-  } catch (_) {
-    return false;
-  }
-}
-
+  // === CONFIG ===
   const GRID_H = 60; 
-  const tg = window.Telegram?.WebApp;
+  let currentWeekStart = getStartOfWeek(new Date());
+  let updateInterval;
   
-  // Logic Vars
-  let currentWeekStart = getStartOfWeek(new Date()); 
-  let selectedDate = new Date(); 
-  let isDragging = false, startX = 0, currentTranslate = 0;
-  
-  const area = document.getElementById('swipeArea'); 
-  const track = document.getElementById('calTrack'); 
-  const prevEl = document.getElementById('weekPrev'); 
-  const currEl = document.getElementById('weekCurr'); 
-  const nextEl = document.getElementById('weekNext');
+  // Fake Data
+  let sessions = [
+    { id: 1, dateStr: getDateStr(0), client: 'Алиса В.', start: '09:00', end: '10:00', note: 'Кардио', status: 'done', type: 'client' },
+    { id: 2, dateStr: getDateStr(0), client: 'Марк Д.', start: '10:30', end: '12:00', note: 'Силовая', status: 'planned', type: 'personal' },
+    { id: 3, dateStr: getDateStr(1), client: 'Елена К.', start: '14:00', end: '15:00', note: 'Йога', status: 'planned', type: 'client' },
+    { id: 4, dateStr: getDateStr(3), client: 'Группа', start: '19:00', end: '20:30', note: 'Кроссфит', status: 'planned', type: 'personal' }
+  ];
+  let editingId = null;
 
+  // === HELPERS ===
   function getStartOfWeek(date) { 
     const d = new Date(date); 
     const day = d.getDay(); 
     const diff = d.getDate() - day + (day === 0 ? -6 : 1); 
-    return new Date(d.setDate(diff)); 
+    d.setDate(diff); d.setHours(0,0,0,0);
+    return d;
   }
-
+  
   function getDateStr(offset) {
-    const d = new Date(); d.setDate(d.getDate() + offset);
+    const d = getStartOfWeek(new Date()); 
+    d.setDate(d.getDate() + offset);
     return d.toISOString().split('T')[0];
   }
 
-  let sessions = [
-    { id: 101, dateStr: getDateStr(0), client: 'Алиса В.', start: '09:00', end: '10:00', note: 'Кардио', status: 'done', type: 'planned' },
-    { id: 102, dateStr: getDateStr(0), client: 'Марк Д.', start: '10:30', end: '12:00', note: 'Силовая', status: 'planned', type: 'personal' },
-    { id: 201, dateStr: getDateStr(1), client: 'Иван П.', start: '16:00', end: '17:30', note: 'Ноги', status: 'planned', type: 'personal' }
-  ];
-  let editingId = null; 
-
+  // === RENDER CORE ===
   function init() {
-    // TMA init is now handled by BLOCK 0 at the top
-    renderAllWeeks(); initSwipe(); renderGrid(); renderEvents(); startClock();
-    document.getElementById('timeline').scrollTop = 7.5 * GRID_H;
-  }
-
-  function initSwipe() {
-    area.onpointerdown = start; area.onpointermove = move; 
-    area.onpointerup = end; area.onpointercancel = end; area.onpointerleave = end;
-  }
-
-  function renderWeekData(container, startDate) {
-    container.innerHTML = ''; 
-    const weekDays = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
-    for(let i=0; i<7; i++) {
-      const d = new Date(startDate); d.setDate(d.getDate() + i);
-      const isSelected = d.toDateString() === selectedDate.toDateString();
-      const el = document.createElement('div'); 
-      el.className = `day-cell ${isSelected ? 'selected' : ''}`;
-      el.innerHTML = `<div class="dc-name">${weekDays[i]}</div><div class="dc-num">${d.getDate()}</div>`;
-      el.onclick = () => { if(Math.abs(currentTranslate) > 5) return; selectedDate = new Date(d); haptic(); renderAllWeeks(); renderEvents(); }; 
-      container.appendChild(el);
-    }
-  }
-
-  function renderAllWeeks() { 
-    renderWeekData(currEl, currentWeekStart); 
-    const dP = new Date(currentWeekStart); dP.setDate(dP.getDate() - 7); renderWeekData(prevEl, dP); 
-    const dN = new Date(currentWeekStart); dN.setDate(dN.getDate() + 7); renderWeekData(nextEl, dN); 
+    renderTimeColumn();
+    renderWeek();
+    scrollToCurrentTime();
+    startClock();
+    initSwipe();
     
-    // Update Header: "НОЯБРЬ 2025 Г." format
-    const mid = new Date(currentWeekStart); mid.setDate(mid.getDate() + 3); 
-    const m = mid.toLocaleString('ru', { month: 'long' }).toUpperCase();
-    const y = mid.getFullYear();
-    document.getElementById('headerMonth').textContent = `${m} ${y} Г.`;
+    // TMA Config
+    const tg = window.Telegram?.WebApp;
+    if(tg) {
+      tg.ready(); tg.expand();
+      try { tg.setHeaderColor('#050505'); tg.setBackgroundColor('#050505'); } catch(e){}
+    }
+  }
+  
+  // === SWIPE LOGIC ===
+  function initSwipe() {
+    const headerZone = document.getElementById('swipeHeaderZone');
+    let startX = 0;
+    let startY = 0;
+    
+    headerZone.addEventListener('touchstart', (e) => {
+      startX = e.touches[0].clientX;
+      startY = e.touches[0].clientY;
+    }, { passive: true });
+    
+    headerZone.addEventListener('touchend', (e) => {
+      const endX = e.changedTouches[0].clientX;
+      const endY = e.changedTouches[0].clientY;
+      const diffX = startX - endX;
+      const diffY = startY - endY;
+      
+      // Check if swipe is mainly horizontal and long enough
+      if (Math.abs(diffX) > 50 && Math.abs(diffX) > Math.abs(diffY)) {
+        if (diffX > 0) {
+          // Swiped Left -> Next Week
+          changeWeek(1);
+        } else {
+          // Swiped Right -> Prev Week
+          changeWeek(-1);
+        }
+      }
+    }, { passive: true });
   }
 
-  function start(e) { if(e.button!==0)return; isDragging=true; startX=e.clientX; currentTranslate=0; track.style.transition='none'; }
-  function move(e) { if(!isDragging)return; currentTranslate=e.clientX-startX; track.style.transform=`translateX(calc(-33.333333% + ${currentTranslate}px))`; }
-  function end() { 
-    if(!isDragging)return; isDragging=false; track.style.transition='transform 0.3s ease'; 
-    if(currentTranslate > 60) { track.style.transform=`translateX(0%)`; setTimeout(()=>shift(-1),300); }
-    else if(currentTranslate < -60) { track.style.transform=`translateX(-66.666666%)`; setTimeout(()=>shift(1),300); }
-    else track.style.transform=`translateX(-33.333333%)`; 
-  }
-  function shift(dir) { currentWeekStart.setDate(currentWeekStart.getDate() + dir*7); track.style.transition='none'; renderAllWeeks(); track.style.transform=`translateX(-33.333333%)`; }
-
-  function renderGrid() {
-    const layer = document.getElementById('gridLayer'); layer.innerHTML = '';
-    const s = parseInt(document.getElementById('setStart').value); const e = parseInt(document.getElementById('setEnd').value);
+  function renderTimeColumn() {
+    const col = document.getElementById('timeColumn');
+    col.innerHTML = '';
     for(let i=0; i<24; i++) {
-      const d = document.createElement('div'); d.className = `grid-hour ${ (i<s || i>=e) ? 'off-hours' : ''}`;
-      d.setAttribute('data-time', `${String(i).padStart(2,'0')}:00`);
-      layer.appendChild(d);
+      const el = document.createElement('div');
+      el.className = 'time-label';
+      el.innerHTML = `<span>${String(i).padStart(2,'0')}:00</span>`;
+      col.appendChild(el);
     }
   }
 
-  function renderEvents() {
-    const layer = document.getElementById('eventsLayer'); layer.innerHTML = '';
-    const key = selectedDate.toISOString().split('T')[0];
-    sessions.filter(s=>s.dateStr===key).forEach(s => {
-      const top = timeToPx(s.start); const h = Math.max(timeToPx(s.end)-top, 20);
-      const el = document.createElement('div'); el.className = `session-block ${s.status} ${s.type}`;
-      el.style.top = `${top}px`; el.style.height = `${h}px`;
-      el.innerHTML = `<div class="sb-title">${s.client}</div><div class="sb-time">${s.start} - ${s.end}</div>`;
-      el.onclick = (e) => { e.stopPropagation(); openEdit(s); };
-      layer.appendChild(el);
-    });
+  function renderWeek() {
+    const headerTrack = document.getElementById('daysHeaderTrack');
+    const gridContainer = document.getElementById('gridColumns');
+    
+    // Clear only columns, keep global line
+    const globalLine = document.getElementById('globalTimeLine');
+    gridContainer.innerHTML = '';
+    gridContainer.appendChild(globalLine); // Put line back in
+    headerTrack.innerHTML = '';
+    
+    // Header Title Update
+    const monthName = currentWeekStart.toLocaleString('ru', { month: 'long' }).toUpperCase();
+    const year = currentWeekStart.getFullYear();
+    document.getElementById('headerMonth').textContent = `${monthName} ${year}`;
+
+    const weekDays = ['ПН','ВТ','СР','ЧТ','ПТ','СБ','ВС'];
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    // Build Columns
+    for(let i=0; i<7; i++) {
+      const d = new Date(currentWeekStart);
+      d.setDate(d.getDate() + i);
+      const dateStr = d.toISOString().split('T')[0];
+      const isToday = (dateStr === todayStr);
+
+      // 1. Header Cell
+      const hCell = document.createElement('div');
+      hCell.className = `day-col-header ${isToday ? 'today' : ''}`;
+      hCell.innerHTML = `<div class="dch-day">${weekDays[i]}</div><div class="dch-num">${d.getDate()}</div>`;
+      headerTrack.appendChild(hCell);
+
+      // 2. Grid Column
+      const col = document.createElement('div');
+      col.className = 'day-column';
+      col.setAttribute('data-date', dateStr);
+      
+      // === CLICK TO ADD LOGIC ===
+      col.onclick = (e) => {
+        // Ignore if clicked on an event (bubble prevented but safe check)
+        if(e.target !== col) return;
+        
+        const yInCol = e.offsetY;
+        const hour = Math.floor(yInCol / GRID_H);
+        
+        const setD = new Date(d);
+        setD.setHours(hour, 0); // Sets time to start of the clicked hour
+        openAddSession(setD);
+      };
+
+      // Add Events for this day
+      const dayEvents = sessions.filter(s => s.dateStr === dateStr);
+      dayEvents.forEach(ev => {
+        const el = createEventEl(ev);
+        col.appendChild(el);
+      });
+
+      gridContainer.appendChild(col);
+    }
+  }
+
+  function createEventEl(ev) {
+    const div = document.createElement('div');
+    const [h, m] = ev.start.split(':').map(Number);
+    const [hE, mE] = ev.end.split(':').map(Number);
+    
+    const startMin = h*60 + m;
+    const endMin = hE*60 + mE;
+    const duration = endMin - startMin;
+    
+    const top = (startMin / 60) * GRID_H;
+    const height = (duration / 60) * GRID_H;
+
+    div.className = `event-card ${ev.type} ${ev.status}`;
+    div.style.top = `${top}px`;
+    div.style.height = `${Math.max(height, 20)}px`;
+    
+    div.innerHTML = `
+      <div class="ev-title">${ev.client}</div>
+      <div class="ev-time">${ev.start} - ${ev.end}</div>
+    `;
+    
+    div.onclick = (e) => {
+      e.stopPropagation();
+      openEdit(ev);
+    };
+    return div;
+  }
+
+  function changeWeek(dir) {
+    currentWeekStart.setDate(currentWeekStart.getDate() + (dir * 7));
+    renderWeek();
+    updateClockPosition();
   }
 
   function startClock() {
-    const line = document.getElementById('timeLine'), txt = document.getElementById('timeLineText');
-    setInterval(() => {
-      const now = new Date(), px = (now.getHours()*GRID_H) + (now.getMinutes()/60*GRID_H);
-      line.style.top = `${px}px`; txt.textContent = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
-      line.style.display = (selectedDate.toISOString().split('T')[0] === now.toISOString().split('T')[0]) ? 'block' : 'none';
-    }, 1000);
+    updateClockPosition();
+    if(updateInterval) clearInterval(updateInterval);
+    updateInterval = setInterval(updateClockPosition, 60000);
   }
 
-  function timeToPx(t) { const [h,m] = t.split(':').map(Number); return (h*GRID_H)+(m/60*GRID_H); }
-  function haptic() { tg?.HapticFeedback?.impactOccurred('light'); }
-  
-  function openAddSession() { 
-    editingId = null; document.getElementById('sheetTitle').textContent='Новая'; document.getElementById('btnDelete').style.display='none';
-    const n=new Date(); const nh=n.getHours()+1; 
-    document.getElementById('inpStart').value=`${String(nh).padStart(2,'0')}:00`; document.getElementById('inpEnd').value=`${String(nh+1).padStart(2,'0')}:00`;
-    openSheet('sessionSheet'); 
+  function updateClockPosition() {
+    const line = document.getElementById('globalTimeLine');
+    if(!line) return;
+    
+    const now = new Date();
+    const weekEnd = new Date(currentWeekStart);
+    weekEnd.setDate(weekEnd.getDate() + 6);
+    weekEnd.setHours(23,59,59);
+    
+    if (now >= currentWeekStart && now <= weekEnd) {
+        line.style.display = 'block';
+        const min = now.getHours() * 60 + now.getMinutes();
+        const top = (min / 60) * GRID_H;
+        line.style.top = `${top}px`;
+    } else {
+        line.style.display = 'none';
+    }
   }
-  function openEdit(s) { 
-    editingId = s.id; document.getElementById('sheetTitle').textContent='Редактировать'; document.getElementById('btnDelete').style.display='block';
-    document.getElementById('inpClient').value=s.client; document.getElementById('inpStart').value=s.start; document.getElementById('inpEnd').value=s.end; document.getElementById('inpNote').value=s.note;
-    openSheet('sessionSheet'); 
+
+  function scrollToCurrentTime() {
+    const now = new Date();
+    const h = now.getHours();
+    const scrollY = (h - 2) * GRID_H;
+    document.getElementById('matrixViewport').scrollTop = scrollY > 0 ? scrollY : 0;
   }
+
+  // === FORM LOGIC ===
+  function openAddSession(dateObj) {
+    editingId = null;
+    document.getElementById('sheetTitle').textContent = 'Новая тренировка';
+    document.getElementById('btnDelete').style.display = 'none';
+    
+    const d = dateObj || new Date();
+    document.getElementById('inpDate').value = d.toISOString().split('T')[0];
+    
+    const h = d.getHours();
+    document.getElementById('inpStart').value = `${String(h).padStart(2,'0')}:00`;
+    document.getElementById('inpEnd').value = `${String(h+1).padStart(2,'0')}:00`;
+    document.getElementById('inpNote').value = '';
+    
+    openSheet('sessionSheet');
+  }
+
+  function openEdit(s) {
+    editingId = s.id;
+    document.getElementById('sheetTitle').textContent = 'Редактировать';
+    document.getElementById('btnDelete').style.display = 'block';
+    
+    document.getElementById('inpClient').value = s.client;
+    document.getElementById('inpDate').value = s.dateStr;
+    document.getElementById('inpStart').value = s.start;
+    document.getElementById('inpEnd').value = s.end;
+    document.getElementById('inpNote').value = s.note || '';
+    
+    openSheet('sessionSheet');
+  }
+
   function saveSession() {
-    const client=document.getElementById('inpClient').value, start=document.getElementById('inpStart').value, end=document.getElementById('inpEnd').value, note=document.getElementById('inpNote').value;
-    if(editingId) { const idx=sessions.findIndex(s=>s.id===editingId); if(idx!==-1) sessions[idx]={...sessions[idx], client, start, end, note}; }
-    else sessions.push({ id:Date.now(), dateStr:selectedDate.toISOString().split('T')[0], client, start, end, note, status:'planned', type:'personal' });
-    closeAllSheets(); renderEvents();
+    const client = document.getElementById('inpClient').value;
+    const dateStr = document.getElementById('inpDate').value;
+    const start = document.getElementById('inpStart').value;
+    const end = document.getElementById('inpEnd').value;
+    const note = document.getElementById('inpNote').value;
+
+    if(editingId) {
+      const idx = sessions.findIndex(s => s.id === editingId);
+      if(idx !== -1) {
+        sessions[idx] = { ...sessions[idx], client, dateStr, start, end, note };
+      }
+    } else {
+      sessions.push({
+        id: Date.now(),
+        client, dateStr, start, end, note,
+        status: 'planned', type: client === 'Гость' ? 'personal' : 'client'
+      });
+    }
+    closeAllSheets();
+    renderWeek();
   }
-  function deleteSession() { sessions=sessions.filter(s=>s.id!==editingId); closeAllSheets(); renderEvents(); }
+
+  function deleteSession() {
+    if(editingId) {
+      sessions = sessions.filter(s => s.id !== editingId);
+      closeAllSheets();
+      renderWeek();
+    }
+  }
+
   function openSettings() { openSheet('settingsSheet'); }
-  function openSheet(id) { document.getElementById('overlay').classList.add('active'); document.getElementById(id).classList.add('open'); }
-  function closeAllSheets() { document.getElementById('overlay').classList.remove('active'); document.querySelectorAll('.sheet').forEach(s=>s.classList.remove('open')); }
+  
+  function openSheet(id) {
+    document.getElementById('overlay').classList.add('active');
+    document.getElementById(id).classList.add('open');
+  }
+  function closeAllSheets() {
+    document.getElementById('overlay').classList.remove('active');
+    document.querySelectorAll('.sheet').forEach(s => s.classList.remove('open'));
+  }
 
   document.addEventListener('DOMContentLoaded', init);
+
 </script>
 </body>
 </html>
