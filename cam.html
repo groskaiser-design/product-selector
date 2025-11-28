@@ -566,12 +566,51 @@
 
   function haptic(style) { if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred(style); }
   
-  let torchState = false;
-  document.getElementById('btnTorch').onclick = async () => {
+let torchState = false;
+  const btnTorch = document.getElementById('btnTorch');
+
+  btnTorch.onclick = async () => {
     if(!state.track) return;
-    torchState = !torchState;
-    try { await state.track.applyConstraints({ advanced: [{ torch: torchState }] }); } catch(e){}
-    haptic('light');
+
+    // 1. ПРОВЕРКА: Поддерживает ли камера вспышку
+    const capabilities = state.track.getCapabilities();
+    if (!capabilities.torch) {
+      alert("Вспышка недоступна на этой камере");
+      haptic('error');
+      return;
+    }
+
+    // 2. Логическое переключение
+    const newState = !torchState;
+
+    try {
+      // 3. Попытка применить настройку
+      await state.track.applyConstraints({ 
+        advanced: [{ torch: newState }] 
+      });
+      
+      // Если ошибок нет - обновляем состояние и UI
+      torchState = newState;
+      
+      // Визуально красим кнопку
+      if (torchState) {
+        btnTorch.style.backgroundColor = 'var(--acc-orange)'; // Желтый/Оранжевый
+        btnTorch.style.color = '#000';
+        btnTorch.style.border = '1px solid transparent';
+      } else {
+        btnTorch.style.backgroundColor = ''; // Сброс к дефолту
+        btnTorch.style.color = '';
+        btnTorch.style.border = '';
+      }
+      
+      haptic('light');
+
+    } catch(e) {
+      console.error(e);
+      // Если Android отказал - сообщаем
+      alert("Ошибка драйвера: " + e.message);
+      haptic('error');
+    }
   };
 
   // ИЗМЕНЕНО: Удален код обработчиков галереи (btnGallery.onclick и fileInput.onchange)
