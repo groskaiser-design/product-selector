@@ -77,7 +77,6 @@
     height: 48px;
   }
 
-  /* Кнопка закрытия (маленькая круглая) */
   .btn-close {
     width: 40px; height: 40px;
     border-radius: 50%;
@@ -88,7 +87,6 @@
     border: 1px solid rgba(255,255,255,0.1);
   }
 
-  /* Уровень */
   .status-chip {
     background: rgba(0,0,0,0.4);
     border: 1px solid rgba(255,255,255,0.1);
@@ -101,13 +99,11 @@
   .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--acc-orange); box-shadow: 0 0 8px var(--acc-orange); transition: 0.3s; }
   .status-dot.ok { background: var(--acc-green); box-shadow: 0 0 8px var(--acc-green); }
 
-  /* Заглушка справа для баланса top-bar */
   .spacer { width: 40px; }
 
   /* === BOTTOM GRID CONTROLS === */
   .controls-grid {
     display: grid;
-    /* Три колонки: 1fr (лево), auto (центр), 1fr (право) */
     grid-template-columns: 1fr auto 1fr;
     align-items: center;
     pointer-events: auto;
@@ -119,7 +115,6 @@
   .grid-cell-center { display: flex; justify-content: center; }
   .grid-cell-right { display: flex; justify-content: flex-end; }
 
-  /* Круглые кнопки действий (Flash, Switch) */
   .action-btn {
     width: 56px; height: 56px;
     border-radius: 50%;
@@ -134,7 +129,6 @@
   .action-btn:active { transform: scale(0.92); background: rgba(60,60,60,0.8); }
   .action-btn.hidden { opacity: 0; pointer-events: none; }
 
-  /* Shutter (Центральная кнопка) */
   .shutter-outer {
     width: 80px; height: 80px;
     border-radius: 50%;
@@ -155,7 +149,7 @@
   .shutter-outer.active { border-color: var(--acc-green); transform: scale(1.05); }
   .shutter-outer:active:not(.disabled) .shutter-inner { transform: scale(0.9); }
 
-  /* === TOAST NOTIFICATION (Camera Name) === */
+  /* === TOAST === */
   .cam-toast {
     position: absolute;
     top: 100px; left: 50%;
@@ -174,7 +168,7 @@
   }
   .cam-toast.visible { opacity: 1; }
 
-  /* === PERMISSION & PREVIEW OVERLAYS === */
+  /* === PERMISSION & PREVIEW === */
   .perm-overlay {
     position: absolute; inset: 0; z-index: 100;
     background: rgba(0,0,0,0.9);
@@ -187,7 +181,7 @@
     border-radius: 14px; font-size: 16px; font-weight: 600; cursor: pointer;
   }
 
-  /* === PREVIEW OVERLAY (FIXED) === */
+  /* FIXED PREVIEW STYLES */
   .preview-overlay {
     position: absolute; inset: 0; z-index: 200;
     background: #000; 
@@ -196,7 +190,6 @@
     height: 100%; 
     overflow: hidden; 
   }
-
   .preview-img { 
     flex: 1; 
     width: 100%; 
@@ -205,13 +198,11 @@
     margin-bottom: 12px;
     min-height: 0; 
   }
-
   .comment-wrap { 
     flex-shrink: 0;
     padding: 0 24px 16px 24px; 
     width: 100%; 
   }
-
   .comment-label { 
     display: block; 
     color: rgba(255,255,255,0.6); 
@@ -219,7 +210,6 @@
     margin-bottom: 8px; 
     margin-left: 4px; 
   }
-
   .comment-input {
     width: 100%; height: 80px;
     background: rgba(255,255,255,0.12);
@@ -229,7 +219,6 @@
     resize: none; outline: none; transition: 0.2s;
   }
   .comment-input:focus { background: rgba(255,255,255,0.18); border-color: var(--acc-blue); }
-
   .preview-controls { 
     flex-shrink: 0;
     padding: 0 24px 34px 24px; 
@@ -237,7 +226,16 @@
     gap: 16px; 
     background: #000; 
   }
-  
+  .btn {
+    flex: 1; padding: 14px; border-radius: 14px;
+    font-weight: 600; font-size: 16px;
+    border: 1px solid rgba(255,255,255,0.1);
+    background: rgba(255,255,255,0.1);
+    color: #fff; cursor: pointer; text-align: center;
+  }
+  .btn.primary { background: var(--acc-blue); border-color: transparent; }
+  .hidden { display: none !important; }
+
 </style>
 </head>
 <body>
@@ -314,14 +312,14 @@
   const state = {
     stream: null,
     track: null,
-    imageCapture: null,
     levelOK: false,
     angleX: 0, angleY: 0,
     photoBlob: null,
     isCapturing: false,
     devices: [],      
     currentDevIdx: 0, 
-    torchOn: false    
+    torchOn: false,
+    sensorActive: false // Флаг работы датчиков
   };
 
   const DOM = {
@@ -411,15 +409,13 @@
       const settings = state.track.getSettings();
       if (settings.deviceId) localStorage.setItem('ultima_cam_id', settings.deviceId);
 
-      // Получаем красивое имя для тоста
       let label = state.track.label || "Камера";
       label = label.replace(/\(.*\)/, '').replace(/camera2/i, '').replace(/facing/i, '').trim();
       if(label.length < 2) label = "Камера " + (state.currentDevIdx + 1);
       
       if(state.devices.length > 1) showToast(label);
 
-      if (window.ImageCapture) state.imageCapture = new ImageCapture(state.track);
-      
+      // Пытаемся включить непрерывный фокус
       const caps = state.track.getCapabilities();
       if (caps.focusMode?.includes('continuous')) {
         try { await state.track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch(e){}
@@ -475,7 +471,7 @@
     }
   }
 
-  // === UI & SENSORS ===
+  // === SENSORS & PERMISSIONS ===
   function checkSensorPerms() {
     if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
       DOM.permReq.classList.remove('hidden'); 
@@ -483,22 +479,40 @@
       window.addEventListener('deviceorientation', handleOrientation);
     }
   }
+
   async function requestSensors() {
     try {
       const resp = await DeviceOrientationEvent.requestPermission();
       if (resp === 'granted') {
-        DOM.permReq.classList.add('hidden');
         window.addEventListener('deviceorientation', handleOrientation);
+      } else {
+        console.warn("Permission denied");
       }
-    } catch (e) { alert(e); }
+    } catch (e) { 
+      console.warn(e); 
+    } finally {
+      // ВСЕГДА скрываем окно, чтобы не блокировать UI
+      DOM.permReq.classList.add('hidden');
+    }
   }
+
   function handleOrientation(e) {
     let x = e.beta; let y = e.gamma; 
     if (x === null || y === null) return;
+    
+    state.sensorActive = true; // Датчики работают!
     state.angleX = x; state.angleY = y;
   }
+
   function updateUI() {
     if (state.isCapturing) return;
+    // Если датчики не активны, не блокируем UI статусом "Выровняйте"
+    if (!state.sensorActive) {
+         DOM.lvlDot.classList.remove('ok'); DOM.lvlText.textContent = "Камера";
+         DOM.shutter.classList.remove('disabled'); DOM.shutter.classList.add('active');
+         return;
+    }
+
     if (state.levelOK) {
       DOM.lvlDot.classList.add('ok'); DOM.lvlText.textContent = "Ровно";
       DOM.shutter.classList.remove('disabled'); DOM.shutter.classList.add('active');
@@ -512,26 +526,22 @@
     if (DOM.canvas.width !== w || DOM.canvas.height !== h) { DOM.canvas.width = w; DOM.canvas.height = h; }
   }
 
-  // === DRAW LOOP (CLEANED) ===
+  // === DRAW LOOP ===
   function drawLoop() {
     const ctx = DOM.ctx; const w = DOM.canvas.width; const h = DOM.canvas.height;
     ctx.clearRect(0, 0, w, h);
     
     const cx = w / 2; const cy = h / 2;
 
-    // === 1. ОТРИСОВКА ОБЛАСТИ КАРТЫ (ВЕРТИКАЛЬНО, СПРАВА) ===
+    // 1. КРЕДИТКА (Вертикально, Справа)
     const cardRatio = 1.586; 
-    
-    // Ширина - это короткая сторона (22% ширины экрана)
-    const cardW = w * 0.22; 
+    const cardW = w * 0.22; // 22% ширины
     const cardH = cardW * cardRatio;
-    
-    // Позиция: Справа от центра (+50px)
     const cardX = cx + 50; 
     const cardY = cy - cardH / 2; 
     const r = 8; 
 
-    // Рисуем форму (Card Area)
+    // Форма
     ctx.beginPath();
     ctx.moveTo(cardX + r, cardY);
     ctx.lineTo(cardX + cardW - r, cardY);
@@ -543,15 +553,13 @@
     ctx.lineTo(cardX, cardY + r);
     ctx.quadraticCurveTo(cardX, cardY, cardX + r, cardY);
     
-    // Заливка ("Блюр" эффект)
     ctx.fillStyle = 'rgba(255, 255, 255, 0.2)'; 
     ctx.fill(); 
 
-    // ТЕКСТ (ПОВЕРНУТЫЙ НА 90 ГРАДУСОВ)
+    // Текст
     ctx.save();
     ctx.translate(cardX + cardW / 2, cardY + cardH / 2);
     ctx.rotate(-Math.PI / 2);
-    
     ctx.fillStyle = '#ffffff';
     ctx.font = 'bold 12px sans-serif';
     ctx.textAlign = 'center';
@@ -559,75 +567,69 @@
     ctx.fillText("CREDIT CARD", 0, 0);
     ctx.restore(); 
 
-    // === 2. ОТРИСОВКА УРОВНЯ (По центру) ===
-    const rBubble = 14; const rTarget = 16; const maxOffset = 60; 
-    
-    const rawX = (isNaN(state.angleY) || state.angleY === null) ? 0 : state.angleY;
-    const rawY = (isNaN(state.angleX) || state.angleX === null) ? 0 : state.angleX;
-    const clamp = (val) => Math.max(-20, Math.min(20, val));
-    const dx = (clamp(rawX) / 20) * maxOffset; 
-    const dy = (clamp(rawY) / 20) * maxOffset;
+    // 2. УРОВЕНЬ (Если датчики активны)
+    if (state.sensorActive) {
+        const rBubble = 14; const rTarget = 16; const maxOffset = 60; 
+        
+        const rawX = (isNaN(state.angleY) || state.angleY === null) ? 0 : state.angleY;
+        const rawY = (isNaN(state.angleX) || state.angleX === null) ? 0 : state.angleX;
+        const clamp = (val) => Math.max(-20, Math.min(20, val));
+        const dx = (clamp(rawX) / 20) * maxOffset; 
+        const dy = (clamp(rawY) / 20) * maxOffset;
 
-    const dist = Math.hypot(dx, dy);
-    const isInside = (dist + rBubble) <= rTarget;
+        const dist = Math.hypot(dx, dy);
+        const isInside = (dist + rBubble) <= rTarget;
 
-    if (state.levelOK !== isInside && !state.isCapturing) {
-      state.levelOK = isInside; updateUI();
-      if(isInside) haptic('medium');
+        if (state.levelOK !== isInside && !state.isCapturing) {
+        state.levelOK = isInside; updateUI();
+        if(isInside) haptic('medium');
+        }
+
+        ctx.shadowBlur = 4; ctx.shadowColor = 'rgba(0,0,0,0.5)';
+        ctx.beginPath(); ctx.arc(cx, cy, rTarget, 0, Math.PI * 2); 
+        const color = (state.levelOK || state.isCapturing) ? '#30d158' : 'rgba(255,255,255,0.85)';
+        ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.stroke();
+
+        ctx.beginPath(); ctx.arc(cx + dx, cy + dy, rBubble, 0, Math.PI * 2); 
+        ctx.fillStyle = color; ctx.fill(); ctx.shadowBlur = 0;
+    } else {
+        // Если датчиков нет, рисуем просто белый прицел
+        ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(cx-10, cy); ctx.lineTo(cx+10, cy); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(cx, cy-10); ctx.lineTo(cx, cy+10); ctx.stroke();
     }
-
-    ctx.shadowBlur = 4; ctx.shadowColor = 'rgba(0,0,0,0.5)';
-    ctx.beginPath(); ctx.arc(cx, cy, rTarget, 0, Math.PI * 2); 
-    const color = (state.levelOK || state.isCapturing) ? '#30d158' : 'rgba(255,255,255,0.85)';
-    ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.stroke();
-
-    ctx.beginPath(); ctx.arc(cx + dx, cy + dy, rBubble, 0, Math.PI * 2); 
-    ctx.fillStyle = color; ctx.fill(); ctx.shadowBlur = 0;
     
     requestAnimationFrame(drawLoop);
   }
 
-  // === CAPTURE (FIXED) ===
+  // === CAPTURE ===
   DOM.shutter.addEventListener('click', async () => {
-    // 1. Проверки перед съемкой
     if (state.isCapturing) return; 
-    if (!state.levelOK) { haptic('error'); showToast("Выровняйте телефон"); return; }
+    
+    // Блокируем только если датчики работают и уровень кривой
+    if (state.sensorActive && !state.levelOK) { 
+        haptic('error'); showToast("Выровняйте телефон"); return; 
+    }
 
     try {
         state.isCapturing = true; 
         haptic('heavy');
         
-        // Анимация нажатия
         DOM.shutter.style.transform = 'scale(0.8)'; 
         DOM.shutter.style.opacity = '0.5';
         
-        // Даем браузеру время отрисовать нажатие (важная микро-пауза)
         await new Promise(r => setTimeout(r, 50));
 
-        // 2. СНИМАЕМ ТОЛЬКО ЧЕРЕЗ CANVAS (Самый надежный способ)
         const vid = DOM.video;
-        
-        // Проверяем, идет ли вообще видео
-        if (vid.readyState < 2 || vid.videoWidth === 0) {
-            throw new Error("Камера не готова");
-        }
+        if (vid.readyState < 2 || vid.videoWidth === 0) throw new Error("Камера не готова");
 
         const c = document.createElement('canvas');
-        c.width = vid.videoWidth; 
-        c.height = vid.videoHeight;
-        
-        // Рисуем кадр с видео на холст
-        const ctx = c.getContext('2d');
-        ctx.drawImage(vid, 0, 0);
+        c.width = vid.videoWidth; c.height = vid.videoHeight;
+        c.getContext('2d').drawImage(vid, 0, 0);
 
-        // Конвертируем в файл (Blob)
-        const blob = await new Promise(resolve => {
-            c.toBlob(b => resolve(b), 'image/jpeg', 0.95);
-        });
-
+        const blob = await new Promise(resolve => c.toBlob(resolve, 'image/jpeg', 0.95));
         if (!blob) throw new Error("Пустой кадр");
 
-        // 3. Показываем результат
         showPreview(blob);
 
     } catch(err) {
@@ -637,9 +639,7 @@
         state.isCapturing = false;
         updateUI();
     } finally {
-        // Сбрасываем кнопку
-        DOM.shutter.style.transform = ''; 
-        DOM.shutter.style.opacity = '';
+        DOM.shutter.style.transform = ''; DOM.shutter.style.opacity = '';
         state.isCapturing = false;
     }
   });
@@ -655,18 +655,18 @@
     if(DOM.finalImg.src) URL.revokeObjectURL(DOM.finalImg.src);
     DOM.finalImg.src = ''; state.photoBlob = null; DOM.commentInput.value = ''; 
   }
+
   async function sendPhoto() {
     const btn = DOM.btnSend;
-    const comment = DOM.commentInput.value.trim();
-
     if (btn.disabled) return; 
+    
     btn.disabled = true;
     btn.textContent = 'Обработка...';
     btn.style.opacity = '0.8'; 
     haptic('light');
 
     try {
-        // === ИМИТАЦИЯ ОТПРАВКИ ===
+        // === ИМИТАЦИЯ ОТПРАВКИ (Заменить на fetch) ===
         await new Promise(r => setTimeout(r, 1500));
 
         btn.textContent = 'Отправлено!';
@@ -684,11 +684,9 @@
         }, 1000);
 
     } catch (e) {
-        console.error(e);
         btn.textContent = 'Ошибка';
         btn.style.backgroundColor = 'var(--acc-red)';
         haptic('error');
-        
         setTimeout(() => {
             btn.textContent = 'Готово';
             btn.disabled = false;
@@ -696,6 +694,7 @@
         }, 2000);
     }
   }
+
   function haptic(style) { if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred(style); }
   document.getElementById('btnClose').onclick = () => window.history.back();
 
