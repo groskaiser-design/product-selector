@@ -3,71 +3,65 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Simple Cam</title>
+<title>Default Cam</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
-  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body {
     margin: 0; padding: 0;
-    background: #000;
-    height: 100vh; overflow: hidden;
-    display: flex; flex-direction: column;
+    background: #000; /* Черный фон для полос */
+    height: 100vh; 
+    overflow: hidden;
+    display: flex; 
+    flex-direction: column;
+    align-items: center; 
+    justify-content: center;
   }
 
-  /* Видео на весь экран */
+  /* === ЧЕСТНОЕ ВИДЕО === */
+  /* contain = Вписать в экран полностью. Гарантирует отсутствие зума/кропа */
   video {
-    position: absolute;
-    top: 0; left: 0;
-    width: 100%; height: 100%;
-    object-fit: cover; /* Заполняет весь экран */
-    z-index: 1;
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain; 
+    display: block;
   }
 
-  /* Кнопка поверх видео */
+  /* Кнопка поверх всего */
   .ui-layer {
     position: absolute;
-    bottom: 40px; left: 0; right: 0;
-    z-index: 10;
+    bottom: 30px; 
+    width: 100%;
     display: flex; justify-content: center;
-    pointer-events: none; /* Чтобы клики мимо кнопки проходили на видео (фокус) */
+    z-index: 10;
   }
 
   .shutter-btn {
-    pointer-events: auto;
-    width: 72px; height: 72px;
+    width: 70px; height: 70px;
     background: rgba(255,255,255,0.2);
     border: 4px solid #fff;
     border-radius: 50%;
     cursor: pointer;
-    transition: 0.2s;
     position: relative;
   }
-  
   .shutter-btn::after {
-    content: '';
-    position: absolute;
-    top: 50%; left: 50%; transform: translate(-50%, -50%);
-    width: 54px; height: 54px;
-    background: #fff;
-    border-radius: 50%;
-    transition: 0.2s;
+    content:''; position:absolute; 
+    top:50%; left:50%; transform:translate(-50%,-50%);
+    width:54px; height:54px; background:#fff; border-radius:50%;
   }
+  .shutter-btn:active { transform: scale(0.9); opacity: 0.8; }
 
-  .shutter-btn:active { transform: scale(0.95); opacity: 0.8; }
-
-  /* Экран просмотра */
+  /* Превью */
   #preview {
     position: absolute; inset: 0; z-index: 20;
-    background: #000;
-    display: none; flex-direction: column;
+    background: #000; display: none; flex-direction: column;
   }
   #previewImg { flex: 1; object-fit: contain; }
   .controls { display: flex; padding: 20px; gap: 15px; background: #000; }
   .btn {
     flex: 1; padding: 15px;
-    border-radius: 12px; border: none;
-    font-size: 16px; font-weight: bold;
-    cursor: pointer; color: #fff;
+    border-radius: 12px; border: 1px solid #333;
+    font-size: 16px; font-weight: 600;
+    cursor: pointer; color: #fff; background: #1c1c1e;
   }
 </style>
 </head>
@@ -82,52 +76,48 @@
   <div id="preview">
     <img id="previewImg">
     <div class="controls">
-      <button class="btn" style="background:#333" onclick="retake()">Заново</button>
-      <button class="btn" style="background:#007aff" id="btnSend" onclick="send()">Отправить</button>
+      <button class="btn" onclick="retake()">Заново</button>
+      <button class="btn" style="background:#007aff; border:none" onclick="send()">Отправить</button>
     </div>
   </div>
 
 <script>
   const tg = window.Telegram?.WebApp;
-  if(tg) { tg.ready(); tg.expand(); }
+  if(tg) { tg.ready(); tg.expand(); tg.setHeaderColor('#000000'); }
 
   const video = document.getElementById('video');
   const preview = document.getElementById('preview');
   const previewImg = document.getElementById('previewImg');
-  let currentBlob = null;
 
-  async function startCamera() {
+  async function start() {
     try {
-      // Просим HD (1280x720) - это самый стандартный формат (16:9).
-      // Он обычно дает самый широкий угол без программного зума.
+      // МИНИМАЛЬНЫЙ ЗАПРОС
+      // Мы ничего не требуем, кроме "задней камеры".
+      // Браузер отдаст самый нативный поток.
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
         video: {
-          facingMode: 'environment',
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
+          facingMode: 'environment'
         }
       });
       video.srcObject = stream;
     } catch (e) {
-      alert("Камера недоступна");
+      alert("Ошибка: " + e.message);
     }
   }
 
   document.getElementById('btnSnap').onclick = () => {
-    // Делаем снимок через Canvas
+    // Снимаем ровно то, что видим в video теге
     const canvas = document.createElement('canvas');
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     canvas.getContext('2d').drawImage(video, 0, 0);
     
-    // Показываем
     canvas.toBlob(blob => {
-      currentBlob = blob;
       previewImg.src = URL.createObjectURL(blob);
       preview.style.display = 'flex';
-      if(tg.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
-    }, 'image/jpeg', 0.9);
+      if(tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+    }, 'image/jpeg');
   };
 
   window.retake = () => {
@@ -136,15 +126,11 @@
   };
 
   window.send = () => {
-    document.getElementById('btnSend').textContent = 'Отправка...';
-    // Имитация отправки
-    setTimeout(() => {
-        if(tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
-        tg.close();
-    }, 500);
+    if(tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+    tg.close();
   };
 
-  startCamera();
+  start();
 </script>
 </body>
 </html>
