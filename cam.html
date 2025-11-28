@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Ultima FoodCam Final</title>
+<title>Ultima FoodCam</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
   :root {
@@ -42,6 +42,7 @@
     background: #000;
   }
 
+  /* Video */
   video {
     position: absolute;
     width: 100%; height: 100%;
@@ -49,6 +50,7 @@
     z-index: 1;
   }
 
+  /* Canvas */
   #uiCanvas {
     position: absolute;
     inset: 0;
@@ -56,41 +58,6 @@
     z-index: 10;
     pointer-events: none;
   }
-
-  /* Focus Box Animation */
-  .focus-box {
-    position: absolute;
-    width: 70px; height: 70px;
-    border: 2px solid var(--acc-orange);
-    border-radius: 8px;
-    transform: translate(-50%, -50%) scale(1.3);
-    opacity: 0;
-    pointer-events: none;
-    z-index: 50;
-    transition: transform 0.2s ease-out, opacity 0.2s ease-out;
-    box-shadow: 0 0 15px rgba(255, 159, 10, 0.4);
-  }
-  .focus-box.active {
-    transform: translate(-50%, -50%) scale(1);
-    opacity: 1;
-  }
-
-  /* Hint Overlay */
-  .focus-hint {
-    position: absolute;
-    top: 20%; left: 50%; transform: translateX(-50%);
-    background: rgba(0,0,0,0.4);
-    backdrop-filter: blur(4px);
-    padding: 8px 16px;
-    border-radius: 12px;
-    color: rgba(255,255,255,0.8);
-    font-size: 14px;
-    pointer-events: none;
-    z-index: 60;
-    opacity: 0;
-    transition: opacity 0.5s;
-  }
-  .focus-hint.show { opacity: 1; }
 
   /* === UI LAYERS === */
   .ui-layer {
@@ -139,7 +106,7 @@
   }
   .icon-btn:active { transform: scale(0.9); background: rgba(80,80,80,0.6); }
 
-  /* Guide overlay */
+  /* Guide overlay for card */
   .card-guide {
     position: absolute;
     right: 20px; top: 50%; transform: translateY(-50%);
@@ -158,10 +125,9 @@
   .controls-area {
     display: flex;
     align-items: center;
-    justify-content: center; /* Центрируем кнопку */
+    justify-content: space-between; 
     pointer-events: auto;
     position: relative;
-    padding-bottom: 20px;
   }
 
   .shutter-outer {
@@ -184,7 +150,7 @@
   .shutter-outer.active { border-color: var(--acc-green); transform: scale(1.05); }
   .shutter-outer:active:not(.disabled) .shutter-inner { transform: scale(0.9); }
 
-  /* Permission Overlay */
+  /* Permission Overlay (iOS) */
   .perm-overlay {
     position: absolute; inset: 0; z-index: 100;
     background: rgba(5,5,5,0.85);
@@ -199,7 +165,7 @@
     cursor: pointer;
   }
 
-  /* === RESULT PREVIEW === */
+  /* === RESULT PREVIEW (UPDATED) === */
   .preview-overlay {
     position: absolute; inset: 0; z-index: 200;
     background: #000;
@@ -207,15 +173,17 @@
     flex-direction: column;
   }
   
+  /* Изображение занимает все свободное место сверху */
   .preview-img { 
     flex: 1; 
     width: 100%; 
-    min-height: 0; 
+    min-height: 0; /* Важно для flex контейнера */
     object-fit: contain; 
     background: #111; 
     margin-bottom: 12px;
   }
 
+  /* Секция комментария */
   .comment-wrap {
     padding: 0 24px 16px 24px;
     width: 100%;
@@ -246,10 +214,14 @@
     transition: 0.2s;
   }
   .comment-input::placeholder { color: rgba(255,255,255,0.3); }
-  .comment-input:focus { background: rgba(255,255,255,0.15); border-color: var(--acc-blue); }
+  .comment-input:focus { 
+    background: rgba(255,255,255,0.15); 
+    border-color: var(--acc-blue); 
+  }
 
+  /* Кнопки снизу */
   .preview-controls {
-    padding: 0 24px 34px 24px;
+    padding: 0 24px 34px 24px; /* padding bottom safe area */
     display: flex; gap: 16px;
     background: #000;
   }
@@ -272,15 +244,13 @@
   <div class="cam-viewport">
     <video id="video" autoplay playsinline muted></video>
     <canvas id="uiCanvas"></canvas>
-    <div id="focusBox" class="focus-box"></div> 
-    <div id="focusHint" class="focus-hint">Нажмите для фокуса</div>
     
     <div class="ui-layer">
       <div class="top-bar">
         <div class="icon-btn" id="btnClose">✕</div>
         <div class="status-chip" id="lvlChip">
           <div class="status-dot" id="lvlDot"></div>
-          <span id="lvlText">Загрузка...</span>
+          <span id="lvlText">Уровень</span>
         </div>
         <div class="icon-btn" id="btnTorch">⚡</div>
       </div>
@@ -290,17 +260,19 @@
       </div>
 
       <div class="controls-area">
+        <div class="icon-btn" style="opacity:0; pointer-events:none"></div>
         <div class="shutter-outer disabled" id="shutterBtn">
           <div class="shutter-inner"></div>
         </div>
+        <div class="icon-btn" id="btnGallery">🖼️</div>
       </div>
     </div>
   </div>
 
   <div id="permReq" class="perm-overlay hidden">
     <div style="font-size:48px; margin-bottom:10px">📐</div>
-    <h2 style="margin:0">Калибровка</h2>
-    <p style="color:var(--text-muted)">Разрешите доступ к датчикам, чтобы уровень и стабилизация работали корректно.</p>
+    <h2 style="margin:0">Настройка</h2>
+    <p style="color:var(--text-muted)">Для точного расчета нам нужно использовать гироскоп телефона.</p>
     <button class="perm-btn" onclick="requestSensors()">Разрешить</button>
   </div>
 
@@ -308,8 +280,8 @@
     <img id="finalPhoto" class="preview-img">
     
     <div class="comment-wrap">
-      <label class="comment-label">Комментарий (вес, состав, нюансы)</label>
-      <textarea id="commentInput" class="comment-input" placeholder="Например: кофе на кокосовом, 300мл"></textarea>
+      <label class="comment-label">Комментарий (например: вес, состав)</label>
+      <textarea id="commentInput" class="comment-input" placeholder="Треска 200г, рис белый 150г..."></textarea>
     </div>
 
     <div class="preview-controls">
@@ -317,6 +289,8 @@
       <button class="btn primary" id="btnSend" onclick="sendPhoto()">Готово</button>
     </div>
   </div>
+
+  <input type="file" id="fileInput" accept="image/*" class="hidden">
 
 <script>
   // === TELEGRAM INIT ===
@@ -329,19 +303,19 @@
 
   // === CONFIG ===
   const MAX_TILT = 5; 
-  const MAX_SHAKE = 2.0; 
+  const TARGET_RES_H = 4096;
   const TARGET_ASPECT = 0.75; 
 
   // === STATE ===
   const state = {
     stream: null,
     track: null,
+    imageCapture: null,
     levelOK: false,
-    shake: 0, 
     angleX: 0,
     angleY: 0,
     photoBlob: null,
-    isCapturing: false 
+    isCapturing: false // <--- НОВЫЙ ФЛАГ БЛОКИРОВКИ
   };
 
   const DOM = {
@@ -355,9 +329,8 @@
     preview: document.getElementById('previewScreen'),
     finalImg: document.getElementById('finalPhoto'),
     btnSend: document.getElementById('btnSend'),
-    commentInput: document.getElementById('commentInput'),
-    focusBox: document.getElementById('focusBox'),
-    focusHint: document.getElementById('focusHint')
+    fileInput: document.getElementById('fileInput'),
+    commentInput: document.getElementById('commentInput')
   };
 
   // --- 1. CAMERA INIT ---
@@ -372,8 +345,8 @@
         video: {
           facingMode: facing,
           aspectRatio: { ideal: TARGET_ASPECT },
-          width: { ideal: 1920 }, 
-          height: { ideal: 2560 }
+          height: { ideal: TARGET_RES_H },
+          width: { ideal: 3072 } 
         }
       };
 
@@ -387,20 +360,24 @@
         try { await state.track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch(e){}
       }
 
+      if (window.ImageCapture) {
+        state.imageCapture = new ImageCapture(state.track);
+      }
+
       resizeCanvas();
       window.addEventListener('resize', resizeCanvas);
       requestAnimationFrame(drawLoop);
       checkSensorPerms();
-      
-      initTapToFocus();
-
-      // Показываем подсказку фокуса на 4 сек
-      DOM.focusHint.classList.add('show');
-      setTimeout(() => DOM.focusHint.classList.remove('show'), 4000);
 
     } catch (e) {
-      console.warn("Camera Init Error", e);
-      alert("Ошибка камеры: " + e.message);
+      console.warn("Camera fallback", e);
+      try {
+         const fs = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+         state.stream = fs;
+         state.track = fs.getVideoTracks()[0];
+         DOM.video.srcObject = fs;
+         requestAnimationFrame(drawLoop);
+      } catch(e2){ alert("Ошибка доступа к камере"); }
     }
   }
 
@@ -410,7 +387,6 @@
       DOM.permReq.classList.remove('hidden'); 
     } else {
       window.addEventListener('deviceorientation', handleOrientation);
-      window.addEventListener('devicemotion', handleMotion);
     }
   }
 
@@ -420,50 +396,41 @@
       if (resp === 'granted') {
         DOM.permReq.classList.add('hidden');
         window.addEventListener('deviceorientation', handleOrientation);
-        window.addEventListener('devicemotion', handleMotion);
       } else {
-        alert("Без датчиков функции уровня работать не будут");
+        alert("Без гироскопа уровень работать не будет");
         DOM.permReq.classList.add('hidden');
       }
     } catch (e) { alert(e); }
   }
 
   function handleOrientation(e) {
-    if (e.beta === null || e.gamma === null) return;
-    state.angleX = e.beta; 
-    state.angleY = e.gamma; 
+    let x = e.beta; 
+    let y = e.gamma; 
+    if (x === null || y === null) return;
+    state.angleX = x;
+    state.angleY = y;
   }
 
-  function handleMotion(e) {
-    if (!e.acceleration) return;
-    const {x, y, z} = e.acceleration;
-    state.shake = Math.hypot(x || 0, y || 0, z || 0);
-  }
-
-  // --- 3. UI LOOP ---
+  // --- 3. UI LOOPS ---
   function updateUI() {
+    // Если идет съемка - не меняем UI, чтобы не сбивать
     if (state.isCapturing) return;
 
     if (state.levelOK) {
       DOM.lvlDot.classList.add('ok');
-      DOM.lvlText.textContent = "Идеально";
+      DOM.lvlText.textContent = "Ровно";
       DOM.shutter.classList.remove('disabled');
       DOM.shutter.classList.add('active');
     } else {
       DOM.lvlDot.classList.remove('ok');
-      
-      if (state.shake > MAX_SHAKE) {
-          DOM.lvlText.textContent = "Не тряси!";
-      } else {
-          DOM.lvlText.textContent = "Выровняйте";
-      }
-      
+      DOM.lvlText.textContent = "Выровняйте";
       DOM.shutter.classList.add('disabled');
       DOM.shutter.classList.remove('active');
     }
   }
 
   function resizeCanvas() {
+    // ЗАЩИТА ОТ МЕРЦАНИЯ: Меняем размер только если он реально изменился
     const w = window.innerWidth;
     const h = window.innerHeight;
     if (DOM.canvas.width !== w || DOM.canvas.height !== h) {
@@ -484,35 +451,37 @@
     const rTarget = 16;
     const maxOffset = 60; 
     
-    const rawX = state.angleY || 0;
-    const rawY = state.angleX || 0;
+    // Защита от NaN (если датчики "отвалились" при тряске)
+    const rawX = (isNaN(state.angleY) || state.angleY === null) ? 0 : state.angleY;
+    const rawY = (isNaN(state.angleX) || state.angleX === null) ? 0 : state.angleX;
     
     const clamp = (val) => Math.max(-20, Math.min(20, val));
     const dx = (clamp(rawX) / 20) * maxOffset; 
     const dy = (clamp(rawY) / 20) * maxOffset;
 
     const dist = Math.hypot(dx, dy);
-    
-    const isLevel = (dist + rBubble) <= rTarget;
-    const isStable = state.shake < MAX_SHAKE;
-    const isReady = isLevel && isStable;
+    const isInside = (dist + rBubble) <= rTarget;
 
-    if (state.levelOK !== isReady && !state.isCapturing) {
-      state.levelOK = isReady;
+    // Обновляем статус только если мы НЕ снимаем в данный момент
+    if (state.levelOK !== isInside && !state.isCapturing) {
+      state.levelOK = isInside;
       updateUI();
-      if(isReady) haptic('medium');
+      if(isInside) haptic('medium');
     }
 
     ctx.shadowBlur = 4;
     ctx.shadowColor = 'rgba(0,0,0,0.5)';
     
+    // Внешний круг
     ctx.beginPath();
     ctx.arc(cx, cy, rTarget, 0, Math.PI * 2); 
+    // Если идет съемка - держим зеленым, иначе по факту
     const color = (state.levelOK || state.isCapturing) ? '#30d158' : 'rgba(255,255,255,0.85)';
     ctx.strokeStyle = color;
     ctx.lineWidth = 3;
     ctx.stroke();
 
+    // Пузырек
     ctx.beginPath();
     ctx.arc(cx + dx, cy + dy, rBubble, 0, Math.PI * 2); 
     ctx.fillStyle = color;
@@ -522,42 +491,39 @@
     requestAnimationFrame(drawLoop);
   }
 
-  // --- 4. CAPTURE LOGIC (FIXED: RELIABLE CANVAS METHOD) ---
+  // --- 4. CAPTURE LOGIC (FIXED) ---
   DOM.shutter.addEventListener('click', async () => {
+    // 1. БЛОКИРОВКА ПОВТОРНЫХ НАЖАТИЙ
     if (state.isCapturing) return; 
-    
-    // Проверка уровня и тряски
-    if (!state.levelOK) { 
-        haptic('error');
-        if (state.shake > MAX_SHAKE) alert("Слишком сильная тряска! Замрите.");
-        return; 
-    }
+    if (!state.levelOK) { haptic('error'); return; }
 
     try {
-        state.isCapturing = true; 
+        state.isCapturing = true; // Блокируем
         haptic('heavy');
         
-        // Визуализация нажатия
+        // Визуальная реакция
         DOM.shutter.style.transform = 'scale(0.8)';
-        DOM.shutter.style.opacity = '0.5'; 
+        DOM.shutter.style.opacity = '0.5'; // Показываем, что занято
 
-        // Микро-пауза (UI update)
+        // Пауза, чтобы дать анимации проиграться перед тяжелой задачей
         await new Promise(r => setTimeout(r, 50));
 
-        // ИСПОЛЬЗУЕМ 100% НАДЕЖНЫЙ МЕТОД: Копия видео-элемента
-        // Это гарантирует, что фото будет таким же, как на экране
+        if (state.imageCapture) {
+          try {
+            const blob = await state.imageCapture.takePhoto();
+            showPreview(blob);
+            return;
+          } catch(e) { console.log('ImageCapture error, trying fallback'); }
+        }
+
         const vid = DOM.video;
-        const canvas = document.createElement('canvas');
-        canvas.width = vid.videoWidth;
-        canvas.height = vid.videoHeight;
-        const ctx = canvas.getContext('2d');
+        const c = document.createElement('canvas');
+        c.width = vid.videoWidth;
+        c.height = vid.videoHeight;
+        c.getContext('2d').drawImage(vid, 0, 0);
         
-        // Рисуем текущий кадр
-        ctx.drawImage(vid, 0, 0);
-        
-        // Конвертируем в файл
+        // Ждем конвертации (Promise wrapper)
         await new Promise(resolve => {
-            c = canvas; // Для краткости
             c.toBlob(blob => {
                 showPreview(blob);
                 resolve();
@@ -565,14 +531,15 @@
         });
 
     } catch(err) {
-        console.error("Capture error:", err);
+        console.error("Capture failed:", err);
         haptic('error');
-        alert("Ошибка: " + err.message);
+        alert("Не удалось сделать фото. Держите телефон стабильнее.");
     } finally {
+        // РАЗБЛОКИРОВКА (всегда, даже при ошибке)
         state.isCapturing = false;
         DOM.shutter.style.transform = '';
         DOM.shutter.style.opacity = '';
-        updateUI(); 
+        updateUI(); // Возвращаем актуальный цвет
     }
   });
 
@@ -581,8 +548,6 @@
     state.photoBlob = blob;
     DOM.finalImg.src = URL.createObjectURL(blob);
     DOM.preview.style.display = 'flex';
-    DOM.btnSend.textContent = 'Готово'; 
-    DOM.btnSend.disabled = false;
   }
 
   function retake() {
@@ -591,138 +556,26 @@
     DOM.finalImg.src = '';
     state.photoBlob = null;
     DOM.commentInput.value = ''; 
-    DOM.btnSend.textContent = 'Готово';
-    DOM.btnSend.disabled = false;
   }
 
-  // --- 5. COMPRESSION & SENDING ---
-  
-  function compressImage(blob, maxWidth, quality) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(blob);
-      reader.onload = event => {
-        const img = new Image();
-        img.src = event.target.result;
-        img.onload = () => {
-          const elem = document.createElement('canvas');
-          let width = img.width;
-          let height = img.height;
-
-          if (width > maxWidth) {
-            height = Math.round(height * (maxWidth / width));
-            width = maxWidth;
-          }
-
-          elem.width = width;
-          elem.height = height;
-          const ctx = elem.getContext('2d');
-          ctx.drawImage(img, 0, 0, width, height);
-
-          const dataUrl = elem.toDataURL('image/jpeg', quality);
-          resolve(dataUrl.split(',')[1]); 
-        };
-        img.onerror = error => reject(error);
-      };
-      reader.onerror = error => reject(error);
-    });
-  }
-
-  async function sendPhoto() {
-    // =========================================================
-    // !!! ВАЖНО: ВСТАВЬ СЮДА ССЫЛКУ GAS !!!
-    const GAS_URL = 'ВСТАВЬ_СЮДА_ТВОЙ_GAS_URL'; 
-    // =========================================================
-
-    if (GAS_URL.includes('ВСТАВЬ')) {
-        alert("Ошибка настройки: не указан URL скрипта!");
-        return;
-    }
-
+  function sendPhoto() {
     const comment = DOM.commentInput.value.trim();
-    const btn = DOM.btnSend;
-    
-    btn.textContent = 'Сжатие...';
-    btn.disabled = true;
+    DOM.btnSend.textContent = 'Отправка...';
     haptic('light');
 
-    try {
-      const base64ForServer = await compressImage(state.photoBlob, 1280, 0.8);
-      
-      btn.textContent = 'Анализ AI...';
-
-      const payload = {
-          action: "analyze_food", 
-          image_base64: base64ForServer,
-          user_comment: comment,
-          user_id: tg?.initDataUnsafe?.user?.id || 'debug_user'
-      };
-
-      const response = await fetch(GAS_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify(payload)
-      });
-
-      const result = await response.json();
-
-      if (!result.success) throw new Error(result.error || "Ошибка сервера");
-
-      console.log("Success:", result.data);
-      haptic('success');
-      btn.textContent = 'Успешно!';
-      
-      setTimeout(() => {
-          retake(); 
-      }, 1500);
-
-    } catch (error) {
-      console.error(error);
-      btn.textContent = 'Ошибка';
-      haptic('error');
-      alert("Не удалось отправить: " + error.message);
-      btn.disabled = false;
-    }
-  }
-
-  // --- 6. UTILS ---
-
-  function initTapToFocus() {
-    const box = DOM.focusBox;
-    const viewport = document.querySelector('.cam-viewport');
-
-    viewport.addEventListener('click', async (e) => {
-      if (e.target.closest('.icon-btn') || e.target.closest('.shutter-outer')) return;
-
-      const rect = viewport.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-
-      box.style.left = x + 'px';
-      box.style.top = y + 'px';
-      box.classList.add('active');
-      haptic('light');
-
-      setTimeout(() => box.classList.remove('active'), 1500);
-
-      if (!state.track) return;
-
-      try {
-        const capabilities = state.track.getCapabilities();
-        if (capabilities.pointsOfInterest) {
-          const normX = x / rect.width;
-          const normY = y / rect.height;
-          await state.track.applyConstraints({
-            advanced: [{ pointsOfInterest: [{ x: normX, y: normY }] }]
-          });
-        } else {
-            await state.track.applyConstraints({ advanced: [{ focusMode: 'manual' }] });
-            setTimeout(async () => {
-                await state.track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
-            }, 200);
-        }
-      } catch (err) { }
+    console.log("SENDING:", {
+        blobSize: state.photoBlob.size,
+        comment: comment
     });
+    
+    setTimeout(() => {
+        haptic('success');
+        DOM.btnSend.textContent = 'Успешно!';
+        setTimeout(() => { 
+            retake(); 
+            DOM.btnSend.textContent = 'Готово';
+        }, 1000);
+    }, 1500);
   }
 
   function haptic(style) { if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred(style); }
@@ -735,10 +588,18 @@
     haptic('light');
   };
 
+  document.getElementById('btnGallery').onclick = () => DOM.fileInput.click();
+  DOM.fileInput.onchange = (e) => {
+    const file = e.target.files[0];
+    if(file) showPreview(file);
+    e.target.value = '';
+  };
+
   document.getElementById('btnClose').onclick = () => window.history.back();
 
   initCamera();
 
 </script>
+
 </body>
 </html>
