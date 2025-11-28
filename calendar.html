@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Ultima Coach Week View</title>
+<title>Ultima Coach Infinite</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
   /* === CORE STYLES === */
@@ -15,14 +15,14 @@
     
     --line-color: rgba(255, 255, 255, 0.08);
     --time-col-width: 50px;
-    --day-col-min-width: 65px; 
+    --day-col-width: 65px; /* Fixed width per day */
     
     --acc-blue: #0a84ff;
     --acc-red: #ff453a;
     --acc-green: #30d158;
     --acc-purple: #5e60ce;
     
-    --grid-h: 60px; /* Высота одного часа */
+    --grid-h: 60px;
     --safe-top: env(safe-area-inset-top);
     --safe-bottom: env(safe-area-inset-bottom);
   }
@@ -34,19 +34,27 @@
     background-color: var(--bg-core);
     font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', Roboto, sans-serif;
     color: var(--text-main);
-    height: 100vh;
-    overflow: hidden;
-    display: flex; flex-direction: column;
+    height: 100%; width: 100%;
+    overflow: hidden; /* Lock body scroll */
+    position: fixed; /* Prevent rubber banding on iOS */
+    inset: 0;
     user-select: none;
   }
 
   /* === FX LAYER === */
-  .fx-layer { position: fixed; inset: 0; z-index: 0; pointer-events: none; }
+  .fx-layer { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
   .orb { position: absolute; border-radius: 50%; filter: blur(80px); opacity: 0.5; will-change: transform; }
   .orb-1 { width: 300px; height: 300px; background: var(--acc-purple); top: -50px; left: -100px; animation: float 20s infinite ease-in-out; }
   .orb-2 { width: 250px; height: 250px; background: var(--acc-blue); bottom: -50px; right: -50px; animation: float 15s infinite ease-in-out reverse; }
   .noise { position: fixed; inset: 0; opacity: 0.04; background: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
   @keyframes float { 0%, 100% { transform: translate(0, 0); } 50% { transform: translate(30px, 50px); } }
+
+  /* === MAIN LAYOUT WRAPPER === */
+  .app-container {
+    display: flex; flex-direction: column;
+    height: 100%; width: 100%;
+    position: relative; z-index: 1;
+  }
 
   /* === HEADER AREA === */
   .top-area {
@@ -55,14 +63,19 @@
     border-bottom: 1px solid var(--line-color);
     padding-top: calc(10px + var(--safe-top));
     padding-bottom: 4px;
-    z-index: 20;
+    z-index: 30;
     flex-shrink: 0;
+    transition: background 0.3s;
+  }
+  
+  body.edit-mode .top-area {
+    background: rgba(10, 132, 255, 0.15);
+    border-bottom: 1px solid var(--acc-blue);
   }
 
   .header-row {
     display: flex; justify-content: space-between; align-items: center;
-    padding: 0 16px;
-    margin-bottom: 10px;
+    padding: 0 16px; margin-bottom: 10px;
   }
   
   .month-label { 
@@ -75,119 +88,125 @@
   .week-controls { display: flex; gap: 16px; align-items: center; }
   .icon-btn { width: 24px; height: 24px; color: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center;}
   
-  /* === MATRIX LAYOUT === */
+  .edit-badge {
+    display: none;
+    font-size: 11px; font-weight: 700; color: #fff; background: var(--acc-blue);
+    padding: 4px 8px; border-radius: 6px; margin-right: 8px;
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  body.edit-mode .edit-badge { display: block; }
+  body.edit-mode .month-label { display: none; }
+
+  /* === INFINITE MATRIX VIEWPORT === */
   .matrix-viewport {
     flex: 1;
-    overflow: auto;
+    overflow: auto; /* Handles both X and Y scroll */
     position: relative;
     -webkit-overflow-scrolling: touch;
-    display: flex;
-    flex-direction: column;
-    z-index: 10;
+    overscroll-behavior: none; /* Prevents bounce/jump */
+    display: flex; flex-direction: column;
   }
 
-  /* Header Row for Days (Sticky Top) */
+  /* Sticky Header Row (Time spacer + Days) */
+  /* This whole row sticks to the TOP of the viewport */
   .matrix-header-row {
-    display: flex;
-    position: sticky;
-    top: 0;
-    z-index: 15;
+    display: flex; 
+    position: sticky; top: 0; z-index: 20;
+    width: max-content; /* Allows horizontal growth */
     background: rgba(0, 0, 0, 0.25);
     backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px);
     border-bottom: 1px solid var(--line-color);
-    width: fit-content;
-    min-width: 100%;
   }
 
+  /* The Corner Cell (Sticks to LEFT and TOP) */
   .corner-cell {
-    width: var(--time-col-width);
-    flex-shrink: 0;
-    position: sticky;
-    left: 0;
-    z-index: 16;
-    background: inherit; 
-    backdrop-filter: inherit; -webkit-backdrop-filter: inherit;
+    width: var(--time-col-width); flex-shrink: 0;
+    position: sticky; left: 0; z-index: 25; /* Highest index in grid */
+    background: inherit; /* Matches header bg */
     border-right: 1px solid var(--line-color);
   }
 
-  .days-header-track { 
-    display: flex; 
-    flex: 1; 
-    touch-action: pan-x pan-y;
-  }
+  /* Days Track */
+  .days-header-track { display: flex; flex: 1; }
 
-  /* --- DAY HEADER STYLING --- */
+  /* Day Header Cell */
   .day-col-header {
-    min-width: var(--day-col-min-width);
-    flex: 1;
-    text-align: center;
-    height: 52px; 
-    padding: 8px 0 0 0;
-    font-size: 11px;
-    color: var(--text-muted);
+    width: var(--day-col-width); flex-shrink: 0; /* Fixed width */
+    text-align: center; height: 52px; padding: 8px 0 0 0;
+    font-size: 11px; color: var(--text-muted);
     border-right: 1px solid var(--line-color);
     display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
-    gap: 4px;
-    position: relative;
-    transition: color 0.2s;
+    gap: 4px; position: relative; cursor: pointer;
   }
-  
+  .day-col-header:active { background: rgba(255,255,255,0.05); }
+
   .dch-day { font-weight: 600; text-transform: uppercase; line-height: 1; }
   .dch-num { font-size: 16px; font-weight: 500; color: #fff; line-height: 1; }
-
-  /* Today State */
+  
   .day-col-header.today { color: var(--acc-blue); }
   .day-col-header.today .dch-day { color: var(--acc-blue); }
-  
-  /* The DOT Indicator */
-  .day-col-header::after {
-    content: '';
-    width: 4px; height: 4px;
-    border-radius: 50%;
-    background: transparent;
-    margin-top: 4px;
-    transition: background 0.2s;
-  }
-  
   .day-col-header.today::after {
-    background: var(--acc-blue);
-    box-shadow: 0 0 6px var(--acc-blue);
+    content: ''; width: 4px; height: 4px; border-radius: 50%;
+    background: var(--acc-blue); margin-top: 4px; box-shadow: 0 0 6px var(--acc-blue);
   }
 
-  /* Body */
-  .matrix-body {
-    display: flex;
+  /* Matrix Body (Time + Grid) */
+  .matrix-body { 
+    display: flex; 
+    width: max-content; /* Allow horizontal growth */
     position: relative;
-    width: fit-content;
-    min-width: 100%;
   }
 
-  /* Time Column */
+  /* Time Column (Sticks to LEFT) */
   .time-column {
-    width: var(--time-col-width);
-    flex-shrink: 0;
-    position: sticky;
-    left: 0;
-    z-index: 14;
-    background: rgba(0, 0, 0, 0.25);
-    backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px);
-    border-right: 1px solid var(--line-color);
+    width: var(--time-col-width); flex-shrink: 0; 
+    position: sticky; left: 0; z-index: 18;
+    background: rgba(0, 0, 0, 0.25); backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px);
+    border-right: 1px solid var(--line-color); 
     padding-bottom: 20px;
   }
-
+  
   .time-label { height: var(--grid-h); position: relative; }
   .time-label span {
     position: absolute; top: -7px; right: 6px;
     font-size: 11px; font-weight: 500; color: var(--text-muted);
     font-variant-numeric: tabular-nums;
     text-shadow: 0 1px 3px rgba(0,0,0,0.8);
-    padding: 0 2px;
   }
   .time-label:first-child span { top: 2px; }
 
-  /* Grid Columns */
+  /* Main Grid Container */
   .grid-columns-container { display: flex; flex: 1; position: relative; }
 
+  /* Column */
+  .day-column {
+    width: var(--day-col-width); flex-shrink: 0;
+    border-right: 1px solid var(--line-color); position: relative;
+    background-image: linear-gradient(to bottom, var(--line-color) 1px, transparent 1px);
+    background-size: 100% var(--grid-h);
+    padding-bottom: 20px;
+    cursor: pointer;
+  }
+
+  /* Blocked Slot */
+  .blocked-slot {
+    position: absolute; left: 0; right: 0; height: var(--grid-h);
+    background: repeating-linear-gradient(45deg, rgba(255,255,255,0.03), rgba(255,255,255,0.03) 10px, rgba(255,255,255,0.06) 10px, rgba(255,255,255,0.06) 20px);
+    pointer-events: none; z-index: 1;
+  }
+  body.edit-mode .blocked-slot {
+    background: repeating-linear-gradient(45deg, rgba(10,132,255,0.1), rgba(10,132,255,0.1) 10px, rgba(10,132,255,0.2) 10px, rgba(10,132,255,0.2) 20px);
+    pointer-events: auto; cursor: pointer; border-top: 1px solid rgba(10,132,255,0.3); border-bottom: 1px solid rgba(10,132,255,0.3);
+  }
+
+  /* Day Off Overlay */
+  .day-off-overlay {
+    position: absolute; inset: 0; background: rgba(0,0,0,0.7); backdrop-filter: grayscale(100%); z-index: 8;
+    display: flex; align-items: center; justify-content: center; writing-mode: vertical-rl; text-orientation: mixed;
+    color: rgba(255,255,255,0.3); font-weight: 800; font-size: 24px; letter-spacing: 4px; pointer-events: none;
+  }
+
+  /* Global Time Line (Across all columns) */
   .global-time-line {
     position: absolute; left: 0; width: 100%; height: 1px;
     background: var(--acc-red); z-index: 10; pointer-events: none;
@@ -195,70 +214,37 @@
   }
   .global-time-line::before {
     content: ''; position: absolute; left: -3px; top: -3px;
-    width: 7px; height: 7px; background: var(--acc-red);
-    border-radius: 50%; box-shadow: 0 0 6px rgba(255, 69, 58, 0.6);
+    width: 7px; height: 7px; background: var(--acc-red); border-radius: 50%;
   }
 
-  .day-column {
-    min-width: var(--day-col-min-width); flex: 1;
-    border-right: 1px solid var(--line-color); position: relative;
-    background-image: linear-gradient(to bottom, var(--line-color) 1px, transparent 1px);
-    background-size: 100% var(--grid-h);
-    padding-bottom: 20px;
-    cursor: pointer; /* Hint that it's clickable */
-  }
-  
-  /* Tap highlight effect for better feedback */
-  .day-column:active {
-    background-color: rgba(255, 255, 255, 0.03);
-  }
-
-  /* Events */
+  /* Event Cards */
   .event-card {
-    position: absolute; left: 2px; right: 2px; border-radius: 4px; padding: 3px 5px;
-    overflow: hidden; border-left: 2px solid;
-    background: rgba(28, 28, 30, 0.6); backdrop-filter: blur(5px);
-    cursor: pointer; z-index: 5;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-    border-top: 1px solid rgba(255,255,255,0.05);
-    border-right: 1px solid rgba(255,255,255,0.05);
-    border-bottom: 1px solid rgba(0,0,0,0.2);
+    position: absolute; left: 2px; right: 2px; border-radius: 4px; padding: 3px 5px; overflow: hidden; border-left: 2px solid;
+    background: rgba(28, 28, 30, 0.9); cursor: pointer; z-index: 5; box-shadow: 0 2px 8px rgba(0,0,0,0.3);
   }
-  .ev-title { font-size: 10px; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.2; text-shadow: 0 1px 2px rgba(0,0,0,0.5); }
+  .ev-title { font-size: 10px; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.2; }
   .ev-time { font-size: 9px; color: rgba(255,255,255,0.8); margin-top: 1px; }
-  .event-card.personal { border-left-color: #BF5AF2; background: rgba(191, 90, 242, 0.25); border: 1px solid rgba(191,90,242, 0.3); border-left-width: 3px; }
-  .event-card.client { border-left-color: var(--acc-blue); background: rgba(10, 132, 255, 0.25); border: 1px solid rgba(10,132,255, 0.3); border-left-width: 3px; }
-  .event-card.done { opacity: 0.7; filter: grayscale(0.3); }
+  .event-card.personal { border-left-color: #BF5AF2; background: rgba(191, 90, 242, 0.25); }
+  .event-card.client { border-left-color: var(--acc-blue); background: rgba(10, 132, 255, 0.25); }
 
-  /* Sheets */
-  .sheet-overlay {
-    position: fixed; inset: 0; background: rgba(0,0,0,0.6);
-    z-index: 50; opacity: 0; pointer-events: none; transition: 0.3s;
-    backdrop-filter: blur(4px);
-  }
+  /* Sheets & Forms */
+  .sheet-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 50; opacity: 0; pointer-events: none; transition: 0.3s; backdrop-filter: blur(4px); }
   .sheet-overlay.active { opacity: 1; pointer-events: auto; }
-  
   .sheet {
-    position: fixed; bottom: 0; left: 0; right: 0;
-    background: rgba(28, 28, 30, 0.95); backdrop-filter: blur(30px);
-    border-radius: 20px 20px 0 0;
-    padding: 24px 16px calc(24px + var(--safe-bottom)) 16px;
-    transform: translateY(110%); transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
-    z-index: 51; border-top: 1px solid rgba(255,255,255,0.1);
-    box-shadow: 0 -10px 40px rgba(0,0,0,0.5);
+    position: fixed; bottom: 0; left: 0; right: 0; background: rgba(28, 28, 30, 0.95); backdrop-filter: blur(30px);
+    border-radius: 20px 20px 0 0; padding: 24px 16px calc(24px + var(--safe-bottom)) 16px;
+    transform: translateY(110%); transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1); z-index: 51; border-top: 1px solid rgba(255,255,255,0.1);
   }
   .sheet.open { transform: translateY(0); }
-
   .sheet-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
   .sh-title { font-size: 18px; font-weight: 700; color: #fff; }
   .sh-close { color: var(--acc-blue); font-size: 16px; font-weight: 500; cursor: pointer; }
-
   .form-group { margin-bottom: 16px; }
   .form-label { font-size: 12px; color: #8E8E93; margin-bottom: 6px; margin-left: 2px; text-transform: uppercase; }
   .input-box { width: 100%; background: rgba(118, 118, 128, 0.24); border: none; border-radius: 10px; padding: 12px; color: #fff; font-size: 16px; appearance: none; }
   .input-row { display: flex; gap: 12px; }
-
-  .btn-primary { width: 100%; padding: 14px; background: #fff; color: #000; font-weight: 600; font-size: 16px; border-radius: 12px; border: none; margin-top: 12px; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
+  .btn-primary { width: 100%; padding: 14px; background: #fff; color: #000; font-weight: 600; font-size: 16px; border-radius: 12px; border: none; margin-top: 12px; cursor: pointer; }
+  .btn-secondary { background: rgba(255,255,255,0.1); color: #fff; }
   .btn-danger { background: rgba(255, 69, 58, 0.15); color: var(--acc-red); }
 
 </style>
@@ -271,49 +257,44 @@
   <div class="noise"></div>
 </div>
 
-<!-- Header -->
-<div class="top-area">
-  <div class="header-row">
-    <div class="month-label" id="headerMonth">НОЯБРЬ 2025</div>
-    
-    <div class="week-controls">
-      <!-- Settings Only -->
-      <div class="icon-btn" onclick="openSettings()">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+<div class="app-container">
+  <!-- Header -->
+  <div class="top-area">
+    <div class="header-row">
+      <div style="display:flex; align-items:center;">
+        <div class="edit-badge" id="editBadge">Редактор</div>
+        <div class="month-label" id="headerMonth">НОЯБРЬ 2025</div>
       </div>
       
-      <!-- No Add Button Here anymore -->
-    </div>
-  </div>
-</div>
-
-<!-- Matrix Viewport -->
-<div class="matrix-viewport" id="matrixViewport">
-  
-  <!-- Sticky Header Row: Time spacer + 7 Days + SWIPE AREA -->
-  <div class="matrix-header-row" id="swipeHeaderZone">
-    <div class="corner-cell"></div>
-    <div class="days-header-track" id="daysHeaderTrack">
-      <!-- Generated by JS -->
+      <div class="week-controls">
+        <div class="icon-btn" id="savePatternBtn" onclick="toggleEditMode()" style="display:none; color: var(--acc-blue); font-weight:600; font-size:14px; width:auto;">Готово</div>
+        <div class="icon-btn" id="settingsBtn" onclick="openSettings()">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+        </div>
+      </div>
     </div>
   </div>
 
-  <!-- Scrollable Body: Time column + Grid columns -->
-  <div class="matrix-body">
-    <!-- Time Column -->
-    <div class="time-column" id="timeColumn">
-      <!-- Generated by JS -->
+  <!-- Infinite Matrix Viewport -->
+  <div class="matrix-viewport" id="matrixViewport">
+    
+    <!-- Sticky Header Row -->
+    <div class="matrix-header-row">
+      <div class="corner-cell"></div>
+      <div class="days-header-track" id="daysHeaderTrack">
+        <!-- Rendered by JS -->
+      </div>
     </div>
 
-    <!-- Main Grid -->
-    <div class="grid-columns-container" id="gridColumns">
-      <!-- GLOBAL TIME LINE: spans all columns -->
-      <div class="global-time-line" id="globalTimeLine"></div>
-      
-      <!-- Columns generated by JS -->
+    <!-- Scrollable Body -->
+    <div class="matrix-body">
+      <div class="time-column" id="timeColumn"></div>
+      <div class="grid-columns-container" id="gridColumns">
+        <div class="global-time-line" id="globalTimeLine"></div>
+        <!-- Rendered by JS -->
+      </div>
     </div>
   </div>
-
 </div>
 
 <!-- Overlays -->
@@ -325,7 +306,6 @@
     <div class="sh-title" id="sheetTitle">Тренировка</div>
     <div class="sh-close" onclick="closeAllSheets()">Отмена</div>
   </div>
-  
   <div class="form-group">
     <div class="form-label">Клиент</div>
     <select class="input-box" id="inpClient">
@@ -335,12 +315,10 @@
       <option value="Гость">Гость</option>
     </select>
   </div>
-  
   <div class="form-group">
     <div class="form-label">Дата</div>
     <input type="date" class="input-box" id="inpDate">
   </div>
-
   <div class="input-row">
     <div class="form-group" style="flex:1">
       <div class="form-label">Начало</div>
@@ -351,27 +329,44 @@
       <input type="time" class="input-box" id="inpEnd">
     </div>
   </div>
-
   <div class="form-group">
     <div class="form-label">Заметка</div>
     <input type="text" class="input-box" id="inpNote" placeholder="Тип тренировки...">
   </div>
-
   <button class="btn-primary" onclick="saveSession()">Сохранить</button>
   <button class="btn-primary btn-danger" id="btnDelete" style="display:none" onclick="deleteSession()">Удалить</button>
 </div>
 
+<!-- Day Options Sheet -->
+<div class="sheet" id="dayOptionsSheet">
+  <div class="sheet-header">
+    <div class="sh-title" id="dayOptionsTitle">Настройки дня</div>
+    <div class="sh-close" onclick="closeAllSheets()">Закрыть</div>
+  </div>
+  <div class="form-group">
+    <div class="form-label">Статус дня</div>
+    <button class="btn-primary btn-danger" onclick="toggleDayOff()">Сделать выходным</button>
+    <button class="btn-primary btn-secondary" onclick="clearDayOff()" style="margin-top:12px;">Сбросить (Рабочий)</button>
+  </div>
+</div>
+
+<!-- Settings Sheet -->
 <div class="sheet" id="settingsSheet">
   <div class="sheet-header">
     <div class="sh-title">Настройки</div>
     <div class="sh-close" onclick="closeAllSheets()">Готово</div>
   </div>
   <div class="form-group">
+    <div class="form-label">График работы</div>
+    <button class="btn-primary" onclick="toggleEditMode()">Редактор шаблона</button>
+    <div style="color:#8E8E93; font-size:13px; margin-top:8px;">Настройте повторяющиеся часы для дней недели.</div>
+  </div>
+  <div class="form-group">
     <div class="form-label">Инструкция</div>
     <div style="color:#8E8E93; font-size:14px; padding:10px 0; line-height: 1.5;">
-      • <b>Создать:</b> Нажмите на пустую ячейку в сетке.<br>
-      • <b>Изменить:</b> Нажмите на карточку тренировки.<br>
-      • <b>Навигация:</b> Свайп по датам (вверху) переключает неделю.
+      • <b>Скролл:</b> Листайте вправо/влево свободно.<br>
+      • <b>Создать:</b> Тап по пустой ячейке.<br>
+      • <b>Изменить:</b> Тап по тренировке.
     </div>
   </div>
 </div>
@@ -379,77 +374,49 @@
 <script>
   // === CONFIG ===
   const GRID_H = 60; 
-  let currentWeekStart = getStartOfWeek(new Date());
+  // Range: How many days back and forward to render?
+  const DAYS_BACK = 14;
+  const DAYS_FORWARD = 60;
+  
+  let startDate = new Date();
+  startDate.setDate(startDate.getDate() - DAYS_BACK); // Start rendering from 2 weeks ago
+
   let updateInterval;
+  let isEditMode = false;
+  let selectedDayForOptions = null;
+  
+  let availabilityPattern = { 0: [], 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] };
+  let dateExceptions = {};
   
   // Fake Data
   let sessions = [
     { id: 1, dateStr: getDateStr(0), client: 'Алиса В.', start: '09:00', end: '10:00', note: 'Кардио', status: 'done', type: 'client' },
-    { id: 2, dateStr: getDateStr(0), client: 'Марк Д.', start: '10:30', end: '12:00', note: 'Силовая', status: 'planned', type: 'personal' },
-    { id: 3, dateStr: getDateStr(1), client: 'Елена К.', start: '14:00', end: '15:00', note: 'Йога', status: 'planned', type: 'client' },
-    { id: 4, dateStr: getDateStr(3), client: 'Группа', start: '19:00', end: '20:30', note: 'Кроссфит', status: 'planned', type: 'personal' }
+    { id: 2, dateStr: getDateStr(0), client: 'Марк Д.', start: '10:30', end: '12:00', note: 'Силовая', status: 'planned', type: 'personal' }
   ];
   let editingId = null;
 
-  // === HELPERS ===
-  function getStartOfWeek(date) { 
-    const d = new Date(date); 
-    const day = d.getDay(); 
-    const diff = d.getDate() - day + (day === 0 ? -6 : 1); 
-    d.setDate(diff); d.setHours(0,0,0,0);
-    return d;
-  }
-  
   function getDateStr(offset) {
-    const d = getStartOfWeek(new Date()); 
-    d.setDate(d.getDate() + offset);
+    const d = new Date(); d.setDate(d.getDate() + offset);
     return d.toISOString().split('T')[0];
   }
 
-  // === RENDER CORE ===
+  // === INIT ===
   function init() {
     renderTimeColumn();
-    renderWeek();
-    scrollToCurrentTime();
+    renderTimeline(); // Render the big range
+    
+    // Set initial pattern demo
+    availabilityPattern[0] = [0,1,2,3,4,5,6,7];
+    reRenderBlocks(); // Apply pattern
+
+    scrollToToday();
     startClock();
-    initSwipe();
     
-    // TMA Config
+    // Listen to scroll to update Month Label dynamically
+    document.getElementById('matrixViewport').addEventListener('scroll', onScroll);
+
     const tg = window.Telegram?.WebApp;
-    if(tg) {
-      tg.ready(); tg.expand();
-      try { tg.setHeaderColor('#050505'); tg.setBackgroundColor('#050505'); } catch(e){}
-    }
-  }
-  
-  // === SWIPE LOGIC ===
-  function initSwipe() {
-    const headerZone = document.getElementById('swipeHeaderZone');
-    let startX = 0;
-    let startY = 0;
-    
-    headerZone.addEventListener('touchstart', (e) => {
-      startX = e.touches[0].clientX;
-      startY = e.touches[0].clientY;
-    }, { passive: true });
-    
-    headerZone.addEventListener('touchend', (e) => {
-      const endX = e.changedTouches[0].clientX;
-      const endY = e.changedTouches[0].clientY;
-      const diffX = startX - endX;
-      const diffY = startY - endY;
-      
-      // Check if swipe is mainly horizontal and long enough
-      if (Math.abs(diffX) > 50 && Math.abs(diffX) > Math.abs(diffY)) {
-        if (diffX > 0) {
-          // Swiped Left -> Next Week
-          changeWeek(1);
-        } else {
-          // Swiped Right -> Prev Week
-          changeWeek(-1);
-        }
-      }
-    }, { passive: true });
+    if(tg) { tg.ready(); tg.expand(); try { tg.setHeaderColor('#050505'); tg.setBackgroundColor('#050505'); } catch(e){} }
   }
 
   function renderTimeColumn() {
@@ -463,164 +430,234 @@
     }
   }
 
-  function renderWeek() {
+  // Generate range of days
+  function renderTimeline() {
     const headerTrack = document.getElementById('daysHeaderTrack');
     const gridContainer = document.getElementById('gridColumns');
-    
-    // Clear only columns, keep global line
     const globalLine = document.getElementById('globalTimeLine');
-    gridContainer.innerHTML = '';
-    gridContainer.appendChild(globalLine); // Put line back in
+
+    // Keep the line, remove others
+    gridContainer.innerHTML = ''; gridContainer.appendChild(globalLine);
     headerTrack.innerHTML = '';
-    
-    // Header Title Update
-    const monthName = currentWeekStart.toLocaleString('ru', { month: 'long' }).toUpperCase();
-    const year = currentWeekStart.getFullYear();
-    document.getElementById('headerMonth').textContent = `${monthName} ${year}`;
 
     const weekDays = ['ПН','ВТ','СР','ЧТ','ПТ','СБ','ВС'];
     const todayStr = new Date().toISOString().split('T')[0];
+    const totalDays = DAYS_BACK + DAYS_FORWARD;
 
-    // Build Columns
-    for(let i=0; i<7; i++) {
-      const d = new Date(currentWeekStart);
+    for (let i = 0; i < totalDays; i++) {
+      const d = new Date(startDate);
       d.setDate(d.getDate() + i);
       const dateStr = d.toISOString().split('T')[0];
       const isToday = (dateStr === todayStr);
+      let dayIdx = d.getDay() - 1; if(dayIdx === -1) dayIdx = 6;
 
-      // 1. Header Cell
+      // 1. Header
       const hCell = document.createElement('div');
       hCell.className = `day-col-header ${isToday ? 'today' : ''}`;
-      hCell.innerHTML = `<div class="dch-day">${weekDays[i]}</div><div class="dch-num">${d.getDate()}</div>`;
+      hCell.id = `header-${dateStr}`; // ID for scrolling
+      hCell.setAttribute('data-date', dateStr);
+      
+      // Update header content based on edit mode
+      updateHeaderContent(hCell, weekDays[dayIdx], d.getDate(), isEditMode);
+      
+      hCell.onclick = () => {
+         if(!isEditMode) openDayOptions(dateStr, `${weekDays[dayIdx]} ${d.getDate()}`);
+      };
       headerTrack.appendChild(hCell);
 
-      // 2. Grid Column
+      // 2. Column
       const col = document.createElement('div');
       col.className = 'day-column';
       col.setAttribute('data-date', dateStr);
+      col.setAttribute('data-day-idx', dayIdx);
       
-      // === CLICK TO ADD LOGIC ===
-      col.onclick = (e) => {
-        // Ignore if clicked on an event (bubble prevented but safe check)
-        if(e.target !== col) return;
-        
-        const yInCol = e.offsetY;
-        const hour = Math.floor(yInCol / GRID_H);
-        
-        const setD = new Date(d);
-        setD.setHours(hour, 0); // Sets time to start of the clicked hour
-        openAddSession(setD);
-      };
+      // We will render blocks in a separate pass or here
+      // Render events
+      renderEventsForColumn(col, dateStr);
 
-      // Add Events for this day
-      const dayEvents = sessions.filter(s => s.dateStr === dateStr);
-      dayEvents.forEach(ev => {
-        const el = createEventEl(ev);
-        col.appendChild(el);
-      });
-
+      col.onclick = (e) => handleGridClick(e, col, d, dayIdx);
       gridContainer.appendChild(col);
     }
+    
+    // Render blocks initially
+    reRenderBlocks();
+  }
+  
+  function updateHeaderContent(el, dayName, dayNum, isEdit) {
+    if(isEdit) {
+       el.innerHTML = `<div class="dch-day" style="margin-top:12px; font-size:13px;">${dayName}</div>`;
+    } else {
+       el.innerHTML = `<div class="dch-day">${dayName}</div><div class="dch-num">${dayNum}</div>`;
+    }
+  }
+
+  function reRenderBlocks() {
+    const cols = document.querySelectorAll('.day-column');
+    cols.forEach(col => {
+      // Remove existing blocked slots first
+      const existing = col.querySelectorAll('.blocked-slot, .day-off-overlay');
+      existing.forEach(e => e.remove());
+      
+      const dateStr = col.getAttribute('data-date');
+      const dayIdx = parseInt(col.getAttribute('data-day-idx'));
+      
+      // 1. Pattern Blocks
+      const blockedHours = availabilityPattern[dayIdx] || [];
+      blockedHours.forEach(h => {
+        const blk = document.createElement('div');
+        blk.className = 'blocked-slot';
+        blk.style.top = `${h * GRID_H}px`;
+        if(isEditMode) blk.onclick = (e) => { e.stopPropagation(); togglePatternBlock(dayIdx, h); };
+        col.appendChild(blk);
+      });
+
+      // 2. Exception Day Off
+      if (!isEditMode && dateExceptions[dateStr] === 'off') {
+        const overlay = document.createElement('div');
+        overlay.className = 'day-off-overlay';
+        overlay.innerHTML = 'ВЫХОДНОЙ';
+        col.appendChild(overlay);
+      }
+    });
+  }
+
+  function renderEventsForColumn(col, dateStr) {
+     // Clear old events first if re-rendering? (Not needed for this flow usually, but good practice)
+     // Actually for simplicity, we assume this is called on init. For updates, we might need to clear.
+     const oldEv = col.querySelectorAll('.event-card');
+     oldEv.forEach(e => e.remove());
+
+     const dayEvents = sessions.filter(s => s.dateStr === dateStr);
+     dayEvents.forEach(ev => {
+       const el = createEventEl(ev);
+       col.appendChild(el);
+     });
   }
 
   function createEventEl(ev) {
     const div = document.createElement('div');
     const [h, m] = ev.start.split(':').map(Number);
     const [hE, mE] = ev.end.split(':').map(Number);
-    
-    const startMin = h*60 + m;
-    const endMin = hE*60 + mE;
-    const duration = endMin - startMin;
-    
-    const top = (startMin / 60) * GRID_H;
-    const height = (duration / 60) * GRID_H;
+    const top = (h*60 + m) / 60 * GRID_H;
+    const height = (hE*60 + mE - (h*60+m)) / 60 * GRID_H;
 
     div.className = `event-card ${ev.type} ${ev.status}`;
     div.style.top = `${top}px`;
     div.style.height = `${Math.max(height, 20)}px`;
-    
-    div.innerHTML = `
-      <div class="ev-title">${ev.client}</div>
-      <div class="ev-time">${ev.start} - ${ev.end}</div>
-    `;
-    
-    div.onclick = (e) => {
-      e.stopPropagation();
-      openEdit(ev);
-    };
+    div.innerHTML = `<div class="ev-title">${ev.client}</div><div class="ev-time">${ev.start} - ${ev.end}</div>`;
+    div.onclick = (e) => { e.stopPropagation(); openEdit(ev); };
     return div;
   }
 
-  function changeWeek(dir) {
-    currentWeekStart.setDate(currentWeekStart.getDate() + (dir * 7));
-    renderWeek();
-    updateClockPosition();
-  }
-
-  function startClock() {
-    updateClockPosition();
-    if(updateInterval) clearInterval(updateInterval);
-    updateInterval = setInterval(updateClockPosition, 60000);
-  }
-
-  function updateClockPosition() {
-    const line = document.getElementById('globalTimeLine');
-    if(!line) return;
+  function handleGridClick(e, col, dateObj, dayIdx) {
+    if (e.target !== col) return;
+    const y = e.offsetY;
+    const h = Math.floor(y / GRID_H);
     
-    const now = new Date();
-    const weekEnd = new Date(currentWeekStart);
-    weekEnd.setDate(weekEnd.getDate() + 6);
-    weekEnd.setHours(23,59,59);
-    
-    if (now >= currentWeekStart && now <= weekEnd) {
-        line.style.display = 'block';
-        const min = now.getHours() * 60 + now.getMinutes();
-        const top = (min / 60) * GRID_H;
-        line.style.top = `${top}px`;
+    if (isEditMode) {
+      togglePatternBlock(dayIdx, h);
     } else {
-        line.style.display = 'none';
+      const setD = new Date(dateObj); setD.setHours(h, 0);
+      openAddSession(setD);
     }
   }
 
-  function scrollToCurrentTime() {
-    const now = new Date();
-    const h = now.getHours();
-    const scrollY = (h - 2) * GRID_H;
-    document.getElementById('matrixViewport').scrollTop = scrollY > 0 ? scrollY : 0;
+  // === SCROLL LOGIC ===
+  function scrollToToday() {
+    const todayStr = new Date().toISOString().split('T')[0];
+    const headerEl = document.getElementById(`header-${todayStr}`);
+    const viewport = document.getElementById('matrixViewport');
+    
+    if (headerEl && viewport) {
+      // Calculate position to center today or put it slightly left
+      const offsetLeft = headerEl.offsetLeft;
+      // Subtract header width to give some context of previous day
+      viewport.scrollLeft = offsetLeft - 70; 
+      
+      // Scroll Y to 08:00
+      viewport.scrollTop = 8 * GRID_H;
+    }
   }
 
-  // === FORM LOGIC ===
-  function openAddSession(dateObj) {
+  // Detect which month is currently visible
+  function onScroll() {
+    if(isEditMode) return;
+    const viewport = document.getElementById('matrixViewport');
+    const headers = document.querySelectorAll('.day-col-header');
+    
+    // Find first visible header
+    let visibleHeader = null;
+    for (let h of headers) {
+      if (h.offsetLeft >= viewport.scrollLeft) {
+        visibleHeader = h;
+        break;
+      }
+    }
+    
+    if (visibleHeader) {
+      const dateStr = visibleHeader.getAttribute('data-date');
+      const d = new Date(dateStr);
+      const m = d.toLocaleString('ru', { month: 'long' }).toUpperCase();
+      const y = d.getFullYear();
+      document.getElementById('headerMonth').textContent = `${m} ${y}`;
+    }
+  }
+
+  // === EDIT MODE & LOGIC ===
+  function toggleEditMode() {
+    isEditMode = !isEditMode;
+    document.body.classList.toggle('edit-mode', isEditMode);
+    
+    document.getElementById('savePatternBtn').style.display = isEditMode ? 'flex' : 'none';
+    document.getElementById('settingsBtn').style.display = isEditMode ? 'none' : 'flex';
+    
+    if(isEditMode) closeAllSheets();
+    
+    // Update headers visuals
+    const headers = document.querySelectorAll('.day-col-header');
+    headers.forEach(h => {
+        const dateStr = h.getAttribute('data-date');
+        const d = new Date(dateStr);
+        const dayIdx = d.getDay() - 1 === -1 ? 6 : d.getDay() - 1;
+        const weekDays = ['ПН','ВТ','СР','ЧТ','ПТ','СБ','ВС'];
+        updateHeaderContent(h, weekDays[dayIdx], d.getDate(), isEditMode);
+    });
+    
+    reRenderBlocks();
+  }
+
+  function togglePatternBlock(dayIdx, hour) {
+    const arr = availabilityPattern[dayIdx];
+    const idx = arr.indexOf(hour);
+    if(idx === -1) arr.push(hour); else arr.splice(idx, 1);
+    reRenderBlocks();
+  }
+
+  // === FORMS ===
+  function openAddSession(d) {
     editingId = null;
     document.getElementById('sheetTitle').textContent = 'Новая тренировка';
     document.getElementById('btnDelete').style.display = 'none';
-    
-    const d = dateObj || new Date();
     document.getElementById('inpDate').value = d.toISOString().split('T')[0];
-    
     const h = d.getHours();
     document.getElementById('inpStart').value = `${String(h).padStart(2,'0')}:00`;
     document.getElementById('inpEnd').value = `${String(h+1).padStart(2,'0')}:00`;
     document.getElementById('inpNote').value = '';
-    
     openSheet('sessionSheet');
   }
-
   function openEdit(s) {
     editingId = s.id;
     document.getElementById('sheetTitle').textContent = 'Редактировать';
     document.getElementById('btnDelete').style.display = 'block';
-    
     document.getElementById('inpClient').value = s.client;
     document.getElementById('inpDate').value = s.dateStr;
     document.getElementById('inpStart').value = s.start;
     document.getElementById('inpEnd').value = s.end;
     document.getElementById('inpNote').value = s.note || '';
-    
     openSheet('sessionSheet');
   }
-
   function saveSession() {
+    // Logic same as before...
     const client = document.getElementById('inpClient').value;
     const dateStr = document.getElementById('inpDate').value;
     const start = document.getElementById('inpStart').value;
@@ -629,41 +666,61 @@
 
     if(editingId) {
       const idx = sessions.findIndex(s => s.id === editingId);
-      if(idx !== -1) {
-        sessions[idx] = { ...sessions[idx], client, dateStr, start, end, note };
-      }
+      if(idx !== -1) sessions[idx] = { ...sessions[idx], client, dateStr, start, end, note };
     } else {
-      sessions.push({
-        id: Date.now(),
-        client, dateStr, start, end, note,
-        status: 'planned', type: client === 'Гость' ? 'personal' : 'client'
-      });
+      sessions.push({ id: Date.now(), client, dateStr, start, end, note, status: 'planned', type: client === 'Гость' ? 'personal' : 'client' });
     }
     closeAllSheets();
-    renderWeek();
+    
+    // Find the specific column and update only it
+    const col = document.querySelector(`.day-column[data-date="${dateStr}"]`);
+    if(col) renderEventsForColumn(col, dateStr);
   }
-
+  
   function deleteSession() {
     if(editingId) {
-      sessions = sessions.filter(s => s.id !== editingId);
-      closeAllSheets();
-      renderWeek();
+       const s = sessions.find(s => s.id === editingId);
+       sessions = sessions.filter(x => x.id !== editingId);
+       if(s) {
+          const col = document.querySelector(`.day-column[data-date="${s.dateStr}"]`);
+          if(col) renderEventsForColumn(col, s.dateStr);
+       }
+       closeAllSheets();
     }
+  }
+
+  // Day Options
+  function openDayOptions(dateStr, title) {
+    selectedDayForOptions = dateStr;
+    document.getElementById('dayOptionsTitle').textContent = title;
+    openSheet('dayOptionsSheet');
+  }
+  function toggleDayOff() {
+    if(selectedDayForOptions) { dateExceptions[selectedDayForOptions] = 'off'; reRenderBlocks(); closeAllSheets(); }
+  }
+  function clearDayOff() {
+    if(selectedDayForOptions) { delete dateExceptions[selectedDayForOptions]; reRenderBlocks(); closeAllSheets(); }
   }
 
   function openSettings() { openSheet('settingsSheet'); }
+  function openSheet(id) { document.getElementById('overlay').classList.add('active'); document.getElementById(id).classList.add('open'); }
+  function closeAllSheets() { document.getElementById('overlay').classList.remove('active'); document.querySelectorAll('.sheet').forEach(s => s.classList.remove('open')); }
   
-  function openSheet(id) {
-    document.getElementById('overlay').classList.add('active');
-    document.getElementById(id).classList.add('open');
+  // Clock
+  function startClock() {
+    updateClock();
+    if(updateInterval) clearInterval(updateInterval);
+    updateInterval = setInterval(updateClock, 60000);
   }
-  function closeAllSheets() {
-    document.getElementById('overlay').classList.remove('active');
-    document.querySelectorAll('.sheet').forEach(s => s.classList.remove('open'));
+  function updateClock() {
+    const line = document.getElementById('globalTimeLine');
+    const now = new Date();
+    const min = now.getHours()*60 + now.getMinutes();
+    line.style.top = `${(min/60)*GRID_H}px`;
+    line.style.display = 'block';
   }
 
   document.addEventListener('DOMContentLoaded', init);
-
 </script>
 </body>
 </html>
