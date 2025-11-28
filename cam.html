@@ -65,7 +65,6 @@
     display: flex;
     flex-direction: column;
     justify-content: space-between;
-    /* Отступы как в оригинале */
     padding: calc(16px + env(safe-area-inset-top)) 16px calc(32px + env(safe-area-inset-bottom)) 16px;
     pointer-events: none;
   }
@@ -120,18 +119,16 @@
   }
   .card-guide span { font-size: 11px; color: rgba(255,255,255,0.7); font-weight: 600; }
 
-  /* Bottom Controls (Grid layout for perfect alignment) */
+  /* Bottom Controls (Grid layout) */
   .controls-area {
     display: grid;
-    grid-template-columns: 44px 1fr 44px; /* Лево - Центр - Право */
+    grid-template-columns: 44px 1fr 44px;
     align-items: center;
     pointer-events: auto;
     position: relative;
-    /* Центрируем кнопку спуска */
     justify-items: center; 
   }
   
-  /* Прибиваем левую кнопку влево, чтобы она была ровно под кнопкой закрытия */
   .controls-area > :first-child {
     justify-self: start;
   }
@@ -142,7 +139,6 @@
     border: 4px solid rgba(255,255,255,0.3);
     display:flex; align-items:center; justify-content:center;
     transition: 0.3s;
-    /* Grid placement center */
     grid-column: 2; 
   }
   .shutter-inner {
@@ -282,7 +278,7 @@
           <div class="status-dot" id="lvlDot"></div>
           <span id="lvlText">Уровень</span>
         </div>
-        <div class="icon-btn hidden" id="btnTorch">⚡</div>
+        <div class="icon-btn" id="btnTorch">⚡</div>
       </div>
 
       <div class="card-guide">
@@ -411,13 +407,13 @@
 
   // --- CAMERA CORE ---
   async function initCamera(mode = 'environment') {
-    // 1. Android Fix: Полная остановка и обнуление
+    // 1. ПОЛНАЯ ЧИСТКА (Android Fix)
     if (state.stream) {
-        state.stream.getTracks().forEach(track => {
-            track.stop();
-        });
+        state.stream.getTracks().forEach(track => track.stop());
         state.stream = null;
-        DOM.video.srcObject = null; // Критично для Android!
+        DOM.video.srcObject = null;
+        // ДАЕМ БРАУЗЕРУ ВРЕМЯ НА ОСВОБОЖДЕНИЕ КАМЕРЫ (ВАЖНО!)
+        await new Promise(r => setTimeout(r, 200));
     }
 
     try {
@@ -435,22 +431,22 @@
       state.stream = stream;
       state.track = stream.getVideoTracks()[0];
       state.facingMode = mode;
-      DOM.video.srcObject = stream;
-
-      // Применяем настройки
-      const caps = state.track.getCapabilities();
       
-      // Фокус
+      DOM.video.srcObject = stream;
+      // ЯВНЫЙ ПИННЬ ДЛЯ ВИДЕО (IOS/ANDROID)
+      DOM.video.play().catch(e => console.log("Play auto-started"));
+
+      // 2. НАСТРОЙКА ФОКУСА
+      const caps = state.track.getCapabilities();
       if (mode === 'environment' && caps.focusMode && caps.focusMode.includes('continuous')) {
         try { await state.track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch(e){}
       }
 
-      // Вспышка: проверяем реальную возможность
-      // На Android caps.torch может быть undefined, тогда скрываем на всякий
-      if (caps.torch) {
-          DOM.btnTorch.classList.remove('hidden');
+      // 3. УПРАВЛЕНИЕ КНОПКОЙ ВСПЫШКИ (ПО РЕЖИМУ, А НЕ ПО CAPS)
+      if (mode === 'user') {
+          DOM.btnTorch.style.display = 'none'; // Скрываем на фронталке
       } else {
-          DOM.btnTorch.classList.add('hidden');
+          DOM.btnTorch.style.display = 'flex'; // Всегда показываем на задней
       }
 
       if (window.ImageCapture) {
@@ -469,12 +465,13 @@
 
     } catch (e) {
       console.warn("Init error:", e);
+      // FALLBACK
       try {
-         // Простой Fallback
          const fs = await navigator.mediaDevices.getUserMedia({ video: true });
          state.stream = fs;
          state.track = fs.getVideoTracks()[0];
          DOM.video.srcObject = fs;
+         DOM.video.play();
          if(!state.isLoopRunning) {
              requestAnimationFrame(drawLoop);
              state.isLoopRunning = true;
@@ -611,7 +608,12 @@
              const c = document.createElement('canvas');
              c.width = vid.videoWidth;
              c.height = vid.videoHeight;
-             c.getContext('2d').drawImage(vid, 0, 0);
+             const ctx = c.getContext('2d');
+             
+             // Для фронталки можно зеркалить, если нужно
+             // if (state.facingMode === 'user') { ctx.translate(c.width, 0); ctx.scale(-1, 1); }
+             
+             ctx.drawImage(vid, 0, 0);
              blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.95));
         }
         showPreview(blob);
@@ -667,7 +669,7 @@
             
             console.log("SENDING:", { sizeKB: (base64data.length/1024).toFixed(0), text: comment });
 
-            // Имитация
+            // Имитация отправки
             setTimeout(() => {
                 haptic('success');
                 btn.textContent = 'Успешно!';
@@ -704,13 +706,12 @@
     if(!state.track) return;
     torchState = !torchState;
     try { 
-        // Для Android часто нужно применить constraint заново к треку
         await state.track.applyConstraints({ advanced: [{ torch: torchState }] }); 
         haptic('light');
     } catch(e){
         console.warn(e);
         torchState = !torchState; 
-        showToast("Фонарик недоступен");
+        showToast("Фонарик недоступен"); // Уведомляем пользователя если не вышло
     }
   };
 
