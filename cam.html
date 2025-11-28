@@ -125,9 +125,10 @@
   .controls-area {
     display: flex;
     align-items: center;
-    justify-content: space-between; 
+    justify-content: center; /* Центрируем кнопку затвора */
     pointer-events: auto;
     position: relative;
+    padding-bottom: 20px;
   }
 
   .shutter-outer {
@@ -173,17 +174,15 @@
     flex-direction: column;
   }
   
-  /* Изображение занимает все свободное место сверху */
   .preview-img { 
     flex: 1; 
     width: 100%; 
-    min-height: 0; /* Важно для flex контейнера */
+    min-height: 0; 
     object-fit: contain; 
     background: #111; 
     margin-bottom: 12px;
   }
 
-  /* Секция комментария */
   .comment-wrap {
     padding: 0 24px 16px 24px;
     width: 100%;
@@ -219,9 +218,8 @@
     border-color: var(--acc-blue); 
   }
 
-  /* Кнопки снизу */
   .preview-controls {
-    padding: 0 24px 34px 24px; /* padding bottom safe area */
+    padding: 0 24px 34px 24px;
     display: flex; gap: 16px;
     background: #000;
   }
@@ -260,12 +258,10 @@
       </div>
 
       <div class="controls-area">
-        <div class="icon-btn" style="opacity:0; pointer-events:none"></div>
         <div class="shutter-outer disabled" id="shutterBtn">
           <div class="shutter-inner"></div>
         </div>
-        <div class="icon-btn" id="btnGallery">🖼️</div>
-      </div>
+        </div>
     </div>
   </div>
 
@@ -290,8 +286,6 @@
     </div>
   </div>
 
-  <input type="file" id="fileInput" accept="image/*" class="hidden">
-
 <script>
   // === TELEGRAM INIT ===
   const tg = window.Telegram?.WebApp;
@@ -315,7 +309,7 @@
     angleX: 0,
     angleY: 0,
     photoBlob: null,
-    isCapturing: false // <--- НОВЫЙ ФЛАГ БЛОКИРОВКИ
+    isCapturing: false
   };
 
   const DOM = {
@@ -329,7 +323,6 @@
     preview: document.getElementById('previewScreen'),
     finalImg: document.getElementById('finalPhoto'),
     btnSend: document.getElementById('btnSend'),
-    fileInput: document.getElementById('fileInput'),
     commentInput: document.getElementById('commentInput')
   };
 
@@ -413,7 +406,6 @@
 
   // --- 3. UI LOOPS ---
   function updateUI() {
-    // Если идет съемка - не меняем UI, чтобы не сбивать
     if (state.isCapturing) return;
 
     if (state.levelOK) {
@@ -430,7 +422,6 @@
   }
 
   function resizeCanvas() {
-    // ЗАЩИТА ОТ МЕРЦАНИЯ: Меняем размер только если он реально изменился
     const w = window.innerWidth;
     const h = window.innerHeight;
     if (DOM.canvas.width !== w || DOM.canvas.height !== h) {
@@ -451,7 +442,6 @@
     const rTarget = 16;
     const maxOffset = 60; 
     
-    // Защита от NaN (если датчики "отвалились" при тряске)
     const rawX = (isNaN(state.angleY) || state.angleY === null) ? 0 : state.angleY;
     const rawY = (isNaN(state.angleX) || state.angleX === null) ? 0 : state.angleX;
     
@@ -462,7 +452,6 @@
     const dist = Math.hypot(dx, dy);
     const isInside = (dist + rBubble) <= rTarget;
 
-    // Обновляем статус только если мы НЕ снимаем в данный момент
     if (state.levelOK !== isInside && !state.isCapturing) {
       state.levelOK = isInside;
       updateUI();
@@ -475,7 +464,6 @@
     // Внешний круг
     ctx.beginPath();
     ctx.arc(cx, cy, rTarget, 0, Math.PI * 2); 
-    // Если идет съемка - держим зеленым, иначе по факту
     const color = (state.levelOK || state.isCapturing) ? '#30d158' : 'rgba(255,255,255,0.85)';
     ctx.strokeStyle = color;
     ctx.lineWidth = 3;
@@ -491,21 +479,18 @@
     requestAnimationFrame(drawLoop);
   }
 
-  // --- 4. CAPTURE LOGIC (FIXED) ---
+  // --- 4. CAPTURE LOGIC ---
   DOM.shutter.addEventListener('click', async () => {
-    // 1. БЛОКИРОВКА ПОВТОРНЫХ НАЖАТИЙ
     if (state.isCapturing) return; 
     if (!state.levelOK) { haptic('error'); return; }
 
     try {
-        state.isCapturing = true; // Блокируем
+        state.isCapturing = true;
         haptic('heavy');
         
-        // Визуальная реакция
         DOM.shutter.style.transform = 'scale(0.8)';
-        DOM.shutter.style.opacity = '0.5'; // Показываем, что занято
+        DOM.shutter.style.opacity = '0.5';
 
-        // Пауза, чтобы дать анимации проиграться перед тяжелой задачей
         await new Promise(r => setTimeout(r, 50));
 
         if (state.imageCapture) {
@@ -522,7 +507,6 @@
         c.height = vid.videoHeight;
         c.getContext('2d').drawImage(vid, 0, 0);
         
-        // Ждем конвертации (Promise wrapper)
         await new Promise(resolve => {
             c.toBlob(blob => {
                 showPreview(blob);
@@ -535,11 +519,10 @@
         haptic('error');
         alert("Не удалось сделать фото. Держите телефон стабильнее.");
     } finally {
-        // РАЗБЛОКИРОВКА (всегда, даже при ошибке)
         state.isCapturing = false;
         DOM.shutter.style.transform = '';
         DOM.shutter.style.opacity = '';
-        updateUI(); // Возвращаем актуальный цвет
+        updateUI();
     }
   });
 
@@ -568,6 +551,7 @@
         comment: comment
     });
     
+    // Здесь код отправки на сервер/боту
     setTimeout(() => {
         haptic('success');
         DOM.btnSend.textContent = 'Успешно!';
@@ -588,18 +572,10 @@
     haptic('light');
   };
 
-  document.getElementById('btnGallery').onclick = () => DOM.fileInput.click();
-  DOM.fileInput.onchange = (e) => {
-    const file = e.target.files[0];
-    if(file) showPreview(file);
-    e.target.value = '';
-  };
-
   document.getElementById('btnClose').onclick = () => window.history.back();
 
   initCamera();
 
 </script>
-
 </body>
 </html>
