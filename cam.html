@@ -54,6 +54,26 @@
     z-index: 1;
   }
 
+  /* === PRELOADER (SPINNER) - ДОБАВЛЕНО === */
+  .cam-loader {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+  }
+  .spinner {
+    width: 40px; height: 40px;
+    border: 4px solid rgba(255,255,255,0.3);
+    border-top: 4px solid #fff;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+  }
+  @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
   #uiCanvas {
     position: absolute; inset: 0;
     width: 100%; height: 100%;
@@ -128,6 +148,7 @@
   }
   .action-btn:active { transform: scale(0.92); background: rgba(60,60,60,0.8); }
   .action-btn.hidden { opacity: 0; pointer-events: none; }
+  .action-btn.disabled { opacity: 0.5; pointer-events: none; } /* Стиль для блокировки */
 
   .shutter-outer {
     width: 80px; height: 80px;
@@ -242,8 +263,12 @@
 
   <div class="cam-viewport">
     <video id="video" autoplay playsinline muted></video>
-    <canvas id="uiCanvas"></canvas>
     
+    <div id="loader" class="cam-loader hidden">
+      <div class="spinner"></div>
+    </div>
+    
+    <canvas id="uiCanvas"></canvas>
     <div id="camToast" class="cam-toast">Camera Name</div>
 
     <div class="ui-layer">
@@ -316,10 +341,11 @@
     angleX: 0, angleY: 0,
     photoBlob: null,
     isCapturing: false,
+    isSwitching: false, // Флаг переключения
     devices: [],      
     currentDevIdx: 0, 
     torchOn: false,
-    sensorActive: false // Флаг работы датчиков
+    sensorActive: false
   };
 
   const DOM = {
@@ -336,10 +362,10 @@
     commentInput: document.getElementById('commentInput'),
     btnTorch: document.getElementById('btnTorch'),
     btnSwitch: document.getElementById('btnSwitch'),
-    toast: document.getElementById('camToast')
+    toast: document.getElementById('camToast'),
+    loader: document.getElementById('loader') // Добавлен лоадер
   };
 
-  // === TOAST LOGIC ===
   let toastTimer;
   function showToast(msg) {
     DOM.toast.textContent = msg;
@@ -348,6 +374,178 @@
     toastTimer = setTimeout(() => {
       DOM.toast.classList.remove('visible');
     }, 2000);
+  }
+
+  // 1. Функция остановки
+  function stopStream() {
+    if (state.stream) {
+      state.stream.getTracks().forEach(t => t.stop());
+      state.stream = null;
+    }
+    state.track = null;
+    state.torchOn = false; 
+    updateTorchUI();
+    DOM.video.srcObject = null;
+  }
+
+  // 2. Функция запуска (Safe Res)
+  async function startStream(deviceId) {
+    if (state.stream) stopStream();
+
+    const constraints = {
+      audio: false,
+      video: {
+        deviceId: deviceId ? { exact: deviceId } : undefined,
+        facingMode: deviceId ? undefined : 'environment',
+        // Full HD для стабильности
+        width: { ideal: 1920 }, 
+        height: { ideal: 2560 }
+      }
+    };
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      state.stream = stream;
+      state.track = stream.getVideoTracks()[0];
+      DOM.video.srcObject = stream;
+
+      const settings = state.track.getSettings();
+      if (settings.deviceId) localStorage.setItem('ultima_cam_id', settings.deviceId);
+
+      let label = state.track.label || "Камера";
+      label = label.replace(/\(.*\)/, '').replace(/camera2/i, '').replace(/facing/i, '').trim();
+      if(label.length < 2) label = "Камера " + (state.currentDevIdx + 1);
+      
+      if(state.devices.length > 1) showToast(label);
+
+      const caps = state.track.getCapabilities();
+      if (caps.focusMode?.includes('continuous')) {
+        try { await state.track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch(e){}
+      }
+
+    } catch (e) {
+      if (deviceId) {
+        localStorage.removeItem('ultima_cam_id');
+        await startStream(null);
+      } else {
+        alert("Ошибка камеры: " + e.message);
+      }
+    }
+  }
+
+  // 3. Кнопка с Лоадером
+  DOM.btnSwitch.onclick = async () => {
+    if (state.devices.length < 2 || state.isSwitching) return;
+    state.isSwitching = true;
+    haptic('medium');
+    
+    // Показываем лоадер, блокируем кнопки
+    DOM.loader.classList.remove('hidden');
+    DOM.btnSwitch.classList.add('disabled');
+    DOM.btnTorch.classList.add('disabled');
+    DOM.shutter.classList.add('disabled');
+    
+    const svg = DOM.btnSwitch.querySelector('svg');
+    svg.style.transition = 'transform 0.4s';
+    svg.style.transform = 'rotate(180deg)';
+
+    stopStream();
+
+    // Пауза от бага
+    await new Promise(r => setTimeout(r, 500));
+
+    let nextIdx = state.currentDevIdx + 1;
+    if (nextIdx >= state.devices.length) nextIdx = 0;
+    state.currentDevIdx = nextIdx;
+
+    await startStream(state.devices[nextIdx].deviceId);
+    
+    // Скрываем лоадер, разблокируем
+    DOM.loader.classList.add('hidden');
+    DOM.btnSwitch.classList.remove('disabled');
+    DOM.btnTorch.classList.remove('disabled');
+    DOM.shutter.classList.remove('disabled');
+    
+    state.isSwitching = false;
+    setTimeout(() => svg.style.transform = '', 400);
+  };
+
+  DOM.btnTorch.onclick = async () => {
+    if(!state.track) return;
+    const caps = state.track.getCapabilities();
+    if (!caps.torch) { showToast("Вспышка недоступна"); haptic('error'); return; }
+    
+    const newState = !state.torchOn;
+    try {
+      await state.track.applyConstraints({ advanced: [{ torch: newState }] });
+      state.torchOn = newState; 
+      updateTorchUI(); 
+      haptic('light');
+    } catch(e) { showToast("Ошибка вспышки"); }
+  };
+
+  function updateTorchUI() {
+    if (state.torchOn) {
+      DOM.btnTorch.style.backgroundColor = 'var(--acc-orange)';
+      DOM.btnTorch.style.color = '#000';
+    } else {
+      DOM.btnTorch.style.backgroundColor = '';
+      DOM.btnTorch.style.color = '#fff';
+    }
+  }
+
+  // === SENSORS ===
+  function checkSensorPerms() {
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+      DOM.permReq.classList.remove('hidden'); 
+    } else {
+      window.addEventListener('deviceorientation', handleOrientation);
+    }
+  }
+
+  async function requestSensors() {
+    try {
+      const resp = await DeviceOrientationEvent.requestPermission();
+      if (resp === 'granted') {
+        window.addEventListener('deviceorientation', handleOrientation);
+      } else {
+        console.warn("Permission denied");
+      }
+    } catch (e) { 
+      console.warn(e); 
+    } finally {
+      DOM.permReq.classList.add('hidden');
+    }
+  }
+
+  function handleOrientation(e) {
+    let x = e.beta; let y = e.gamma; 
+    if (x === null || y === null) return;
+    
+    state.sensorActive = true; 
+    state.angleX = x; state.angleY = y;
+  }
+
+  function updateUI() {
+    if (state.isCapturing || state.isSwitching) return;
+    
+    if (!state.sensorActive) {
+         DOM.lvlDot.classList.remove('ok'); DOM.lvlText.textContent = "Камера";
+         DOM.shutter.classList.remove('disabled'); DOM.shutter.classList.add('active');
+         return;
+    }
+
+    if (state.levelOK) {
+      DOM.lvlDot.classList.add('ok'); DOM.lvlText.textContent = "Ровно";
+      DOM.shutter.classList.remove('disabled'); DOM.shutter.classList.add('active');
+    } else {
+      DOM.lvlDot.classList.remove('ok'); DOM.lvlText.textContent = "Выровняйте";
+      DOM.shutter.classList.add('disabled'); DOM.shutter.classList.remove('active');
+    }
+  }
+  function resizeCanvas() {
+    const w = window.innerWidth; const h = window.innerHeight;
+    if (DOM.canvas.width !== w || DOM.canvas.height !== h) { DOM.canvas.width = w; DOM.canvas.height = h; }
   }
 
   // === CAMERA LOGIC ===
@@ -384,148 +582,6 @@
     } catch(e) {}
   }
 
-  async function startStream(deviceId) {
-    if (state.stream) {
-      state.stream.getTracks().forEach(t => t.stop());
-    }
-    state.torchOn = false; updateTorchUI();
-
-    const constraints = {
-      audio: false,
-      video: {
-        deviceId: deviceId ? { exact: deviceId } : undefined,
-        facingMode: deviceId ? undefined : 'environment',
-        width: { ideal: 3072 },
-        height: { ideal: 4096 }
-      }
-    };
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      state.stream = stream;
-      state.track = stream.getVideoTracks()[0];
-      DOM.video.srcObject = stream;
-
-      const settings = state.track.getSettings();
-      if (settings.deviceId) localStorage.setItem('ultima_cam_id', settings.deviceId);
-
-      let label = state.track.label || "Камера";
-      label = label.replace(/\(.*\)/, '').replace(/camera2/i, '').replace(/facing/i, '').trim();
-      if(label.length < 2) label = "Камера " + (state.currentDevIdx + 1);
-      
-      if(state.devices.length > 1) showToast(label);
-
-      // Пытаемся включить непрерывный фокус
-      const caps = state.track.getCapabilities();
-      if (caps.focusMode?.includes('continuous')) {
-        try { await state.track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch(e){}
-      }
-
-    } catch (e) {
-      if (deviceId) {
-        localStorage.removeItem('ultima_cam_id');
-        await startStream(null);
-      } else {
-        alert("Ошибка камеры: " + e.message);
-      }
-    }
-  }
-
-  DOM.btnSwitch.onclick = async () => {
-    if (state.devices.length < 2) return;
-    haptic('medium');
-    
-    const svg = DOM.btnSwitch.querySelector('svg');
-    svg.style.transition = 'transform 0.4s';
-    svg.style.transform = 'rotate(180deg)';
-    setTimeout(() => svg.style.transform = '', 400);
-
-    let nextIdx = state.currentDevIdx + 1;
-    if (nextIdx >= state.devices.length) nextIdx = 0;
-    
-    state.currentDevIdx = nextIdx;
-    await startStream(state.devices[nextIdx].deviceId);
-  };
-
-  DOM.btnTorch.onclick = async () => {
-    if(!state.track) return;
-    const caps = state.track.getCapabilities();
-    if (!caps.torch) { showToast("Вспышка недоступна"); haptic('error'); return; }
-    
-    const newState = !state.torchOn;
-    try {
-      await state.track.applyConstraints({ advanced: [{ torch: newState }] });
-      state.torchOn = newState; 
-      updateTorchUI(); 
-      haptic('light');
-    } catch(e) { showToast("Ошибка вспышки"); }
-  };
-
-  function updateTorchUI() {
-    if (state.torchOn) {
-      DOM.btnTorch.style.backgroundColor = 'var(--acc-orange)';
-      DOM.btnTorch.style.color = '#000';
-    } else {
-      DOM.btnTorch.style.backgroundColor = '';
-      DOM.btnTorch.style.color = '#fff';
-    }
-  }
-
-  // === SENSORS & PERMISSIONS ===
-  function checkSensorPerms() {
-    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-      DOM.permReq.classList.remove('hidden'); 
-    } else {
-      window.addEventListener('deviceorientation', handleOrientation);
-    }
-  }
-
-  async function requestSensors() {
-    try {
-      const resp = await DeviceOrientationEvent.requestPermission();
-      if (resp === 'granted') {
-        window.addEventListener('deviceorientation', handleOrientation);
-      } else {
-        console.warn("Permission denied");
-      }
-    } catch (e) { 
-      console.warn(e); 
-    } finally {
-      // ВСЕГДА скрываем окно, чтобы не блокировать UI
-      DOM.permReq.classList.add('hidden');
-    }
-  }
-
-  function handleOrientation(e) {
-    let x = e.beta; let y = e.gamma; 
-    if (x === null || y === null) return;
-    
-    state.sensorActive = true; // Датчики работают!
-    state.angleX = x; state.angleY = y;
-  }
-
-  function updateUI() {
-    if (state.isCapturing) return;
-    // Если датчики не активны, не блокируем UI статусом "Выровняйте"
-    if (!state.sensorActive) {
-         DOM.lvlDot.classList.remove('ok'); DOM.lvlText.textContent = "Камера";
-         DOM.shutter.classList.remove('disabled'); DOM.shutter.classList.add('active');
-         return;
-    }
-
-    if (state.levelOK) {
-      DOM.lvlDot.classList.add('ok'); DOM.lvlText.textContent = "Ровно";
-      DOM.shutter.classList.remove('disabled'); DOM.shutter.classList.add('active');
-    } else {
-      DOM.lvlDot.classList.remove('ok'); DOM.lvlText.textContent = "Выровняйте";
-      DOM.shutter.classList.add('disabled'); DOM.shutter.classList.remove('active');
-    }
-  }
-  function resizeCanvas() {
-    const w = window.innerWidth; const h = window.innerHeight;
-    if (DOM.canvas.width !== w || DOM.canvas.height !== h) { DOM.canvas.width = w; DOM.canvas.height = h; }
-  }
-
   // === DRAW LOOP ===
   function drawLoop() {
     const ctx = DOM.ctx; const w = DOM.canvas.width; const h = DOM.canvas.height;
@@ -533,15 +589,13 @@
     
     const cx = w / 2; const cy = h / 2;
 
-    // 1. КРЕДИТКА (Вертикально, Справа)
     const cardRatio = 1.586; 
-    const cardW = w * 0.22; // 22% ширины
+    const cardW = w * 0.22; 
     const cardH = cardW * cardRatio;
     const cardX = cx + 80; 
     const cardY = cy - cardH / 2; 
     const r = 8; 
 
-    // Форма
     ctx.beginPath();
     ctx.moveTo(cardX + r, cardY);
     ctx.lineTo(cardX + cardW - r, cardY);
@@ -561,14 +615,14 @@
     ctx.translate(cardX + cardW / 2, cardY + cardH / 2);
     ctx.rotate(-Math.PI / 2);
     ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 12px sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-ctx.fillText("CREDIT CARD", 0, -10);       // Поднимаем чуть выше
-ctx.fillText("(необязательно)", 0, 10);    // Опускаем чуть ниже
+    ctx.font = 'bold 12px sans-serif';
+    ctx.fillText("CREDIT CARD", 0, -10);
+    ctx.font = '10px sans-serif'; 
+    ctx.fillText("(необязательно)", 0, 10); 
     ctx.restore(); 
 
-    // 2. УРОВЕНЬ (Если датчики активны)
     if (state.sensorActive) {
         const rBubble = 14; const rTarget = 18; const maxOffset = 60; 
         
@@ -581,9 +635,9 @@ ctx.fillText("(необязательно)", 0, 10);    // Опускаем чу
         const dist = Math.hypot(dx, dy);
         const isInside = (dist + rBubble) <= rTarget;
 
-        if (state.levelOK !== isInside && !state.isCapturing) {
-        state.levelOK = isInside; updateUI();
-        if(isInside) haptic('medium');
+        if (state.levelOK !== isInside && !state.isCapturing && !state.isSwitching) {
+          state.levelOK = isInside; updateUI();
+          if(isInside) haptic('medium');
         }
 
         ctx.shadowBlur = 4; ctx.shadowColor = 'rgba(0,0,0,0.5)';
@@ -594,7 +648,6 @@ ctx.fillText("(необязательно)", 0, 10);    // Опускаем чу
         ctx.beginPath(); ctx.arc(cx + dx, cy + dy, rBubble, 0, Math.PI * 2); 
         ctx.fillStyle = color; ctx.fill(); ctx.shadowBlur = 0;
     } else {
-        // Если датчиков нет, рисуем просто белый прицел
         ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 2;
         ctx.beginPath(); ctx.moveTo(cx-10, cy); ctx.lineTo(cx+10, cy); ctx.stroke();
         ctx.beginPath(); ctx.moveTo(cx, cy-10); ctx.lineTo(cx, cy+10); ctx.stroke();
@@ -603,11 +656,9 @@ ctx.fillText("(необязательно)", 0, 10);    // Опускаем чу
     requestAnimationFrame(drawLoop);
   }
 
-  // === CAPTURE ===
   DOM.shutter.addEventListener('click', async () => {
-    if (state.isCapturing) return; 
+    if (state.isCapturing || state.isSwitching) return; 
     
-    // Блокируем только если датчики работают и уровень кривой
     if (state.sensorActive && !state.levelOK) { 
         haptic('error'); showToast("Выровняйте телефон"); return; 
     }
@@ -667,7 +718,7 @@ ctx.fillText("(необязательно)", 0, 10);    // Опускаем чу
     haptic('light');
 
     try {
-        // === ИМИТАЦИЯ ОТПРАВКИ (Заменить на fetch) ===
+        // === ИМИТАЦИЯ ОТПРАВКИ ===
         await new Promise(r => setTimeout(r, 1500));
 
         btn.textContent = 'Отправлено!';
