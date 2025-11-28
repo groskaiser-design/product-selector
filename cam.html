@@ -326,20 +326,24 @@
     commentInput: document.getElementById('commentInput')
   };
 
-  // --- 1. CAMERA INIT ---
+// --- 1. CAMERA INIT (UPDATED FOR NO ZOOM) ---
   async function initCamera() {
     try {
       const devices = await navigator.mediaDevices.enumerateDevices();
       const hasBack = devices.some(d => d.kind === 'videoinput' && d.label.toLowerCase().includes('back'));
+      // На iOS 'environment' иногда выбирает не ту камеру, поэтому пробуем просто mode
       const facing = hasBack ? { ideal: 'environment' } : 'environment';
 
       const constraints = {
         audio: false,
         video: {
           facingMode: facing,
-          aspectRatio: { ideal: TARGET_ASPECT },
-          height: { ideal: TARGET_RES_H },
-          width: { ideal: 3072 } 
+          // ВАЖНО: Убираем 4096. Просим разрешение поменьше, чтобы избежать кропа стабилизации
+          width: { ideal: 1920 }, 
+          height: { ideal: 1440 },
+          // Просим 4:3 (1.333), это родной формат сенсора большинства телефонов.
+          // Если просить 16:9, телефон сам обрежет верх и низ, приблизив картинку.
+          aspectRatio: { ideal: 1.333 } 
         }
       };
 
@@ -348,7 +352,19 @@
       state.track = stream.getVideoTracks()[0];
       DOM.video.srcObject = stream;
 
+      // === ПОПЫТКА СБРОСИТЬ ЗУМ ===
       const caps = state.track.getCapabilities();
+      
+      // 1. Сброс зума (если поддерживается)
+      if (caps.zoom) {
+        try {
+          // Ставим минимально возможный зум (обычно 1)
+          const minZoom = caps.zoom.min || 1;
+          await state.track.applyConstraints({ advanced: [{ zoom: minZoom }] });
+        } catch(e) { console.log('Zoom reset failed', e); }
+      }
+
+      // 2. Фокус (оставляем, полезно для макро)
       if (caps.focusMode && caps.focusMode.includes('continuous')) {
         try { await state.track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch(e){}
       }
@@ -365,12 +381,13 @@
     } catch (e) {
       console.warn("Camera fallback", e);
       try {
+         // Самый простой фоллбэк без настроек, иногда дает самый широкий угол
          const fs = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
          state.stream = fs;
          state.track = fs.getVideoTracks()[0];
          DOM.video.srcObject = fs;
          requestAnimationFrame(drawLoop);
-      } catch(e2){ alert("Ошибка доступа к камере"); }
+      } catch(e2){ alert("Ошибка доступа к камере: " + e2.message); }
     }
   }
 
