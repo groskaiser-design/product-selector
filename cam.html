@@ -48,12 +48,12 @@
     width: 100%; height: 100%;
     object-fit: cover; 
     z-index: 1;
-    transform: scaleX(1); /* Для фронталки будем менять зеркально в JS если нужно, но обычно видеопоток сам ок */
   }
   
-  /* Если фронталка, можно добавить класс mirror для зеркалирования видео, но пока оставим стандарт */
+  /* Зеркалирование видео только для CSS (визуально), если нужно */
+  video.mirrored { transform: scaleX(-1); }
 
-  /* Canvas */
+  /* Canvas UI (Level) */
   #uiCanvas {
     position: absolute;
     inset: 0;
@@ -105,11 +105,11 @@
     backdrop-filter: blur(10px);
     display: flex; align-items: center; justify-content: center;
     color: #fff; cursor: pointer;
-    transition: transform 0.1s;
+    transition: transform 0.2s, background 0.2s;
   }
   .icon-btn:active { transform: scale(0.9); background: rgba(80,80,80,0.6); }
 
-  /* Guide overlay for card */
+  /* Guide overlay */
   .card-guide {
     position: absolute;
     right: 20px; top: 50%; transform: translateY(-50%);
@@ -153,7 +153,7 @@
   .shutter-outer.active { border-color: var(--acc-green); transform: scale(1.05); }
   .shutter-outer:active:not(.disabled) .shutter-inner { transform: scale(0.9); }
 
-  /* Permission Overlay (iOS) */
+  /* Permission Overlay */
   .perm-overlay {
     position: absolute; inset: 0; z-index: 100;
     background: rgba(5,5,5,0.85);
@@ -233,20 +233,22 @@
     border: 1px solid var(--surface-border);
     background: var(--surface-glass);
     color: #fff; cursor: pointer; text-align: center;
+    transition: 0.2s;
   }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .btn.primary { background: var(--acc-blue); border-color: transparent; }
 
-  /* === TOAST NOTIFICATION (NEW) === */
+  /* === TOAST NOTIFICATION === */
   .toast-msg {
     position: absolute;
-    top: 90px;
+    top: 100px;
     left: 50%;
     transform: translateX(-50%) translateY(-20px);
-    background: rgba(30, 30, 30, 0.85);
+    background: rgba(20, 20, 20, 0.9);
     backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.15);
     color: #fff;
-    padding: 10px 24px;
+    padding: 10px 20px;
     border-radius: 30px;
     font-size: 14px;
     font-weight: 600;
@@ -255,20 +257,17 @@
     transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
     z-index: 300;
     display: flex; align-items: center; gap: 8px;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    white-space: nowrap;
   }
-
-  .toast-msg.visible {
-    opacity: 1;
-    transform: translateX(-50%) translateY(0);
-  }
+  .toast-msg.visible { opacity: 1; transform: translateX(-50%) translateY(0); }
 
   .hidden { display: none !important; }
 </style>
 </head>
 <body>
 
-  <div id="toast" class="toast-msg">Смена камеры</div>
+  <div id="toast" class="toast-msg"></div>
 
   <div class="cam-viewport">
     <video id="video" autoplay playsinline muted></video>
@@ -285,12 +284,12 @@
       </div>
 
       <div class="card-guide">
-        <span>Банковская карта, (опционально, повысит точность)</span>
+        <span>Банковская карта (опционально)</span>
       </div>
 
       <div class="controls-area">
         <div class="icon-btn" id="btnSwitch">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M23 4v6h-6"></path>
                 <path d="M1 20v-6h6"></path>
                 <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"></path>
@@ -301,6 +300,7 @@
         <div class="shutter-outer disabled" id="shutterBtn">
           <div class="shutter-inner"></div>
         </div>
+        
         <div class="icon-btn" id="btnGallery">🖼️</div>
       </div>
     </div>
@@ -322,8 +322,8 @@
     </div>
 
     <div class="preview-controls">
-      <button class="btn" onclick="retake()">Переснять</button>
-      <button class="btn primary" id="btnSend" onclick="sendPhoto()">Готово</button>
+      <button id="btnRetake" class="btn" onclick="retake()">Переснять</button>
+      <button id="btnSend" class="btn primary" onclick="sendPhoto()">Готово</button>
     </div>
   </div>
 
@@ -339,9 +339,10 @@
   }
 
   // === CONFIG ===
-  const MAX_TILT = 5; 
-  const TARGET_RES_H = 4096;
-  const TARGET_ASPECT = 0.75; 
+  const TARGET_RES_H = 4096; // Макс разрешение камеры (не фото)
+  const TARGET_ASPECT = 0.75; // 3:4 портрет
+  const COMPRESS_MAX_SIZE = 1024; // Макс сторона для отправки
+  const COMPRESS_QUALITY = 0.6;   // Качество JPEG (0-1)
 
   // === STATE ===
   const state = {
@@ -351,9 +352,9 @@
     levelOK: false,
     angleX: 0,
     angleY: 0,
-    photoBlob: null,
+    photoBlob: null, // Здесь хранится полноразмерный оригинал
     isCapturing: false,
-    facingMode: 'environment', // 'environment' = задняя, 'user' = передняя
+    facingMode: 'environment', // 'environment' | 'user'
     isLoopRunning: false
   };
 
@@ -368,6 +369,7 @@
     preview: document.getElementById('previewScreen'),
     finalImg: document.getElementById('finalPhoto'),
     btnSend: document.getElementById('btnSend'),
+    btnRetake: document.getElementById('btnRetake'),
     fileInput: document.getElementById('fileInput'),
     commentInput: document.getElementById('commentInput'),
     btnSwitch: document.getElementById('btnSwitch'),
@@ -375,17 +377,64 @@
     btnTorch: document.getElementById('btnTorch')
   };
 
-  // --- 1. CAMERA INIT ---
+  // --- 1. UTILS: COMPRESSION & TOAST ---
+  
+  // Функция сжатия (вызывается только при отправке)
+  async function compressImage(sourceBlob, quality, maxWidth) {
+    const img = new Image();
+    const url = URL.createObjectURL(sourceBlob);
+    img.src = url;
+    
+    // Ждем загрузки в Image элемент
+    await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = reject;
+    });
+
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    
+    // Вычисляем пропорции
+    let w = img.width;
+    let h = img.height;
+    const scale = Math.min(maxWidth / w, maxWidth / h, 1);
+    
+    canvas.width = w * scale;
+    canvas.height = h * scale;
+
+    // Рисуем уменьшенное изображение
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    
+    // Очищаем память от ObjectURL исходника (для функции)
+    URL.revokeObjectURL(url);
+
+    return new Promise(resolve => {
+        canvas.toBlob(blob => {
+            console.log(`[Compression] Original: ${(sourceBlob.size/1024).toFixed(0)}KB -> Compressed: ${(blob.size/1024).toFixed(0)}KB`);
+            resolve(blob);
+        }, 'image/jpeg', quality);
+    });
+  }
+
+  let toastTimeout;
+  function showToast(text) {
+    DOM.toast.textContent = text;
+    DOM.toast.classList.add('visible');
+    
+    if(toastTimeout) clearTimeout(toastTimeout);
+    toastTimeout = setTimeout(() => {
+      DOM.toast.classList.remove('visible');
+    }, 2000);
+  }
+
+  // --- 2. CAMERA CORE ---
   async function initCamera(mode = 'environment') {
-    // 1. Останавливаем старый поток
+    // Останавливаем старый поток (критично для Android)
     if (state.stream) {
         state.stream.getTracks().forEach(track => track.stop());
     }
 
     try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      // Пробуем найти камеры (опционально, но полезно для отладки)
-      
       const constraints = {
         audio: false,
         video: {
@@ -402,21 +451,24 @@
       state.facingMode = mode;
       DOM.video.srcObject = stream;
 
-      // Применяем настройки (фокус только для задней)
+      // Применяем Continuous Focus, если доступно (только для задней камеры)
       const caps = state.track.getCapabilities();
       if (mode === 'environment' && caps.focusMode && caps.focusMode.includes('continuous')) {
         try { await state.track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch(e){}
       }
 
+      // Инициализация ImageCapture API (если поддерживается браузером)
       if (window.ImageCapture) {
         state.imageCapture = new ImageCapture(state.track);
+      } else {
+        state.imageCapture = null;
       }
       
-      // Скрываем фонарик на фронталке
+      // Управление кнопкой вспышки (скрываем на фронталке)
       if (mode === 'user') DOM.btnTorch.style.display = 'none';
       else DOM.btnTorch.style.display = 'flex';
 
-      // Запускаем отрисовку и листенеры один раз
+      // Запускаем UI Loop один раз
       if (!state.isLoopRunning) {
           resizeCanvas();
           window.addEventListener('resize', resizeCanvas);
@@ -426,8 +478,8 @@
       }
 
     } catch (e) {
-      console.warn("Camera fallback or error", e);
-      // Fallback: пробуем любую камеру, если запрошенная не открылась
+      console.warn("Camera Init Error:", e);
+      // Fallback на дефолтную камеру
       try {
          const fs = await navigator.mediaDevices.getUserMedia({ video: true });
          state.stream = fs;
@@ -438,12 +490,12 @@
              state.isLoopRunning = true;
          }
       } catch(e2){ 
-          alert("Ошибка доступа к камере. Проверьте настройки."); 
+          alert("Не удалось получить доступ к камере. Проверьте настройки прав."); 
       }
     }
   }
 
-  // --- 2. SENSORS ---
+  // --- 3. SENSORS (GYROSCOPE) ---
   function checkSensorPerms() {
     if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
       DOM.permReq.classList.remove('hidden'); 
@@ -459,21 +511,19 @@
         DOM.permReq.classList.add('hidden');
         window.addEventListener('deviceorientation', handleOrientation);
       } else {
-        alert("Без гироскопа уровень работать не будет");
+        alert("Без гироскопа уровень будет неактивен, но фото делать можно.");
         DOM.permReq.classList.add('hidden');
       }
-    } catch (e) { alert(e); }
+    } catch (e) { alert("Ошибка датчиков: " + e); }
   }
 
   function handleOrientation(e) {
-    let x = e.beta; 
-    let y = e.gamma; 
-    if (x === null || y === null) return;
-    state.angleX = x;
-    state.angleY = y;
+    if (e.beta === null || e.gamma === null) return;
+    state.angleX = e.beta; 
+    state.angleY = e.gamma; 
   }
 
-  // --- 3. UI LOOPS ---
+  // --- 4. UI LOOP & DRAWING ---
   function updateUI() {
     if (state.isCapturing) return;
 
@@ -511,8 +561,9 @@
     const rTarget = 16;
     const maxOffset = 60; 
     
-    const rawX = (isNaN(state.angleY) || state.angleY === null) ? 0 : state.angleY;
-    const rawY = (isNaN(state.angleX) || state.angleX === null) ? 0 : state.angleX;
+    // Защита от Null значений
+    const rawX = (state.angleY === null) ? 0 : state.angleY;
+    const rawY = (state.angleX === null) ? 0 : state.angleX;
     
     const clamp = (val) => Math.max(-20, Math.min(20, val));
     const dx = (clamp(rawX) / 20) * maxOffset; 
@@ -527,9 +578,11 @@
       if(isInside) haptic('medium');
     }
 
+    // Рисование уровня
     ctx.shadowBlur = 4;
     ctx.shadowColor = 'rgba(0,0,0,0.5)';
     
+    // Круг цели
     ctx.beginPath();
     ctx.arc(cx, cy, rTarget, 0, Math.PI * 2); 
     const color = (state.levelOK || state.isCapturing) ? '#30d158' : 'rgba(255,255,255,0.85)';
@@ -537,6 +590,7 @@
     ctx.lineWidth = 3;
     ctx.stroke();
 
+    // Пузырек
     ctx.beginPath();
     ctx.arc(cx + dx, cy + dy, rBubble, 0, Math.PI * 2); 
     ctx.fillStyle = color;
@@ -546,7 +600,7 @@
     requestAnimationFrame(drawLoop);
   }
 
-  // --- 4. CAPTURE LOGIC ---
+  // --- 5. ACTION: CAPTURE (INSTANT) ---
   DOM.shutter.addEventListener('click', async () => {
     if (state.isCapturing) return; 
     if (!state.levelOK) { haptic('error'); return; }
@@ -555,44 +609,44 @@
         state.isCapturing = true; 
         haptic('heavy');
         
+        // UI Feedback
         DOM.shutter.style.transform = 'scale(0.8)';
         DOM.shutter.style.opacity = '0.5'; 
 
+        // Даем UI отрисоваться перед блокировкой потока
         await new Promise(r => setTimeout(r, 50));
 
+        let blob = null;
+
+        // A. Пробуем ImageCapture (Лучшее качество)
         if (state.imageCapture) {
           try {
-            const blob = await state.imageCapture.takePhoto();
-            showPreview(blob);
-            return;
-          } catch(e) { console.log('ImageCapture error, trying fallback'); }
+            blob = await state.imageCapture.takePhoto();
+          } catch(e) { console.log('Capture error, fallback to canvas'); }
         }
 
-        const vid = DOM.video;
-        const c = document.createElement('canvas');
-        c.width = vid.videoWidth;
-        c.height = vid.videoHeight;
-        const ctx = c.getContext('2d');
-        
-        // Зеркалирование для фронталки при сохранении (опционально)
-        if (state.facingMode === 'user') {
-             ctx.translate(c.width, 0);
-             ctx.scale(-1, 1);
+        // B. Fallback на Canvas (Если ImageCapture недоступен или упал)
+        if (!blob) {
+             const vid = DOM.video;
+             const c = document.createElement('canvas');
+             c.width = vid.videoWidth;
+             c.height = vid.videoHeight;
+             const ctx = c.getContext('2d');
+             
+             // Если фронталка - можно зеркалить, но для AI лучше "честное" фото
+             // Для превью юзера обычно зеркалят, но мы сохраняем как есть
+             ctx.drawImage(vid, 0, 0);
+             
+             blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.95));
         }
 
-        ctx.drawImage(vid, 0, 0);
-        
-        await new Promise(resolve => {
-            c.toBlob(blob => {
-                showPreview(blob);
-                resolve();
-            }, 'image/jpeg', 0.95);
-        });
+        // Показываем превью без сжатия (быстро)
+        showPreview(blob);
 
     } catch(err) {
-        console.error("Capture failed:", err);
+        console.error("Critical Capture Error:", err);
         haptic('error');
-        alert("Не удалось сделать фото. Держите телефон стабильнее.");
+        alert("Ошибка съемки. Попробуйте еще раз.");
     } finally {
         state.isCapturing = false;
         DOM.shutter.style.transform = '';
@@ -601,7 +655,92 @@
     }
   });
 
-  // --- 5. SWITCH CAMERA LOGIC ---
+  // --- 6. ACTION: PREVIEW & SEND (COMPRESSED) ---
+  function showPreview(blob) {
+    if(!blob) return;
+    state.photoBlob = blob;
+    // Создаем ссылку на blob для показа
+    DOM.finalImg.src = URL.createObjectURL(blob);
+    DOM.preview.style.display = 'flex';
+  }
+
+  function retake() {
+    DOM.preview.style.display = 'none';
+    
+    // Очистка памяти
+    if(DOM.finalImg.src) {
+        URL.revokeObjectURL(DOM.finalImg.src);
+        DOM.finalImg.src = '';
+    }
+    state.photoBlob = null;
+    DOM.commentInput.value = ''; 
+    
+    // Разблокировка кнопок (на случай если была отмена отправки)
+    DOM.btnSend.disabled = false;
+    DOM.btnSend.textContent = 'Готово';
+  }
+
+  async function sendPhoto() {
+    if (!state.photoBlob) return;
+
+    const comment = DOM.commentInput.value.trim();
+    const btn = DOM.btnSend;
+    
+    // Блокируем интерфейс
+    btn.disabled = true;
+    DOM.btnRetake.disabled = true;
+    btn.textContent = 'Сжатие...';
+    haptic('light');
+
+    try {
+        // 1. СЖАТИЕ (Heavy Task)
+        const compressedBlob = await compressImage(state.photoBlob, COMPRESS_QUALITY, COMPRESS_MAX_SIZE);
+
+        btn.textContent = 'Отправка...';
+
+        // 2. ПОДГОТОВКА ДАННЫХ (Base64)
+        const reader = new FileReader();
+        reader.readAsDataURL(compressedBlob);
+        
+        reader.onloadend = () => {
+            const base64data = reader.result.split(',')[1];
+            
+            // LOG ДЛЯ ОТЛАДКИ (Потом здесь будет fetch в GAS)
+            console.log(">>> READY TO UPLOAD <<<");
+            console.log("Payload Size:", (base64data.length / 1024).toFixed(2), "KB");
+            console.log("Comment:", comment);
+
+            // TODO: Вставьте здесь вызов вашего API / telegramData
+            // tg.sendData(JSON.stringify({ image: base64data, text: comment })); 
+            
+            // Имитация успешной отправки
+            setTimeout(() => {
+                haptic('success');
+                btn.textContent = 'Успешно!';
+                setTimeout(() => { 
+                    retake(); 
+                    // Возвращаем кнопки в норму
+                    btn.disabled = false;
+                    DOM.btnRetake.disabled = false;
+                    btn.textContent = 'Готово';
+                }, 1000);
+            }, 1000);
+        };
+
+    } catch (e) {
+        console.error("Send Error:", e);
+        btn.textContent = 'Ошибка';
+        haptic('error');
+        // Возвращаем состояние
+        setTimeout(() => { 
+            btn.textContent = 'Готово'; 
+            btn.disabled = false;
+            DOM.btnRetake.disabled = false;
+        }, 2000);
+    }
+  }
+
+  // --- 7. ACTION: SWITCH CAMERA & TOOLS ---
   DOM.btnSwitch.onclick = () => {
     haptic('medium');
     
@@ -611,78 +750,43 @@
     icon.style.transform = 'rotate(180deg)';
     setTimeout(() => icon.style.transform = '', 500);
 
-    // Логика
+    // Логика переключения
     const newMode = state.facingMode === 'environment' ? 'user' : 'environment';
     initCamera(newMode);
 
-    // Toast
+    // Уведомление
     showToast(newMode === 'environment' ? "Основная камера" : "Фронтальная камера");
   };
 
-  let toastTimeout;
-  function showToast(text) {
-    DOM.toast.textContent = text;
-    DOM.toast.classList.add('visible');
-    
-    clearTimeout(toastTimeout);
-    toastTimeout = setTimeout(() => {
-      DOM.toast.classList.remove('visible');
-    }, 2000);
-  }
-
-  function showPreview(blob) {
-    if(!blob) return;
-    state.photoBlob = blob;
-    DOM.finalImg.src = URL.createObjectURL(blob);
-    DOM.preview.style.display = 'flex';
-  }
-
-  function retake() {
-    DOM.preview.style.display = 'none';
-    if(DOM.finalImg.src) URL.revokeObjectURL(DOM.finalImg.src);
-    DOM.finalImg.src = '';
-    state.photoBlob = null;
-    DOM.commentInput.value = ''; 
-  }
-
-  function sendPhoto() {
-    const comment = DOM.commentInput.value.trim();
-    DOM.btnSend.textContent = 'Отправка...';
-    haptic('light');
-
-    console.log("SENDING:", {
-        blobSize: state.photoBlob.size,
-        comment: comment
-    });
-    
-    setTimeout(() => {
-        haptic('success');
-        DOM.btnSend.textContent = 'Успешно!';
-        setTimeout(() => { 
-            retake(); 
-            DOM.btnSend.textContent = 'Готово';
-        }, 1000);
-    }, 1500);
-  }
-
-  function haptic(style) { if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred(style); }
-  
   let torchState = false;
   DOM.btnTorch.onclick = async () => {
     if(!state.track) return;
     torchState = !torchState;
-    try { await state.track.applyConstraints({ advanced: [{ torch: torchState }] }); } catch(e){}
-    haptic('light');
+    try { 
+        await state.track.applyConstraints({ advanced: [{ torch: torchState }] }); 
+        haptic('light');
+    } catch(e){
+        torchState = !torchState; // Вернуть как было если ошибка
+        showToast("Фонарик недоступен");
+    }
   };
 
+  // Галерея
   document.getElementById('btnGallery').onclick = () => DOM.fileInput.click();
   DOM.fileInput.onchange = (e) => {
     const file = e.target.files[0];
-    if(file) showPreview(file);
-    e.target.value = '';
+    if(file) {
+        showPreview(file);
+    }
+    e.target.value = ''; // Сброс, чтобы можно было выбрать тот же файл снова
   };
 
-  document.getElementById('btnClose').onclick = () => window.history.back();
+  document.getElementById('btnClose').onclick = () => {
+     if (tg) tg.close();
+     else window.history.back();
+  };
+
+  function haptic(style) { if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred(style); }
 
   // START
   initCamera();
