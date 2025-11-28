@@ -554,21 +554,22 @@ function drawLoop() {
     
     const cx = w / 2; const cy = h / 2;
 
-    // === 1. ОТРИСОВКА ОБЛАСТИ КАРТЫ (СПРАВА, ЗАБЛЮРЕННАЯ, БЕЗ КОНТУРА) ===
+    // === 1. ОТРИСОВКА ОБЛАСТИ КАРТЫ (ВЕРТИКАЛЬНО, СПРАВА) ===
     const cardRatio = 1.586; // Пропорции кредитки
     
-    // Размеры: сделаем её не очень большой, например 35% от ширины экрана
-    const cardW = w * 0.35; 
-    const cardH = cardW / cardRatio;
+    // ТЕПЕРЬ ВЕРТИКАЛЬНО:
+    // Ширина - это короткая сторона. Берем ~22% от ширины экрана
+    const cardW = w * 0.22; 
+    // Высота - это длинная сторона
+    const cardH = cardW * cardRatio;
     
-    // Позиция: Сдвигаем вправо от центра. 
-    // cx (центр) + 40px (отступ)
-    const cardX = cx + 40; 
-    // Центрируем по вертикали относительно прицела
+    // Позиция: Справа от центра
+    const cardX = cx + 50; 
+    // Центрируем по вертикали
     const cardY = cy - cardH / 2; 
-    const r = 10; // Радиус скругления
+    const r = 8; // Радиус скругления
 
-    // Рисуем путь для плашки
+    // Рисуем форму
     ctx.beginPath();
     ctx.moveTo(cardX + r, cardY);
     ctx.lineTo(cardX + cardW - r, cardY);
@@ -580,20 +581,57 @@ function drawLoop() {
     ctx.lineTo(cardX, cardY + r);
     ctx.quadraticCurveTo(cardX, cardY, cardX + r, cardY);
     
-    // ЭФФЕКТ "БЛЮРА" (Заливка полупрозрачным белым без контура)
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.15)'; // Очень легкая белая заливка
-    ctx.fill(); // Только заливаем, не обводим (без stroke)
+    // Заливка ("Блюр" эффект)
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)'; 
+    ctx.fill(); 
 
-    // ТЕКСТ ПОВЕРХУ
+    // ТЕКСТ (ПОВЕРНУТЫЙ НА 90 ГРАДУСОВ)
+    ctx.save(); // Сохраняем состояние контекста
+    // Переносим точку рисования в центр карты
+    ctx.translate(cardX + cardW / 2, cardY + cardH / 2);
+    // Поворачиваем на -90 градусов
+    ctx.rotate(-Math.PI / 2);
+    
     ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 11px sans-serif';
+    ctx.font = 'bold 12px sans-serif';
     ctx.textAlign = 'center';
-    // Рисуем текст по центру плашки
-    ctx.fillText("CREDIT CARD", cardX + cardW / 2, cardY + cardH / 2 + 4);
+    ctx.textBaseline = 'middle';
+    ctx.fillText("CREDIT CARD", 0, 0);
+    
+    ctx.restore(); // Возвращаем контекст в норму (чтобы уровень не повернулся)
+
+
+    // === 2. ОТРИСОВКА УРОВНЯ (По центру) ===
+    const rBubble = 14; const rTarget = 16; const maxOffset = 60; 
+    
+    const rawX = (isNaN(state.angleY) || state.angleY === null) ? 0 : state.angleY;
+    const rawY = (isNaN(state.angleX) || state.angleX === null) ? 0 : state.angleX;
+    const clamp = (val) => Math.max(-20, Math.min(20, val));
+    const dx = (clamp(rawX) / 20) * maxOffset; 
+    const dy = (clamp(rawY) / 20) * maxOffset;
+
+    const dist = Math.hypot(dx, dy);
+    const isInside = (dist + rBubble) <= rTarget;
+
+    if (state.levelOK !== isInside && !state.isCapturing) {
+      state.levelOK = isInside; updateUI();
+      if(isInside) haptic('medium');
+    }
+
+    ctx.shadowBlur = 4; ctx.shadowColor = 'rgba(0,0,0,0.5)';
+    ctx.beginPath(); ctx.arc(cx, cy, rTarget, 0, Math.PI * 2); 
+    const color = (state.levelOK || state.isCapturing) ? '#30d158' : 'rgba(255,255,255,0.85)';
+    ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.stroke();
+
+    ctx.beginPath(); ctx.arc(cx + dx, cy + dy, rBubble, 0, Math.PI * 2); 
+    ctx.fillStyle = color; ctx.fill(); ctx.shadowBlur = 0;
+    
+    requestAnimationFrame(drawLoop);
+  }
 
 
     // === 2. ОТРИСОВКА УРОВНЯ (По центру экрана) ===
-    const rBubble = 14; const rTarget = 16; const maxOffset = 60; 
+    const rBubble = 14; const rTarget = 18; const maxOffset = 60; 
     
     const rawX = (isNaN(state.angleY) || state.angleY === null) ? 0 : state.angleY;
     const rawY = (isNaN(state.angleX) || state.angleX === null) ? 0 : state.angleX;
