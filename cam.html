@@ -577,35 +577,61 @@
     requestAnimationFrame(drawLoop);
   }
 
-  // === CAPTURE ===
+// === CAPTURE (FIXED) ===
   DOM.shutter.addEventListener('click', async () => {
+    // 1. Проверки перед съемкой
     if (state.isCapturing) return; 
     if (!state.levelOK) { haptic('error'); showToast("Выровняйте телефон"); return; }
 
     try {
-        state.isCapturing = true; haptic('heavy');
-        DOM.shutter.style.transform = 'scale(0.8)'; DOM.shutter.style.opacity = '0.5';
+        state.isCapturing = true; 
+        haptic('heavy');
+        
+        // Анимация нажатия
+        DOM.shutter.style.transform = 'scale(0.8)'; 
+        DOM.shutter.style.opacity = '0.5';
+        
+        // Даем браузеру время отрисовать нажатие (важная микро-пауза)
         await new Promise(r => setTimeout(r, 50));
 
-        if (state.imageCapture) {
-          try {
-            const blob = await state.imageCapture.takePhoto();
-            showPreview(blob); return;
-          } catch(e) {}
+        // 2. СНИМАЕМ ТОЛЬКО ЧЕРЕЗ CANVAS (Самый надежный способ)
+        const vid = DOM.video;
+        
+        // Проверяем, идет ли вообще видео
+        if (vid.readyState < 2 || vid.videoWidth === 0) {
+            throw new Error("Камера не готова");
         }
 
-        const vid = DOM.video;
         const c = document.createElement('canvas');
-        c.width = vid.videoWidth; c.height = vid.videoHeight;
-        c.getContext('2d').drawImage(vid, 0, 0);
-        await new Promise(res => c.toBlob(blob => { showPreview(blob); res(); }, 'image/jpeg', 0.95));
+        c.width = vid.videoWidth; 
+        c.height = vid.videoHeight;
+        
+        // Рисуем кадр с видео на холст
+        const ctx = c.getContext('2d');
+        ctx.drawImage(vid, 0, 0);
+
+        // Конвертируем в файл (Blob)
+        const blob = await new Promise(resolve => {
+            c.toBlob(b => resolve(b), 'image/jpeg', 0.95);
+        });
+
+        if (!blob) throw new Error("Пустой кадр");
+
+        // 3. Показываем результат
+        showPreview(blob);
 
     } catch(err) {
-        haptic('error'); showToast("Ошибка съемки");
-    } finally {
+        console.error(err);
+        haptic('error'); 
+        showToast("Ошибка: " + err.message);
+        // Если произошла ошибка, принудительно возвращаем интерфейс
         state.isCapturing = false;
-        DOM.shutter.style.transform = ''; DOM.shutter.style.opacity = '';
         updateUI();
+    } finally {
+        // Сбрасываем кнопку
+        DOM.shutter.style.transform = ''; 
+        DOM.shutter.style.opacity = '';
+        state.isCapturing = false;
     }
   });
 
