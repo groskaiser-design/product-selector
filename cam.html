@@ -326,51 +326,57 @@
     commentInput: document.getElementById('commentInput')
   };
 
-// --- 1. CAMERA INIT (SMART AUTO-DETECT) ---
+// --- 1. CAMERA INIT (HARD SPLIT FIX) ---
   async function initCamera() {
+    // 1. Четко определяем iOS
+    const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+    
     try {
       const devices = await navigator.mediaDevices.enumerateDevices();
       const hasBack = devices.some(d => d.kind === 'videoinput' && d.label.toLowerCase().includes('back'));
-      const facing = hasBack ? { ideal: 'environment' } : 'environment';
+      const facing = hasBack ? { ideal: 'environment' } : 'user';
 
-      // ХИТРОСТЬ:
-      // Мы не просим 16:9 или 4:3. Мы просим "очень много пикселей".
-      // Браузер поймет, что мы хотим макс. качество, и отдаст "родной" формат сенсора.
-      // На iPhone это будет 4:3, на Android — часто 16:9 или 4:3, но БЕЗ кропа.
-      const constraints = {
-        audio: false,
-        video: {
+      let constraints = { audio: false };
+
+      if (isIOS) {
+        // === IPHONE SETTINGS (Твой Идеал) ===
+        // iOS любит 4:3. Это полный сенсор.
+        constraints.video = {
           facingMode: facing,
-          // Просим разрешение выше, чем есть в реальности (4K+).
-          // Умный алгоритм выберет максимально доступное без цифрового зума.
-          width: { ideal: 4096 },
-          height: { ideal: 4096 } 
-        }
-      };
+          width: { ideal: 1920 },
+          height: { ideal: 1440 }, // 4:3
+          aspectRatio: { ideal: 1.3333 }
+        };
+      } else {
+        // === ANDROID SETTINGS (Anti-Zoom) ===
+        // Android экраны вытянутые (20:9). Квадратная картинка 4:3 вызывает 
+        // лютый кроп (зум) в CSS. Мы требуем широкий формат 16:9.
+        constraints.video = {
+          facingMode: facing,
+          width: { ideal: 1920 },
+          height: { ideal: 1080 }, // 16:9
+          aspectRatio: { ideal: 1.7777 } // Заставляем драйвер дать широкий угол
+        };
+      }
 
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       state.stream = stream;
       state.track = stream.getVideoTracks()[0];
       DOM.video.srcObject = stream;
 
-      // === ПОСТ-АНАЛИЗ ===
-      // Теперь мы смотрим, что нам реально дала камера, и подстраиваемся
-      const settings = state.track.getSettings();
-      console.log(`Camera active: ${settings.width}x${settings.height}`);
-
-      // === СБРОС ЗУМА (ДЛЯ ANDROID) ===
-      // Если камера умеет зумить, принудительно ставим 1.0 (минимум)
+      // === ПРИНУДИТЕЛЬНЫЙ ОТКАТ ЗУМА (Android Only) ===
+      // Некоторые Android (Samsung/Pixel) могут стартовать с зумом 1.2x-1.5x
       const caps = state.track.getCapabilities();
-      if (caps.zoom) {
+      if (!isIOS && caps.zoom) {
         try {
-          // Иногда min бывает 0, иногда 1. Берем min из возможностей.
-          const minZoom = caps.zoom.min || 1; 
+          // Ставим минимальный зум (обычно 1.0)
+          const minZoom = caps.zoom.min || 1;
           await state.track.applyConstraints({ advanced: [{ zoom: minZoom }] });
-          console.log("Zoom reset to", minZoom);
-        } catch(e) { console.log('Zoom reset warning', e); }
+          console.log("Android Zoom forced to:", minZoom);
+        } catch(e) { console.log('Zoom reset ignored', e); }
       }
 
-      // Фокус
+      // Фокус (везде)
       if (caps.focusMode && caps.focusMode.includes('continuous')) {
         try { await state.track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch(e){}
       }
@@ -385,17 +391,8 @@
       checkSensorPerms();
 
     } catch (e) {
-      console.warn("Camera fallback", e);
-      try {
-         // Если "максимальный" запрос не прошел, запускаем самый простой режим
-         const fs = await navigator.mediaDevices.getUserMedia({ 
-             video: { facingMode: 'environment' } 
-         });
-         state.stream = fs;
-         state.track = fs.getVideoTracks()[0];
-         DOM.video.srcObject = fs;
-         requestAnimationFrame(drawLoop);
-      } catch(e2){ alert("Ошибка доступа к камере"); }
+      console.warn("Camera Error:", e);
+      alert("Камера недоступна. Проверьте разрешения.");
     }
   }
 
