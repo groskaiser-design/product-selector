@@ -3,61 +3,83 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>No Zoom Cam</title>
+<title>Lens Selector</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   
   body {
     margin: 0; padding: 0;
-    background: #000; /* Черный фон сольется с полосами */
+    background: #000;
     height: 100vh; 
     overflow: hidden;
-    display: flex; 
-    flex-direction: column;
-    justify-content: center; /* Центруем видео по вертикали */
+    display: flex; flex-direction: column;
   }
 
-  /* === ГЛАВНЫЙ СЕКРЕТ ОТ ЗУМА === */
+  /* Видео вписано в экран (с полосами, но без кропа) */
   video {
-    width: 100%;
-    height: 100%;
-    /* contain = "Помести видео целиком, даже если останутся пустые места".
-       cover   = "Заполни экран любой ценой" (это вызывало зум).
-    */
+    width: 100%; height: 100%;
     object-fit: contain; 
     display: block;
+    background: #000;
   }
 
-  /* Кнопка */
+  /* Панель управления */
   .ui-layer {
     position: absolute;
-    bottom: 30px; 
-    left: 0; right: 0;
-    display: flex; justify-content: center;
+    bottom: 0; left: 0; right: 0;
+    height: 140px;
+    background: rgba(0,0,0,0.5);
+    display: flex; 
+    flex-direction: column;
+    align-items: center; 
+    justify-content: center;
     z-index: 10;
+    padding-bottom: 20px;
   }
 
+  /* Ряд кнопок */
+  .btn-row {
+    display: flex; align-items: center; gap: 40px;
+  }
+
+  /* Кнопка смены линзы */
+  .lens-btn {
+    color: #fff;
+    font-size: 14px;
+    font-weight: 600;
+    background: rgba(255,255,255,0.2);
+    padding: 10px 20px;
+    border-radius: 20px;
+    cursor: pointer;
+    border: 1px solid rgba(255,255,255,0.3);
+    display: flex; gap: 6px; align-items: center;
+  }
+  
+  /* Кнопка затвора */
   .shutter-btn {
-    width: 76px; height: 76px;
+    width: 70px; height: 70px;
     background: rgba(255,255,255,0.2);
     border: 4px solid #fff;
     border-radius: 50%;
     cursor: pointer;
     position: relative;
-    transition: transform 0.1s;
   }
-  
   .shutter-btn::after {
     content:''; position:absolute; 
     top:50%; left:50%; transform:translate(-50%,-50%);
-    width: 58px; height: 58px; 
+    width: 54px; height: 54px; 
     background: #fff; border-radius: 50%;
   }
-  
-  .shutter-btn:active { transform: scale(0.95); opacity: 0.8; }
 
-  /* Превью фото */
+  /* Инфо о текущей камере */
+  .debug-info {
+    position: absolute; top: 40px; left: 0; right: 0;
+    text-align: center; color: rgba(255,255,255,0.5);
+    font-size: 12px; pointer-events: none;
+  }
+
+  /* Превью */
   #preview {
     position: absolute; inset: 0; z-index: 20;
     background: #000; display: none; flex-direction: column;
@@ -74,10 +96,19 @@
 </head>
 <body>
 
+  <div class="debug-info" id="camName">Инициализация...</div>
   <video id="video" autoplay playsinline muted></video>
 
   <div class="ui-layer">
-    <div class="shutter-btn" id="btnSnap"></div>
+    <div class="btn-row">
+        <div class="lens-btn" id="btnSwitch">
+            <span>🔄</span> <span id="lensLabel">CAM 1</span>
+        </div>
+
+        <div class="shutter-btn" id="btnSnap"></div>
+        
+        <div style="width: 80px;"></div>
+    </div>
   </div>
 
   <div id="preview">
@@ -95,28 +126,91 @@
   const video = document.getElementById('video');
   const preview = document.getElementById('preview');
   const previewImg = document.getElementById('previewImg');
+  const camNameEl = document.getElementById('camName');
+  const lensLabel = document.getElementById('lensLabel');
+  
+  // Хранилище камер
+  let videoDevices = [];
+  let currentCamIndex = 0;
 
-  async function start() {
+  async function init() {
     try {
-      // Мы НЕ просим конкретное разрешение.
-      // Мы просим "Дай мне камеру по умолчанию".
-      // Это предотвращает попытки браузера "подогнать" картинку под экран.
+      // 1. Сначала просто запрашиваем доступ, чтобы браузер дал права
+      // и мы могли увидеть названия камер (labels)
+      const initialStream = await navigator.mediaDevices.getUserMedia({ video: true });
+      initialStream.getTracks().forEach(t => t.stop()); // Останавливаем сразу
+
+      // 2. Получаем список всех устройств
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      
+      // 3. Фильтруем только видео и только задние (если есть инфо)
+      const allVideo = devices.filter(d => d.kind === 'videoinput');
+      
+      // Пытаемся найти задние камеры по названиям "back", "environment", "rear"
+      // Если таких нет (иногда бывает), берем все видео-устройства
+      const backCams = allVideo.filter(d => {
+          const l = d.label.toLowerCase();
+          return l.includes('back') || l.includes('rear') || l.includes('environment');
+      });
+
+      // Если нашли задние - используем их. Если нет - используем все найденные.
+      videoDevices = backCams.length > 0 ? backCams : allVideo;
+
+      if (videoDevices.length === 0) {
+        alert("Камеры не найдены");
+        return;
+      }
+
+      // Запускаем первую камеру
+      startCamera(0);
+
+    } catch (e) {
+      alert("Ошибка доступа: " + e.message);
+    }
+  }
+
+  async function startCamera(index) {
+    if (index >= videoDevices.length) index = 0;
+    currentCamIndex = index;
+
+    const device = videoDevices[index];
+    
+    // Обновляем UI
+    lensLabel.textContent = `CAM ${index + 1}`;
+    camNameEl.textContent = device.label || `Camera ${device.deviceId.slice(0,8)}...`;
+
+    // Останавливаем старый поток
+    if (video.srcObject) {
+      video.srcObject.getTracks().forEach(t => t.stop());
+    }
+
+    try {
+      // ЗАПРОС КОНКРЕТНОЙ КАМЕРЫ ПО ID
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
         video: {
-          facingMode: 'environment'
+          deviceId: { exact: device.deviceId },
+          // Не просим разрешение, пусть драйвер даст родное для этой линзы
         }
       });
       video.srcObject = stream;
     } catch (e) {
-      alert("Ошибка: " + e.message);
+      camNameEl.textContent = "Ошибка: " + e.message;
     }
   }
 
-  // Делаем снимок
+  // КНОПКА СМЕНЫ ЛИНЗЫ
+  document.getElementById('btnSwitch').onclick = () => {
+    let next = currentCamIndex + 1;
+    if (next >= videoDevices.length) next = 0;
+    
+    if(tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
+    startCamera(next);
+  };
+
+  // СЪЕМКА
   document.getElementById('btnSnap').onclick = () => {
     const canvas = document.createElement('canvas');
-    // Важно: берем реальные размеры видеопотока, а не экрана
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     canvas.getContext('2d').drawImage(video, 0, 0);
@@ -124,7 +218,7 @@
     canvas.toBlob(blob => {
       previewImg.src = URL.createObjectURL(blob);
       preview.style.display = 'flex';
-      if(tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+      if(tg.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
     }, 'image/jpeg');
   };
 
@@ -138,7 +232,7 @@
     tg.close();
   };
 
-  start();
+  init();
 </script>
 </body>
 </html>
