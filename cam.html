@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Ultimate Cam</title>
+<title>Ultima AI Cam</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -16,16 +16,23 @@
     display: flex; flex-direction: column;
   }
 
-  /* Видео: Вписано в экран (черные полосы), зато ЧЕСТНЫЙ кадр без зума */
+  /* 1. ВИДЕО (ЧЕСТНЫЙ КАДР) */
   video {
     width: 100%; height: 100%;
-    object-fit: contain; 
+    object-fit: contain; /* Вписываем видео целиком, черные полосы допустимы */
     display: block;
     background: #000;
-    transform: scaleX(1); /* На всякий случай, чтобы не зеркалило */
   }
 
-  /* Нижняя панель */
+  /* 2. СЛОЙ УРОВНЯ (CANVAS) */
+  #levelCanvas {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    z-index: 5;
+    pointer-events: none; /* Клики проходят сквозь него */
+  }
+
+  /* 3. ИНТЕРФЕЙС */
   .ui-layer {
     position: absolute;
     bottom: 0; left: 0; right: 0;
@@ -43,7 +50,7 @@
     display: flex; align-items: center; gap: 40px;
   }
 
-  /* Кнопка смены линзы */
+  /* Кнопка смены камеры */
   .lens-btn {
     color: rgba(255,255,255,0.9);
     font-size: 13px; font-weight: 600;
@@ -52,12 +59,12 @@
     border-radius: 20px;
     cursor: pointer;
     backdrop-filter: blur(4px);
-    display: none; /* Скрыта, пока не найдем камеры */
+    display: none; /* Скрыта по умолчанию */
     gap: 6px; align-items: center;
     border: 1px solid rgba(255,255,255,0.1);
   }
   
-  /* Затвор */
+  /* Кнопка затвора */
   .shutter-btn {
     width: 76px; height: 76px;
     background: rgba(255,255,255,0.2);
@@ -65,19 +72,32 @@
     border-radius: 50%;
     cursor: pointer;
     position: relative;
-    transition: 0.1s;
+    transition: 0.2s;
   }
   .shutter-btn::after {
     content:''; position:absolute; 
     top:50%; left:50%; transform:translate(-50%,-50%);
     width: 60px; height: 60px; 
     background: #fff; border-radius: 50%;
+    transition: 0.2s;
   }
   .shutter-btn:active { transform: scale(0.95); opacity: 0.8; }
+  
+  /* Если уровень не ровный, делаем кнопку полупрозрачной (визуальная подсказка) */
+  .shutter-btn.bad-angle { opacity: 0.5; border-color: #ff453a; }
+  .shutter-btn.bad-angle::after { background: #ff453a; }
+
+  /* Оверлей разрешения датчиков (iOS) */
+  #sensorPermBtn {
+    position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
+    background: #0a84ff; color: #fff; border: none; padding: 10px 20px;
+    border-radius: 20px; font-size: 14px; font-weight: 600; z-index: 50;
+    display: none; cursor: pointer;
+  }
 
   /* Превью */
   #preview {
-    position: absolute; inset: 0; z-index: 20;
+    position: absolute; inset: 0; z-index: 100;
     background: #000; display: none; flex-direction: column;
   }
   #previewImg { flex: 1; object-fit: contain; }
@@ -92,7 +112,10 @@
 </head>
 <body>
 
+  <button id="sensorPermBtn">Включить уровень 📐</button>
+
   <video id="video" autoplay playsinline muted></video>
+  <canvas id="levelCanvas"></canvas>
 
   <div class="ui-layer">
     <div class="btn-row">
@@ -109,7 +132,7 @@
   <div id="preview">
     <img id="previewImg">
     <div class="controls">
-      <button class="btn" onclick="retake()">Заново</button>
+      <button class="btn" onclick="retake()">Переснять</button>
       <button class="btn" style="background:#007aff" onclick="send()">Отправить</button>
     </div>
   </div>
@@ -118,104 +141,118 @@
   const tg = window.Telegram?.WebApp;
   if(tg) { tg.ready(); tg.expand(); tg.setHeaderColor('#000000'); }
 
+  // === UI ELEMENTS ===
   const video = document.getElementById('video');
-  const preview = document.getElementById('preview');
-  const previewImg = document.getElementById('previewImg');
+  const canvas = document.getElementById('levelCanvas');
+  const ctx = canvas.getContext('2d');
+  const shutterBtn = document.getElementById('btnSnap');
   const btnSwitch = document.getElementById('btnSwitch');
   const lensName = document.getElementById('lensName');
+  const preview = document.getElementById('preview');
+  const previewImg = document.getElementById('previewImg');
+  const sensorBtn = document.getElementById('sensorPermBtn');
   
-  let availableCams = []; // Сюда сложим только ЗАДНИЕ камеры
+  // === STATE ===
+  let videoDevices = [];
   let currentCamIndex = 0;
-  const STORAGE_KEY = 'ultima_cam_id_v2';
+  const STORAGE_KEY = 'ultima_cam_id_v3';
+  
+  let state = {
+    angleX: 0, // Beta (наклон вперед-назад)
+    angleY: 0, // Gamma (наклон влево-вправо)
+    levelOK: false // Ровно ли держим
+  };
 
+  // 1. ИНИЦИАЛИЗАЦИЯ
   async function init() {
-    try {
-      // 1. ПРОВЕРЯЕМ ПАМЯТЬ
-      const savedId = localStorage.getItem(STORAGE_KEY);
-      
-      let constraints = { audio: false };
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
 
+    // Проверка прав на датчики (для iOS 13+)
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        sensorBtn.style.display = 'block';
+        sensorBtn.onclick = async () => {
+            try {
+                const resp = await DeviceOrientationEvent.requestPermission();
+                if (resp === 'granted') {
+                    sensorBtn.style.display = 'none';
+                    window.addEventListener('deviceorientation', handleOrientation);
+                }
+            } catch(e) { alert(e); }
+        };
+    } else {
+        window.addEventListener('deviceorientation', handleOrientation);
+    }
+
+    // Запуск камеры
+    try {
+      // Пробуем восстановить прошлую камеру
+      const savedId = localStorage.getItem(STORAGE_KEY);
+      let constraints = { audio: false };
+      
       if (savedId) {
-          // Если есть сохраненная - пробуем её по ID
           constraints.video = { deviceId: { exact: savedId } };
       } else {
-          // ЕСЛИ ЗАПУСК ВПЕРВЫЕ:
-          // Приказываем открыть "environment" (заднюю). 
-          // Это заставит iPhone открыть заднюю камеру, даже если он не отдал список.
           constraints.video = { facingMode: 'environment' };
       }
 
-      // 2. ЗАПУСКАЕМ ПОТОК
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       video.srcObject = stream;
 
-      // 3. ТЕПЕРЬ (когда есть права) СКАНИРУЕМ УСТРОЙСТВА
+      // После запуска сканируем, чтобы найти "ширик"
       await scanDevices();
+      
+      // Запускаем отрисовку уровня
+      requestAnimationFrame(drawLoop);
 
     } catch (e) {
-      // Если сохраненный ID сломался, пробуем сброс на дефолт
+      // Если сохраненный ID сломался (камера сменилась), сброс
       if (localStorage.getItem(STORAGE_KEY)) {
-          localStorage.removeItem(STORAGE_KEY);
-          init(); // Рестарт
-          return;
+         localStorage.removeItem(STORAGE_KEY);
+         init(); 
+         return;
       }
-      alert("Ошибка камеры: " + e.message);
+      alert("Камера недоступна: " + e.message);
     }
   }
 
+  // 2. СКАНИРОВАНИЕ УСТРОЙСТВ
   async function scanDevices() {
     const devices = await navigator.mediaDevices.enumerateDevices();
     const videoInputs = devices.filter(d => d.kind === 'videoinput');
 
-    // 4. ФИЛЬТРУЕМ: Оставляем только задние
-    // Логика: Если в названии есть 'front', выкидываем.
-    // Если название пустое (редкий баг после прав), оставляем на всякий случай.
+    // Фильтр фронталок
     const backCams = videoInputs.filter(d => {
         const l = d.label.toLowerCase();
         return !l.includes('front') && !l.includes('user') && !l.includes('selfie');
     });
 
-    availableCams = backCams.length > 0 ? backCams : videoInputs;
+    videoDevices = backCams.length > 0 ? backCams : videoInputs;
 
-    // Если нашли больше 1 камеры, включаем кнопку
-    if (availableCams.length > 1) {
+    if (videoDevices.length > 1) {
         btnSwitch.style.display = 'flex';
-        updateLensLabel();
+        // Пытаемся понять текущий индекс
+        if(video.srcObject) {
+            const track = video.srcObject.getVideoTracks()[0];
+            const sid = track.getSettings().deviceId;
+            const idx = videoDevices.findIndex(c => c.deviceId === sid);
+            if(idx !== -1) currentCamIndex = idx;
+        }
+        lensName.textContent = `Lens ${currentCamIndex + 1}`;
     }
   }
 
-  // Обновление подписи кнопки (для отладки можно видеть номер)
-  function updateLensLabel() {
-      // Пытаемся понять, какая сейчас активна
-      if (!video.srcObject) return;
-      const track = video.srcObject.getVideoTracks()[0];
-      const currentSettings = track.getSettings();
-      
-      // Ищем индекс текущей камеры в нашем списке
-      const idx = availableCams.findIndex(c => c.deviceId === currentSettings.deviceId);
-      if (idx !== -1) currentCamIndex = idx;
-      
-      lensName.textContent = `Lens ${currentCamIndex + 1}`;
-  }
-
-  // ПЕРЕКЛЮЧЕНИЕ КАМЕРЫ (Кнопка)
+  // 3. ПЕРЕКЛЮЧЕНИЕ КАМЕРЫ
   btnSwitch.onclick = async () => {
-    if (availableCams.length < 2) return;
-    
+    if (videoDevices.length < 2) return;
     if(tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
 
-    // Следующий индекс
-    currentCamIndex = (currentCamIndex + 1) % availableCams.length;
-    const nextCam = availableCams[currentCamIndex];
-
-    // Запоминаем выбор!
+    currentCamIndex = (currentCamIndex + 1) % videoDevices.length;
+    const nextCam = videoDevices[currentCamIndex];
     localStorage.setItem(STORAGE_KEY, nextCam.deviceId);
-    lensName.textContent = `...`; // Индикатор загрузки
+    lensName.textContent = `...`;
 
-    // Перезапуск потока
-    if (video.srcObject) {
-      video.srcObject.getTracks().forEach(t => t.stop());
-    }
+    if (video.srcObject) video.srcObject.getTracks().forEach(t => t.stop());
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -223,23 +260,108 @@
         video: { deviceId: { exact: nextCam.deviceId } }
       });
       video.srcObject = stream;
-      updateLensLabel();
-    } catch (e) {
-      alert("Не удалось переключить: " + e.message);
-    }
+      lensName.textContent = `Lens ${currentCamIndex + 1}`;
+    } catch (e) { alert("Err switch: " + e.message); }
   };
 
-  // СЪЕМКА
-  document.getElementById('btnSnap').onclick = () => {
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext('2d').drawImage(video, 0, 0);
+  // 4. ДАТЧИКИ И УРОВЕНЬ
+  function handleOrientation(e) {
+    // Получаем углы. Для фото сверху нас интересуют Beta и Gamma.
+    // Когда телефон лежит на столе: Beta ~ 0, Gamma ~ 0.
+    if (e.beta !== null && e.gamma !== null) {
+        state.angleX = e.gamma; // Наклон влево-вправо
+        state.angleY = e.beta;  // Наклон вперед-назад
+    }
+  }
+
+  function resizeCanvas() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+  }
+
+  function drawLoop() {
+    const w = canvas.width;
+    const h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+
+    const cx = w / 2;
+    const cy = h / 2;
+
+    // Математика уровня
+    // Коэффициент чувствительности (чем меньше делитель, тем резче бегает точка)
+    const sensitivity = 4; 
     
-    canvas.toBlob(blob => {
+    // Ограничиваем движение, чтобы точка не улетала за экран
+    const clamp = (val, max) => Math.max(-max, Math.min(max, val));
+    
+    const dx = clamp(state.angleX * sensitivity, w/2 - 20);
+    const dy = clamp(state.angleY * sensitivity, h/2 - 20);
+
+    // Проверяем, попали ли в центр (допуск 10 градусов смещения)
+    // 10 градусов * sensitivity(4) = 40 пикселей радиус
+    const dist = Math.hypot(dx, dy);
+    const threshold = 30; // Радиус "зеленой зоны" в пикселях
+    const isLevel = dist < threshold;
+
+    if (isLevel !== state.levelOK) {
+        state.levelOK = isLevel;
+        // Визуальная реакция кнопки спуска
+        if(isLevel) {
+            shutterBtn.classList.remove('bad-angle');
+            if(tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
+        } else {
+            shutterBtn.classList.add('bad-angle');
+        }
+    }
+
+    // РИСУЕМ
+    
+    // 1. Центральный прицел (крестик или круг)
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(cx, cy, threshold, 0, Math.PI * 2); // Круг допуска
+    ctx.stroke();
+    
+    // Линии перекрестия
+    ctx.beginPath();
+    ctx.moveTo(cx - 10, cy); ctx.lineTo(cx - threshold, cy);
+    ctx.moveTo(cx + 10, cy); ctx.lineTo(cx + threshold, cy);
+    ctx.moveTo(cx, cy - 10); ctx.lineTo(cx, cy - threshold);
+    ctx.moveTo(cx, cy + 10); ctx.lineTo(cx, cy + threshold);
+    ctx.stroke();
+
+    // 2. Бегающая точка (Пузырек)
+    ctx.fillStyle = isLevel ? '#30d158' : '#ff453a'; // Зеленый или Красный
+    ctx.beginPath();
+    ctx.arc(cx + dx, cy + dy, 8, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // Тень/Свечение для красоты
+    ctx.shadowColor = isLevel ? '#30d158' : '#ff453a';
+    ctx.shadowBlur = 10;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    requestAnimationFrame(drawLoop);
+  }
+
+  // 5. СЪЕМКА (Только фото, без лишнего)
+  shutterBtn.onclick = () => {
+    // Можно добавить блокировку: if(!state.levelOK) return; 
+    // Но лучше оставить возможность снять "криво", просто показав предупреждение.
+    
+    if(tg.HapticFeedback) tg.HapticFeedback.impactOccurred('heavy');
+    
+    const c = document.createElement('canvas');
+    c.width = video.videoWidth;
+    c.height = video.videoHeight;
+    // Рисуем чистый кадр видео
+    c.getContext('2d').drawImage(video, 0, 0);
+    
+    c.toBlob(blob => {
       previewImg.src = URL.createObjectURL(blob);
       preview.style.display = 'flex';
-      if(tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
     }, 'image/jpeg');
   };
 
