@@ -95,10 +95,10 @@
     color: #fff; cursor: pointer;
     transition: transform 0.1s;
     font-size: 20px;
+    user-select: none;
   }
   .icon-btn:active { transform: scale(0.9); background: rgba(80,80,80,0.6); }
 
-  /* Guide overlay */
   .card-guide {
     position: absolute;
     right: 20px; top: 50%; transform: translateY(-50%);
@@ -112,23 +112,24 @@
   }
   .card-guide span { font-size: 11px; color: rgba(255,255,255,0.7); font-weight: 600; }
 
-  /* Bottom Controls */
+  /* === ИСПРАВЛЕННЫЙ БЛОК УПРАВЛЕНИЯ === */
   .controls-area {
     display: flex;
     align-items: center;
-    justify-content: space-between; /* Важно для центрирования кнопки спуска */
+    justify-content: center; /* Всегда центрируем содержимое (кнопку спуска) */
     pointer-events: auto;
-    position: relative;
+    position: relative; /* Чтобы позиционировать кнопку смены абсолютно */
     width: 100%;
+    min-height: 84px;
   }
 
-  /* Кнопка спуска */
   .shutter-outer {
     width: 84px; height: 84px;
     border-radius: 50%;
     border: 4px solid rgba(255,255,255,0.3);
     display:flex; align-items:center; justify-content:center;
     transition: 0.3s;
+    z-index: 2; /* Поверх всего */
   }
   .shutter-inner {
     width: 64px; height: 64px;
@@ -141,6 +142,16 @@
   .shutter-outer.disabled .shutter-inner { background: var(--acc-red); transform: scale(0.4); }
   .shutter-outer.active { border-color: var(--acc-green); transform: scale(1.05); }
   .shutter-outer:active:not(.disabled) .shutter-inner { transform: scale(0.9); }
+
+  /* Кнопка смены камеры - Абсолютно справа */
+  #btnSwitch {
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 5;
+  }
+  #btnSwitch:active { transform: translateY(-50%) scale(0.9); }
 
   /* Permission Overlay */
   .perm-overlay {
@@ -214,13 +225,11 @@
       </div>
 
       <div class="controls-area">
-        <div class="icon-btn" style="opacity:0; pointer-events:none"></div>
-        
         <div class="shutter-outer disabled" id="shutterBtn">
           <div class="shutter-inner"></div>
         </div>
 
-        <div class="icon-btn" id="btnSwitch">🔄</div>
+        <div class="icon-btn hidden" id="btnSwitch">🔄</div>
       </div>
     </div>
   </div>
@@ -245,7 +254,6 @@
   </div>
 
 <script>
-  // === TELEGRAM INIT ===
   const tg = window.Telegram?.WebApp;
   if(tg) {
     tg.ready(); tg.expand();
@@ -253,7 +261,6 @@
     if(tg.disableVerticalSwipes) tg.disableVerticalSwipes();
   }
 
-  // === STATE ===
   const state = {
     stream: null,
     track: null,
@@ -262,9 +269,9 @@
     angleX: 0, angleY: 0,
     photoBlob: null,
     isCapturing: false,
-    devices: [],      // Список камер
-    currentDevIdx: 0, // Индекс текущей камеры
-    torchOn: false    // Состояние вспышки
+    devices: [],      
+    currentDevIdx: 0, 
+    torchOn: false    
   };
 
   const DOM = {
@@ -283,35 +290,18 @@
     btnSwitch: document.getElementById('btnSwitch')
   };
 
-  // --- 1. CAMERA LOGIC ---
   async function initCamera() {
     try {
-      // 1. Получаем список всех видеоустройств
-      const allDevices = await navigator.mediaDevices.enumerateDevices();
-      state.devices = allDevices.filter(d => d.kind === 'videoinput');
-      
-      if (state.devices.length < 2) {
-        DOM.btnSwitch.classList.add('hidden'); // Прячем кнопку, если камера всего одна
-      }
-
-      // 2. Пытаемся найти сохраненную камеру
+      // 1. Сначала пробуем запустить сохраненную камеру или дефолтную заднюю
+      // Это нужно, чтобы получить права доступа к списку устройств
       const savedId = localStorage.getItem('ultima_cam_id');
-      let targetId = null;
+      
+      // Стартуем "вслепую" в первый раз, чтобы вылез запрос прав
+      await startStream(savedId);
 
-      if (savedId) {
-        // Проверяем, существует ли еще эта камера
-        const exists = state.devices.find(d => d.deviceId === savedId);
-        if (exists) targetId = savedId;
-      }
-
-      // 3. Если сохраненной нет, ищем "back" камеру по умолчанию
-      if (!targetId) {
-        const backCam = state.devices.find(d => d.label.toLowerCase().includes('back') || d.label.toLowerCase().includes('environment'));
-        if (backCam) targetId = backCam.deviceId;
-      }
-
-      // 4. Запускаем поток
-      await startStream(targetId);
+      // 2. И только ПОСЛЕ успешного старта запрашиваем список устройств
+      // На Android это критично - до startStream список может быть пуст или без labels
+      await updateDeviceList();
 
       resizeCanvas();
       window.addEventListener('resize', resizeCanvas);
@@ -320,25 +310,45 @@
 
     } catch (e) {
       console.warn("Init Error:", e);
-      alert("Ошибка камеры: " + e.message);
+      alert("Ошибка старта камеры: " + e.message);
     }
+  }
+
+  async function updateDeviceList() {
+    try {
+      const allDevices = await navigator.mediaDevices.enumerateDevices();
+      state.devices = allDevices.filter(d => d.kind === 'videoinput');
+      
+      console.log("Found cameras:", state.devices.length, state.devices);
+
+      // Если камер больше 1, показываем кнопку
+      if (state.devices.length > 1) {
+        DOM.btnSwitch.classList.remove('hidden');
+      } else {
+        DOM.btnSwitch.classList.add('hidden');
+      }
+
+      // Обновляем текущий индекс
+      if (state.track) {
+        const currentId = state.track.getSettings().deviceId;
+        state.currentDevIdx = state.devices.findIndex(d => d.deviceId === currentId);
+        if(state.currentDevIdx === -1) state.currentDevIdx = 0;
+      }
+    } catch(e) { console.error("Dev list error", e); }
   }
 
   async function startStream(deviceId) {
     if (state.stream) {
       state.stream.getTracks().forEach(t => t.stop());
     }
+    state.torchOn = false; updateTorchUI();
 
-    // Сброс состояния вспышки при смене камеры
-    state.torchOn = false;
-    updateTorchUI();
-
+    // Стратегия: если deviceId нет, просим 'environment'. Если есть - exact ID.
     const constraints = {
       audio: false,
       video: {
-        // Если есть ID, используем его, иначе 'environment'
         deviceId: deviceId ? { exact: deviceId } : undefined,
-        facingMode: deviceId ? undefined : 'environment', 
+        facingMode: deviceId ? undefined : 'environment',
         width: { ideal: 3072 },
         height: { ideal: 4096 }
       }
@@ -350,80 +360,68 @@
       state.track = stream.getVideoTracks()[0];
       DOM.video.srcObject = stream;
 
-      // Обновляем индекс текущей камеры в массиве
-      const currentId = state.track.getSettings().deviceId;
-      state.currentDevIdx = state.devices.findIndex(d => d.deviceId === currentId);
-      if(state.currentDevIdx === -1) state.currentDevIdx = 0;
+      // При успехе сохраняем ID
+      const newId = state.track.getSettings().deviceId;
+      if (newId) localStorage.setItem('ultima_cam_id', newId);
 
-      // Сохраняем выбор
-      if (currentId) localStorage.setItem('ultima_cam_id', currentId);
-
-      // Пробуем ImageCapture
-      if (window.ImageCapture) {
-        state.imageCapture = new ImageCapture(state.track);
-      }
+      if (window.ImageCapture) state.imageCapture = new ImageCapture(state.track);
       
-      // Автофокус
       const caps = state.track.getCapabilities();
-      if (caps.focusMode && caps.focusMode.includes('continuous')) {
+      if (caps.focusMode?.includes('continuous')) {
         try { await state.track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch(e){}
       }
 
     } catch (e) {
-      console.error("Stream Start Error", e);
-      alert("Не удалось запустить эту камеру");
+      console.error("Start stream failed", e);
+      // Если запускали по ID и упали (камера сменилась/отключена), пробуем дефолт
+      if (deviceId) {
+        console.log("Retrying with default environment camera...");
+        localStorage.removeItem('ultima_cam_id');
+        await startStream(null); // Рекурсия без ID
+      } else {
+        throw e;
+      }
     }
   }
 
-  // --- SWITCH CAMERA BUTTON ---
-  DOM.btnSwitch.onclick = () => {
+  DOM.btnSwitch.onclick = async () => {
     if (state.devices.length < 2) return;
     haptic('medium');
     
-    // Циклическое переключение
+    // Анимация иконки
+    DOM.btnSwitch.style.transform = 'translateY(-50%) rotate(360deg)';
+    setTimeout(() => DOM.btnSwitch.style.transform = 'translateY(-50%)', 300);
+
     let nextIdx = state.currentDevIdx + 1;
     if (nextIdx >= state.devices.length) nextIdx = 0;
     
     const nextDevice = state.devices[nextIdx];
-    startStream(nextDevice.deviceId);
+    // Важно: обновляем индекс сразу, но stream запустится асинхронно
+    state.currentDevIdx = nextIdx;
+    
+    await startStream(nextDevice.deviceId);
   };
 
-  // --- TORCH BUTTON (FIXED) ---
   DOM.btnTorch.onclick = async () => {
     if(!state.track) return;
-    
-    // Проверка поддержки
     const caps = state.track.getCapabilities();
-    if (!caps.torch) {
-      alert("Вспышка недоступна на этой камере");
-      haptic('error');
-      return;
-    }
-
+    if (!caps.torch) { alert("Вспышка недоступна на этой камере"); haptic('error'); return; }
     const newState = !state.torchOn;
     try {
       await state.track.applyConstraints({ advanced: [{ torch: newState }] });
-      state.torchOn = newState;
-      updateTorchUI();
-      haptic('light');
-    } catch(e) {
-      alert("Ошибка управления вспышкой");
-    }
+      state.torchOn = newState; updateTorchUI(); haptic('light');
+    } catch(e) { alert("Ошибка вспышки"); }
   };
 
   function updateTorchUI() {
     if (state.torchOn) {
       DOM.btnTorch.style.backgroundColor = 'var(--acc-orange)';
-      DOM.btnTorch.style.color = '#000';
-      DOM.btnTorch.style.border = '1px solid transparent';
+      DOM.btnTorch.style.color = '#000'; DOM.btnTorch.style.border = '1px solid transparent';
     } else {
-      DOM.btnTorch.style.backgroundColor = '';
-      DOM.btnTorch.style.color = '';
-      DOM.btnTorch.style.border = '';
+      DOM.btnTorch.style.backgroundColor = ''; DOM.btnTorch.style.color = ''; DOM.btnTorch.style.border = '';
     }
   }
 
-  // --- SENSORS & LEVEL LOGIC ---
   function checkSensorPerms() {
     if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
       DOM.permReq.classList.remove('hidden'); 
@@ -492,7 +490,6 @@
     requestAnimationFrame(drawLoop);
   }
 
-  // --- PHOTO CAPTURE ---
   DOM.shutter.addEventListener('click', async () => {
     if (state.isCapturing) return; 
     if (!state.levelOK) { haptic('error'); return; }
