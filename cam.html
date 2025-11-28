@@ -326,25 +326,45 @@
     commentInput: document.getElementById('commentInput')
   };
 
-// --- 1. CAMERA INIT (UPDATED FOR NO ZOOM) ---
+// --- 1. CAMERA INIT (HYBRID FIX) ---
   async function initCamera() {
+    // Определяем iOS
+    const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+    
     try {
       const devices = await navigator.mediaDevices.enumerateDevices();
       const hasBack = devices.some(d => d.kind === 'videoinput' && d.label.toLowerCase().includes('back'));
-      // На iOS 'environment' иногда выбирает не ту камеру, поэтому пробуем просто mode
+      
+      // На Android 'environment' работает надежнее для выбора основной камеры
+      // На iOS иногда лучше работает точное указание deviceId, но пока оставим 'environment'
       const facing = hasBack ? { ideal: 'environment' } : 'environment';
+
+      let videoConstraints = {};
+
+      if (isIOS) {
+        // === НАСТРОЙКИ ДЛЯ iPHONE (Твои "идеальные") ===
+        // iPhone любит 4:3, это полный сенсор без цифрового кропа
+        videoConstraints = {
+          facingMode: facing,
+          width: { ideal: 1920 },
+          height: { ideal: 1440 }, // 4:3
+          aspectRatio: { ideal: 1.333 } 
+        };
+      } else {
+        // === НАСТРОЙКИ ДЛЯ ANDROID ===
+        // Android экраны узкие. Если дать 4:3, CSS обрежет бока = зум.
+        // Просим 16:9 (1920x1080) - это стандарт для большинства Android камер.
+        videoConstraints = {
+          facingMode: facing,
+          width: { ideal: 1920 },
+          height: { ideal: 1080 }, // 16:9
+          aspectRatio: { ideal: 1.777 } // Просим широкий кадр
+        };
+      }
 
       const constraints = {
         audio: false,
-        video: {
-          facingMode: facing,
-          // ВАЖНО: Убираем 4096. Просим разрешение поменьше, чтобы избежать кропа стабилизации
-          width: { ideal: 1920 }, 
-          height: { ideal: 1440 },
-          // Просим 4:3 (1.333), это родной формат сенсора большинства телефонов.
-          // Если просить 16:9, телефон сам обрежет верх и низ, приблизив картинку.
-          aspectRatio: { ideal: 1.333 } 
-        }
+        video: videoConstraints
       };
 
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -352,19 +372,18 @@
       state.track = stream.getVideoTracks()[0];
       DOM.video.srcObject = stream;
 
-      // === ПОПЫТКА СБРОСИТЬ ЗУМ ===
+      // === ДОПОЛНИТЕЛЬНЫЙ СБРОС ЗУМА (ОСОБЕННО ДЛЯ ANDROID) ===
       const caps = state.track.getCapabilities();
       
-      // 1. Сброс зума (если поддерживается)
+      // Android Chrome поддерживает управление зумом через applyConstraints
       if (caps.zoom) {
         try {
-          // Ставим минимально возможный зум (обычно 1)
-          const minZoom = caps.zoom.min || 1;
-          await state.track.applyConstraints({ advanced: [{ zoom: minZoom }] });
+          // Явно ставим 1.0, чтобы исключить цифровой зум драйвера
+          await state.track.applyConstraints({ advanced: [{ zoom: 1.0 }] });
         } catch(e) { console.log('Zoom reset failed', e); }
       }
 
-      // 2. Фокус (оставляем, полезно для макро)
+      // Фокус для макро (еда близко)
       if (caps.focusMode && caps.focusMode.includes('continuous')) {
         try { await state.track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch(e){}
       }
@@ -381,8 +400,10 @@
     } catch (e) {
       console.warn("Camera fallback", e);
       try {
-         // Самый простой фоллбэк без настроек, иногда дает самый широкий угол
-         const fs = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+         // Аварийный режим: вообще без требований к разрешению
+         const fs = await navigator.mediaDevices.getUserMedia({ 
+             video: { facingMode: 'environment' } 
+         });
          state.stream = fs;
          state.track = fs.getVideoTracks()[0];
          DOM.video.srcObject = fs;
