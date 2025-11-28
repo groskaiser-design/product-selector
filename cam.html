@@ -31,15 +31,14 @@
   }
 
   /* === MAIN LAYOUT === */
-  /* Верхняя панель */
   .top-bar {
     padding: 16px;
     display: flex; justify-content: space-between; align-items: flex-start;
     z-index: 20;
-    background: linear-gradient(to bottom, rgba(0,0,0,0.5), transparent);
+    background: linear-gradient(to bottom, rgba(0,0,0,0.8), transparent);
   }
 
-  /* Область камеры - СТРОГИЙ КВАДРАТ */
+  /* Область камеры - КВАДРАТ */
   .cam-wrapper {
     width: 100%;
     position: relative;
@@ -53,7 +52,7 @@
   video {
     position: absolute;
     width: 100%; height: 100%;
-    /* cover заполнит квадрат, обрезая лишнее сверху/снизу, но мы берем 4:3 поток, так что потерь будет минимум */
+    /* cover заполнит квадрат по ширине, обрезав верх/низ. Это визуальная обрезка. */
     object-fit: cover; 
     z-index: 1;
   }
@@ -84,9 +83,7 @@
     z-index: 20;
     background: #000;
   }
-  /* Выравнивание левой кнопки */
   .controls-area > :first-child { justify-self: start; }
-  /* Выравнивание правой кнопки (если бы она была) */
   .controls-area > :last-child { justify-self: end; }
 
   /* === UI ELEMENTS === */
@@ -143,7 +140,7 @@
     display: none; flex-direction: column;
   }
   .preview-img { 
-    width: 100%; aspect-ratio: 1/1; /* Превью квадратное */
+    width: 100%; aspect-ratio: 1/1; 
     object-fit: contain; background: #111; margin: auto 0;
   }
   .comment-wrap { padding: 0 24px 16px 24px; width: 100%; }
@@ -184,7 +181,7 @@
       <div class="status-dot" id="lvlDot"></div>
       <span id="lvlText">Уровень</span>
     </div>
-    <div class="icon-btn hidden" id="btnTorch">⚡</div>
+    <div class="icon-btn" id="btnTorch">⚡</div>
   </div>
 
   <div class="cam-wrapper">
@@ -238,7 +235,7 @@
   }
 
   // Настройки
-  const COMPRESS_MAX_SIZE = 1024; // Финальный размер квадрата
+  const COMPRESS_MAX_SIZE = 1024;
   const COMPRESS_QUALITY = 0.6; 
 
   const state = {
@@ -276,7 +273,7 @@
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     
-    // Рисуем уже обрезанный квадрат
+    // Рисуем полученный квадрат
     canvas.width = maxWidth;
     canvas.height = maxWidth;
     ctx.drawImage(img, 0, 0, maxWidth, maxWidth);
@@ -292,11 +289,12 @@
   }
 
   async function initCamera(mode = 'environment') {
-    // Чистка перед сменой
+    // 1. ОСТАНОВКА СТАРОГО ПОТОКА (С ПАУЗОЙ ДЛЯ ANDROID)
     if (state.stream) {
         state.stream.getTracks().forEach(track => track.stop());
         state.stream = null;
         DOM.video.srcObject = null;
+        // Даем Андроиду "выдохнуть"
         await new Promise(r => setTimeout(r, 200));
     }
 
@@ -304,10 +302,12 @@
       const constraints = {
         audio: false,
         video: {
-          facingMode: mode, 
-          // FIX ZOOM: Просим 4:3 (стандарт сенсора), чтобы не было кропа 16:9
-          aspectRatio: { ideal: 1.333 }, 
-          width: { ideal: 1920 }, // Высокое качество
+          facingMode: mode,
+          // ВАЖНО: Мы просим просто высокое разрешение. 
+          // Большинство камер отдадут 4:3 (полный сенсор).
+          // Мы НЕ просим aspect ratio 1:1, чтобы не сломать Android.
+          width: { ideal: 4096 },
+          height: { ideal: 2160 } 
         }
       };
 
@@ -317,20 +317,22 @@
       state.facingMode = mode;
       
       DOM.video.srcObject = stream;
-      DOM.video.play().catch(()=>{});
+      // Явный play() иногда нужен после смены srcObject
+      DOM.video.play().catch(e => console.log(e));
 
-      // Фокус
+      // Настройки трека (фокус)
       const caps = state.track.getCapabilities();
       if (mode === 'environment' && caps.focusMode && caps.focusMode.includes('continuous')) {
         try { await state.track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch(e){}
       }
 
-      // FIX TORCH: Надежная проверка
+      // Фонарик: показываем кнопку всегда на задней камере
+      // Не доверяем caps.torch на Android (он часто врет)
       state.torchOn = false;
-      if (mode === 'environment' && caps.torch) {
-          DOM.btnTorch.classList.remove('hidden');
+      if (mode === 'user') {
+          DOM.btnTorch.style.display = 'none';
       } else {
-          DOM.btnTorch.classList.add('hidden');
+          DOM.btnTorch.style.display = 'flex';
       }
 
       if (window.ImageCapture) state.imageCapture = new ImageCapture(state.track);
@@ -343,11 +345,12 @@
           state.isLoopRunning = true;
       }
     } catch (e) {
-      alert("Ошибка доступа к камере");
+      console.warn(e);
+      alert("Ошибка доступа к камере. Проверьте разрешения.");
     }
   }
 
-  // --- SENSORS & LEVEL ---
+  // --- SENSORS ---
   function checkSensorPerms() {
     if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
       DOM.permReq.classList.remove('hidden'); 
@@ -367,6 +370,8 @@
   function handleOrientation(e) {
     if (e.beta !== null) { state.angleX = e.beta; state.angleY = e.gamma; }
   }
+
+  // --- UI DRAW ---
   function updateUI() {
     if (state.isCapturing) return;
     if (state.levelOK) {
@@ -413,7 +418,7 @@
     requestAnimationFrame(drawLoop);
   }
 
-  // --- CAPTURE: SQUARE CROP FIX ---
+  // --- CAPTURE & CROP ---
   DOM.shutter.addEventListener('click', async () => {
     if (state.isCapturing || !state.levelOK) { if(!state.levelOK) haptic('error'); return; }
 
@@ -423,12 +428,13 @@
         await new Promise(r => setTimeout(r, 50));
 
         const vid = DOM.video;
+        // 1. Создаем канвас
         const c = document.createElement('canvas');
         const vW = vid.videoWidth;
         const vH = vid.videoHeight;
         
-        // Берем центральный квадрат. 
-        // Так как мы запросили 4:3, потери будут минимальны, а угол обзора - максимальным для квадрата.
+        // 2. Вычисляем ЦЕНТР квадрата
+        // Берем меньшую сторону, чтобы сделать квадрат
         const size = Math.min(vW, vH);
         const startX = (vW - size) / 2;
         const startY = (vH - size) / 2;
@@ -437,6 +443,7 @@
         c.height = size;
         const ctx = c.getContext('2d');
 
+        // 3. Вырезаем (crop) из видео
         ctx.drawImage(vid, startX, startY, size, size, 0, 0, size, size);
 
         const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.95));
@@ -493,7 +500,7 @@
     }
   }
 
-  // --- CONTROLS ---
+  // --- ACTIONS ---
   DOM.btnSwitch.onclick = () => {
     haptic('medium');
     const icon = DOM.btnSwitch.querySelector('svg');
@@ -510,14 +517,13 @@
     try { 
         await state.track.applyConstraints({ advanced: [{ torch: state.torchOn }] }); 
         haptic('light');
-    } catch(e){ 
-        // Если advanced не сработал (бывает на Android), пробуем переполучить трек
-        console.warn("Torch failed, trying fallback");
-        state.torchOn = !state.torchOn; // Revert
-        showToast("Не удалось включить фонарик");
+    } catch(e) {
+        state.torchOn = !state.torchOn; // Возвращаем состояние
+        console.warn("Torch error");
+        showToast("Фонарик недоступен");
     }
   };
-  
+
   document.getElementById('btnClose').onclick = () => { if (tg) tg.close(); else window.history.back(); };
   function haptic(style) { if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred(style); }
 
