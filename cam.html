@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Lens Selector</title>
+<title>Smart Cam</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -16,7 +16,7 @@
     display: flex; flex-direction: column;
   }
 
-  /* Видео вписано в экран (с полосами, но без кропа) */
+  /* Видео: Полный кадр (contain) - черные полосы, но без зума */
   video {
     width: 100%; height: 100%;
     object-fit: contain; 
@@ -24,59 +24,59 @@
     background: #000;
   }
 
-  /* Панель управления */
+  /* Нижняя панель */
   .ui-layer {
     position: absolute;
     bottom: 0; left: 0; right: 0;
-    height: 140px;
-    background: rgba(0,0,0,0.5);
+    height: 120px; /* Компактнее */
+    background: linear-gradient(to top, rgba(0,0,0,0.9), transparent);
     display: flex; 
     flex-direction: column;
     align-items: center; 
-    justify-content: center;
+    justify-content: flex-end;
+    padding-bottom: 30px;
     z-index: 10;
-    padding-bottom: 20px;
   }
 
-  /* Ряд кнопок */
   .btn-row {
     display: flex; align-items: center; gap: 40px;
   }
 
-  /* Кнопка смены линзы */
+  /* Кнопка смены камеры */
   .lens-btn {
-    color: #fff;
-    font-size: 14px;
-    font-weight: 600;
-    background: rgba(255,255,255,0.2);
-    padding: 10px 20px;
+    color: rgba(255,255,255,0.9);
+    font-size: 13px; font-weight: 600;
+    background: rgba(255,255,255,0.15);
+    padding: 10px 16px;
     border-radius: 20px;
     cursor: pointer;
-    border: 1px solid rgba(255,255,255,0.3);
+    backdrop-filter: blur(4px);
     display: flex; gap: 6px; align-items: center;
   }
   
-  /* Кнопка затвора */
+  /* Затвор */
   .shutter-btn {
-    width: 70px; height: 70px;
+    width: 72px; height: 72px;
     background: rgba(255,255,255,0.2);
     border: 4px solid #fff;
     border-radius: 50%;
     cursor: pointer;
     position: relative;
+    transition: 0.1s;
   }
   .shutter-btn::after {
     content:''; position:absolute; 
     top:50%; left:50%; transform:translate(-50%,-50%);
-    width: 54px; height: 54px; 
+    width: 56px; height: 56px; 
     background: #fff; border-radius: 50%;
   }
+  .shutter-btn:active { transform: scale(0.95); opacity: 0.8; }
 
-  /* Инфо о текущей камере */
-  .debug-info {
-    position: absolute; top: 40px; left: 0; right: 0;
-    text-align: center; color: rgba(255,255,255,0.5);
-    font-size: 12px; pointer-events: none;
+  /* Текст сверху для отладки (если нужно будет юзеру понять какая камера) */
+  .cam-label {
+    position: absolute; top: 20px; width: 100%;
+    text-align: center; color: rgba(255,255,255,0.4);
+    font-size: 11px; pointer-events: none; z-index: 5;
   }
 
   /* Превью */
@@ -96,25 +96,25 @@
 </head>
 <body>
 
-  <div class="debug-info" id="camName">Инициализация...</div>
+  <div class="cam-label" id="camInfo"></div>
   <video id="video" autoplay playsinline muted></video>
 
   <div class="ui-layer">
     <div class="btn-row">
-        <div class="lens-btn" id="btnSwitch">
-            <span>🔄</span> <span id="lensLabel">CAM 1</span>
+        <div class="lens-btn" id="btnSwitch" style="display:none">
+            <span>🔄</span> Lens
         </div>
 
         <div class="shutter-btn" id="btnSnap"></div>
         
-        <div style="width: 80px;"></div>
+        <div style="width: 70px;"></div> 
     </div>
   </div>
 
   <div id="preview">
     <img id="previewImg">
     <div class="controls">
-      <button class="btn" onclick="retake()">Заново</button>
+      <button class="btn" onclick="retake()">Переснять</button>
       <button class="btn" style="background:#007aff" onclick="send()">Отправить</button>
     </div>
   </div>
@@ -126,43 +126,54 @@
   const video = document.getElementById('video');
   const preview = document.getElementById('preview');
   const previewImg = document.getElementById('previewImg');
-  const camNameEl = document.getElementById('camName');
-  const lensLabel = document.getElementById('lensLabel');
+  const camInfo = document.getElementById('camInfo');
+  const btnSwitch = document.getElementById('btnSwitch');
   
-  // Хранилище камер
   let videoDevices = [];
   let currentCamIndex = 0;
+  const STORAGE_KEY = 'ultima_preferred_cam_id';
 
   async function init() {
     try {
-      // 1. Сначала просто запрашиваем доступ, чтобы браузер дал права
-      // и мы могли увидеть названия камер (labels)
-      const initialStream = await navigator.mediaDevices.getUserMedia({ video: true });
-      initialStream.getTracks().forEach(t => t.stop()); // Останавливаем сразу
+      // 1. Прогрев прав (иначе не увидим лейблы)
+      const testStream = await navigator.mediaDevices.getUserMedia({ video: true });
+      testStream.getTracks().forEach(t => t.stop());
 
-      // 2. Получаем список всех устройств
+      // 2. Получаем все устройства
       const devices = await navigator.mediaDevices.enumerateDevices();
-      
-      // 3. Фильтруем только видео и только задние (если есть инфо)
       const allVideo = devices.filter(d => d.kind === 'videoinput');
-      
-      // Пытаемся найти задние камеры по названиям "back", "environment", "rear"
-      // Если таких нет (иногда бывает), берем все видео-устройства
+
+      // 3. УМНЫЙ ФИЛЬТР: Исключаем фронталки
+      // Ищем ключевые слова, обозначающие "Переднюю" камеру
       const backCams = allVideo.filter(d => {
-          const l = d.label.toLowerCase();
-          return l.includes('back') || l.includes('rear') || l.includes('environment');
+          const label = d.label.toLowerCase();
+          // Если явно написано "front" или "user" - это селфи, пропускаем
+          if (label.includes('front') || label.includes('user') || label.includes('selfie')) return false;
+          return true;
       });
 
-      // Если нашли задние - используем их. Если нет - используем все найденные.
+      // Если после фильтра ничего не осталось (странный девайс), берем все что было
       videoDevices = backCams.length > 0 ? backCams : allVideo;
 
-      if (videoDevices.length === 0) {
-        alert("Камеры не найдены");
-        return;
+      if (videoDevices.length === 0) return alert("Камера не найдена");
+
+      // Если камер больше 1, показываем кнопку переключения
+      if (videoDevices.length > 1) {
+          btnSwitch.style.display = 'flex';
       }
 
-      // Запускаем первую камеру
-      startCamera(0);
+      // 4. ПРОВЕРКА ПАМЯТИ: Какую камеру юзер любил в прошлый раз?
+      const savedId = localStorage.getItem(STORAGE_KEY);
+      let startIndex = 0;
+
+      if (savedId) {
+          const foundIndex = videoDevices.findIndex(d => d.deviceId === savedId);
+          if (foundIndex !== -1) {
+              startIndex = foundIndex; // Нашли любимую камеру!
+          }
+      }
+
+      startCamera(startIndex);
 
     } catch (e) {
       alert("Ошибка доступа: " + e.message);
@@ -172,43 +183,41 @@
   async function startCamera(index) {
     if (index >= videoDevices.length) index = 0;
     currentCamIndex = index;
-
     const device = videoDevices[index];
-    
-    // Обновляем UI
-    lensLabel.textContent = `CAM ${index + 1}`;
-    camNameEl.textContent = device.label || `Camera ${device.deviceId.slice(0,8)}...`;
 
-    // Останавливаем старый поток
+    // Сохраняем выбор пользователя НА ВЕКА
+    localStorage.setItem(STORAGE_KEY, device.deviceId);
+
+    // Вывод инфы (можно скрыть потом)
+    // camInfo.textContent = `CAM ${index+1}/${videoDevices.length}: ${device.label}`;
+
     if (video.srcObject) {
       video.srcObject.getTracks().forEach(t => t.stop());
     }
 
     try {
-      // ЗАПРОС КОНКРЕТНОЙ КАМЕРЫ ПО ID
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
         video: {
-          deviceId: { exact: device.deviceId },
-          // Не просим разрешение, пусть драйвер даст родное для этой линзы
+          deviceId: { exact: device.deviceId }
+          // Не указываем width/height, берем натив
         }
       });
       video.srcObject = stream;
     } catch (e) {
-      camNameEl.textContent = "Ошибка: " + e.message;
+      console.error(e);
     }
   }
 
-  // КНОПКА СМЕНЫ ЛИНЗЫ
-  document.getElementById('btnSwitch').onclick = () => {
+  // Смена камеры по кругу
+  btnSwitch.onclick = () => {
+    if(tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
     let next = currentCamIndex + 1;
     if (next >= videoDevices.length) next = 0;
-    
-    if(tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
     startCamera(next);
   };
 
-  // СЪЕМКА
+  // Съемка
   document.getElementById('btnSnap').onclick = () => {
     const canvas = document.createElement('canvas');
     canvas.width = video.videoWidth;
@@ -218,7 +227,7 @@
     canvas.toBlob(blob => {
       previewImg.src = URL.createObjectURL(blob);
       preview.style.display = 'flex';
-      if(tg.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
+      if(tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
     }, 'image/jpeg');
   };
 
