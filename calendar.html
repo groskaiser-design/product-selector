@@ -280,13 +280,22 @@
   .pattern-editor-overlay .day-col-header, .pattern-editor-overlay .day-column { width: auto; flex: 1; }
   .pattern-editor-overlay .blocked-slot { background: repeating-linear-gradient(45deg, rgba(10,132,255,0.15), rgba(10,132,255,0.15) 10px, rgba(10,132,255,0.25) 10px, rgba(10,132,255,0.25) 20px); pointer-events: auto; cursor: pointer; border-top: 1px solid rgba(10,132,255,0.3); border-bottom: 1px solid rgba(10,132,255,0.3); }
 
-/* 🔥 МАГИЯ ДЛЯ ИДЕАЛЬНЫХ ПОЛОСОК */
-.blocked-slot, 
-.blocked-range-part, 
-.day-off-overlay, 
-.event-card.client-view-busy {
-    background-attachment: fixed;
-}
+  /* Единый стиль штриховки */
+  .stripe-bg {
+      background-image: repeating-linear-gradient(
+          45deg,
+          rgba(255, 255, 255, 0.03),
+          rgba(255, 255, 255, 0.03) 10px,
+          rgba(255, 255, 255, 0.06) 10px,
+          rgba(255, 255, 255, 0.06) 20px
+      );
+      /* Важно: фон должен повторяться */
+      background-repeat: repeat;
+  }
+  /* Применяем к нужным элементам */
+  .blocked-slot, .blocked-range-part, .day-off-overlay, .event-card.client-view-busy {
+      /* Наследуем градиент из .stripe-bg (добавим этот класс в JS) */
+  }
   
 </style>
 </head>
@@ -797,24 +806,61 @@
       renderEventsForColumn(c, dateStr, dayIdx); attachLongPressHandler(c, d); grid.appendChild(c); updateDayStats(dateStr);
     }
   }
+
   function reRenderBlocks() {
-    document.querySelectorAll('#gridColumns .day-column').forEach(col => {
-      col.querySelectorAll('.blocked-slot, .day-off-overlay, .blocked-range-part').forEach(e=>e.remove());
-      const dateStr=col.getAttribute('data-date'), dayIdx=parseInt(col.getAttribute('data-day-idx'));
-      (availabilityPattern[dayIdx]||[]).forEach(h=>{ const b=document.createElement('div'); b.className='blocked-slot'; b.style.top=`${h*GRID_H}px`; col.appendChild(b); });
-      if(dateExceptions[dateStr]==='off') { const o=document.createElement('div'); o.className='day-off-overlay'; col.appendChild(o); } else {
-        const cS=new Date(dateStr+'T00:00:00').getTime(), cE=new Date(dateStr+'T23:59:59').getTime();
-        specialRanges.forEach(r=>{
-          const rS=new Date(r.start).getTime(), rE=new Date(r.end).getTime(); const oS=Math.max(cS,rS), oE=Math.min(cE,rE);
-          if(oS<oE) {
-            if(oS<=cS && oE>=cE-60000) { if(!col.querySelector('.day-off-overlay')) { const o=document.createElement('div'); o.className='day-off-overlay'; col.appendChild(o); } }
-            else { const top=(oS-cS)/3600000*GRID_H, h=(oE-oS)/3600000*GRID_H; const p=document.createElement('div'); p.className='blocked-range-part'; p.style.top=`${top}px`; p.style.height=`${h}px`; col.appendChild(p); }
-          }
-        });
-      }
-      renderEventsForColumn(col, dateStr, dayIdx); updateDayStats(dateStr);
+  document.querySelectorAll('#gridColumns .day-column').forEach(col => {
+    col.querySelectorAll('.blocked-slot, .day-off-overlay, .blocked-range-part').forEach(e => e.remove());
+    const dateStr = col.getAttribute('data-date'), dayIdx = parseInt(col.getAttribute('data-day-idx'));
+    
+    // Блоки паттерна
+    (availabilityPattern[dayIdx] || []).forEach(h => {
+      const b = document.createElement('div');
+      b.className = 'blocked-slot stripe-bg'; // Добавляем класс stripe-bg
+      const top = h * GRID_H;
+      b.style.top = `${top}px`;
+      // СДВИГ ФОНА:
+      b.style.backgroundPosition = `0px -${top}px`;
+      col.appendChild(b);
     });
-  }
+    
+    // Выходные и диапазоны
+    if (dateExceptions[dateStr] === 'off') {
+      const o = document.createElement('div');
+      o.className = 'day-off-overlay stripe-bg'; // Добавляем класс stripe-bg
+      o.style.backgroundPosition = `0px 0px`;
+      col.appendChild(o);
+    } else {
+      const cS = new Date(dateStr + 'T00:00:00').getTime(), cE = new Date(dateStr + 'T23:59:59').getTime();
+      specialRanges.forEach(r => {
+        const rS = new Date(r.start).getTime(), rE = new Date(r.end).getTime();
+        const oS = Math.max(cS, rS), oE = Math.min(cE, rE);
+        if (oS < oE) {
+          if (oS <= cS && oE >= cE - 60000) {
+            if (!col.querySelector('.day-off-overlay')) {
+              const o = document.createElement('div');
+              o.className = 'day-off-overlay stripe-bg';
+              o.style.backgroundPosition = `0px 0px`;
+              col.appendChild(o);
+            }
+          } else {
+            const top = (oS - cS) / 3600000 * GRID_H, h = (oE - oS) / 3600000 * GRID_H;
+            const p = document.createElement('div');
+            p.className = 'blocked-range-part stripe-bg';
+            p.style.top = `${top}px`;
+            p.style.height = `${h}px`;
+            // СДВИГ ФОНА ДЛЯ ДИАПАЗОНОВ:
+            p.style.backgroundPosition = `0px -${top}px`;
+            col.appendChild(p);
+          }
+        }
+      });
+    }
+    renderEventsForColumn(col, dateStr, dayIdx);
+    updateDayStats(dateStr);
+  });
+}
+
+  
   function updateAllDayStats() { document.querySelectorAll('.day-col-header').forEach(h => { updateDayStats(h.getAttribute('data-date')); }); }
   function updateDayStats(dateStr) {
     const track = document.getElementById(`stat-${dateStr}`); if (!track) return;
@@ -944,7 +990,34 @@
   function openPatternEditor(){closeAllSheets();document.getElementById('patternEditor').classList.add('open');renderPatternEditor();}
   function closePatternEditor(){document.getElementById('patternEditor').classList.remove('open');} 
   function renderPatternEditor(){ const t=document.getElementById('peTimeColumn'); t.innerHTML=''; for(let i=0;i<24;i++){const e=document.createElement('div');e.className='time-label'; if(i > 0) e.innerHTML=`<span>${String(i).padStart(2,'0')}:00</span>`;e.onclick=()=>toggleRowPattern(i);t.appendChild(e);} const h=document.getElementById('peHeaderTrack'); h.innerHTML=''; const w=['ПН','ВТ','СР','ЧТ','ПТ','СБ','ВС']; for(let i=0;i<7;i++){const e=document.createElement('div');e.className='day-col-header';e.innerHTML=`<div class="dch-day" style="margin-top:16px">${w[i]}</div>`;e.onclick=()=>toggleColPattern(i);h.appendChild(e);} const g=document.getElementById('peGridColumns'); g.innerHTML=''; for(let i=0;i<7;i++){const c=document.createElement('div');c.className='day-column';c.onclick=(e)=>{if(e.target!==c)return;toggleSinglePattern(i,Math.floor(e.offsetY/GRID_H));};renderPCol(c,i);g.appendChild(c);} }
-  function renderPCol(c,d){c.innerHTML='';(availabilityPattern[d]||[]).forEach(x=>{const b=document.createElement('div');b.className='blocked-slot';b.style.top=`${x*GRID_H}px`;b.onclick=(e)=>{e.stopPropagation();toggleSinglePattern(d,x);};c.appendChild(b);});}
+  
+  function renderPCol(c, d) {
+  c.innerHTML = '';
+  (availabilityPattern[d] || []).forEach(x => {
+    const b = document.createElement('div');
+    b.className = 'blocked-slot stripe-bg'; // Добавляем класс stripe-bg
+    const top = x * GRID_H;
+    b.style.top = `${top}px`;
+    // СДВИГ ФОНА:
+    b.style.backgroundPosition = `0px -${top}px`;
+    b.onclick = (e) => { e.stopPropagation(); toggleSinglePattern(d, x); };
+    c.appendChild(b);
+  });
+}
+
+  function createBusyEl(s) {
+  const [h, m] = s.start.split(':').map(Number);
+  const [hE, mE] = s.end.split(':').map(Number);
+  const top = (h * 60 + m) / 60 * GRID_H, height = (hE * 60 + mE - (h * 60 + m)) / 60 * GRID_H;
+  const div = document.createElement('div');
+  div.className = `event-card client-view-busy stripe-bg`; // Добавляем класс stripe-bg
+  div.style.top = `${top}px`;
+  div.style.height = `${Math.max(height, 20)}px`;
+  // СДВИГ ФОНА:
+  div.style.backgroundPosition = `0px -${top}px`;
+  return div;
+}
+  
   function toggleSinglePattern(d,h){const a=availabilityPattern[d],i=a.indexOf(h);if(i===-1)a.push(h);else a.splice(i,1);renderPCol(document.getElementById('peGridColumns').children[d],d);}
   function toggleRowPattern(h){let all=true;for(let d=0;d<7;d++)if(!availabilityPattern[d].includes(h)){all=false;break;} for(let d=0;d<7;d++){const a=availabilityPattern[d],i=a.indexOf(h);if(all&&i!==-1)a.splice(i,1);if(!all&&i===-1)a.push(h);} const g=document.getElementById('peGridColumns');for(let d=0;d<7;d++)renderPCol(g.children[d],d);}
   function toggleColPattern(d){const a=availabilityPattern[d];if(a.length===24)availabilityPattern[d]=[];else availabilityPattern[d]=Array.from({length:24},(_,i)=>i);renderPCol(document.getElementById('peGridColumns').children[d],d);}
