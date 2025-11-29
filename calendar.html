@@ -351,9 +351,10 @@
 
   <div class="form-group">
     <div class="form-label">Клиент</div>
-    <select class="input-box" id="inpClient">
+    <select class="input-box" id="inpClient" onchange="onClientSelectChange()">
       <!-- Populated dynamically -->
     </select>
+    <input type="text" class="input-box" id="inpNewClient" placeholder="Имя клиента" style="display:none; margin-top:8px;">
   </div>
   <div class="form-group">
     <div class="form-label" style="display:flex; justify-content:space-between;">Дата <span id="dateDisplay" style="color:#fff; font-weight:500;"></span></div>
@@ -877,7 +878,19 @@
     }
 
     // Fill Form
-    document.getElementById('inpClient').value=s.client; document.getElementById('inpDate').value=s.dateStr;
+    document.getElementById('inpClient').value=s.client;
+    // Check if client is in list, if not, set to _new_ and show input
+    const isKnownClient = clients.some(c => c.name === s.client);
+    if (!isKnownClient && s.client) {
+        document.getElementById('inpClient').value = '_new_';
+        const inpNew = document.getElementById('inpNewClient');
+        inpNew.style.display = 'block';
+        inpNew.value = s.client;
+    } else {
+        document.getElementById('inpNewClient').style.display = 'none';
+    }
+
+    document.getElementById('inpDate').value=s.dateStr;
     document.getElementById('inpStart').value=s.start; document.getElementById('inpEnd').value=s.end; document.getElementById('inpNote').value=s.note||'';
     updateDateDisplay();
     openSheet('sessionSheet');
@@ -895,7 +908,10 @@
   // === SMART SAVE LOGIC ===
 
   function trySaveSession() {
-    const clientName = document.getElementById('inpClient').value;
+    let clientName = document.getElementById('inpClient').value;
+    if (clientName === '_new_') {
+        clientName = document.getElementById('inpNewClient').value.trim() || 'Гость';
+    }
     const dateStr = document.getElementById('inpDate').value;
     const start = document.getElementById('inpStart').value;
     const end = document.getElementById('inpEnd').value;
@@ -929,12 +945,23 @@
         // Add to pattern immediately
         const newD = new Date(dateStr);
         let newDayIdx = newD.getDay() - 1; if(newDayIdx === -1) newDayIdx = 6;
+        
+        // Even for new clients (not in DB), we can technically track schedule if we added them? 
+        // But the prompt says "new client who is not yet a client". 
+        // So recurring logic might only work for known clients or we create a client?
+        // Let's create a client on the fly if recurring is checked!
+        let clientObj = clients.find(c => c.name === clientName);
+        if (!clientObj) {
+             clientObj = { id: Date.now(), name: clientName, color: colorPalette[Math.floor(Math.random() * colorPalette.length)], schedule: {} };
+             clients.push(clientObj);
+        }
+        
         updateClientPattern(clientName, null, { dateStr, start, end }); // Add new slot
         
         // Ensure the current session is linked to this new pattern
         // The pattern slot we just created matches {s:start, e:end}
         newData.linkedPatternSlot = { dayIdx: newDayIdx, s: start, e: end };
-        showToast("Серия создана", false);
+        showToast("Серия создана и клиент сохранен", false);
     }
 
     // No conflict, regular save
@@ -1046,11 +1073,13 @@
             sessions[idx].status = 'cancelled';
         } else {
             // Create a cancelled record to block the ghost
-            const client = document.getElementById('inpClient').value;
+            let clientName = document.getElementById('inpClient').value;
+            if (clientName === '_new_') clientName = document.getElementById('inpNewClient').value;
+            
             const dateStr = document.getElementById('inpDate').value;
             sessions.push({
                 id: Date.now(),
-                client: client,
+                client: clientName,
                 dateStr: dateStr,
                 start: editingLinkedPattern.s,
                 end: editingLinkedPattern.e,
@@ -1183,7 +1212,35 @@
     const idx = clients.findIndex(c => c.id === editingClient.id); if(idx !== -1) clients[idx] = editingClient; else clients.push(editingClient);
     saveData(); closeAllSheets(); document.querySelectorAll('.day-column').forEach(c => { const d = c.getAttribute('data-date'); const dIdx = c.getAttribute('data-day-idx'); renderEventsForColumn(c, d, parseInt(dIdx)); });
   }
-  function populateClientSelect() { const sel = document.getElementById('inpClient'); sel.innerHTML = ''; clients.forEach(c => { const opt = document.createElement('option'); opt.value = c.name; opt.textContent = c.name; sel.appendChild(opt); }); }
+  function populateClientSelect() { 
+    const sel = document.getElementById('inpClient'); 
+    sel.innerHTML = ''; 
+    clients.forEach(c => { 
+        const opt = document.createElement('option'); 
+        opt.value = c.name; 
+        opt.textContent = c.name; 
+        sel.appendChild(opt); 
+    }); 
+    
+    // Add "New / Test" option
+    const optNew = document.createElement('option');
+    optNew.value = '_new_';
+    optNew.textContent = '+ Новый / Гость';
+    optNew.style.fontWeight = 'bold';
+    optNew.style.color = 'var(--acc-green)';
+    sel.appendChild(optNew);
+  }
+  
+  function onClientSelectChange() {
+    const sel = document.getElementById('inpClient');
+    const inpNew = document.getElementById('inpNewClient');
+    if (sel.value === '_new_') {
+        inpNew.style.display = 'block';
+        inpNew.focus();
+    } else {
+        inpNew.style.display = 'none';
+    }
+  }
   
   function openDayOptions(d,t){selectedDayForOptions=d;document.getElementById('dayOptionsTitle').textContent=t;openSheet('dayOptionsSheet');}
   function toggleDayOff(){if(selectedDayForOptions){dateExceptions[selectedDayForOptions]='off';saveData();reRenderBlocks();closeAllSheets();}}
