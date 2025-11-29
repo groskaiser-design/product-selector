@@ -37,6 +37,7 @@
     color: var(--text-main);
     height: 100%; width: 100%;
     overflow: hidden; position: fixed; inset: 0; user-select: none;
+    -webkit-user-select: none; /* Запрет выделения по всему телу */
   }
 
   /* === FX LAYER === */
@@ -101,11 +102,17 @@
     font-variant-numeric: tabular-nums; text-align: center; min-width: 40px; display: none;
   }
   .grid-columns-container { display: flex; flex: 1; position: relative; }
+  
+  /* UPDATED DAY COLUMN CSS FOR BETTER TOUCH */
   .day-column {
     width: var(--day-col-width); flex-shrink: 0; border-right: 1px solid var(--line-color); position: relative;
     background-image: linear-gradient(to bottom, var(--line-color) 1px, transparent 1px); background-size: 100% var(--grid-h);
-    padding-bottom: 20px; cursor: pointer; touch-action: pan-y;
+    padding-bottom: 20px; cursor: pointer;
+    touch-action: pan-y; /* Разрешаем вертикальный скролл */
+    -webkit-user-select: none; user-select: none; /* Запрещаем выделение */
+    -webkit-touch-callout: none; /* Убираем меню iOS по долгому тапу */
   }
+  
   .touch-feedback {
     position: absolute; width: 100%; background: rgba(60, 156, 253, 0.25); border-radius: 4px; pointer-events: none; z-index: 20;
     animation: pulse-create 0.6s infinite ease-in-out; border: 1px solid var(--acc-current);
@@ -393,16 +400,84 @@
   }
 
   function attachLongPressHandler(element, dateObj) {
-    let startY = 0; let feedbackEl = null;
-    const startHandler = (e) => {
-        if(e.target.closest('.event-card')) return; isScrolling = false; startY = (e.touches ? e.touches[0].clientY : e.clientY);
-        const hour = Math.floor((startY - element.getBoundingClientRect().top) / GRID_H);
-        feedbackEl = document.createElement('div'); feedbackEl.className = 'touch-feedback'; feedbackEl.style.top = (hour * GRID_H) + 'px'; feedbackEl.style.height = GRID_H + 'px'; element.appendChild(feedbackEl); activeTouchEl = feedbackEl;
-        longPressTimer = setTimeout(() => { if(!isScrolling) { if(window.Telegram?.WebApp?.HapticFeedback) window.Telegram.WebApp.HapticFeedback.impactOccurred('medium'); else if (navigator.vibrate) navigator.vibrate(50); if(feedbackEl) feedbackEl.remove(); const setD = new Date(dateObj); setD.setHours(hour, 0); openAddSession(setD); } }, 500);
+    let startY = 0; 
+    let feedbackTimer = null; 
+    let actionTimer = null;   
+    let feedbackEl = null;
+
+    const cleanup = () => {
+        clearTimeout(feedbackTimer);
+        clearTimeout(actionTimer);
+        if(feedbackEl) { feedbackEl.remove(); feedbackEl = null; }
     };
-    const cancelHandler = () => { if(longPressTimer) clearTimeout(longPressTimer); if(activeTouchEl) { activeTouchEl.remove(); activeTouchEl = null; } };
-    const moveHandler = (e) => { if (Math.abs((e.touches ? e.touches[0].clientY : e.clientY) - startY) > 10) { isScrolling = true; cancelHandler(); } };
-    element.addEventListener('touchstart', startHandler, {passive: true}); element.addEventListener('touchmove', moveHandler, {passive: true}); element.addEventListener('touchend', cancelHandler); element.addEventListener('touchcancel', cancelHandler); element.addEventListener('mousedown', startHandler); element.addEventListener('mousemove', moveHandler); element.addEventListener('mouseup', cancelHandler); element.addEventListener('mouseleave', cancelHandler);
+
+    const startHandler = (e) => {
+        if(e.target.closest('.event-card')) return;
+        
+        isScrolling = false;
+        startY = (e.touches ? e.touches[0].clientY : e.clientY);
+        
+        // Delay visual feedback slightly to allow scrolling without flashing
+        feedbackTimer = setTimeout(() => {
+            if(isScrolling) return;
+            
+            const rect = element.getBoundingClientRect();
+            const offsetY = startY - rect.top;
+            const hour = Math.floor(offsetY / GRID_H);
+            
+            // Haptic Start (Subtle) - optional
+            if(navigator.vibrate) navigator.vibrate(10);
+
+            feedbackEl = document.createElement('div');
+            feedbackEl.className = 'touch-feedback';
+            feedbackEl.style.top = (hour * GRID_H) + 'px';
+            feedbackEl.style.height = GRID_H + 'px';
+            element.appendChild(feedbackEl);
+        }, 150); // 150ms delay for visual
+
+        actionTimer = setTimeout(() => {
+            if(!isScrolling) {
+                // Success Haptic
+                if(window.Telegram?.WebApp?.HapticFeedback) {
+                    window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+                } else if (navigator.vibrate) {
+                    navigator.vibrate(50);
+                }
+                
+                // Calculate time again to be sure (or reuse from feedback if stored)
+                const rect = element.getBoundingClientRect();
+                const offsetY = startY - rect.top;
+                const hour = Math.floor(offsetY / GRID_H);
+
+                cleanup(); // Remove visual
+                
+                const setD = new Date(dateObj);
+                setD.setHours(hour, 0);
+                openAddSession(setD);
+            }
+        }, 600); // 600ms total hold time
+    };
+
+    const cancelHandler = () => {
+        cleanup();
+    };
+
+    const moveHandler = (e) => {
+        const currentY = (e.touches ? e.touches[0].clientY : e.clientY);
+        if (Math.abs(currentY - startY) > 10) {
+            isScrolling = true;
+            cleanup();
+        }
+    };
+
+    element.addEventListener('touchstart', startHandler, {passive: true});
+    element.addEventListener('touchmove', moveHandler, {passive: true});
+    element.addEventListener('touchend', cancelHandler);
+    element.addEventListener('touchcancel', cancelHandler);
+    element.addEventListener('mousedown', startHandler);
+    element.addEventListener('mousemove', moveHandler);
+    element.addEventListener('mouseup', cancelHandler);
+    element.addEventListener('mouseleave', cancelHandler);
   }
   function cancelLongPress() { if(longPressTimer) clearTimeout(longPressTimer); if(activeTouchEl) { activeTouchEl.remove(); activeTouchEl = null; } }
 
@@ -655,5 +730,3 @@
 
   document.addEventListener('DOMContentLoaded', init);
 </script>
-</body>
-</html>
