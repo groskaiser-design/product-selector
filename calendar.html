@@ -624,6 +624,7 @@
   /* ==========================================
        4. ACTIONS & SAVING
      ========================================== */
+  // 2. Функция сохранения (заменяем полностью, чтобы передать имя в проверку)
   async function trySaveSession() {
     const clientName = document.getElementById('inpClient').value;
     
@@ -633,10 +634,11 @@
     const note = document.getElementById('inpNote').value;
     const isRecurring = document.getElementById('inpRecurring').checked;
 
-    const val = validateAppointment(dateStr, start, end, editingId); 
+    // ! ВАЖНО: Передаем clientName пятым параметром !
+    const val = validateAppointment(dateStr, start, end, editingId, clientName); 
     if(!val.valid) { showToast(val.msg, true); return; } 
 
-    // STRICT LOOKUP: Client must exist
+    // Проверяем, существует ли клиент в базе
     let clientObj = clients.find(c => c.name === clientName);
     if (!clientObj) {
         alert("Ошибка: Клиент не найден в базе");
@@ -648,7 +650,7 @@
         dateStr, start, end, note, status: 'planned', type: 'client'
     };
 
-    // CONFLICT CHECK FOR SERIES
+    // Логика конфликтов серии (оставляем без изменений)
     if (editingLinkedPattern) {
         const newD = new Date(dateStr);
         let newDayIdx = newD.getDay() - 1; if(newDayIdx === -1) newDayIdx = 6;
@@ -661,7 +663,7 @@
         }
     }
 
-    // MAKE RECURRING
+    // Логика создания новой серии (оставляем без изменений)
     if (!editingLinkedPattern && isRecurring) {
         const newD = new Date(dateStr);
         let newDayIdx = newD.getDay() - 1; if(newDayIdx === -1) newDayIdx = 6;
@@ -1040,20 +1042,38 @@
   function closeTimeSlotSheet() { document.getElementById('timeSlotSheet').classList.remove('open'); }
   function confirmTimeSlot() { const s = document.getElementById('tsStart').value; const e = document.getElementById('tsEnd').value; if(!editingClient.schedule[editingDayIdx]) editingClient.schedule[editingDayIdx] = []; checkScheduleConflict(editingDayIdx, s, e); editingClient.schedule[editingDayIdx].push({s, e}); closeTimeSlotSheet(); renderClientSchedule(); }
   function checkScheduleConflict(dayIdx, start, end) { const blockedHours = availabilityPattern[dayIdx] || []; if(blockedHours.length === 0) return; const [h1, m1] = start.split(':').map(Number); const [h2, m2] = end.split(':').map(Number); const startMins = h1 * 60 + m1; const endMins = h2 * 60 + m2; let hasConflict = false; for(let h of blockedHours) { const bStart = h * 60; const bEnd = (h + 1) * 60; if (Math.max(startMins, bStart) < Math.min(endMins, bEnd)) { hasConflict = true; break; } } if(hasConflict) { showToast("Обратите внимание: обычно вы не работаете в это время"); } }
-  function validateAppointment(dateStr, start, end, excludeId = null) { 
-      const [h1, m1] = start.split(':').map(Number); const [h2, m2] = end.split(':').map(Number); const startMins = h1 * 60 + m1; const endMins = h2 * 60 + m2; 
-      // Check collision
+  // 1. Функция проверки (заменяем полностью)
+  function validateAppointment(dateStr, start, end, excludeId = null, checkClientName = null) { 
+      const [h1, m1] = start.split(':').map(Number); 
+      const [h2, m2] = end.split(':').map(Number); 
+      const startMins = h1 * 60 + m1; 
+      const endMins = h2 * 60 + m2; 
+      
       for (let s of sessions) { 
+          // Пропускаем сессии в другие дни или отмененные
           if (s.dateStr !== dateStr) continue; 
           if (s.status === 'cancelled') continue;
+          // Пропускаем саму себя (при редактировании)
           if (excludeId && s.id === excludeId) continue; 
+          
           const [sH1, sM1] = s.start.split(':').map(Number); 
           const [sH2, sM2] = s.end.split(':').map(Number); 
-          const sStart = sH1 * 60 + sM1; const sEnd = sH2 * 60 + sM2; 
-          if (Math.max(startMins, sStart) < Math.min(endMins, sEnd)) return { valid: false, msg: "Это время уже занято" }; 
+          const sStart = sH1 * 60 + sM1; 
+          const sEnd = sH2 * 60 + sM2; 
+          
+          // Проверяем накладку по времени
+          if (Math.max(startMins, sStart) < Math.min(endMins, sEnd)) {
+              // ЕДИНСТВЕННОЕ УСЛОВИЕ БЛОКИРОВКИ:
+              // Если это ТОТ ЖЕ самый клиент — запрещаем.
+              if (checkClientName && s.client === checkClientName) {
+                  return { valid: false, msg: "Этот клиент уже записан на это время" }; 
+              }
+              // Если клиенты разные — цикл идет дальше, ошибка не возвращается.
+          }
       } 
       return { valid: true }; 
   }
+  
   function showToast(msg, isSuccess = false) { const t = document.getElementById('toast'); t.className = 'toast-notification ' + (isSuccess ? 'success' : ''); document.getElementById('toastTitle').textContent = isSuccess ? "Успешно" : "Обратите внимание"; document.getElementById('toastMessage').textContent = msg; t.classList.add('show'); setTimeout(() => { t.classList.remove('show'); }, 3500); }
   function populateClientSelect() { const sel = document.getElementById('inpClient'); sel.innerHTML = ''; clients.forEach(c => { const opt = document.createElement('option'); opt.value = c.name; opt.textContent = c.name; sel.appendChild(opt); }); }
   function openDayOptions(d,t){selectedDayForOptions=d;document.getElementById('dayOptionsTitle').textContent=t;openSheet('dayOptionsSheet');}
