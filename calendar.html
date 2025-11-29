@@ -447,12 +447,11 @@
 
 <script>
   /* ==========================================
-     1. CONFIG & GLOBALS
+     1. CONFIG
      ========================================== */
-  const APP_VERSION = 'v3.0-final-text-plain';
-  
-  // 👇👇👇 ВСТАВЬ СЮДА ССЫЛКУ (из Deploy -> Web App URL) 👇👇👇
-  const API_URL = 'https://script.google.com/macros/s/AKfycbw1kzQodsASV-V4StQWsNvErDyhFyjE1KbhMeZomyPcgXWK8CH2-2NI4ZjSPrcNEgt1PA/exec'; 
+  const APP_VERSION = 'v4.0-form-data';
+  // Твой URL
+  const API_URL = 'https://script.google.com/macros/s/AKfycbz-M08iTYlC_4DV7zd6S-ytLeUtaz0ORF5--wfkqJR_u0GH38gS6qK9_NrlcBTfkn17uA/exec';
 
   const GRID_H = 60;
   let startOffset = -30, endOffset = 60;
@@ -462,21 +461,19 @@
   let updateInterval, selectedDayForOptions = null, longPressTimer = null;
   let isScrolling = false, activeTouchEl = null, isClientMode = false, simulatedClientId = 1;
 
-  // DATA STORAGE
+  // DATA
   let availabilityPattern = {0:[],1:[],2:[],3:[],4:[],5:[],6:[]}; 
   let dateExceptions = {}; 
   let specialRanges = []; 
   let clients = []; 
   let sessions = []; 
-  
   const colorPalette = ['#B0BEC5', '#90A4AE', '#78909C', '#607D8B', '#455A64', '#BCAAA4', '#8D6E63', '#5D4037', '#FF5252', '#FF1744', '#D50000', '#B71C1C', '#FF4081', '#F50057', '#C51162', '#880E4F', '#E040FB', '#D500F9', '#AA00FF', '#4A148C', '#7C4DFF', '#651FFF', '#6200EA', '#311B92', '#448AFF', '#2979FF', '#2962FF', '#0D47A1', '#40C4FF', '#00B0FF', '#0091EA', '#01579B', '#18FFFF', '#00E5FF', '#00B8D4', '#006064', '#69F0AE', '#00E676', '#00C853', '#1B5E20', '#B2FF59', '#76FF03', '#64DD17', '#FFFF00', '#FFEA00', '#FFD600', '#FFD740', '#FFC400', '#FFAB00', '#FF6D00'];
 
-  // EDIT CONTEXT
   let editingId = null, editingClient = null, editingDayIdx = null;
   let tempSessionData = null, editingLinkedPattern = null, editingRangeIndex = null;
 
   /* ==========================================
-     2. DATA MANAGER (МЕТОД ИЗ "ЗАМЕРОВ")
+     2. DATA MANAGER (РЕШЕНИЕ: FORM DATA)
      ========================================== */
   const DataManager = {
     keys: {
@@ -506,33 +503,31 @@
       } catch (e) {}
     },
 
+    // 🔥 ГЛАВНАЯ ФУНКЦИЯ: ОТПРАВКА ЧЕРЕЗ ФОРМУ 🔥
     async fetchFromServer(action, payload = {}) {
       const tg = window.Telegram?.WebApp;
-      const body = {
+      
+      // 1. Формируем объект данных
+      const requestData = {
         action: action,
         init_data: tg?.initData || '', 
         ...payload
       };
 
+      // 2. Создаем "Виртуальную Форму"
+      // application/x-www-form-urlencoded
+      const formData = new URLSearchParams();
+      formData.append('payload', JSON.stringify(requestData));
+
       try {
         const resp = await fetch(API_URL, {
           method: 'POST',
-          // 🔥🔥🔥 ТОТ САМЫЙ ХАК ИЗ PROD ПРОЕКТА 🔥🔥🔥
-          // Мы обманываем браузер, говоря что это текст. Браузер не делает CORS Preflight.
-          // А Google Script внутри все равно прочтет это, так как мы добавили парсер.
-          headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
-          body: JSON.stringify(body),
-          mode: 'cors' // Важно оставить cors
+          // Заголовки не нужны, fetch сам поставит правильный Content-Type для URLSearchParams
+          body: formData
         });
         
-        const text = await resp.text();
-        let json = null;
-        try { json = text ? JSON.parse(text) : null; } catch(e){}
-
-        if (!resp.ok || !json || json.ok !== true) {
-           // Если статус не 200 или в JSON написано ok: false
-           throw new Error((json && json.error) || `Server Error: ${resp.status}`);
-        }
+        const json = await resp.json();
+        if (!json.ok) throw new Error(json.error || 'Server error');
         return json.data;
       } catch (e) {
         console.error('API Error:', e);
@@ -542,7 +537,7 @@
   };
 
   /* ==========================================
-     3. INIT & APP
+     3. LOGIC
      ========================================== */
   (function smartVersionCheck(){
     try{
@@ -563,11 +558,9 @@
     const d = new Date();
     const monthStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; 
 
-    // 1. Кэш
     const cached = DataManager.loadFromCache(monthStr);
     if (cached.settings || cached.calendar) applyDataToState(cached, monthStr);
 
-    // 2. Сеть
     try {
       const fresh = await DataManager.fetchFromServer('init_load', { month_str: monthStr });
       applyDataToState(fresh, monthStr);
@@ -603,9 +596,7 @@
     updateAllDayStats();
   }
 
-  /* ==========================================
-     4. ACTIONS
-     ========================================== */
+  /* --- ACTIONS --- */
   async function trySaveSession() {
     let clientName = document.getElementById('inpClient').value;
     if (clientName === '_new_') clientName = document.getElementById('inpNewClient').value.trim() || 'Гость';
@@ -713,9 +704,7 @@
   }
   async function deleteRange(i) { specialRanges.splice(i, 1); if (editingRangeIndex === i) resetRangeForm(); renderRangesList(); reRenderBlocks(); await syncSettings(); }
 
-  /* ==========================================
-     5. VISUAL HELPERS & RENDERING
-     ========================================== */
+  /* --- VISUAL HELPERS --- */
   function getLocalDateStr(date) { const y = date.getFullYear(); const m = String(date.getMonth() + 1).padStart(2, '0'); const d = String(date.getDate()).padStart(2, '0'); return `${y}-${m}-${d}`; }
   function getDateStr(offset) { const d=new Date(); d.setDate(d.getDate()+offset); return getLocalDateStr(d); }
   function getStartOfWeek(date) { const d=new Date(date); const day=d.getDay(); const diff=d.getDate()-day+(day===0?-6:1); d.setDate(diff); d.setHours(0,0,0,0); return d; }
