@@ -179,7 +179,11 @@
   
   .form-group { margin-bottom: 16px; }
   .form-label { font-size: 12px; color: #8E8E93; margin-bottom: 6px; margin-left: 2px; text-transform: uppercase; }
-  .input-box { width: 100%; background: rgba(118, 118, 128, 0.24); border: none; border-radius: 10px; padding: 12px; color: #fff; font-size: 16px; appearance: none; }
+  
+  /* UPDATED INPUT BOX - forcing white color */
+  .input-box { width: 100%; background: rgba(118, 118, 128, 0.24); border: none; border-radius: 10px; padding: 12px; color: #fff; font-size: 16px; appearance: none; -webkit-appearance: none; }
+  .input-box[type="date"] { color: #fff; }
+  
   .input-row { display: flex; gap: 12px; }
   .btn-primary { width: 100%; padding: 14px; background: #fff; color: #000; font-weight: 600; font-size: 16px; border-radius: 12px; border: none; margin-top: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; }
   .btn-secondary { background: rgba(255,255,255,0.1); color: #fff; }
@@ -600,7 +604,18 @@
         daySched.forEach(slot => {
           const exists = sessions.some(s => s.client === client.name && s.dateStr === dateStr && s.start === slot.s);
           if(!exists) {
-            const ghost = { id: `ghost-${client.id}-${dateStr}-${slot.s}`, client: client.name, start: slot.s, end: slot.e, type: 'client', status: 'ghost', clientId: client.id, linkedPatternSlot: { dayIdx, s: slot.s, e: slot.e } };
+            // FIX: Add explicit dateStr to ghost object
+            const ghost = { 
+                id: `ghost-${client.id}-${dateStr}-${slot.s}`, 
+                client: client.name, 
+                dateStr: dateStr, // EXPLICIT DATE
+                start: slot.s, 
+                end: slot.e, 
+                type: 'client', 
+                status: 'ghost', 
+                clientId: client.id, 
+                linkedPatternSlot: { dayIdx, s: slot.s, e: slot.e } 
+            };
             if (isClientMode) { if (client.id === simulatedClientId) { col.appendChild(createEventEl(ghost)); } } else { col.appendChild(createEventEl(ghost)); }
           }
         });
@@ -628,7 +643,32 @@
         div.innerHTML=`<div class="ev-title">${s.client}</div><div class="ev-time">${s.start} - ${s.end}</div>`;
     }
 
-    div.onclick=(e)=>{ e.stopPropagation(); openEdit(s); }; return div;
+    div.onclick=(e)=>{ e.stopPropagation(); if(s.status === 'ghost') confirmGhost(s); else openEdit(s); }; return div;
+  }
+
+  // === CONFIRM GHOST LOGIC ADDED ===
+  function confirmGhost(ghost) {
+    // Now use explicit dateStr from ghost object
+    const realSession = { 
+        id: Date.now(), 
+        client: ghost.client, 
+        dateStr: ghost.dateStr, 
+        start: ghost.start, 
+        end: ghost.end, 
+        note: '', 
+        status: 'planned', 
+        type: 'client',
+        linkedPatternSlot: ghost.linkedPatternSlot // Keep link
+    };
+    
+    // Validate availability before confirming
+    if (isClientMode) { 
+        const val = validateAppointment(realSession.dateStr, realSession.start, realSession.end); 
+        if(!val.valid) { showToast(val.msg, true); return; } 
+    }
+    
+    // Open edit directly, don't save yet. Let user confirm in modal.
+    openEdit(realSession);
   }
 
   // === SESSION EDITOR LOGIC ===
@@ -648,8 +688,11 @@
     populateClientSelect();
     
     // UI Updates
-    document.getElementById('sheetTitle').textContent = s.status === 'ghost' ? 'Подтвердить' : 'Редактировать'; 
-    document.getElementById('btnDelete').style.display = s.status === 'ghost' ? 'none' : 'block';
+    // If ID is new (from confirmGhost), it's technically a "new" session in terms of DB, but we treat as edit
+    const isNew = !sessions.some(sess => sess.id === s.id);
+    document.getElementById('sheetTitle').textContent = isNew ? 'Подтвердить' : 'Редактировать'; 
+    document.getElementById('btnDelete').style.display = isNew ? 'none' : 'block';
+    
     const pBox = document.getElementById('patternInfoBox');
     
     // Pattern Info
@@ -774,11 +817,25 @@
                 // Remove specific session if it matches new pattern? No, just keep it as confirmed
                 sessions[idx].linkedPatternSlot = null; // Reset link, next render will link it correctly by value
              }
+        } else {
+             // Case where editingId is present but not found (rare) or new session with explicit ID
+             sessions.push({ id: editingId, ...data });
         }
     } else {
-        // New from Ghost or Scratch
-        const newId = Date.now();
-        sessions.push({ id: newId, ...data });
+        // New from Ghost or Scratch (editingId is null or ghost ID)
+        // If it was a ghost ID, we generated a NEW ID in openEdit -> confirmGhost -> realSession.id
+        // Wait, confirmGhost passes a realSession with a numeric ID.
+        // openEdit sets editingId = s.id.
+        // So if it came from confirmGhost, editingId is a number (Date.now()), but it is NOT in sessions array yet.
+        // So findIndex will fail.
+        
+        // Correct logic:
+        const idx=sessions.findIndex(s=>s.id===editingId);
+        if (idx !== -1) {
+             sessions[idx] = { ...sessions[idx], ...data };
+        } else {
+             sessions.push({ id: editingId || Date.now(), ...data });
+        }
     }
 
     saveData(); 
