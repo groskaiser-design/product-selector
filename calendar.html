@@ -446,12 +446,10 @@
 </div>
 
 <script>
-  /* ==========================================
-     1. CONFIG
-     ========================================== */
-  const APP_VERSION = 'v4.0-form-data';
-  // Твой URL
-  const API_URL = 'https://script.google.com/macros/s/AKfycbyNdwHHme0P7SYJ5jB0_D6l3-toj1bK8fnxhnSshvdU6cDHOdw5ZrvzfDpj1PQVUsg0kw/exec';
+  // 1. CONFIG
+  const APP_VERSION = 'v5.0-MEASUREMENTS-STYLE';
+  // 👇 ОБЯЗАТЕЛЬНО ВСТАВЬ НОВУЮ ССЫЛКУ /exec 👇
+  const API_URL = 'https://script.google.com/macros/s/AKfycbzvm1h99_j5GBODyilQufuy9pqUKwoMOW8unzn9GVX3LC5oPO2_fkP0dev0W9cGsCg7zQ/exec'; 
 
   const GRID_H = 60;
   let startOffset = -30, endOffset = 60;
@@ -470,12 +468,11 @@
   
   const colorPalette = ['#B0BEC5', '#90A4AE', '#78909C', '#607D8B', '#455A64', '#BCAAA4', '#8D6E63', '#5D4037', '#FF5252', '#FF1744', '#D50000', '#B71C1C', '#FF4081', '#F50057', '#C51162', '#880E4F', '#E040FB', '#D500F9', '#AA00FF', '#4A148C', '#7C4DFF', '#651FFF', '#6200EA', '#311B92', '#448AFF', '#2979FF', '#2962FF', '#0D47A1', '#40C4FF', '#00B0FF', '#0091EA', '#01579B', '#18FFFF', '#00E5FF', '#00B8D4', '#006064', '#69F0AE', '#00E676', '#00C853', '#1B5E20', '#B2FF59', '#76FF03', '#64DD17', '#FFFF00', '#FFEA00', '#FFD600', '#FFD740', '#FFC400', '#FFAB00', '#FF6D00'];
 
-  // CONTEXT
   let editingId = null, editingClient = null, editingDayIdx = null;
   let tempSessionData = null, editingLinkedPattern = null, editingRangeIndex = null;
 
   /* ==========================================
-     2. DATA MANAGER (DEBUG VERSION)
+     2. DATA MANAGER (STYLE: MEASUREMENTS)
      ========================================== */
   const DataManager = {
     keys: {
@@ -508,61 +505,45 @@
     async fetchFromServer(action, payload = {}) {
       const tg = window.Telegram?.WebApp;
       
-      // 1. ЛОГ ДАННЫХ ДО ОТПРАВКИ
-      console.log(`🚀 [API] Starting request: ${action}`);
-      console.log(`🔗 [API] URL: ${API_URL}`);
-      
       const bodyData = {
         action: action,
         init_data: tg?.initData || '', 
         ...payload
       };
 
-      // Логируем то, что реально улетит
-      const stringBody = JSON.stringify(bodyData);
-      console.log(`📦 [API] Payload size: ${stringBody.length} chars`);
-      console.log(`📦 [API] Payload preview:`, stringBody.substring(0, 200) + '...');
+      console.log(`[API] Sending ${action}...`);
 
       try {
-        // МЫ ВЕРНУЛИ TEXT/PLAIN, ТАК КАК ЭТО РАБОТАЛО В ПРОШЛОМ ПРОЕКТЕ
-        // Но добавили redirect: 'follow' явно
         const resp = await fetch(API_URL, {
           method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: stringBody,
-          redirect: 'follow' 
+          // 🔥 ВАЖНО: text/plain чтобы браузер не делал OPTIONS запрос
+          headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+          body: JSON.stringify(bodyData)
         });
         
-        console.log(`✅ [API] Response Status: ${resp.status} ${resp.statusText}`);
-        console.log(`✅ [API] Response Type: ${resp.type}`);
-        console.log(`✅ [API] Response URL (after redirect): ${resp.url}`);
-
+        // Читаем как текст, потом парсим, чтобы поймать HTML-ошибки от Google
         const text = await resp.text();
-        console.log(`📄 [API] Raw Response Body:`, text.substring(0, 500)); // Первые 500 символов
-
         let json = null;
-        try { 
-          json = text ? JSON.parse(text) : null; 
-        } catch(e) {
-          console.error(`❌ [API] JSON Parse Error. Raw response is likely HTML error page.`);
+        try { json = JSON.parse(text); } catch(e) { 
+            console.error('[API] Bad JSON response:', text.substring(0, 200));
+            throw new Error('Server returned invalid JSON (likely HTML error)'); 
         }
 
-        if (!resp.ok || !json || json.ok !== true) {
-           throw new Error((json && json.error) || `Server Error: ${resp.status}`);
+        if (!json.ok) {
+           throw new Error(json.error || 'Unknown Server Error');
         }
         
-        console.log(`🎉 [API] Success! Data:`, json.data);
+        console.log(`[API] Success ${action}`);
         return json.data;
-
       } catch (e) {
-        console.error(`🔥 [API] FETCH FAILED:`, e);
+        console.error('[API] Error:', e);
         throw e;
       }
     }
   };
 
   /* ==========================================
-     3. INIT & APP
+     3. INIT
      ========================================== */
   (function smartVersionCheck(){
     try{
@@ -572,15 +553,8 @@
   })();
 
   async function init() {
-    console.log('🏁 [INIT] Starting App...');
     const tg = window.Telegram?.WebApp;
-    if(tg) { 
-        tg.ready(); tg.expand(); 
-        console.log('📱 [INIT] Telegram WebApp Ready. User ID:', tg.initDataUnsafe?.user?.id);
-        try{tg.setHeaderColor('#050505');tg.setBackgroundColor('#050505');}catch(_){} 
-    } else {
-        console.warn('⚠️ [INIT] Telegram WebApp NOT detected');
-    }
+    if(tg) { tg.ready(); tg.expand(); try{tg.setHeaderColor('#050505');tg.setBackgroundColor('#050505');}catch(_){} }
 
     renderTimeColumn(); renderDayRange(startOffset, endOffset);
     scrollToToday(); startClock();
@@ -591,10 +565,7 @@
     const monthStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; 
 
     const cached = DataManager.loadFromCache(monthStr);
-    if (cached.settings || cached.calendar) {
-        console.log('💾 [INIT] Loaded from cache');
-        applyDataToState(cached, monthStr);
-    }
+    if (cached.settings || cached.calendar) applyDataToState(cached, monthStr);
 
     try {
       const fresh = await DataManager.fetchFromServer('init_load', { month_str: monthStr });
@@ -602,7 +573,7 @@
       DataManager.saveToCache(fresh, monthStr);
       if(!cached.settings) showToast("Данные загружены", true);
     } catch (e) {
-      console.error('❌ [INIT] Network error:', e);
+      // Если есть кэш, ошибку не показываем навязчиво
       if (!cached.settings) showToast("Нет связи с сервером", false);
     }
   }
@@ -632,7 +603,9 @@
     updateAllDayStats();
   }
 
-  /* --- ACTIONS --- */
+  /* ==========================================
+     4. ACTIONS
+     ========================================== */
   async function trySaveSession() {
     let clientName = document.getElementById('inpClient').value;
     if (clientName === '_new_') clientName = document.getElementById('inpNewClient').value.trim() || 'Гость';
