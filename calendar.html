@@ -445,13 +445,13 @@
   <button class="btn-primary btn-secondary" onclick="clearDayOff()" style="margin-top:12px;">Сбросить</button>
 </div>
 
-  <script>
+<script>
   /* ==========================================
      1. CONFIG & GLOBALS
      ========================================== */
-  const APP_VERSION = 'v1.0-cal';
-  // URL твоего опубликованного скрипта
-  const API_URL = 'https://script.google.com/macros/s/AKfycbyspDRKSb0ZDroDP8EZuw_hIk6G-oB-tp131Pd3Z2B8f6BLv5EjqsE17dySWkDvzBVAPw/exec';
+  const APP_VERSION = 'v1.1-cal-final';
+  // Твой URL Google Apps Script (проверь, что он актуален после деплоя!)
+  const API_URL = 'https://script.google.com/macros/s/AKfycbxEvxFb82VtpNwBb6VOR1xmLSiigaVYLMbyIX8CXwrgsIHMzKKq-_O7MxwKbb93QCw0_w/exec';
 
   const GRID_H = 60;
   let startOffset = -30, endOffset = 60;
@@ -467,14 +467,12 @@
   let simulatedClientId = 1;
 
   // --- DATA STORAGE (State) ---
-  // Начинаем с пустых данных, удалив тестовые заглушки
   let availabilityPattern = {0:[],1:[],2:[],3:[],4:[],5:[],6:[]}; 
   let dateExceptions = {}; 
   let specialRanges = []; 
-  let clients = []; // Пусто, данные придут с сервера
-  let sessions = []; // Пусто, данные придут с сервера
+  let clients = []; 
+  let sessions = []; 
   
-  // Цвета для генерации (если не задан)
   const colorPalette = ['#B0BEC5', '#90A4AE', '#78909C', '#607D8B', '#455A64', '#BCAAA4', '#8D6E63', '#5D4037', '#FF5252', '#FF1744', '#D50000', '#B71C1C', '#FF4081', '#F50057', '#C51162', '#880E4F', '#E040FB', '#D500F9', '#AA00FF', '#4A148C', '#7C4DFF', '#651FFF', '#6200EA', '#311B92', '#448AFF', '#2979FF', '#2962FF', '#0D47A1', '#40C4FF', '#00B0FF', '#0091EA', '#01579B', '#18FFFF', '#00E5FF', '#00B8D4', '#006064', '#69F0AE', '#00E676', '#00C853', '#1B5E20', '#B2FF59', '#76FF03', '#64DD17', '#FFFF00', '#FFEA00', '#FFD600', '#FFD740', '#FFC400', '#FFAB00', '#FF6D00'];
 
   // EDIT CONTEXT
@@ -496,7 +494,6 @@
     },
 
     getUserId() {
-      // Пытаемся получить ID из Telegram, иначе 'guest'
       return window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'guest';
     },
 
@@ -556,7 +553,6 @@
      3. INITIALIZATION & SYNC
      ========================================== */
   
-  // Версионирование
   (function smartVersionCheck(){
     try{
       const url = new URL(location.href);
@@ -569,27 +565,24 @@
     const tg = window.Telegram?.WebApp;
     if(tg) { tg.ready(); tg.expand(); try { tg.setHeaderColor('#050505'); tg.setBackgroundColor('#050505'); } catch(e){} }
 
-    // Рендер каркаса (пустой)
     renderTimeColumn(); 
     renderDayRange(startOffset, endOffset);
     scrollToToday(); 
     startClock();
     
-    // Инит скролла
     const vp = document.getElementById('matrixViewport');
     vp.addEventListener('scroll', ()=>{ isScrolling = true; cancelLongPress(); onScroll(); handleInfiniteScroll(); }, {passive: true});
 
-    // 2. Загрузка данных
     const d = new Date();
     const monthStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; 
 
-    // A. Из кэша (быстро)
+    // A. Из кэша
     const cached = DataManager.loadFromCache(monthStr);
     if (cached.settings || cached.calendar) {
       applyDataToState(cached, monthStr);
     }
 
-    // B. Из сети (фоном)
+    // B. Из сети
     try {
       const freshData = await DataManager.fetchFromServer('init_load', { month_str: monthStr });
       applyDataToState(freshData, monthStr);
@@ -600,14 +593,14 @@
     }
   }
 
-  // Применяем данные от бэкенда в переменные фронтенда
   function applyDataToState(data, monthStr) {
     if (!data) return;
 
-    // 1. Settings
+    // 1. Settings (Pattern, Exceptions, Ranges)
     if (data.settings) {
       if (data.settings.pattern) availabilityPattern = data.settings.pattern;
-      // В будущем тут можно сохранять ranges и exceptions, если они в settings
+      if (data.settings.exceptions) dateExceptions = data.settings.exceptions;
+      if (data.settings.ranges) specialRanges = data.settings.ranges;
     }
 
     // 2. Clients
@@ -615,23 +608,17 @@
       clients = data.clients;
     }
 
-    // 3. Sessions (Calendar Bucket)
+    // 3. Sessions
     if (data.calendar) {
-      // Удаляем сессии этого месяца из памяти, чтобы заменить свежими
-      // Оставляем сессии других месяцев (если мы листали)
       sessions = sessions.filter(s => !s.dateStr.startsWith(monthStr));
-
-      // Распаковка: { "29": [{s,e,c...}] } -> Array
       Object.keys(data.calendar).forEach(dayKey => {
         const dayEvents = data.calendar[dayKey];
         dayEvents.forEach(evt => {
-          // Ищем имя клиента по ID
-          const clientObj = clients.find(c => String(c.id) === String(evt.c)) || { name: 'Загрузка...', color: '#555' };
-          
+          const clientObj = clients.find(c => String(c.id) === String(evt.c)) || { name: 'Неизвестный', color: '#555' };
           sessions.push({
             id: evt.i,
             clientId: evt.c,
-            client: clientObj.name, // Для отображения
+            client: clientObj.name, 
             dateStr: `${monthStr}-${dayKey.padStart(2, '0')}`,
             start: evt.s,
             end: evt.e,
@@ -643,16 +630,15 @@
       });
     }
 
-    // 4. Полная перерисовка
     reRenderBlocks();
-    // Обновляем шапки (статистику)
     updateAllDayStats();
   }
 
   /* ==========================================
-     4. USER ACTIONS (Save / Delete / Clients)
+     4. DATA SAVING LOGIC (Sessions, Clients, Settings)
      ========================================== */
 
+  // --- СЕССИИ (SAVE) ---
   async function trySaveSession() {
     let clientName = document.getElementById('inpClient').value;
     if (clientName === '_new_') {
@@ -664,139 +650,188 @@
     const note = document.getElementById('inpNote').value;
     const isRecurring = document.getElementById('inpRecurring').checked;
 
-    // Валидация (Client Mode)
     if (isClientMode) { 
         const val = validateAppointment(dateStr, start, end, editingId); 
         if(!val.valid) { showToast(val.msg, true); return; } 
     }
 
-    // Поиск клиента
     let clientObj = clients.find(c => c.name === clientName);
-    
-    // Если новый клиент -> создаем (Оптимистично + Запрос)
     if (!clientObj) {
         const tempId = 'tmp_' + Date.now();
-        clientObj = { 
-            id: tempId, 
-            name: clientName, 
-            color: colorPalette[Math.floor(Math.random() * colorPalette.length)], 
-            schedule: {} 
-        };
+        clientObj = { id: tempId, name: clientName, color: colorPalette[Math.floor(Math.random() * colorPalette.length)], schedule: {} };
         clients.push(clientObj);
-        
-        // Отправка клиента на бэк
         DataManager.fetchFromServer('save_client', { client: clientObj })
             .then(res => { if(res.client_id) clientObj.id = res.client_id; });
     }
 
-    // Подготовка объекта сессии
     const newData = { 
         id: editingId || Date.now(), 
-        clientId: clientObj.id, // ID для базы
-        client: clientName,     // Имя для UI
+        clientId: clientObj.id, 
+        client: clientName,     
         dateStr, start, end, note, 
         status: 'planned', type: 'client' 
     };
 
-    // --- Обработка повторяющихся (логика без изменений) ---
-    if (editingLinkedPattern) {
-        // ... (логика конфликтов паттерна, как была) ...
-        // Для простоты MVP: при редактировании паттерна обновляем только текущую запись
-        // Если нужно полноценное редактирование серии — это отдельный запрос на бэк
-    }
     if (!editingLinkedPattern && isRecurring) {
-        // Создаем локальный паттерн (оптимистично)
-        // На бэк это пока не уходит как "паттерн", только как сессия
-        // В будущем: добавить API endpoint 'save_pattern'
         const newD = new Date(dateStr);
         let newDayIdx = newD.getDay() - 1; if(newDayIdx === -1) newDayIdx = 6;
         updateClientPattern(clientName, null, { dateStr, start, end });
+        
+        // Отправляем обновленного клиента (с расписанием) на сервер
+        const clientToSave = clients.find(c => c.name === clientName);
+        if (clientToSave) {
+             DataManager.fetchFromServer('save_client', { client: clientToSave })
+                .then(() => console.log('Client pattern saved'));
+        }
         newData.linkedPatternSlot = { dayIdx: newDayIdx, s: start, e: end };
+        showToast("Серия создана", true);
     }
 
-    // ОПТИМИСТИЧНОЕ СОХРАНЕНИЕ
     commitSaveOptimistic(newData);
   }
 
   async function commitSaveOptimistic(data) {
-    // 1. Обновляем локальный массив
     const idx = sessions.findIndex(s => s.id == data.id);
     if (idx !== -1) sessions[idx] = { ...sessions[idx], ...data };
     else sessions.push(data);
 
     closeAllSheets();
-    reRenderBlocks(); // Обновляем UI мгновенно
+    reRenderBlocks();
     updateAllDayStats();
     showToast("Сохранение...", true);
 
-    // 2. Шлем на сервер
     try {
-      const res = await DataManager.fetchFromServer('save_session', {
-        date: data.dateStr,
-        session: data
-      });
+      const res = await DataManager.fetchFromServer('save_session', { date: data.dateStr, session: data });
       if(res.saved_id) {
-         // Если сервер присвоил нормальный ID (вместо временного)
          const local = sessions.find(s => s.id == data.id);
          if(local) local.id = res.saved_id;
          showToast("Сохранено", true);
       }
     } catch(e) {
       showToast("Ошибка сохранения!", false);
-      // Тут можно было бы удалить запись из sessions, если ошибка
     }
   }
 
+  // --- СЕССИИ (DELETE) ---
   async function tryDeleteSession() {
     if(!editingId) return;
     const s = sessions.find(x => x.id == editingId);
     if(!s) return;
 
-    // Оптимистичное удаление
     sessions = sessions.filter(x => x.id != editingId);
     closeAllSheets();
     reRenderBlocks();
     updateAllDayStats();
     showToast("Удалено", false);
 
-    // На сервер
     try {
-      await DataManager.fetchFromServer('save_session', {
-        date: s.dateStr,
-        session: { id: s.id },
-        is_delete: true
-      });
+      await DataManager.fetchFromServer('save_session', { date: s.dateStr, session: { id: s.id }, is_delete: true });
     } catch(e) {
       showToast("Ошибка синхронизации удаления", false);
     }
   }
 
-  // --- Сохранение клиента из меню ---
+  // --- КЛИЕНТЫ ---
   async function saveClient() {
     const name = document.getElementById('ceName').value; 
     if(!name) return alert('Введите имя'); 
     editingClient.name = name;
     
-    // UI
     const idx = clients.findIndex(c => c.id === editingClient.id);
     if(idx !== -1) clients[idx] = editingClient; 
     else clients.push(editingClient);
     
     closeAllSheets();
-    reRenderBlocks(); // Цвета могли измениться
+    reRenderBlocks(); 
 
-    // Server
     try {
         await DataManager.fetchFromServer('save_client', { client: editingClient });
         showToast("Клиент сохранен", true);
     } catch(e) { showToast("Ошибка", false); }
   }
 
+  // --- НАСТРОЙКИ (Pattern, Exceptions, Ranges) ---
+  
+  // Единая функция для отправки настроек
+  async function syncSettings() {
+    showToast("Сохранение настроек...", true);
+    const d = new Date();
+    const monthStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+    const cached = DataManager.loadFromCache(monthStr) || {};
+    
+    const fullSettings = {
+        ...(cached.settings || {}),
+        pattern: availabilityPattern,
+        exceptions: dateExceptions,
+        ranges: specialRanges
+    };
+    
+    DataManager.saveToCache({ ...cached, settings: fullSettings }, monthStr);
+
+    try {
+        await DataManager.fetchFromServer('save_settings', { settings: fullSettings });
+    } catch (e) {
+        showToast("Ошибка сохранения настроек", false);
+    }
+  }
+
+  async function savePattern() {
+    document.getElementById('patternEditor').classList.remove('open');
+    reRenderBlocks();
+    updateAllDayStats();
+    await syncSettings();
+    showToast("График сохранен", true);
+  }
+
+  async function toggleDayOff() {
+    if (selectedDayForOptions) {
+      dateExceptions[selectedDayForOptions] = 'off';
+      reRenderBlocks();
+      closeAllSheets();
+      await syncSettings();
+    }
+  }
+
+  async function clearDayOff() {
+    if (selectedDayForOptions) {
+      delete dateExceptions[selectedDayForOptions];
+      reRenderBlocks();
+      closeAllSheets();
+      await syncSettings();
+    }
+  }
+
+  async function addRange() {
+    const dS = document.getElementById('rangeStartDate').value;
+    const tS = document.getElementById('rangeStartTime').value;
+    const dE = document.getElementById('rangeEndDate').value;
+    const tE = document.getElementById('rangeEndTime').value;
+    if (!dS || !tS || !dE || !tE) return alert('Заполните все поля');
+    const start = `${dS}T${tS}`, end = `${dE}T${tE}`;
+    if (start >= end) return alert('Ошибка дат');
+    
+    const nr = { start, end };
+    if (editingRangeIndex !== null) specialRanges[editingRangeIndex] = nr;
+    else specialRanges.push(nr);
+    
+    resetRangeForm();
+    renderRangesList();
+    reRenderBlocks();
+    await syncSettings();
+  }
+
+  async function deleteRange(i) {
+    specialRanges.splice(i, 1);
+    if (editingRangeIndex === i) resetRangeForm();
+    renderRangesList();
+    reRenderBlocks();
+    await syncSettings();
+  }
+
   /* ==========================================
-     5. ORIGINAL CALENDAR LOGIC (Preserved)
+     5. VISUAL LOGIC & HELPERS
      ========================================== */
 
-  // UTILS
   function getLocalDateStr(date) {
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -808,7 +843,6 @@
   function hexToRgba(hex, alpha) { const r = parseInt(hex.slice(1, 3), 16); const g = parseInt(hex.slice(3, 5), 16); const b = parseInt(hex.slice(5, 7), 16); return `rgba(${r}, ${g}, ${b}, ${alpha})`; }
   function getContrastYIQ(hexcolor){ hexcolor = hexcolor.replace("#", ""); var r = parseInt(hexcolor.substr(0,2),16); var g = parseInt(hexcolor.substr(2,2),16); var b = parseInt(hexcolor.substr(4,2),16); var yiq = ((r*299)+(g*587)+(b*114))/1000; return (yiq >= 128) ? 'black' : 'white'; }
 
-  // RENDERING
   function renderTimeColumn() {
     const col=document.getElementById('timeColumn'), badge=document.getElementById('timeLineBadge'); col.innerHTML=''; col.appendChild(badge);
     for(let i=0; i<24; i++) { 
@@ -850,7 +884,6 @@
       if(dateExceptions[dateStr]==='off') { 
           const o=document.createElement('div'); o.className='day-off-overlay'; col.appendChild(o); 
       } else {
-        // Special Ranges
         const cS=new Date(dateStr+'T00:00:00').getTime(), cE=new Date(dateStr+'T23:59:59').getTime();
         specialRanges.forEach(r=>{
           const rS=new Date(r.start).getTime(), rE=new Date(r.end).getTime(); const oS=Math.max(cS,rS), oE=Math.min(cE,rE);
@@ -860,7 +893,6 @@
           }
         });
       }
-      // Re-render events to ensure they are on top
       renderEventsForColumn(col, dateStr, dayIdx);
       updateDayStats(dateStr);
     });
@@ -870,27 +902,22 @@
   function updateDayStats(dateStr) {
     const track = document.getElementById(`stat-${dateStr}`);
     if (!track) return;
-
-    // 1. Working Capacity
     const dayDate = new Date(dateStr);
     let dayIdx = dayDate.getDay() - 1; if (dayIdx === -1) dayIdx = 6;
     let blockedIntervals = [];
     const pat = availabilityPattern[dayIdx] || [];
     pat.forEach(h => { blockedIntervals.push([h * 60, (h + 1) * 60]); });
-    // ... (Simplified range logic for brevity, core pattern is main) ...
     let totalBlocked = 0; blockedIntervals.forEach(iv => totalBlocked += (iv[1] - iv[0]));
     let totalWorkingMinutes = 1440 - totalBlocked;
     
     if (dateExceptions[dateStr] === 'off') { track.style.display = 'none'; return; }
 
-    // 2. Busy Time
     let busyIntervals = [];
     sessions.filter(s => s.dateStr === dateStr && s.status !== 'cancelled').forEach(s => {
         const [h1, m1] = s.start.split(':').map(Number);
         const [h2, m2] = s.end.split(':').map(Number);
         busyIntervals.push([h1 * 60 + m1, h2 * 60 + m2]);
     });
-    // Add Ghosts
     clients.forEach(client => {
         const daySched = client.schedule?.[dayIdx];
         if (daySched) {
@@ -905,7 +932,6 @@
         }
     });
 
-    // Merge Intervals
     busyIntervals.sort((a, b) => a[0] - b[0]);
     let mergedBusy = [];
     if (busyIntervals.length > 0) {
@@ -929,14 +955,14 @@
 
   function renderEventsForColumn(col, dateStr, dayIdx) {
     col.querySelectorAll('.event-card').forEach(e=>e.remove());
-    // 1. Real
+    // Real
     sessions.filter(s=>s.dateStr===dateStr && s.status !== 'cancelled').forEach(s => {
         if (isClientMode) {
             const cli = clients.find(c => c.name === s.client); const sClientId = cli ? cli.id : -1;
             if (sClientId === simulatedClientId) { col.appendChild(createEventEl(s)); } else { col.appendChild(createBusyEl(s)); }
         } else { col.appendChild(createEventEl(s)); }
     });
-    // 2. Ghosts
+    // Ghosts
     clients.forEach(client => {
       const daySched = client.schedule?.[dayIdx];
       if(daySched) {
@@ -986,7 +1012,6 @@
     openEdit(realSession);
   }
 
-  // INTERACTION
   function attachLongPressHandler(element, dateObj) {
     let startY = 0; let feedbackTimer = null; let actionTimer = null; let feedbackEl = null;
     const cleanup = () => { clearTimeout(feedbackTimer); clearTimeout(actionTimer); if(feedbackEl) { feedbackEl.remove(); feedbackEl = null; } };
@@ -995,9 +1020,8 @@
         feedbackTimer = setTimeout(() => { if(isScrolling) return; const rect = element.getBoundingClientRect(); const offsetY = startY - rect.top; const hour = Math.floor(offsetY / GRID_H); if(navigator.vibrate) navigator.vibrate(10); feedbackEl = document.createElement('div'); feedbackEl.className = 'touch-feedback'; feedbackEl.style.top = (hour * GRID_H) + 'px'; feedbackEl.style.height = GRID_H + 'px'; element.appendChild(feedbackEl); }, 150);
         actionTimer = setTimeout(() => { if(!isScrolling) { if(window.Telegram?.WebApp?.HapticFeedback) window.Telegram.WebApp.HapticFeedback.impactOccurred('medium'); else if (navigator.vibrate) navigator.vibrate(50); const rect = element.getBoundingClientRect(); const offsetY = startY - rect.top; const hour = Math.floor(offsetY / GRID_H); cleanup(); const setD = new Date(dateObj); setD.setHours(hour, 0); openAddSession(setD); } }, 600);
     };
-    const cancelHandler = () => { cleanup(); };
     const moveHandler = (e) => { const currentY = (e.touches ? e.touches[0].clientY : e.clientY); if (Math.abs(currentY - startY) > 10) { isScrolling = true; cleanup(); } };
-    element.addEventListener('touchstart', startHandler, {passive: true}); element.addEventListener('touchmove', moveHandler, {passive: true}); element.addEventListener('touchend', cancelHandler); element.addEventListener('touchcancel', cancelHandler); element.addEventListener('mousedown', startHandler); element.addEventListener('mousemove', moveHandler); element.addEventListener('mouseup', cancelHandler); element.addEventListener('mouseleave', cancelHandler);
+    element.addEventListener('touchstart', startHandler, {passive: true}); element.addEventListener('touchmove', moveHandler, {passive: true}); element.addEventListener('touchend', cleanup); element.addEventListener('mousedown', startHandler); element.addEventListener('mousemove', moveHandler); element.addEventListener('mouseup', cleanup);
   }
   function cancelLongPress() { if(longPressTimer) clearTimeout(longPressTimer); if(activeTouchEl) { activeTouchEl.remove(); activeTouchEl = null; } }
 
@@ -1023,7 +1047,7 @@
     track.insertBefore(fragH, track.firstChild); grid.insertBefore(fragC, grid.querySelector('.day-column'));
   }
 
-  // SHEETS & FORMS
+  // SHEETS
   function openAddSession(d) {
     editingId=null; editingLinkedPattern=null; populateClientSelect();
     document.getElementById('sheetTitle').textContent='Новая'; document.getElementById('btnDelete').style.display='none';
@@ -1070,7 +1094,7 @@
     if (type === 'save') {
         title.textContent = "Изменение повторяющегося события";
         btnOne.textContent = "Только эта тренировка"; btnOne.className = "as-button"; btnOne.onclick = () => { closeActionSheet(); commitSaveOptimistic(tempSessionData); };
-        btnSeries.textContent = "Изменить всю серию"; btnSeries.className = "as-button bold"; btnSeries.onclick = () => { closeActionSheet(); /* series save logic todo */ commitSaveOptimistic(tempSessionData); };
+        btnSeries.textContent = "Изменить всю серию"; btnSeries.className = "as-button bold"; btnSeries.onclick = () => { closeActionSheet(); /* series save logic future */ commitSaveOptimistic(tempSessionData); };
     } else if (type === 'delete') {
         title.textContent = "Удаление события";
         btnOne.textContent = "Только эту тренировку"; btnOne.className = "as-button danger"; btnOne.onclick = () => { closeActionSheet(); tryDeleteSession(); };
@@ -1089,7 +1113,6 @@
     }
   }
 
-  // OTHER UI
   function scrollToToday() { 
     const today = getLocalDateStr(new Date());
     const el = document.getElementById('header-' + today); const vp = document.getElementById('matrixViewport');
@@ -1111,21 +1134,16 @@
   function populateClientSelect() { const sel = document.getElementById('inpClient'); sel.innerHTML = ''; clients.forEach(c => { const opt = document.createElement('option'); opt.value = c.name; opt.textContent = c.name; sel.appendChild(opt); }); const optNew = document.createElement('option'); optNew.value = '_new_'; optNew.textContent = '+ Новый / Гость'; optNew.style.fontWeight = 'bold'; optNew.style.color = 'var(--acc-green)'; sel.appendChild(optNew); }
   function onClientSelectChange() { const sel = document.getElementById('inpClient'); const inpNew = document.getElementById('inpNewClient'); if (sel.value === '_new_') { inpNew.style.display = 'block'; inpNew.focus(); } else { inpNew.style.display = 'none'; } }
   function openDayOptions(d,t){selectedDayForOptions=d;document.getElementById('dayOptionsTitle').textContent=t;openSheet('dayOptionsSheet');}
-  function toggleDayOff(){if(selectedDayForOptions){dateExceptions[selectedDayForOptions]='off';reRenderBlocks();closeAllSheets();}}
-  function clearDayOff(){if(selectedDayForOptions){delete dateExceptions[selectedDayForOptions];reRenderBlocks();closeAllSheets();}}
   function openSettings(){openSheet('settingsSheet');}
   function openSheet(id){document.getElementById('overlay').classList.add('active');document.getElementById(id).classList.add('open');}
   function closeAllSheets(){document.getElementById('overlay').classList.remove('active');document.querySelectorAll('.sheet').forEach(s=>s.classList.remove('open'));}
   function toggleClientMode() { isClientMode = !isClientMode; const btn = document.getElementById('btnToggleClientMode'); btn.textContent = isClientMode ? "Глазами клиента: ВКЛ" : "Глазами клиента: ВЫКЛ"; btn.style.background = isClientMode ? 'var(--acc-green)' : 'rgba(255,255,255,0.1)'; btn.style.color = isClientMode ? '#000' : '#fff'; reRenderBlocks(); closeAllSheets(); showToast(isClientMode ? "Режим клиента включен" : "Режим тренера включен"); }
   function openRangesSheet(){closeAllSheets();resetRangeForm();renderRangesList();openSheet('rangesSheet');}
   function resetRangeForm(){editingRangeIndex=null;document.getElementById('rangeStartDate').value='';document.getElementById('rangeStartTime').value='00:00';document.getElementById('rangeEndDate').value='';document.getElementById('rangeEndTime').value='23:59';document.getElementById('rangeSubmitBtn').textContent='Добавить период';}
-  function addRange(){ const dS=document.getElementById('rangeStartDate').value, tS=document.getElementById('rangeStartTime').value; const dE=document.getElementById('rangeEndDate').value, tE=document.getElementById('rangeEndTime').value; if(!dS||!tS||!dE||!tE)return alert('Заполните все поля'); const start=`${dS}T${tS}`, end=`${dE}T${tE}`; if(start>=end)return alert('Ошибка дат'); const nr={start,end}; if(editingRangeIndex!==null)specialRanges[editingRangeIndex]=nr; else specialRanges.push(nr); resetRangeForm(); renderRangesList(); reRenderBlocks(); }
   function editRange(i){const r=specialRanges[i]; editingRangeIndex=i; const [d1,t1]=r.start.split('T'), [d2,t2]=r.end.split('T'); document.getElementById('rangeStartDate').value=d1; document.getElementById('rangeStartTime').value=t1.substring(0,5); document.getElementById('rangeEndDate').value=d2; document.getElementById('rangeEndTime').value=t2.substring(0,5); document.getElementById('rangeSubmitBtn').textContent='Сохранить';}
-  function deleteRange(i){specialRanges.splice(i,1); if(editingRangeIndex===i) resetRangeForm(); renderRangesList(); reRenderBlocks();}
   function renderRangesList(){ const l=document.getElementById('rangesList'); l.innerHTML=''; if(!specialRanges.length) { l.innerHTML='<div style="color:#8E8E93;font-size:13px;text-align:center">Нет периодов</div>'; return; } specialRanges.forEach((r,i)=>{ const el=document.createElement('div'); el.className='range-item'; const f=(iso)=>{const d=new Date(iso); return `${d.getDate()}.${d.getMonth()+1} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;}; el.innerHTML=`<div><div class="range-text">${f(r.start)} — ${f(r.end)}</div><div class="range-sub">Недоступно</div></div><div class="range-actions"><div class="range-icon edit" onclick="editRange(${i})"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></div><div class="range-icon del" onclick="deleteRange(${i})"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></div></div>`; l.appendChild(el); }); }
   function openPatternEditor(){closeAllSheets();document.getElementById('patternEditor').classList.add('open');renderPatternEditor();}
   function closePatternEditor(){document.getElementById('patternEditor').classList.remove('open');} 
-  function savePattern(){document.getElementById('patternEditor').classList.remove('open');reRenderBlocks();}
   function renderPatternEditor(){ const t=document.getElementById('peTimeColumn'); t.innerHTML=''; for(let i=0;i<24;i++){const e=document.createElement('div');e.className='time-label'; if(i > 0) e.innerHTML=`<span>${String(i).padStart(2,'0')}:00</span>`;e.onclick=()=>toggleRowPattern(i);t.appendChild(e);} const h=document.getElementById('peHeaderTrack'); h.innerHTML=''; const w=['ПН','ВТ','СР','ЧТ','ПТ','СБ','ВС']; for(let i=0;i<7;i++){const e=document.createElement('div');e.className='day-col-header';e.innerHTML=`<div class="dch-day" style="margin-top:16px">${w[i]}</div>`;e.onclick=()=>toggleColPattern(i);h.appendChild(e);} const g=document.getElementById('peGridColumns'); g.innerHTML=''; for(let i=0;i<7;i++){const c=document.createElement('div');c.className='day-column';c.onclick=(e)=>{if(e.target!==c)return;toggleSinglePattern(i,Math.floor(e.offsetY/GRID_H));};renderPCol(c,i);g.appendChild(c);} }
   function renderPCol(c,d){c.innerHTML='';(availabilityPattern[d]||[]).forEach(x=>{const b=document.createElement('div');b.className='blocked-slot';b.style.top=`${x*GRID_H}px`;b.onclick=(e)=>{e.stopPropagation();toggleSinglePattern(d,x);};c.appendChild(b);});}
   function toggleSinglePattern(d,h){const a=availabilityPattern[d],i=a.indexOf(h);if(i===-1)a.push(h);else a.splice(i,1);renderPCol(document.getElementById('peGridColumns').children[d],d);}
