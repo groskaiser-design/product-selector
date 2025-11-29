@@ -280,21 +280,22 @@
   .pattern-editor-overlay .day-col-header, .pattern-editor-overlay .day-column { width: auto; flex: 1; }
   .pattern-editor-overlay .blocked-slot { background: repeating-linear-gradient(45deg, rgba(10,132,255,0.15), rgba(10,132,255,0.15) 10px, rgba(10,132,255,0.25) 10px, rgba(10,132,255,0.25) 20px); pointer-events: auto; cursor: pointer; border-top: 1px solid rgba(10,132,255,0.3); border-bottom: 1px solid rgba(10,132,255,0.3); }
 
-  /* Единый стиль штриховки */
+  /* Единый стиль штриховки (ИСПРАВЛЕННЫЙ) */
   .stripe-bg {
-      background-image: repeating-linear-gradient(
+      /* Используем точный квадратный паттерн */
+      background-image: linear-gradient(
           45deg,
-          rgba(255, 255, 255, 0.03),
-          rgba(255, 255, 255, 0.03) 10px,
-          rgba(255, 255, 255, 0.06) 10px,
-          rgba(255, 255, 255, 0.06) 20px
+          rgba(255, 255, 255, 0.03) 25%,
+          transparent 25%,
+          transparent 50%,
+          rgba(255, 255, 255, 0.03) 50%,
+          rgba(255, 255, 255, 0.03) 75%,
+          transparent 75%,
+          transparent
       );
-      /* Важно: фон должен повторяться */
+      /* Размер 28.28px обеспечивает идеальный стык под 45 градусов для шага 20px */
+      background-size: 28.28px 28.28px;
       background-repeat: repeat;
-  }
-  /* Применяем к нужным элементам */
-  .blocked-slot, .blocked-range-part, .day-off-overlay, .event-card.client-view-busy {
-      /* Наследуем градиент из .stripe-bg (добавим этот класс в JS) */
   }
   
 </style>
@@ -809,48 +810,58 @@
 
   function reRenderBlocks() {
   document.querySelectorAll('#gridColumns .day-column').forEach(col => {
+    // Чистим старое
     col.querySelectorAll('.blocked-slot, .day-off-overlay, .blocked-range-part').forEach(e => e.remove());
-    const dateStr = col.getAttribute('data-date'), dayIdx = parseInt(col.getAttribute('data-day-idx'));
     
-    // Получаем отступ колонки слева
-    const colLeft = col.offsetLeft; 
+    const dateStr = col.getAttribute('data-date');
+    const dayIdx = parseInt(col.getAttribute('data-day-idx'));
+    
+    // ГЛАВНОЕ: Берем координату колонки для синхронизации фона
+    const colLeft = Math.round(col.offsetLeft); 
 
-    // Отрисовка паттерна
+    // 1. Отрисовка обычного графика
     (availabilityPattern[dayIdx] || []).forEach(h => {
       const b = document.createElement('div');
       b.className = 'blocked-slot stripe-bg';
       const top = h * GRID_H;
       b.style.top = `${top}px`;
-      // 🔥 ГЛАВНАЯ ПРАВКА: сдвигаем фон и по X, и по Y
+      // Сдвигаем фон обратно на позицию колонки
       b.style.backgroundPosition = `-${colLeft}px -${top}px`;
       col.appendChild(b);
     });
     
-    // Отрисовка выходных/отпусков
+    // 2. Отрисовка выходных и отпусков
     if (dateExceptions[dateStr] === 'off') {
       const o = document.createElement('div');
       o.className = 'day-off-overlay stripe-bg';
-      o.style.backgroundPosition = `-${colLeft}px 0px`;
+      o.style.backgroundPosition = `-${colLeft}px 0px`; // Синхронизация
       col.appendChild(o);
     } else {
-      const cS = new Date(dateStr + 'T00:00:00').getTime(), cE = new Date(dateStr + 'T23:59:59').getTime();
+      const cS = new Date(dateStr + 'T00:00:00').getTime();
+      const cE = new Date(dateStr + 'T23:59:59').getTime();
+      
       specialRanges.forEach(r => {
-        const rS = new Date(r.start).getTime(), rE = new Date(r.end).getTime();
-        const oS = Math.max(cS, rS), oE = Math.min(cE, rE);
+        const rS = new Date(r.start).getTime();
+        const rE = new Date(r.end).getTime();
+        const oS = Math.max(cS, rS);
+        const oE = Math.min(cE, rE);
+        
         if (oS < oE) {
           if (oS <= cS && oE >= cE - 60000) {
             if (!col.querySelector('.day-off-overlay')) {
               const o = document.createElement('div');
               o.className = 'day-off-overlay stripe-bg';
-              o.style.backgroundPosition = `-${colLeft}px 0px`;
+              o.style.backgroundPosition = `-${colLeft}px 0px`; // Синхронизация
               col.appendChild(o);
             }
           } else {
-            const top = (oS - cS) / 3600000 * GRID_H, h = (oE - oS) / 3600000 * GRID_H;
+            const top = (oS - cS) / 3600000 * GRID_H;
+            const h = (oE - oS) / 3600000 * GRID_H;
             const p = document.createElement('div');
             p.className = 'blocked-range-part stripe-bg';
             p.style.top = `${top}px`;
             p.style.height = `${h}px`;
+            // Синхронизация
             p.style.backgroundPosition = `-${colLeft}px -${top}px`;
             col.appendChild(p);
           }
@@ -995,15 +1006,15 @@
   
   function renderPCol(c, d) {
   c.innerHTML = '';
-  // Получаем отступ колонки
-  const colLeft = c.offsetLeft;
+  // Берем отступ колонки внутри редактора
+  const colLeft = Math.round(c.offsetLeft);
   
   (availabilityPattern[d] || []).forEach(x => {
     const b = document.createElement('div');
     b.className = 'blocked-slot stripe-bg';
     const top = x * GRID_H;
     b.style.top = `${top}px`;
-    // 🔥 Сдвигаем фон
+    // Синхронизируем фон
     b.style.backgroundPosition = `-${colLeft}px -${top}px`;
     b.onclick = (e) => { e.stopPropagation(); toggleSinglePattern(d, x); };
     c.appendChild(b);
@@ -1013,12 +1024,15 @@
   function createBusyEl(s, colLeft = 0) {
   const [h, m] = s.start.split(':').map(Number);
   const [hE, mE] = s.end.split(':').map(Number);
-  const top = (h * 60 + m) / 60 * GRID_H, height = (hE * 60 + mE - (h * 60 + m)) / 60 * GRID_H;
+  const top = (h * 60 + m) / 60 * GRID_H;
+  const height = (hE * 60 + mE - (h * 60 + m)) / 60 * GRID_H;
+  
   const div = document.createElement('div');
   div.className = `event-card client-view-busy stripe-bg`;
   div.style.top = `${top}px`;
   div.style.height = `${Math.max(height, 20)}px`;
-  // 🔥 Сдвигаем фон
+  
+  // Синхронизация фона (если передан colLeft)
   div.style.backgroundPosition = `-${colLeft}px -${top}px`;
   return div;
 }
