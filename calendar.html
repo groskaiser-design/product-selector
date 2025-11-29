@@ -444,14 +444,19 @@
 </div>
 
 <div class="sheet fixed-layout" id="clientEditSheet">
-  <div class="sheet-header"><div class="sh-title" id="ceTitle">Новый клиент</div><div class="sh-close" onclick="openClientsSheet()">Назад</div></div>
+  <div class="sheet-header"><div class="sh-title" id="ceTitle">Клиент</div><div class="sh-close" onclick="openClientsSheet()">Назад</div></div>
   
   <div class="sheet-fixed-section">
-    <div class="form-group"><div class="form-label">Имя</div><input type="text" class="input-box" id="ceName" placeholder="Иван И."></div>
+    <div class="form-group">
+      <div class="form-label">Имя</div>
+      <input type="text" class="input-box" id="ceName" placeholder="Имя клиента">
+    </div>
   </div>
   
   <div class="sheet-scroll-area">
-    <div class="form-group"><div class="form-label">Цвет</div>
+    <!-- Добавлен ID "ceColorGroup" для скрытия -->
+    <div class="form-group" id="ceColorGroup">
+      <div class="form-label">Цвет</div>
       <div class="color-grid" id="ceColorGrid"></div>
       <input type="hidden" id="ceColor">
     </div>
@@ -463,7 +468,7 @@
   </div>
 
   <div class="sheet-fixed-footer">
-    <button class="btn-primary" onclick="saveClient()">Сохранить клиента</button>
+    <button class="btn-primary" onclick="saveClient()">Сохранить изменения</button>
   </div>
 </div>
 
@@ -994,7 +999,40 @@
   function onScroll() { const vp=document.getElementById('matrixViewport'), headers=document.querySelectorAll('.day-col-header'); for(let h of headers) if(h.offsetLeft>=vp.scrollLeft) { const d=new Date(h.getAttribute('data-date')); document.getElementById('headerMonth').textContent=`${d.toLocaleString('ru',{month:'long'}).toUpperCase()} ${d.getFullYear()}`; break; } }
   function openClientsSheet() { closeAllSheets(); renderClientsList(); openSheet('clientsSheet'); }
   function renderClientsList() { const cont = document.getElementById('clientsListContainer'); cont.innerHTML = ''; clients.forEach(c => { const el = document.createElement('div'); el.className='client-list-item'; el.innerHTML = `<div class="color-dot" style="background:${c.color}"></div><div class="client-name">${c.name}</div>`; el.onclick = () => openClientEdit(c); cont.appendChild(el); }); }
-  function openClientEdit(client = null) { closeAllSheets(); editingClient = client ? JSON.parse(JSON.stringify(client)) : { id: Date.now(), name: '', color: colorPalette[0], schedule: {} }; document.getElementById('ceTitle').textContent = client ? 'Редактировать' : 'Новый клиент'; document.getElementById('ceName').value = editingClient.name; document.getElementById('ceColor').value = editingClient.color; renderColorGrid(); renderClientSchedule(); openSheet('clientEditSheet'); }
+
+  function openClientEdit(client = null) { 
+    closeAllSheets(); 
+    
+    // Проверяем, редактирование это или создание нового
+    const isEditing = !!client;
+
+    editingClient = client ? JSON.parse(JSON.stringify(client)) : { id: Date.now(), name: '', color: colorPalette[0], schedule: {} }; 
+    
+    document.getElementById('ceTitle').textContent = isEditing ? 'Карточка клиента' : 'Новый клиент'; 
+    
+    // Логика для Имени
+    const nameInput = document.getElementById('ceName');
+    nameInput.value = editingClient.name;
+    if (isEditing) {
+        nameInput.setAttribute('readonly', true);
+        nameInput.style.opacity = '0.6';
+    } else {
+        nameInput.removeAttribute('readonly');
+        nameInput.style.opacity = '1';
+    }
+
+    // Логика для Цвета (скрываем блок целиком)
+    const colorGroup = document.getElementById('ceColorGroup');
+    if (colorGroup) {
+        colorGroup.style.display = isEditing ? 'none' : 'block';
+    }
+
+    document.getElementById('ceColor').value = editingClient.color; 
+    renderColorGrid(); 
+    renderClientSchedule(); 
+    openSheet('clientEditSheet'); 
+  }
+  
   function renderColorGrid() { const grid = document.getElementById('ceColorGrid'); grid.innerHTML = ''; colorPalette.forEach(c => { const d = document.createElement('div'); d.className = `color-option ${editingClient.color === c ? 'selected' : ''}`; d.style.backgroundColor = c; d.onclick = () => { editingClient.color = c; renderColorGrid(); }; grid.appendChild(d); }); }
   function renderClientSchedule() { const cont = document.getElementById('ceScheduleContainer'); cont.innerHTML = ''; const days = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']; days.forEach((dName, idx) => { const row = document.createElement('div'); row.className = 'sched-row'; const slots = editingClient.schedule[idx] || []; let slotsHtml = slots.map((s, sIdx) => `<div class="sched-chip" style="background:${editingClient.color}; color:${getContrastYIQ(editingClient.color)}" onclick="removeClientSlot(${idx}, ${sIdx})">${s.s}-${s.e} ×</div>`).join(''); row.innerHTML = `<div class="sched-day">${dName}</div><div class="sched-slots">${slotsHtml}<div class="sched-add" onclick="addClientSlot(${idx})">+</div></div>`; cont.appendChild(row); }); }
   function addClientSlot(dayIdx) { editingDayIdx = dayIdx; openSheet('timeSlotSheet'); }
