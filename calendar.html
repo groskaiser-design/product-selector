@@ -353,9 +353,8 @@
 
   <div class="form-group">
     <div class="form-label">Клиент</div>
-    <select class="input-box" id="inpClient" onchange="onClientSelectChange()">
+    <select class="input-box" id="inpClient">
       </select>
-    <input type="text" class="input-box" id="inpNewClient" placeholder="Имя клиента" style="display:none; margin-top:8px;">
   </div>
   <div class="form-group">
     <div class="form-label" style="display:flex; justify-content:space-between;">Дата <span id="dateDisplay" style="color:#fff; font-weight:500;"></span></div>
@@ -384,7 +383,6 @@
   <div class="form-group"><div class="form-label">График работы</div><button class="btn-primary" onclick="openPatternEditor()">Редактор шаблона (7 дней)</button></div>
   <div class="form-group"><div class="form-label">Особые даты</div><button class="btn-primary btn-secondary" onclick="openRangesSheet()">Отпуск / Периоды</button></div>
   <div class="form-group"><div class="form-label">База</div><button class="btn-primary btn-secondary" onclick="openClientsSheet()">Клиенты</button></div>
-  <div class="form-group"><div class="form-label">Предпросмотр</div><button class="btn-primary btn-secondary" id="btnToggleClientMode" onclick="toggleClientMode()">Глазами клиента: ВЫКЛ</button></div>
 </div>
 
 <div class="sheet" id="rangesSheet">
@@ -397,7 +395,6 @@
 
 <div class="sheet" id="clientsSheet">
   <div class="sheet-header"><div class="sh-title">Клиенты</div><div class="sh-close" onclick="closeAllSheets()">Закрыть</div></div>
-  <div class="form-group"><button class="btn-primary" onclick="openClientEdit()">+ Добавить клиента</button></div>
   <div id="clientsListContainer" style="margin-top:20px;"></div>
 </div>
 
@@ -452,7 +449,7 @@
   currentStart.setDate(currentStart.getDate() + startOffset);
   
   let updateInterval, selectedDayForOptions = null, longPressTimer = null;
-  let isScrolling = false, activeTouchEl = null, isClientMode = false, simulatedClientId = 1;
+  let isScrolling = false, activeTouchEl = null;
 
   // DATA STORAGE
   const KEY_PATTERN = 'uc_pattern', KEY_EXCEPTIONS = 'uc_exceptions', KEY_RANGES = 'uc_ranges', KEY_CLIENTS = 'uc_clients', KEY_SESSIONS = 'uc_sessions';
@@ -578,8 +575,7 @@
        4. ACTIONS & SAVING
      ========================================== */
   async function trySaveSession() {
-    let clientName = document.getElementById('inpClient').value;
-    if (clientName === '_new_') clientName = document.getElementById('inpNewClient').value.trim() || 'Гость';
+    const clientName = document.getElementById('inpClient').value;
     
     const dateStr = document.getElementById('inpDate').value;
     const start = document.getElementById('inpStart').value;
@@ -587,17 +583,14 @@
     const note = document.getElementById('inpNote').value;
     const isRecurring = document.getElementById('inpRecurring').checked;
 
-    if (isClientMode) { 
-        const val = validateAppointment(dateStr, start, end, editingId); 
-        if(!val.valid) { showToast(val.msg, true); return; } 
-    }
+    const val = validateAppointment(dateStr, start, end, editingId); 
+    if(!val.valid) { showToast(val.msg, true); return; } 
 
-    // CREATE CLIENT ON FLY IF NEEDED (Strictly Name, ID, Color)
+    // STRICT LOOKUP: Client must exist
     let clientObj = clients.find(c => c.name === clientName);
     if (!clientObj) {
-        clientObj = { id: Date.now(), name: clientName, color: colorPalette[Math.floor(Math.random()*colorPalette.length)], schedule: {} };
-        clients.push(clientObj);
-        DataManager.fetchFromServer('save_client', { client: clientObj });
+        alert("Ошибка: Клиент не найден в базе");
+        return;
     }
 
     const newData = { 
@@ -622,9 +615,12 @@
     if (!editingLinkedPattern && isRecurring) {
         const newD = new Date(dateStr);
         let newDayIdx = newD.getDay() - 1; if(newDayIdx === -1) newDayIdx = 6;
+        
         updateClientPattern(clientName, null, { dateStr, start, end });
+        
         const cSave = clients.find(c => c.name === clientName);
         if(cSave) DataManager.fetchFromServer('save_client', { client: cSave });
+        
         newData.linkedPatternSlot = { dayIdx: newDayIdx, s: start, e: end };
         showToast("Серия создана", true);
     }
@@ -682,8 +678,7 @@
     } else {
         if (!deleteSeries && editingLinkedPattern) {
              // Create Cancelled Session to hide ghost
-             let clientName = document.getElementById('inpClient').value;
-             if (clientName === '_new_') clientName = document.getElementById('inpNewClient').value;
+             const clientName = document.getElementById('inpClient').value;
              const dateStr = document.getElementById('inpDate').value;
              const cancelledS = { id: Date.now(), client: clientName, dateStr: dateStr, start: editingLinkedPattern.s, end: editingLinkedPattern.e, status: 'cancelled', type: 'client' };
              sessions.push(cancelledS);
@@ -739,6 +734,37 @@
     resetRangeForm(); renderRangesList(); reRenderBlocks(); syncSettings();
   }
   function deleteRange(i) { specialRanges.splice(i, 1); if (editingRangeIndex === i) resetRangeForm(); renderRangesList(); reRenderBlocks(); syncSettings(); }
+
+  function renderRangesList() {
+      const l = document.getElementById('rangesList');
+      l.innerHTML = '';
+      if (!specialRanges.length) {
+        l.innerHTML = '<div style="color:#8E8E93;font-size:13px;text-align:center;margin-top:20px;">Нет периодов</div>';
+        return;
+      }
+      specialRanges.forEach((r, i) => {
+        const el = document.createElement('div');
+        el.className = 'range-item';
+        const f = (iso) => {
+          const d = new Date(iso);
+          return `${d.getDate()}.${String(d.getMonth() + 1).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+        };
+        el.innerHTML = `
+          <div>
+            <div class="range-text">${f(r.start)} — ${f(r.end)}</div>
+            <div class="range-sub">Недоступно</div>
+          </div>
+          <div class="range-actions">
+            <div class="range-icon edit" onclick="editRange(${i})">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            </div>
+            <div class="range-icon del" onclick="deleteRange(${i})">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            </div>
+          </div>`;
+        l.appendChild(el);
+      });
+  }
 
   /* --- VISUAL HELPERS & UI --- */
   function getLocalDateStr(date) { const y = date.getFullYear(); const m = String(date.getMonth() + 1).padStart(2, '0'); const d = String(date.getDate()).padStart(2, '0'); return `${y}-${m}-${d}`; }
@@ -804,12 +830,40 @@
     fill.style.width = `${Math.min(100, percent)}%`;
     fill.style.background = (totalBusyMinutes > totalWorkingMinutes) ? 'var(--acc-red)' : 'var(--acc-current)';
   }
+  
   function renderEventsForColumn(col, dateStr, dayIdx) {
     col.querySelectorAll('.event-card').forEach(e=>e.remove());
-    sessions.filter(s=>s.dateStr===dateStr && s.status !== 'cancelled').forEach(s => { if (isClientMode) { const cli = clients.find(c => (s.clientId && c.id == s.clientId) || c.name === s.client); const sClientId = cli ? cli.id : -1; if (sClientId === simulatedClientId) { col.appendChild(createEventEl(s)); } else { col.appendChild(createBusyEl(s)); } } else { col.appendChild(createEventEl(s)); } });
-    clients.forEach(client => { const daySched = client.schedule?.[dayIdx]; if(daySched) { daySched.forEach(slot => { const existsOrCancelled = sessions.some(s => s.client === client.name && s.dateStr === dateStr && s.start === slot.s); if(!existsOrCancelled) { const ghost = { id: `ghost-${client.id}-${dateStr}-${slot.s}`, client: client.name, dateStr: dateStr, start: slot.s, end: slot.e, type: 'client', status: 'ghost', clientId: client.id, linkedPatternSlot: { dayIdx, s: slot.s, e: slot.e } }; if (isClientMode) { if (client.id === simulatedClientId) { col.appendChild(createEventEl(ghost)); } } else { col.appendChild(createEventEl(ghost)); } } }); } });
+    
+    // 1. Render Real Sessions
+    sessions.filter(s=>s.dateStr===dateStr && s.status !== 'cancelled').forEach(s => { 
+        col.appendChild(createEventEl(s));
+    });
+    
+    // 2. Render Ghosts
+    clients.forEach(client => { 
+        const daySched = client.schedule?.[dayIdx]; 
+        if(daySched) { 
+            daySched.forEach(slot => { 
+                const existsOrCancelled = sessions.some(s => s.client === client.name && s.dateStr === dateStr && s.start === slot.s); 
+                if(!existsOrCancelled) { 
+                    const ghost = { 
+                        id: `ghost-${client.id}-${dateStr}-${slot.s}`, 
+                        client: client.name, 
+                        dateStr: dateStr, 
+                        start: slot.s, 
+                        end: slot.e, 
+                        type: 'client', 
+                        status: 'ghost', 
+                        clientId: client.id, 
+                        linkedPatternSlot: { dayIdx, s: slot.s, e: slot.e } 
+                    }; 
+                    col.appendChild(createEventEl(ghost)); 
+                } 
+            }); 
+        } 
+    });
   }
-  function createBusyEl(s) { const [h,m]=s.start.split(':').map(Number); const [hE,mE]=s.end.split(':').map(Number); const top=(h*60+m)/60*GRID_H, height=(hE*60+mE-(h*60+m))/60*GRID_H; const div=document.createElement('div'); div.className=`event-card client-view-busy`; div.style.top=`${top}px`; div.style.height=`${Math.max(height,20)}px`; return div; }
+  
   function createEventEl(s) { 
       const [h,m]=s.start.split(':').map(Number); 
       const [hE,mE]=s.end.split(':').map(Number); 
@@ -827,13 +881,17 @@
       div.onclick=(e)=>{ e.stopPropagation(); if(s.status === 'ghost') confirmGhost(s); else openEdit(s); }; 
       return div; 
   }
-  function confirmGhost(ghost) { const realSession = { id: Date.now(), client: ghost.client, dateStr: ghost.dateStr, start: ghost.start, end: ghost.end, note: '', status: 'planned', type: 'client', linkedPatternSlot: ghost.linkedPatternSlot }; if (isClientMode) { const val = validateAppointment(realSession.dateStr, realSession.start, realSession.end); if(!val.valid) { showToast(val.msg, true); return; } } openEdit(realSession); }
+  function confirmGhost(ghost) { 
+      const realSession = { id: Date.now(), client: ghost.client, dateStr: ghost.dateStr, start: ghost.start, end: ghost.end, note: '', status: 'planned', type: 'client', linkedPatternSlot: ghost.linkedPatternSlot }; 
+      openEdit(realSession); 
+  }
+
   function attachLongPressHandler(element, dateObj) { let startY = 0; let feedbackTimer = null; let actionTimer = null; let feedbackEl = null; const cleanup = () => { clearTimeout(feedbackTimer); clearTimeout(actionTimer); if(feedbackEl) { feedbackEl.remove(); feedbackEl = null; } }; const startHandler = (e) => { if(e.target.closest('.event-card')) return; isScrolling = false; startY = (e.touches ? e.touches[0].clientY : e.clientY); feedbackTimer = setTimeout(() => { if(isScrolling) return; const rect = element.getBoundingClientRect(); const offsetY = startY - rect.top; const hour = Math.floor(offsetY / GRID_H); if(navigator.vibrate) navigator.vibrate(10); feedbackEl = document.createElement('div'); feedbackEl.className = 'touch-feedback'; feedbackEl.style.top = (hour * GRID_H) + 'px'; feedbackEl.style.height = GRID_H + 'px'; element.appendChild(feedbackEl); }, 150); actionTimer = setTimeout(() => { if(!isScrolling) { if(window.Telegram?.WebApp?.HapticFeedback) window.Telegram.WebApp.HapticFeedback.impactOccurred('medium'); else if (navigator.vibrate) navigator.vibrate(50); const rect = element.getBoundingClientRect(); const offsetY = startY - rect.top; const hour = Math.floor(offsetY / GRID_H); cleanup(); const setD = new Date(dateObj); setD.setHours(hour, 0); openAddSession(setD); } }, 600); }; const moveHandler = (e) => { const currentY = (e.touches ? e.touches[0].clientY : e.clientY); if (Math.abs(currentY - startY) > 10) { isScrolling = true; cleanup(); } }; element.addEventListener('touchstart', startHandler, {passive: true}); element.addEventListener('touchmove', moveHandler, {passive: true}); element.addEventListener('touchend', cleanup); element.addEventListener('mousedown', startHandler); element.addEventListener('mousemove', moveHandler); element.addEventListener('mouseup', cleanup); }
   function cancelLongPress() { if(longPressTimer) clearTimeout(longPressTimer); if(activeTouchEl) { activeTouchEl.remove(); activeTouchEl = null; } }
   function handleInfiniteScroll() { const vp=document.getElementById('matrixViewport'); const sl=vp.scrollLeft, sw=vp.scrollWidth, cw=vp.clientWidth; if(sw-(sl+cw)<300) { const old=endOffset; endOffset+=14; renderDayRange(old+1, endOffset); reRenderBlocks(); } if(sl<300) { const old=startOffset; startOffset-=14; prependDays(startOffset, old-1); vp.scrollLeft+=(14*65); reRenderBlocks(); } }
   function prependDays(from, to) { const track=document.getElementById('daysHeaderTrack'), grid=document.getElementById('gridColumns'); const weekDays=['ПН','ВТ','СР','ЧТ','ПТ','СБ','ВС']; const base=new Date(); base.setHours(0,0,0,0); const todayStr = getLocalDateStr(new Date()); const fragH=document.createDocumentFragment(), fragC=document.createDocumentFragment(); for(let i=from; i<=to; i++) { const d=new Date(base); d.setDate(d.getDate()+i); const dateStr=getLocalDateStr(d); let dayIdx=d.getDay()-1; if(dayIdx===-1) dayIdx=6; const isToday = dateStr === todayStr; const h=document.createElement('div'); h.className=`day-col-header ${isToday ? 'today' : ''}`; h.id=`header-${dateStr}`; h.setAttribute('data-date', dateStr); h.innerHTML=`<div class="dch-day">${weekDays[dayIdx]}</div><div class="dch-num">${d.getDate()}</div><div class="dch-stats" id="stat-${dateStr}"><div class="dch-stats-fill"></div></div>`; h.onclick=()=>openDayOptions(dateStr, `${weekDays[dayIdx]} ${d.getDate()}`); fragH.appendChild(h); const c=document.createElement('div'); c.className=`day-column ${isToday ? 'today' : ''}`; c.setAttribute('data-date', dateStr); c.setAttribute('data-day-idx', dayIdx); renderEventsForColumn(c, dateStr, dayIdx); attachLongPressHandler(c, d); fragC.appendChild(c); updateDayStats(dateStr); } track.insertBefore(fragH, track.firstChild); grid.insertBefore(fragC, grid.querySelector('.day-column')); }
   function openAddSession(d) { editingId=null; editingLinkedPattern=null; populateClientSelect(); document.getElementById('sheetTitle').textContent='Новая'; document.getElementById('btnDelete').style.display='none'; document.getElementById('patternInfoBox').style.display='none'; document.getElementById('recurringOptionContainer').style.display = 'flex'; document.getElementById('inpRecurring').checked = false; document.getElementById('inpDate').value=getLocalDateStr(d); updateDateDisplay(); const h=d.getHours(); document.getElementById('inpStart').value=`${String(h).padStart(2,'0')}:00`; document.getElementById('inpEnd').value=`${String(h+1).padStart(2,'0')}:00`; openSheet('sessionSheet'); }
-  function openEdit(s) { editingId=s.id; editingLinkedPattern = s.linkedPatternSlot || null; populateClientSelect(); const isNew = !sessions.some(sess => sess.id === s.id); document.getElementById('sheetTitle').textContent = isNew ? 'Подтвердить' : 'Редактировать'; if (!isNew || editingLinkedPattern) { document.getElementById('btnDelete').style.display = 'block'; } else { document.getElementById('btnDelete').style.display = 'none'; } const pBox = document.getElementById('patternInfoBox'); const rOption = document.getElementById('recurringOptionContainer'); if (editingLinkedPattern) { pBox.style.display = 'flex'; pBox.querySelector('.pib-text').textContent = "Часть регулярного расписания."; rOption.style.display = 'none'; } else { pBox.style.display = 'none'; rOption.style.display = 'flex'; document.getElementById('inpRecurring').checked = false; } document.getElementById('inpClient').value=s.client; const isKnownClient = clients.some(c => c.name === s.client); if (!isKnownClient && s.client) { document.getElementById('inpClient').value = '_new_'; const inpNew = document.getElementById('inpNewClient'); inpNew.style.display = 'block'; inpNew.value = s.client; } else { document.getElementById('inpNewClient').style.display = 'none'; } document.getElementById('inpDate').value=s.dateStr; document.getElementById('inpStart').value=s.start; document.getElementById('inpEnd').value=s.end; document.getElementById('inpNote').value=s.note||''; updateDateDisplay(); openSheet('sessionSheet'); }
+  function openEdit(s) { editingId=s.id; editingLinkedPattern = s.linkedPatternSlot || null; populateClientSelect(); const isNew = !sessions.some(sess => sess.id === s.id); document.getElementById('sheetTitle').textContent = isNew ? 'Подтвердить' : 'Редактировать'; if (!isNew || editingLinkedPattern) { document.getElementById('btnDelete').style.display = 'block'; } else { document.getElementById('btnDelete').style.display = 'none'; } const pBox = document.getElementById('patternInfoBox'); const rOption = document.getElementById('recurringOptionContainer'); if (editingLinkedPattern) { pBox.style.display = 'flex'; pBox.querySelector('.pib-text').textContent = "Часть регулярного расписания."; rOption.style.display = 'none'; } else { pBox.style.display = 'none'; rOption.style.display = 'flex'; document.getElementById('inpRecurring').checked = false; } document.getElementById('inpClient').value=s.client; document.getElementById('inpDate').value=s.dateStr; document.getElementById('inpStart').value=s.start; document.getElementById('inpEnd').value=s.end; document.getElementById('inpNote').value=s.note||''; updateDateDisplay(); openSheet('sessionSheet'); }
   function updateDateDisplay() { const val = document.getElementById('inpDate').value; const disp = document.getElementById('dateDisplay'); if (!val) { disp.textContent = ''; return; } const d = new Date(val); const options = { weekday: 'long', month: 'long', day: 'numeric' }; disp.textContent = d.toLocaleDateString('ru-RU', options); }
   function openActionSheet(type) { const sheet = document.getElementById('actionSheet'); const overlay = document.getElementById('actionSheetOverlay'); const title = document.getElementById('asTitle'); const btnOne = document.getElementById('asBtnOne'); const btnSeries = document.getElementById('asBtnSeries'); overlay.classList.add('active'); sheet.classList.add('open'); if (type === 'save') { title.textContent = "Изменение повторяющегося события"; btnOne.textContent = "Только эта тренировка"; btnOne.className = "as-button"; btnOne.onclick = () => { closeActionSheet(); commitSave(tempSessionData, false); }; btnSeries.textContent = "Изменить всю серию"; btnSeries.className = "as-button bold"; btnSeries.onclick = () => { closeActionSheet(); commitSave(tempSessionData, true); }; } else if (type === 'delete') { title.textContent = "Удаление события"; btnOne.textContent = "Только эту тренировку"; btnOne.className = "as-button danger"; btnOne.onclick = () => { closeActionSheet(); commitDelete(false); }; btnSeries.textContent = "Удалить из расписания"; btnSeries.className = "as-button danger bold"; btnSeries.onclick = () => { closeActionSheet(); commitDelete(true); }; } }
   function closeActionSheet() { document.getElementById('actionSheet').classList.remove('open'); document.getElementById('actionSheetOverlay').classList.remove('active'); }
@@ -850,59 +908,31 @@
   function closeTimeSlotSheet() { document.getElementById('timeSlotSheet').classList.remove('open'); }
   function confirmTimeSlot() { const s = document.getElementById('tsStart').value; const e = document.getElementById('tsEnd').value; if(!editingClient.schedule[editingDayIdx]) editingClient.schedule[editingDayIdx] = []; checkScheduleConflict(editingDayIdx, s, e); editingClient.schedule[editingDayIdx].push({s, e}); closeTimeSlotSheet(); renderClientSchedule(); }
   function checkScheduleConflict(dayIdx, start, end) { const blockedHours = availabilityPattern[dayIdx] || []; if(blockedHours.length === 0) return; const [h1, m1] = start.split(':').map(Number); const [h2, m2] = end.split(':').map(Number); const startMins = h1 * 60 + m1; const endMins = h2 * 60 + m2; let hasConflict = false; for(let h of blockedHours) { const bStart = h * 60; const bEnd = (h + 1) * 60; if (Math.max(startMins, bStart) < Math.min(endMins, bEnd)) { hasConflict = true; break; } } if(hasConflict) { showToast("Обратите внимание: обычно вы не работаете в это время"); } }
-  function validateAppointment(dateStr, start, end, excludeId = null) { const [h1, m1] = start.split(':').map(Number); const [h2, m2] = end.split(':').map(Number); const startMins = h1 * 60 + m1; const endMins = h2 * 60 + m2; const dayIdx = new Date(dateStr).getDay()-1 === -1 ? 6 : new Date(dateStr).getDay()-1; const blockedHours = availabilityPattern[dayIdx] || []; for(let h of blockedHours) { const bStart = h * 60; const bEnd = (h + 1) * 60; if (Math.max(startMins, bStart) < Math.min(endMins, bEnd)) return { valid: false, msg: "Это время заблокировано (нерабочее)" }; } for (let s of sessions) { if (s.dateStr !== dateStr) continue; if (excludeId && s.id === excludeId) continue; const [sH1, sM1] = s.start.split(':').map(Number); const [sH2, sM2] = s.end.split(':').map(Number); const sStart = sH1 * 60 + sM1; const sEnd = sH2 * 60 + sM2; if (Math.max(startMins, sStart) < Math.min(endMins, sEnd)) return { valid: false, msg: "Это время уже занято" }; } return { valid: true }; }
+  function validateAppointment(dateStr, start, end, excludeId = null) { 
+      const [h1, m1] = start.split(':').map(Number); const [h2, m2] = end.split(':').map(Number); const startMins = h1 * 60 + m1; const endMins = h2 * 60 + m2; 
+      // Check collision
+      for (let s of sessions) { 
+          if (s.dateStr !== dateStr) continue; 
+          if (s.status === 'cancelled') continue;
+          if (excludeId && s.id === excludeId) continue; 
+          const [sH1, sM1] = s.start.split(':').map(Number); 
+          const [sH2, sM2] = s.end.split(':').map(Number); 
+          const sStart = sH1 * 60 + sM1; const sEnd = sH2 * 60 + sM2; 
+          if (Math.max(startMins, sStart) < Math.min(endMins, sEnd)) return { valid: false, msg: "Это время уже занято" }; 
+      } 
+      return { valid: true }; 
+  }
   function showToast(msg, isSuccess = false) { const t = document.getElementById('toast'); t.className = 'toast-notification ' + (isSuccess ? 'success' : ''); document.getElementById('toastTitle').textContent = isSuccess ? "Успешно" : "Обратите внимание"; document.getElementById('toastMessage').textContent = msg; t.classList.add('show'); setTimeout(() => { t.classList.remove('show'); }, 3500); }
-  function populateClientSelect() { const sel = document.getElementById('inpClient'); sel.innerHTML = ''; clients.forEach(c => { const opt = document.createElement('option'); opt.value = c.name; opt.textContent = c.name; sel.appendChild(opt); }); const optNew = document.createElement('option'); optNew.value = '_new_'; optNew.textContent = '+ Новый / Гость'; optNew.style.fontWeight = 'bold'; optNew.style.color = 'var(--acc-green)'; sel.appendChild(optNew); }
-  function onClientSelectChange() { const sel = document.getElementById('inpClient'); const inpNew = document.getElementById('inpNewClient'); if (sel.value === '_new_') { inpNew.style.display = 'block'; inpNew.focus(); } else { inpNew.style.display = 'none'; } }
+  function populateClientSelect() { const sel = document.getElementById('inpClient'); sel.innerHTML = ''; clients.forEach(c => { const opt = document.createElement('option'); opt.value = c.name; opt.textContent = c.name; sel.appendChild(opt); }); }
   function openDayOptions(d,t){selectedDayForOptions=d;document.getElementById('dayOptionsTitle').textContent=t;openSheet('dayOptionsSheet');}
   function openSettings(){openSheet('settingsSheet');}
   function openSheet(id){document.getElementById('overlay').classList.add('active');document.getElementById(id).classList.add('open');}
   function closeAllSheets(){document.getElementById('overlay').classList.remove('active');document.querySelectorAll('.sheet').forEach(s=>s.classList.remove('open'));}
-  function toggleClientMode() { isClientMode = !isClientMode; const btn = document.getElementById('btnToggleClientMode'); btn.textContent = isClientMode ? "Глазами клиента: ВКЛ" : "Глазами клиента: ВЫКЛ"; btn.style.background = isClientMode ? 'var(--acc-green)' : 'rgba(255,255,255,0.1)'; btn.style.color = isClientMode ? '#000' : '#fff'; reRenderBlocks(); closeAllSheets(); showToast(isClientMode ? "Режим клиента включен" : "Режим тренера включен"); }
   function openRangesSheet(){closeAllSheets();resetRangeForm();renderRangesList();openSheet('rangesSheet');}
   function resetRangeForm(){editingRangeIndex=null;document.getElementById('rangeStartDate').value='';document.getElementById('rangeStartTime').value='00:00';document.getElementById('rangeEndDate').value='';document.getElementById('rangeEndTime').value='23:59';document.getElementById('rangeSubmitBtn').textContent='Добавить период';}
   function addRange(){ const dS=document.getElementById('rangeStartDate').value, tS=document.getElementById('rangeStartTime').value; const dE=document.getElementById('rangeEndDate').value, tE=document.getElementById('rangeEndTime').value; if(!dS||!tS||!dE||!tE)return alert('Заполните все поля'); const start=`${dS}T${tS}`, end=`${dE}T${tE}`; if(start>=end)return alert('Ошибка дат'); const nr={start,end}; if(editingRangeIndex!==null)specialRanges[editingRangeIndex]=nr; else specialRanges.push(nr); resetRangeForm(); renderRangesList(); reRenderBlocks(); syncSettings(); }
   function editRange(i){const r=specialRanges[i]; editingRangeIndex=i; const [d1,t1]=r.start.split('T'), [d2,t2]=r.end.split('T'); document.getElementById('rangeStartDate').value=d1; document.getElementById('rangeStartTime').value=t1.substring(0,5); document.getElementById('rangeEndDate').value=d2; document.getElementById('rangeEndTime').value=t2.substring(0,5); document.getElementById('rangeSubmitBtn').textContent='Сохранить';}
   function deleteRange(i){specialRanges.splice(i,1); if(editingRangeIndex===i) resetRangeForm(); renderRangesList(); reRenderBlocks(); syncSettings(); }
-
-  function renderRangesList() {
-  const l = document.getElementById('rangesList');
-  l.innerHTML = '';
-  
-  // Если список пуст
-  if (!specialRanges.length) {
-    l.innerHTML = '<div style="color:#8E8E93;font-size:13px;text-align:center;margin-top:20px;">Нет периодов</div>';
-    return;
-  }
-
-  // Перебор всех периодов
-  specialRanges.forEach((r, i) => {
-    const el = document.createElement('div');
-    el.className = 'range-item';
-    
-    // Форматирование даты для отображения
-    const f = (iso) => {
-      const d = new Date(iso);
-      return `${d.getDate()}.${String(d.getMonth() + 1).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-    };
-
-    el.innerHTML = `
-      <div>
-        <div class="range-text">${f(r.start)} — ${f(r.end)}</div>
-        <div class="range-sub">Недоступно</div>
-      </div>
-      <div class="range-actions">
-        <div class="range-icon edit" onclick="editRange(${i})">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-        </div>
-        <div class="range-icon del" onclick="deleteRange(${i})">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-        </div>
-      </div>`;
-    l.appendChild(el);
-  });
-}
-  
   function openPatternEditor(){closeAllSheets();document.getElementById('patternEditor').classList.add('open');renderPatternEditor();}
   function closePatternEditor(){document.getElementById('patternEditor').classList.remove('open');} 
   function renderPatternEditor(){ const t=document.getElementById('peTimeColumn'); t.innerHTML=''; for(let i=0;i<24;i++){const e=document.createElement('div');e.className='time-label'; if(i > 0) e.innerHTML=`<span>${String(i).padStart(2,'0')}:00</span>`;e.onclick=()=>toggleRowPattern(i);t.appendChild(e);} const h=document.getElementById('peHeaderTrack'); h.innerHTML=''; const w=['ПН','ВТ','СР','ЧТ','ПТ','СБ','ВС']; for(let i=0;i<7;i++){const e=document.createElement('div');e.className='day-col-header';e.innerHTML=`<div class="dch-day" style="margin-top:16px">${w[i]}</div>`;e.onclick=()=>toggleColPattern(i);h.appendChild(e);} const g=document.getElementById('peGridColumns'); g.innerHTML=''; for(let i=0;i<7;i++){const c=document.createElement('div');c.className='day-column';c.onclick=(e)=>{if(e.target!==c)return;toggleSinglePattern(i,Math.floor(e.offsetY/GRID_H));};renderPCol(c,i);g.appendChild(c);} }
