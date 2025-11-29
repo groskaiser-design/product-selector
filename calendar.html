@@ -197,6 +197,14 @@
   .btn-secondary { background: rgba(255,255,255,0.1); color: #fff; }
   .btn-danger { background: rgba(255, 69, 58, 0.15); color: var(--acc-red); }
   
+  /* SWITCH */
+  .switch { position: relative; display: inline-block; width: 50px; height: 30px; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #3a3a3c; transition: .4s; border-radius: 30px; }
+  .slider:before { position: absolute; content: ""; height: 26px; width: 26px; left: 2px; bottom: 2px; background-color: white; transition: .4s; border-radius: 50%; }
+  input:checked + .slider { background-color: var(--acc-green); }
+  input:checked + .slider:before { transform: translateX(20px); }
+
   .pattern-info-box { background: rgba(10, 132, 255, 0.1); border: 1px solid rgba(10, 132, 255, 0.3); border-radius: 8px; padding: 10px; margin-bottom: 16px; display: flex; align-items: center; gap: 10px; }
   .pib-icon { color: var(--acc-blue); }
   .pib-text { font-size: 13px; color: #fff; flex: 1; line-height: 1.3; }
@@ -345,6 +353,15 @@
     <div class="form-group" style="flex:1"><div class="form-label">Конец</div><input type="time" class="input-box" id="inpEnd"></div>
   </div>
   <div class="form-group"><div class="form-label">Заметка</div><input type="text" class="input-box" id="inpNote" placeholder="Тип тренировки..."></div>
+  
+  <div class="form-group" id="recurringOptionContainer" style="display: flex; align-items: center; gap: 12px; background: rgba(255,255,255,0.05); padding: 12px; border-radius: 10px; margin-bottom: 16px;">
+    <div style="flex: 1; font-size: 16px;">Повторять еженедельно</div>
+    <label class="switch">
+      <input type="checkbox" id="inpRecurring">
+      <span class="slider"></span>
+    </label>
+  </div>
+
   <button class="btn-primary" onclick="trySaveSession()">Сохранить</button>
   <button class="btn-primary btn-danger" id="btnDelete" style="display:none" onclick="tryDeleteSession()">Удалить</button>
 </div>
@@ -701,6 +718,11 @@
     editingId=null; editingLinkedPattern=null; populateClientSelect();
     document.getElementById('sheetTitle').textContent='Новая'; document.getElementById('btnDelete').style.display='none';
     document.getElementById('patternInfoBox').style.display='none';
+    
+    // Reset switch
+    document.getElementById('recurringOptionContainer').style.display = 'flex';
+    document.getElementById('inpRecurring').checked = false;
+
     document.getElementById('inpDate').value=getLocalDateStr(d);
     updateDateDisplay();
     const h=d.getHours(); document.getElementById('inpStart').value=`${String(h).padStart(2,'0')}:00`; document.getElementById('inpEnd').value=`${String(h+1).padStart(2,'0')}:00`;
@@ -723,13 +745,17 @@
     }
     
     const pBox = document.getElementById('patternInfoBox');
+    const rOption = document.getElementById('recurringOptionContainer');
     
-    // Pattern Info
+    // Pattern Info & Switch Logic
     if (editingLinkedPattern) {
         pBox.style.display = 'flex';
         pBox.querySelector('.pib-text').textContent = "Часть регулярного расписания.";
+        rOption.style.display = 'none'; // Already recurring
     } else {
         pBox.style.display = 'none';
+        rOption.style.display = 'flex'; // Allow making it recurring
+        document.getElementById('inpRecurring').checked = false;
     }
 
     // Fill Form
@@ -756,6 +782,7 @@
     const start = document.getElementById('inpStart').value;
     const end = document.getElementById('inpEnd').value;
     const note = document.getElementById('inpNote').value;
+    const isRecurring = document.getElementById('inpRecurring').checked;
     
     // Validate
     if (isClientMode) { const val = validateAppointment(dateStr, start, end, editingId); if(!val.valid) { showToast(val.msg, true); return; } }
@@ -777,6 +804,19 @@
             openActionSheet('save');
             return;
         }
+    }
+
+    // Handle "Make Recurring" for single/new sessions
+    if (!editingLinkedPattern && isRecurring) {
+        // Add to pattern immediately
+        const newD = new Date(dateStr);
+        let newDayIdx = newD.getDay() - 1; if(newDayIdx === -1) newDayIdx = 6;
+        updateClientPattern(clientName, null, { dateStr, start, end }); // Add new slot
+        
+        // Ensure the current session is linked to this new pattern
+        // The pattern slot we just created matches {s:start, e:end}
+        newData.linkedPatternSlot = { dayIdx: newDayIdx, s: start, e: end };
+        showToast("Серия создана", false);
     }
 
     // No conflict, regular save
@@ -925,7 +965,7 @@
     if (!client) return;
     
     // 1. Remove old slot
-    if (client.schedule && client.schedule[oldSlot.dayIdx]) {
+    if (oldSlot && client.schedule && client.schedule[oldSlot.dayIdx]) {
         const arr = client.schedule[oldSlot.dayIdx];
         const idx = arr.findIndex(sl => sl.s === oldSlot.s && sl.e === oldSlot.e);
         if (idx !== -1) arr.splice(idx, 1);
