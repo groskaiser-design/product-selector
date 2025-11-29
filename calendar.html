@@ -582,7 +582,9 @@
 
     if(capacity <= 0) { track.style.display = 'none'; return; }
     let intervals = [];
-    sessions.filter(s=>s.dateStr===dateStr).forEach(s => { const [h1,m1] = s.start.split(':').map(Number); const [h2,m2] = s.end.split(':').map(Number); intervals.push([h1*60+m1, h2*60+m2]); });
+    // Only count active sessions
+    sessions.filter(s=>s.dateStr===dateStr && s.status !== 'cancelled').forEach(s => { const [h1,m1] = s.start.split(':').map(Number); const [h2,m2] = s.end.split(':').map(Number); intervals.push([h1*60+m1, h2*60+m2]); });
+    
     clients.forEach(client => { const daySched = client.schedule?.[dayIdx]; if(daySched) { daySched.forEach(slot => { const exists = sessions.some(s => s.client === client.name && s.dateStr === dateStr && s.start === slot.s); if(!exists) { const [h1,m1] = slot.s.split(':').map(Number); const [h2,m2] = slot.e.split(':').map(Number); intervals.push([h1*60+m1, h2*60+m2]); } }); } });
     intervals.sort((a,b) => a[0] - b[0]); let merged = []; if(intervals.length > 0) { let curr = intervals[0]; for(let i=1; i<intervals.length; i++) { if(intervals[i][0] < curr[1]) { curr[1] = Math.max(curr[1], intervals[i][1]); } else { merged.push(curr); curr = intervals[i]; } } merged.push(curr); }
     let occupied = 0; merged.forEach(iv => occupied += (iv[1] - iv[0]));
@@ -592,18 +594,23 @@
 
   function renderEventsForColumn(col, dateStr, dayIdx) {
     col.querySelectorAll('.event-card').forEach(e=>e.remove());
-    sessions.filter(s=>s.dateStr===dateStr).forEach(s => {
+    // Render Real Sessions (excluding cancelled)
+    sessions.filter(s=>s.dateStr===dateStr && s.status !== 'cancelled').forEach(s => {
         if (isClientMode) {
             const cli = clients.find(c => c.name === s.client); const sClientId = cli ? cli.id : -1;
             if (sClientId === simulatedClientId) { col.appendChild(createEventEl(s)); } else { col.appendChild(createBusyEl(s)); }
         } else { col.appendChild(createEventEl(s)); }
     });
+    // Render Pattern Ghosts
     clients.forEach(client => {
       const daySched = client.schedule?.[dayIdx];
       if(daySched) {
         daySched.forEach(slot => {
-          const exists = sessions.some(s => s.client === client.name && s.dateStr === dateStr && s.start === slot.s);
-          if(!exists) {
+          // CHECK: Does a real session exist OR is it cancelled?
+          // If cancelled, it is in sessions array with status='cancelled', so .some() returns true
+          const existsOrCancelled = sessions.some(s => s.client === client.name && s.dateStr === dateStr && s.start === slot.s);
+          
+          if(!existsOrCancelled) {
             // FIX: Add explicit dateStr to ghost object
             const ghost = { 
                 id: `ghost-${client.id}-${dateStr}-${slot.s}`, 
@@ -688,10 +695,15 @@
     populateClientSelect();
     
     // UI Updates
-    // If ID is new (from confirmGhost), it's technically a "new" session in terms of DB, but we treat as edit
     const isNew = !sessions.some(sess => sess.id === s.id);
     document.getElementById('sheetTitle').textContent = isNew ? 'Подтвердить' : 'Редактировать'; 
-    document.getElementById('btnDelete').style.display = isNew ? 'none' : 'block';
+    
+    // SHOW DELETE if it's existing OR if it's a linked pattern (to allow skipping/deleting series)
+    if (!isNew || editingLinkedPattern) {
+        document.getElementById('btnDelete').style.display = 'block';
+    } else {
+        document.getElementById('btnDelete').style.display = 'none';
+    }
     
     const pBox = document.getElementById('patternInfoBox');
     
@@ -810,26 +822,17 @@
         // Editing existing session
         const idx=sessions.findIndex(s=>s.id===editingId); 
         if(idx!==-1) {
-            sessions[idx] = { ...sessions[idx], ...data, linkedPatternSlot: updateSeries ? null : sessions[idx].linkedPatternSlot }; // If series updated, unlink this session from old logic or keeping it? 
-            // Better logic: If series updated, this session becomes just a regular session matching the pattern
-            // If series NOT updated, this session is an EXCEPTION
+            sessions[idx] = { ...sessions[idx], ...data, linkedPatternSlot: updateSeries ? null : sessions[idx].linkedPatternSlot }; 
              if (updateSeries) {
-                // Remove specific session if it matches new pattern? No, just keep it as confirmed
-                sessions[idx].linkedPatternSlot = null; // Reset link, next render will link it correctly by value
+                // If series updated, unlink this session from old logic or keeping it?
+                sessions[idx].linkedPatternSlot = null; 
              }
         } else {
              // Case where editingId is present but not found (rare) or new session with explicit ID
              sessions.push({ id: editingId, ...data });
         }
     } else {
-        // New from Ghost or Scratch (editingId is null or ghost ID)
-        // If it was a ghost ID, we generated a NEW ID in openEdit -> confirmGhost -> realSession.id
-        // Wait, confirmGhost passes a realSession with a numeric ID.
-        // openEdit sets editingId = s.id.
-        // So if it came from confirmGhost, editingId is a number (Date.now()), but it is NOT in sessions array yet.
-        // So findIndex will fail.
-        
-        // Correct logic:
+        // New from Ghost or Scratch
         const idx=sessions.findIndex(s=>s.id===editingId);
         if (idx !== -1) {
              sessions[idx] = { ...sessions[idx], ...data };
@@ -853,19 +856,39 @@
   function commitDelete(deleteSeries) {
     if (deleteSeries && editingLinkedPattern) {
         // Find client and remove slot
-        const s = sessions.find(x=>x.id===editingId);
-        const cName = s ? s.client : document.getElementById('inpClient').value;
-        const client = clients.find(c => c.name === cName);
-        if (client && client.schedule && client.schedule[editingLinkedPattern.dayIdx]) {
-            const arr = client.schedule[editingLinkedPattern.dayIdx];
-            const idx = arr.findIndex(sl => sl.s === editingLinkedPattern.s && sl.e === editingLinkedPattern.e);
-            if (idx !== -1) arr.splice(idx, 1);
-            showToast("Удалено из расписания", false);
-        }
+        const s = sessions.find(x=>x.id===editingId) || { client: document.getElementById('inpClient').value };
+        updateClientPattern(s.client, editingLinkedPattern, null); // Pass null to delete
+        showToast("Серия удалена из графика", false);
+        
+        // Also ensure any current session is removed
+        if(editingId) sessions = sessions.filter(x=>x.id!==editingId);
     }
-
-    if(editingId && !String(editingId).startsWith('ghost')) { 
-        sessions = sessions.filter(x=>x.id!==editingId); 
+    else if (!deleteSeries && editingLinkedPattern) {
+        // SINGLE INSTANCE DELETE (EXCEPTION)
+        // If it's a real session, mark cancelled. If it's a ghost, create a cancelled session.
+        const idx = sessions.findIndex(x=>x.id === editingId);
+        if (idx !== -1) {
+            sessions[idx].status = 'cancelled';
+        } else {
+            // Create a cancelled record to block the ghost
+            const client = document.getElementById('inpClient').value;
+            const dateStr = document.getElementById('inpDate').value;
+            sessions.push({
+                id: Date.now(),
+                client: client,
+                dateStr: dateStr,
+                start: editingLinkedPattern.s,
+                end: editingLinkedPattern.e,
+                status: 'cancelled',
+                type: 'client'
+            });
+        }
+        showToast("Тренировка отменена", false);
+    }
+    else {
+        // Regular Manual Session Delete
+        if(editingId) sessions = sessions.filter(x=>x.id!==editingId);
+        showToast("Удалено", false);
     }
     
     saveData(); 
@@ -891,12 +914,14 @@
         if (idx !== -1) arr.splice(idx, 1);
     }
 
-    // 2. Add new slot
-    const newD = new Date(newData.dateStr);
-    let newDayIdx = newD.getDay() - 1; if(newDayIdx === -1) newDayIdx = 6;
-    
-    if (!client.schedule[newDayIdx]) client.schedule[newDayIdx] = [];
-    client.schedule[newDayIdx].push({ s: newData.start, e: newData.end });
+    // 2. Add new slot (ONLY IF newData is provided)
+    if (newData) {
+        const newD = new Date(newData.dateStr);
+        let newDayIdx = newD.getDay() - 1; if(newDayIdx === -1) newDayIdx = 6;
+        
+        if (!client.schedule[newDayIdx]) client.schedule[newDayIdx] = [];
+        client.schedule[newDayIdx].push({ s: newData.start, e: newData.end });
+    }
   }
 
   // === STANDARD FUNCTIONS ===
