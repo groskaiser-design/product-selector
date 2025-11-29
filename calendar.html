@@ -594,27 +594,131 @@
 
   function updateAllDayStats() { document.querySelectorAll('.day-col-header').forEach(h => { updateDayStats(h.getAttribute('data-date')); }); }
   function updateDayStats(dateStr) {
-    const track = document.getElementById(`stat-${dateStr}`); if(!track) return;
-    if(dateExceptions[dateStr] === 'off') { track.style.display = 'none'; return; }
-    
-    // Check ranges
-    let isFullBlocked = false; const cS=new Date(dateStr+'T00:00:00').getTime(), cE=new Date(dateStr+'T23:59:59').getTime();
-    for(let r of specialRanges) { const rS=new Date(r.start).getTime(), rE=new Date(r.end).getTime(); if (Math.max(cS,rS) < Math.min(cE,rE)) { if(rS<=cS && rE>=cE-60000) { isFullBlocked=true; break; } } }
-    if(isFullBlocked) { track.style.display = 'none'; return; }
+    const track = document.getElementById(`stat-${dateStr}`);
+    if (!track) return;
 
-    let capacity = 1440; const dayIdx = new Date(dateStr).getDay()-1===-1?6:new Date(dateStr).getDay()-1; const pat = availabilityPattern[dayIdx] || []; capacity -= (pat.length * 60);
-    specialRanges.forEach(r => { const rS=new Date(r.start).getTime(), rE=new Date(r.end).getTime(); const oS=Math.max(cS,rS), oE=Math.min(cE,rE); if(oS<oE) capacity -= ((oE-oS)/60000); });
+    // 1. Calculate Total Working Capacity (minutes)
+    const dayDate = new Date(dateStr);
+    let dayIdx = dayDate.getDay() - 1; 
+    if (dayIdx === -1) dayIdx = 6;
 
-    if(capacity <= 0) { track.style.display = 'none'; return; }
-    let intervals = [];
-    // Only count active sessions
-    sessions.filter(s=>s.dateStr===dateStr && s.status !== 'cancelled').forEach(s => { const [h1,m1] = s.start.split(':').map(Number); const [h2,m2] = s.end.split(':').map(Number); intervals.push([h1*60+m1, h2*60+m2]); });
+    // Get Blocked Intervals
+    let blockedIntervals = [];
     
-    clients.forEach(client => { const daySched = client.schedule?.[dayIdx]; if(daySched) { daySched.forEach(slot => { const exists = sessions.some(s => s.client === client.name && s.dateStr === dateStr && s.start === slot.s); if(!exists) { const [h1,m1] = slot.s.split(':').map(Number); const [h2,m2] = slot.e.split(':').map(Number); intervals.push([h1*60+m1, h2*60+m2]); } }); } });
-    intervals.sort((a,b) => a[0] - b[0]); let merged = []; if(intervals.length > 0) { let curr = intervals[0]; for(let i=1; i<intervals.length; i++) { if(intervals[i][0] < curr[1]) { curr[1] = Math.max(curr[1], intervals[i][1]); } else { merged.push(curr); curr = intervals[i]; } } merged.push(curr); }
-    let occupied = 0; merged.forEach(iv => occupied += (iv[1] - iv[0]));
-    track.style.display = 'flex'; const fill = track.querySelector('.dch-stats-fill'); const pct = Math.min(100, Math.max(0, (occupied / capacity) * 100)); fill.style.width = `${pct}%`;
-    if (occupied > capacity) fill.style.background = 'var(--acc-red)'; else fill.style.background = 'var(--acc-current)';
+    // A. Pattern Blocks (e.g. 0 = 00:00-01:00)
+    const pat = availabilityPattern[dayIdx] || [];
+    pat.forEach(h => {
+        blockedIntervals.push([h * 60, (h + 1) * 60]);
+    });
+
+    // B. Special Ranges (Ranges might not align with minutes, but we usually stick to minute precision)
+    const dayStartMs = new Date(dateStr + 'T00:00:00').getTime();
+    const dayEndMs = new Date(dateStr + 'T23:59:59').getTime();
+
+    specialRanges.forEach(r => {
+        const rS = new Date(r.start).getTime();
+        const rE = new Date(r.end).getTime();
+        const startMs = Math.max(dayStartMs, rS);
+        const endMs = Math.min(dayEndMs, rE);
+
+        if (startMs < endMs) {
+            const startMins = Math.floor((startMs - dayStartMs) / 60000);
+            const endMins = Math.floor((endMs - dayStartMs) / 60000);
+            blockedIntervals.push([startMins, endMins]);
+        }
+    });
+
+    // Merge Blocked Intervals
+    blockedIntervals.sort((a, b) => a[0] - b[0]);
+    let mergedBlocked = [];
+    if (blockedIntervals.length > 0) {
+        let curr = blockedIntervals[0];
+        for (let i = 1; i < blockedIntervals.length; i++) {
+            if (blockedIntervals[i][0] < curr[1]) {
+                curr[1] = Math.max(curr[1], blockedIntervals[i][1]);
+            } else {
+                mergedBlocked.push(curr);
+                curr = blockedIntervals[i];
+            }
+        }
+        mergedBlocked.push(curr);
+    }
+
+    let totalBlocked = 0;
+    mergedBlocked.forEach(iv => totalBlocked += (iv[1] - iv[0]));
+    let totalWorkingMinutes = 1440 - totalBlocked;
+    
+    if (dateExceptions[dateStr] === 'off') {
+        track.style.display = 'none'; 
+        return;
+    }
+
+    // 2. Calculate Busy (Occupied) Time
+    let busyIntervals = [];
+
+    // A. Real Sessions
+    sessions.filter(s => s.dateStr === dateStr && s.status !== 'cancelled').forEach(s => {
+        const [h1, m1] = s.start.split(':').map(Number);
+        const [h2, m2] = s.end.split(':').map(Number);
+        busyIntervals.push([h1 * 60 + m1, h2 * 60 + m2]);
+    });
+
+    // B. Client Patterns (Ghosts)
+    clients.forEach(client => {
+        const daySched = client.schedule?.[dayIdx];
+        if (daySched) {
+            daySched.forEach(slot => {
+                const existsOrCancelled = sessions.some(s => s.client === client.name && s.dateStr === dateStr && s.start === slot.s);
+                if (!existsOrCancelled) {
+                    const [h1, m1] = slot.s.split(':').map(Number);
+                    const [h2, m2] = slot.e.split(':').map(Number);
+                    busyIntervals.push([h1 * 60 + m1, h2 * 60 + m2]);
+                }
+            });
+        }
+    });
+
+    // Merge Busy Intervals
+    busyIntervals.sort((a, b) => a[0] - b[0]);
+    let mergedBusy = [];
+    if (busyIntervals.length > 0) {
+        let curr = busyIntervals[0];
+        for (let i = 1; i < busyIntervals.length; i++) {
+            if (busyIntervals[i][0] < curr[1]) {
+                curr[1] = Math.max(curr[1], busyIntervals[i][1]);
+            } else {
+                mergedBusy.push(curr);
+                curr = busyIntervals[i];
+            }
+        }
+        mergedBusy.push(curr);
+    }
+
+    let totalBusyMinutes = 0;
+    mergedBusy.forEach(iv => totalBusyMinutes += (iv[1] - iv[0]));
+
+    if (totalBusyMinutes === 0) {
+        track.style.display = 'none';
+        return;
+    }
+
+    // 3. Render
+    track.style.display = 'flex';
+    let percent = 0;
+    if (totalWorkingMinutes > 0) {
+        percent = (totalBusyMinutes / totalWorkingMinutes) * 100;
+    } else {
+        percent = 100;
+    }
+
+    const fill = track.querySelector('.dch-stats-fill');
+    fill.style.width = `${Math.min(100, percent)}%`;
+    
+    if (totalBusyMinutes > totalWorkingMinutes) {
+        fill.style.background = 'var(--acc-red)';
+    } else {
+        fill.style.background = 'var(--acc-current)';
+    }
   }
 
   function renderEventsForColumn(col, dateStr, dayIdx) {
