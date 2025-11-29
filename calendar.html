@@ -446,12 +446,12 @@
 </div>
 
 <script>
-  /* ==========================================
-     1. CONFIG & GLOBALS
-     ========================================== */
-  const APP_VERSION = 'v1.2-stable';
-  // 👇 ОБЯЗАТЕЛЬНО ОБНОВИ ССЫЛКУ ПОСЛЕ ДЕПЛОЯ 👇
-  const API_URL = 'https://script.google.com/macros/s/AKfycbz8nd5mI-VlRqQgHSjXpnq79E8gPRNJ5tvbQe8UIXLWsKGVu5SwPO-duakxOVkWwFoBNA/exec';
+  // ==========================================
+  // 1. CONFIG & GLOBALS
+  // ==========================================
+  const APP_VERSION = 'v2.0-fixed';
+  // Вставь сюда URL скрипта после новой публикации!
+  const API_URL = 'https://script.google.com/macros/s/AKfycbzfnCFBzcnEafD0_xlXXpdjpx5amP5AkCCpdFILPaSQ6zO7JqbqIbdeDRA0yucLMcefwA/exec'; 
 
   const GRID_H = 60;
   let startOffset = -30, endOffset = 60;
@@ -461,7 +461,7 @@
   let updateInterval, selectedDayForOptions = null, longPressTimer = null;
   let isScrolling = false, activeTouchEl = null, isClientMode = false, simulatedClientId = 1;
 
-  // DATA
+  // DATA STORAGE
   let availabilityPattern = {0:[],1:[],2:[],3:[],4:[],5:[],6:[]}; 
   let dateExceptions = {}; 
   let specialRanges = []; 
@@ -470,12 +470,12 @@
   
   const colorPalette = ['#B0BEC5', '#90A4AE', '#78909C', '#607D8B', '#455A64', '#BCAAA4', '#8D6E63', '#5D4037', '#FF5252', '#FF1744', '#D50000', '#B71C1C', '#FF4081', '#F50057', '#C51162', '#880E4F', '#E040FB', '#D500F9', '#AA00FF', '#4A148C', '#7C4DFF', '#651FFF', '#6200EA', '#311B92', '#448AFF', '#2979FF', '#2962FF', '#0D47A1', '#40C4FF', '#00B0FF', '#0091EA', '#01579B', '#18FFFF', '#00E5FF', '#00B8D4', '#006064', '#69F0AE', '#00E676', '#00C853', '#1B5E20', '#B2FF59', '#76FF03', '#64DD17', '#FFFF00', '#FFEA00', '#FFD600', '#FFD740', '#FFC400', '#FFAB00', '#FF6D00'];
 
-  // CONTEXT
+  // EDIT CONTEXT
   let editingId = null, editingClient = null, editingDayIdx = null;
   let tempSessionData = null, editingLinkedPattern = null, editingRangeIndex = null;
 
   /* ==========================================
-     2. DATA MANAGER (Fixed for GAS Redirects)
+     2. DATA MANAGER (COPIED FROM MEASUREMENTS LOGIC)
      ========================================== */
   const DataManager = {
     keys: {
@@ -507,22 +507,30 @@
 
     async fetchFromServer(action, payload = {}) {
       const tg = window.Telegram?.WebApp;
-      const bodyData = {
+      const body = {
         action: action,
         init_data: tg?.initData || '', 
         ...payload
       };
 
       try {
-        // 🔥 ИСПОЛЬЗУЕМ fetch с mode: 'cors' и БЕЗ кастомных заголовков Content-Type
-        // Google Apps Script лучше всего кушает text/plain, когда он идет "как есть"
         const resp = await fetch(API_URL, {
           method: 'POST',
-          body: JSON.stringify(bodyData) // Просто строка, браузер сам поставит text/plain
+          // 🔥 КЛЮЧЕВОЙ МОМЕНТ ИЗ MEASUREMENTS: text/plain + charset=UTF-8
+          headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+          body: JSON.stringify(body),
+          cache: 'no-store',
+          credentials: 'omit',
+          mode: 'cors'
         });
         
-        const json = await resp.json();
-        if (!json.ok) throw new Error(json.error || 'Server error');
+        const text = await resp.text();
+        let json = null;
+        try { json = text ? JSON.parse(text) : null; } catch(e){}
+
+        if (!resp.ok || !json || json.ok !== true) {
+           throw new Error(json?.error || `HTTP ${resp.status}`);
+        }
         return json.data;
       } catch (e) {
         console.error('API Error:', e);
@@ -532,7 +540,7 @@
   };
 
   /* ==========================================
-     3. INIT & APP
+     3. INIT
      ========================================== */
   (function smartVersionCheck(){
     try{
@@ -553,16 +561,18 @@
     const d = new Date();
     const monthStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; 
 
+    // Кэш
     const cached = DataManager.loadFromCache(monthStr);
     if (cached.settings || cached.calendar) applyDataToState(cached, monthStr);
 
+    // Сеть
     try {
       const fresh = await DataManager.fetchFromServer('init_load', { month_str: monthStr });
       applyDataToState(fresh, monthStr);
       DataManager.saveToCache(fresh, monthStr);
       if(!cached.settings) showToast("Данные загружены", true);
     } catch (e) {
-      if (!cached.settings) showToast("Нет связи с сервером", false);
+      if (!cached.settings) showToast("Ошибка сети", false);
     }
   }
 
@@ -575,6 +585,7 @@
     }
     if (data.clients) clients = data.clients;
     if (data.calendar) {
+      // Удаляем старые записи этого месяца, чтобы не дублировать
       sessions = sessions.filter(s => !s.dateStr.startsWith(monthStr));
       Object.keys(data.calendar).forEach(dayKey => {
         data.calendar[dayKey].forEach(evt => {
@@ -591,7 +602,9 @@
     updateAllDayStats();
   }
 
-  // --- ACTIONS ---
+  /* ==========================================
+     4. ACTIONS
+     ========================================== */
   async function trySaveSession() {
     let clientName = document.getElementById('inpClient').value;
     if (clientName === '_new_') clientName = document.getElementById('inpNewClient').value.trim() || 'Гость';
@@ -673,7 +686,7 @@
   }
 
   async function syncSettings() {
-    showToast("Сохранение настроек...", true);
+    showToast("Сохранение...", true);
     const d = new Date();
     const monthStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
     const cached = DataManager.loadFromCache(monthStr) || {};
@@ -699,7 +712,7 @@
   }
   async function deleteRange(i) { specialRanges.splice(i, 1); if (editingRangeIndex === i) resetRangeForm(); renderRangesList(); reRenderBlocks(); await syncSettings(); }
 
-  // --- VISUAL & HELPERS ---
+  /* --- VISUAL HELPERS --- */
   function getLocalDateStr(date) { const y = date.getFullYear(); const m = String(date.getMonth() + 1).padStart(2, '0'); const d = String(date.getDate()).padStart(2, '0'); return `${y}-${m}-${d}`; }
   function getDateStr(offset) { const d=new Date(); d.setDate(d.getDate()+offset); return getLocalDateStr(d); }
   function getStartOfWeek(date) { const d=new Date(date); const day=d.getDay(); const diff=d.getDate()-day+(day===0?-6:1); d.setDate(diff); d.setHours(0,0,0,0); return d; }
@@ -803,10 +816,12 @@
   function toggleClientMode() { isClientMode = !isClientMode; const btn = document.getElementById('btnToggleClientMode'); btn.textContent = isClientMode ? "Глазами клиента: ВКЛ" : "Глазами клиента: ВЫКЛ"; btn.style.background = isClientMode ? 'var(--acc-green)' : 'rgba(255,255,255,0.1)'; btn.style.color = isClientMode ? '#000' : '#fff'; reRenderBlocks(); closeAllSheets(); showToast(isClientMode ? "Режим клиента включен" : "Режим тренера включен"); }
   function openRangesSheet(){closeAllSheets();resetRangeForm();renderRangesList();openSheet('rangesSheet');}
   function resetRangeForm(){editingRangeIndex=null;document.getElementById('rangeStartDate').value='';document.getElementById('rangeStartTime').value='00:00';document.getElementById('rangeEndDate').value='';document.getElementById('rangeEndTime').value='23:59';document.getElementById('rangeSubmitBtn').textContent='Добавить период';}
+  function addRange(){ const dS=document.getElementById('rangeStartDate').value, tS=document.getElementById('rangeStartTime').value; const dE=document.getElementById('rangeEndDate').value, tE=document.getElementById('rangeEndTime').value; if(!dS||!tS||!dE||!tE)return alert('Заполните все поля'); const start=`${dS}T${tS}`, end=`${dE}T${tE}`; if(start>=end)return alert('Ошибка дат'); const nr={start,end}; if(editingRangeIndex!==null)specialRanges[editingRangeIndex]=nr; else specialRanges.push(nr); resetRangeForm(); renderRangesList(); reRenderBlocks(); syncSettings(); }
   function editRange(i){const r=specialRanges[i]; editingRangeIndex=i; const [d1,t1]=r.start.split('T'), [d2,t2]=r.end.split('T'); document.getElementById('rangeStartDate').value=d1; document.getElementById('rangeStartTime').value=t1.substring(0,5); document.getElementById('rangeEndDate').value=d2; document.getElementById('rangeEndTime').value=t2.substring(0,5); document.getElementById('rangeSubmitBtn').textContent='Сохранить';}
+  function deleteRange(i){specialRanges.splice(i,1); if(editingRangeIndex===i) resetRangeForm(); renderRangesList(); reRenderBlocks(); syncSettings(); }
   function renderRangesList(){ const l=document.getElementById('rangesList'); l.innerHTML=''; if(!specialRanges.length) { l.innerHTML='<div style="color:#8E8E93;font-size:13px;text-align:center">Нет периодов</div>'; return; } specialRanges.forEach((r,i)=>{ const el=document.createElement('div'); el.className='range-item'; const f=(iso)=>{const d=new Date(iso); return `${d.getDate()}.${d.getMonth()+1} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;}; el.innerHTML=`<div><div class="range-text">${f(r.start)} — ${f(r.end)}</div><div class="range-sub">Недоступно</div></div><div class="range-actions"><div class="range-icon edit" onclick="editRange(${i})"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></div><div class="range-icon del" onclick="deleteRange(${i})"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></div></div>`; l.appendChild(el); }); }
   function openPatternEditor(){closeAllSheets();document.getElementById('patternEditor').classList.add('open');renderPatternEditor();}
-  function closePatternEditor(){document.getElementById('patternEditor').classList.remove('open');} 
+  function closePatternEditor(){document.getElementById('patternEditor').classList.remove('open');} 
   function renderPatternEditor(){ const t=document.getElementById('peTimeColumn'); t.innerHTML=''; for(let i=0;i<24;i++){const e=document.createElement('div');e.className='time-label'; if(i > 0) e.innerHTML=`<span>${String(i).padStart(2,'0')}:00</span>`;e.onclick=()=>toggleRowPattern(i);t.appendChild(e);} const h=document.getElementById('peHeaderTrack'); h.innerHTML=''; const w=['ПН','ВТ','СР','ЧТ','ПТ','СБ','ВС']; for(let i=0;i<7;i++){const e=document.createElement('div');e.className='day-col-header';e.innerHTML=`<div class="dch-day" style="margin-top:16px">${w[i]}</div>`;e.onclick=()=>toggleColPattern(i);h.appendChild(e);} const g=document.getElementById('peGridColumns'); g.innerHTML=''; for(let i=0;i<7;i++){const c=document.createElement('div');c.className='day-column';c.onclick=(e)=>{if(e.target!==c)return;toggleSinglePattern(i,Math.floor(e.offsetY/GRID_H));};renderPCol(c,i);g.appendChild(c);} }
   function renderPCol(c,d){c.innerHTML='';(availabilityPattern[d]||[]).forEach(x=>{const b=document.createElement('div');b.className='blocked-slot';b.style.top=`${x*GRID_H}px`;b.onclick=(e)=>{e.stopPropagation();toggleSinglePattern(d,x);};c.appendChild(b);});}
   function toggleSinglePattern(d,h){const a=availabilityPattern[d],i=a.indexOf(h);if(i===-1)a.push(h);else a.splice(i,1);renderPCol(document.getElementById('peGridColumns').children[d],d);}
