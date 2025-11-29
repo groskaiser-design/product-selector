@@ -37,7 +37,7 @@
     color: var(--text-main);
     height: 100%; width: 100%;
     overflow: hidden; position: fixed; inset: 0; user-select: none;
-    -webkit-user-select: none; /* Запрет выделения по всему телу */
+    -webkit-user-select: none;
   }
 
   /* === FX LAYER === */
@@ -103,14 +103,12 @@
   }
   .grid-columns-container { display: flex; flex: 1; position: relative; }
   
-  /* UPDATED DAY COLUMN CSS FOR BETTER TOUCH */
+  /* UPDATED DAY COLUMN */
   .day-column {
     width: var(--day-col-width); flex-shrink: 0; border-right: 1px solid var(--line-color); position: relative;
     background-image: linear-gradient(to bottom, var(--line-color) 1px, transparent 1px); background-size: 100% var(--grid-h);
     padding-bottom: 20px; cursor: pointer;
-    touch-action: pan-y; /* Разрешаем вертикальный скролл */
-    -webkit-user-select: none; user-select: none; /* Запрещаем выделение */
-    -webkit-touch-callout: none; /* Убираем меню iOS по долгому тапу */
+    touch-action: pan-y; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
   }
   
   .touch-feedback {
@@ -120,11 +118,14 @@
   }
   .touch-feedback::after { content: '+'; font-size: 24px; font-weight: 300; color: #fff; opacity: 0.9; }
   @keyframes pulse-create { 0% { opacity: 0.3; transform: scale(0.98); } 50% { opacity: 0.7; transform: scale(1.0); } 100% { opacity: 0.3; transform: scale(0.98); } }
+  
   .blocked-slot { position: absolute; left: 0; right: 0; height: var(--grid-h); background: repeating-linear-gradient(45deg, rgba(255,255,255,0.03), rgba(255,255,255,0.03) 10px, rgba(255,255,255,0.06) 10px, rgba(255,255,255,0.06) 20px); pointer-events: none; z-index: 1; }
   .blocked-range-part { position: absolute; left: 0; right: 0; background-color: var(--bg-core); background-image: repeating-linear-gradient(45deg, rgba(60, 156, 253, 0.1), rgba(60, 156, 253, 0.1) 10px, rgba(60, 156, 253, 0.2) 10px, rgba(60, 156, 253, 0.2) 20px); border-top: 1px solid rgba(60, 156, 253, 0.4); border-bottom: 1px solid rgba(60, 156, 253, 0.4); z-index: 2; pointer-events: none; }
   .day-off-overlay { position: absolute; inset: 0; background-color: var(--bg-core); background-image: repeating-linear-gradient(45deg, rgba(60, 156, 253, 0.1), rgba(60, 156, 253, 0.1) 10px, rgba(60, 156, 253, 0.2) 10px, rgba(60, 156, 253, 0.2) 20px); z-index: 8; pointer-events: none; }
+  
   .global-time-line { position: absolute; left: 0; width: 100%; height: 1px; background: var(--acc-current); z-index: 10; pointer-events: none; display: none; }
   .global-time-line::before { content: ''; position: absolute; left: -4px; top: -3px; width: 7px; height: 7px; background: var(--acc-current); border-radius: 50%; }
+  
   .event-card { position: absolute; left: 2px; right: 2px; border-radius: 6px; padding: 3px 5px; overflow: hidden; border-left: 3px solid; background: rgba(30, 30, 32, 0.95); cursor: pointer; z-index: 5; box-shadow: 0 2px 8px rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); }
   .event-card.ghost { opacity: 0.7; border-style: dashed; }
   .event-card.client-view-busy { background: repeating-linear-gradient(135deg, rgba(255,255,255,0.05), rgba(255,255,255,0.05) 5px, rgba(255,255,255,0.02) 5px, rgba(255,255,255,0.02) 10px); border: 1px solid rgba(255,255,255,0.05); border-left: none; color: transparent; pointer-events: none; opacity: 0.6; }
@@ -187,13 +188,14 @@
   .pattern-editor-overlay .day-col-header, .pattern-editor-overlay .day-column { width: auto; flex: 1; }
   .pattern-editor-overlay .blocked-slot { background: repeating-linear-gradient(45deg, rgba(10,132,255,0.15), rgba(10,132,255,0.15) 10px, rgba(10,132,255,0.25) 10px, rgba(10,132,255,0.25) 20px); pointer-events: auto; cursor: pointer; border-top: 1px solid rgba(10,132,255,0.3); border-bottom: 1px solid rgba(10,132,255,0.3); }
 
-  /* === TOAST === */
+  /* === TOAST (Z-INDEX UPDATED TO 9999) === */
   .toast-notification {
     position: fixed; top: calc(20px + var(--safe-top)); left: 16px; right: 16px;
     background: rgba(28, 28, 30, 0.9); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
     border: 1px solid rgba(255,255,255,0.1); color: #fff; padding: 16px;
     border-radius: 16px; box-shadow: 0 10px 40px rgba(0,0,0,0.5);
-    z-index: 200; font-size: 14px; font-weight: 500; text-align: center;
+    z-index: 9999; /* Max Z-Index for Visibility */
+    font-size: 14px; font-weight: 500; text-align: center;
     transform: translateY(-150%); transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
     pointer-events: none; opacity: 0;
   }
@@ -400,84 +402,16 @@
   }
 
   function attachLongPressHandler(element, dateObj) {
-    let startY = 0; 
-    let feedbackTimer = null; 
-    let actionTimer = null;   
-    let feedbackEl = null;
-
-    const cleanup = () => {
-        clearTimeout(feedbackTimer);
-        clearTimeout(actionTimer);
-        if(feedbackEl) { feedbackEl.remove(); feedbackEl = null; }
-    };
-
+    let startY = 0; let feedbackTimer = null; let actionTimer = null; let feedbackEl = null;
+    const cleanup = () => { clearTimeout(feedbackTimer); clearTimeout(actionTimer); if(feedbackEl) { feedbackEl.remove(); feedbackEl = null; } };
     const startHandler = (e) => {
-        if(e.target.closest('.event-card')) return;
-        
-        isScrolling = false;
-        startY = (e.touches ? e.touches[0].clientY : e.clientY);
-        
-        // Delay visual feedback slightly to allow scrolling without flashing
-        feedbackTimer = setTimeout(() => {
-            if(isScrolling) return;
-            
-            const rect = element.getBoundingClientRect();
-            const offsetY = startY - rect.top;
-            const hour = Math.floor(offsetY / GRID_H);
-            
-            // Haptic Start (Subtle) - optional
-            if(navigator.vibrate) navigator.vibrate(10);
-
-            feedbackEl = document.createElement('div');
-            feedbackEl.className = 'touch-feedback';
-            feedbackEl.style.top = (hour * GRID_H) + 'px';
-            feedbackEl.style.height = GRID_H + 'px';
-            element.appendChild(feedbackEl);
-        }, 150); // 150ms delay for visual
-
-        actionTimer = setTimeout(() => {
-            if(!isScrolling) {
-                // Success Haptic
-                if(window.Telegram?.WebApp?.HapticFeedback) {
-                    window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
-                } else if (navigator.vibrate) {
-                    navigator.vibrate(50);
-                }
-                
-                // Calculate time again to be sure (or reuse from feedback if stored)
-                const rect = element.getBoundingClientRect();
-                const offsetY = startY - rect.top;
-                const hour = Math.floor(offsetY / GRID_H);
-
-                cleanup(); // Remove visual
-                
-                const setD = new Date(dateObj);
-                setD.setHours(hour, 0);
-                openAddSession(setD);
-            }
-        }, 600); // 600ms total hold time
+        if(e.target.closest('.event-card')) return; isScrolling = false; startY = (e.touches ? e.touches[0].clientY : e.clientY);
+        feedbackTimer = setTimeout(() => { if(isScrolling) return; const rect = element.getBoundingClientRect(); const offsetY = startY - rect.top; const hour = Math.floor(offsetY / GRID_H); if(navigator.vibrate) navigator.vibrate(10); feedbackEl = document.createElement('div'); feedbackEl.className = 'touch-feedback'; feedbackEl.style.top = (hour * GRID_H) + 'px'; feedbackEl.style.height = GRID_H + 'px'; element.appendChild(feedbackEl); }, 150);
+        actionTimer = setTimeout(() => { if(!isScrolling) { if(window.Telegram?.WebApp?.HapticFeedback) window.Telegram.WebApp.HapticFeedback.impactOccurred('medium'); else if (navigator.vibrate) navigator.vibrate(50); const rect = element.getBoundingClientRect(); const offsetY = startY - rect.top; const hour = Math.floor(offsetY / GRID_H); cleanup(); const setD = new Date(dateObj); setD.setHours(hour, 0); openAddSession(setD); } }, 600);
     };
-
-    const cancelHandler = () => {
-        cleanup();
-    };
-
-    const moveHandler = (e) => {
-        const currentY = (e.touches ? e.touches[0].clientY : e.clientY);
-        if (Math.abs(currentY - startY) > 10) {
-            isScrolling = true;
-            cleanup();
-        }
-    };
-
-    element.addEventListener('touchstart', startHandler, {passive: true});
-    element.addEventListener('touchmove', moveHandler, {passive: true});
-    element.addEventListener('touchend', cancelHandler);
-    element.addEventListener('touchcancel', cancelHandler);
-    element.addEventListener('mousedown', startHandler);
-    element.addEventListener('mousemove', moveHandler);
-    element.addEventListener('mouseup', cancelHandler);
-    element.addEventListener('mouseleave', cancelHandler);
+    const cancelHandler = () => { cleanup(); };
+    const moveHandler = (e) => { const currentY = (e.touches ? e.touches[0].clientY : e.clientY); if (Math.abs(currentY - startY) > 10) { isScrolling = true; cleanup(); } };
+    element.addEventListener('touchstart', startHandler, {passive: true}); element.addEventListener('touchmove', moveHandler, {passive: true}); element.addEventListener('touchend', cancelHandler); element.addEventListener('touchcancel', cancelHandler); element.addEventListener('mousedown', startHandler); element.addEventListener('mousemove', moveHandler); element.addEventListener('mouseup', cancelHandler); element.addEventListener('mouseleave', cancelHandler);
   }
   function cancelLongPress() { if(longPressTimer) clearTimeout(longPressTimer); if(activeTouchEl) { activeTouchEl.remove(); activeTouchEl = null; } }
 
@@ -623,7 +557,7 @@
     checkScheduleConflict(editingDayIdx, s, e); editingClient.schedule[editingDayIdx].push({s, e}); closeTimeSlotSheet(); renderClientSchedule();
   }
   function checkScheduleConflict(dayIdx, start, end) {
-    const blockedHours = availabilityPattern[dayIdx] || []; if(blockedHours.length === 0) return;
+    const blockedHours = availabilityPattern[dayIdx] || availabilityPattern[String(dayIdx)] || []; if(blockedHours.length === 0) return;
     const [h1, m1] = start.split(':').map(Number); const [h2, m2] = end.split(':').map(Number); const startMins = h1 * 60 + m1; const endMins = h2 * 60 + m2;
     let hasConflict = false; for(let h of blockedHours) { const bStart = h * 60; const bEnd = (h + 1) * 60; if (Math.max(startMins, bStart) < Math.min(endMins, bEnd)) { hasConflict = true; break; } }
     if(hasConflict) { showToast("Обратите внимание: обычно вы не работаете в это время"); }
