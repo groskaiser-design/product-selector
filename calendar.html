@@ -491,7 +491,7 @@
   // 1. CONFIG
   const APP_VERSION = 'v8.0-SYNC-DAY';
   // 👇 ПРОВЕРЬ, ЧТО ТУТ СТОИТ ТВОЯ ССЫЛКУ 👇
-  const API_URL = 'https://script.google.com/macros/s/AKfycbwx5BGhhFhPYVBaezdpErKnJk7E56Clu8wr5PoGo8rzULcBKuIbZIHp1UQZlVUmzLPbIg/exec'; 
+  const API_URL = 'https://script.google.com/macros/s/AKfycbwc1t_HLkbE7Yfdsy8cXqDmRz7-hhs8CHYXZigIs4QvNJxHG7vqgiviObgKJ0kVzxHF/exec'; 
 
   const GRID_H = 60;
   let startOffset = -30, endOffset = 60;
@@ -670,7 +670,26 @@
   /* ==========================================
        4. ACTIONS & SAVING (UPDATED)
      ========================================== */
-  async function trySaveSession() {
+  // === НОВАЯ ФУНКЦИЯ: ОТПРАВКА УВЕДОМЛЕНИЙ ===
+  function sendNotification(type, targetId, details) {
+    // Проверки безопасности: если гость или ID короче 5 символов - не шлем
+    if (!targetId || targetId === 'guest' || String(targetId).length < 5) return;
+    
+    // Красивая дата для сообщения (из 2025-11-30 делаем 30.11)
+    const [y, m, d] = details.date.split('-');
+    const prettyDate = `${d}.${m}`;
+
+    console.log(`[Notify] ${type} -> ${targetId}`);
+
+    // Отправляем "в фоне", не блокируя интерфейс
+    DataManager.fetchFromServer('notify', {
+      target_id: targetId,
+      type: type,
+      details: { ...details, date: prettyDate }
+    }).catch(err => console.error("Notify failed", err));
+  }
+  
+async function trySaveSession() {
     const clientName = document.getElementById('inpClient').value;
     const dateStr = document.getElementById('inpDate').value;
     const start = document.getElementById('inpStart').value;
@@ -692,6 +711,32 @@
     if(val.warning) {
         showToast(val.warning + " (Сохраняем...)", false);
     }
+
+    // === ЛОГИКА УВЕДОМЛЕНИЙ (НАЧАЛО) ===
+    let notifyType = null;
+    // Данные для сообщения
+    let notifyDetails = { date: dateStr, time: `${start}-${end}`, note: note };
+    
+    // Ищем старую версию этой тренировки в базе
+    const oldSession = sessions.find(s => String(s.id) === String(editingId));
+
+    if (!oldSession) {
+        // Если старой нет (или это был ghost-слот) -> значит это НОВАЯ запись
+        notifyType = 'new';
+    } else {
+        // Если старая есть -> проверяем, изменилось ли время или дата
+        if (oldSession.start !== start || oldSession.end !== end || oldSession.dateStr !== dateStr) {
+            notifyType = 'move';
+            // Для переноса добавляем старое и новое время
+            notifyDetails.old_time = `${oldSession.start}-${oldSession.end}`;
+            notifyDetails.new_time = `${start}-${end}`;
+        }
+    }
+    // Если определили тип и у клиента есть ID -> отправляем
+    if (notifyType && clientObj.id) {
+        sendNotification(notifyType, clientObj.id, notifyDetails);
+    }
+    // === ЛОГИКА УВЕДОМЛЕНИЙ (КОНЕЦ) ===
 
     const newData = { 
         client: clientName, 
@@ -723,6 +768,7 @@
     
     commitSave(newData, false);
   }
+  
 
   // === ОБНОВЛЕННАЯ ФУНКЦИЯ СОХРАНЕНИЯ ===
   function commitSave(data, updateSeries) {
@@ -763,49 +809,69 @@
   }
 
   // === ОБНОВЛЕННАЯ ФУНКЦИЯ УДАЛЕНИЯ ===
+// === ОБНОВЛЕННАЯ ФУНКЦИЯ УДАЛЕНИЯ ===
   function commitDelete(deleteSeries) {
-    // Получаем дату ДО удаления (важно, если id "ghost")
     let dateToSync = document.getElementById('inpDate').value;
-    if(editingId && !String(editingId).startsWith('ghost')) {
-        const s = sessions.find(x => String(x.id) === String(editingId));
-        if(s) dateToSync = s.dateStr;
+    
+    // Пытаемся найти удаляемую сессию
+    let s = sessions.find(x => String(x.id) === String(editingId));
+    
+    // Если это "призрак" (ghost), берем данные из полей ввода
+    if (!s) {
+        const cName = document.getElementById('inpClient').value;
+        const cObj = clients.find(c => c.name === cName);
+        s = {
+            clientId: cObj ? cObj.id : null,
+            dateStr: dateToSync,
+            start: document.getElementById('inpStart').value,
+            end: document.getElementById('inpEnd').value
+        };
+    } else {
+        dateToSync = s.dateStr;
     }
 
+    // === УВЕДОМЛЕНИЕ ОБ ОТМЕНЕ (ВСТАВКА) ===
+    // Если есть данные сессии и ID клиента
+    if (s && s.clientId) {
+        sendNotification('cancel', s.clientId, {
+            date: s.dateStr,
+            time: `${s.start}-${s.end}`
+        });
+    }
+    // =======================================
+
     if (deleteSeries && editingLinkedPattern) {
-         // Удаление серии
-         const s = sessions.find(x => String(x.id) === String(editingId)) || { client: document.getElementById('inpClient').value };
-         updateClientPattern(s.client, editingLinkedPattern, null);
-         const cSave = clients.find(c => c.name === s.client);
-         if(cSave) DataManager.fetchFromServer('save_client', { client: cSave });
-         
-         // Удаляем эту конкретную запись из отображения
-         if(editingId && !String(editingId).startsWith('ghost')) sessions = sessions.filter(x => String(x.id) !== String(editingId));
-         showToast("Серия удалена", false);
+          // Удаление серии
+          const sForName = sessions.find(x => String(x.id) === String(editingId)) || { client: document.getElementById('inpClient').value };
+          updateClientPattern(sForName.client, editingLinkedPattern, null);
+          const cSave = clients.find(c => c.name === sForName.client);
+          if(cSave) DataManager.fetchFromServer('save_client', { client: cSave });
+          
+          if(editingId && !String(editingId).startsWith('ghost')) sessions = sessions.filter(x => String(x.id) !== String(editingId));
+          showToast("Серия удалена", false);
 
     } else {
         if (!deleteSeries && editingLinkedPattern) {
-             // Исключение из серии (Cancel)
-             const clientName = document.getElementById('inpClient').value;
-             const dateStr = document.getElementById('inpDate').value;
-             
-             // Удаляем активную версию, если она была
-             if (editingId && !String(editingId).startsWith('ghost')) {
-                 sessions = sessions.filter(x => String(x.id) !== String(editingId));
-             }
+              // Исключение из серии (Cancel)
+              const clientName = document.getElementById('inpClient').value;
+              
+              if (editingId && !String(editingId).startsWith('ghost')) {
+                  sessions = sessions.filter(x => String(x.id) !== String(editingId));
+              }
 
-             // Добавляем запись "Отменено"
-             const cancelledS = { 
-                 id: generateUniqueId(), 
-                 client: clientName, 
-                 dateStr: dateStr, 
-                 start: editingLinkedPattern.s, 
-                 end: editingLinkedPattern.e, 
-                 status: 'cancelled', 
-                 type: 'client',
-                 linkedPatternSlot: editingLinkedPattern 
-             };
-             sessions.push(cancelledS);
-             showToast("Отменено", false);
+              const cancelledS = { 
+                  id: generateUniqueId(), 
+                  client: clientName, 
+                  clientId: s.clientId, // ВАЖНО: сохраняем ID клиента
+                  dateStr: dateToSync, 
+                  start: editingLinkedPattern.s, 
+                  end: editingLinkedPattern.e, 
+                  status: 'cancelled', 
+                  type: 'client',
+                  linkedPatternSlot: editingLinkedPattern 
+              };
+              sessions.push(cancelledS);
+              showToast("Отменено", false);
 
         } else if(editingId && !String(editingId).startsWith('ghost')) {
             // Обычное удаление
