@@ -1497,7 +1497,67 @@ function validateAppointment(dateStr, start, end, excludeSessionId, checkClientI
   function updateClock(){const n=new Date(),l=document.getElementById('globalTimeLine'),b=document.getElementById('timeLineBadge'),px=(n.getHours()*60+n.getMinutes())/60*GRID_H;l.style.top=`${px}px`;l.style.display='block';b.textContent=`${String(n.getHours()).padStart(2,'0')}:${String(n.getMinutes()).padStart(2,'0')}`;b.style.display='block';b.style.top=`${px}px`;}
 
   document.addEventListener('DOMContentLoaded', init);
-</script>
 
+async function runGarbageCollector() {
+    console.group("🚛 GARBAGE COLLECTOR STARTED");
+    const initialCount = sessions.length;
+    const affectedDays = new Set(); // Запоминаем дни, которые надо перезалить
+
+    // 1. ЧИСТКА ОТ БИТЫХ ЗАПИСЕЙ (NULL)
+    sessions = sessions.filter(s => {
+        // Условие мусора: статус cancelled И (нет ID клиента ИЛИ нет имени)
+        const isGarbage = s.status === 'cancelled' && (!s.clientId || !s.client || s.client === '?');
+        
+        if (isGarbage) {
+            console.log(`🗑 Found NULL garbage: ${s.dateStr} ${s.start}`, s);
+            affectedDays.add(s.dateStr); // Помечаем день для синхронизации
+            return false; // Удаляем
+        }
+        return true; // Оставляем
+    });
+
+    // 2. ЧИСТКА ДУБЛЕЙ
+    // Если на одно время приходится несколько записей, оставляем одну
+    const uniqueMap = new Set();
+    const cleanSessions = [];
+    
+    sessions.forEach(s => {
+        // Создаем уникальный ключ: Дата + Время + Клиент
+        const key = `${s.dateStr}|${s.start}|${s.clientId || s.client}`;
+        
+        if (uniqueMap.has(key)) {
+            console.log(`👯 Found DUPLICATE: ${key}`, s);
+            affectedDays.add(s.dateStr);
+        } else {
+            uniqueMap.add(key);
+            cleanSessions.push(s);
+        }
+    });
+    sessions = cleanSessions;
+
+    const deletedCount = initialCount - sessions.length;
+    console.log(`✅ SCAN COMPLETE. Deleted ${deletedCount} garbage records.`);
+    console.log(`Days to sync:`, Array.from(affectedDays));
+
+    // 3. СОХРАНЕНИЕ И СИНХРОНИЗАЦИЯ
+    if (deletedCount > 0) {
+        saveAllDataLocally();
+        reRenderBlocks();
+        
+        showToast(`Удаляем ${deletedCount} мусорных записей...`, true);
+        
+        // Перезаливаем каждый затронутый день на сервер
+        for (const dateStr of affectedDays) {
+            console.log(`🚀 Syncing clean day: ${dateStr}...`);
+            await syncDayToServer(dateStr);
+        }
+        showToast("База полностью очищена!", true);
+    } else {
+        showToast("Мусора не найдено", true);
+    }
+    console.groupEnd();
+}
+
+</script>
 </body>
 </html>
