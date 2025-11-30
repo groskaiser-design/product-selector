@@ -628,17 +628,39 @@
 
   function applyDataToState(data, monthStr) {
     if (!data) return;
-    if (data.settings) {
-      if (data.settings.pattern) availabilityPattern = data.settings.pattern;
-      if (data.settings.exceptions) dateExceptions = data.settings.exceptions;
-      if (data.settings.ranges) specialRanges = data.settings.ranges;
+    
+    console.groupCollapsed(`📥 Server Data Load: ${monthStr}`); // Свернутая группа, чтобы не спамить
+
+    // 1. НАСТРОЙКИ (ПАТТЕРНЫ)
+    if (data.clients) {
+        clients = data.clients;
+        // Проверяем, есть ли у кого-то расписание
+        clients.forEach(c => {
+            if (c.schedule && Object.keys(c.schedule).length > 0) {
+                console.log(`👤 Client Pattern Loaded: ${c.name}`, JSON.parse(JSON.stringify(c.schedule)));
+            }
+        });
     }
-    if (data.clients) clients = data.clients;
+
+    // 2. КАЛЕНДАРЬ (СЕССИИ)
     if (data.calendar) {
+      // Чистим старые сессии этого месяца
       sessions = sessions.filter(s => !s.dateStr.startsWith(monthStr));
+      
       Object.keys(data.calendar).forEach(dayKey => {
-        data.calendar[dayKey].forEach(evt => {
+        const evts = data.calendar[dayKey];
+        if (evts.length > 0) {
+             console.log(`📅 Date ${monthStr}-${dayKey} has ${evts.length} records from server:`, evts);
+        }
+
+        evts.forEach(evt => {
           const clientObj = clients.find(c => String(c.id) === String(evt.c)) || { name: '?', color: '#555' };
+          
+          // Логируем, если это та самая проблемная запись (например, на 11:00)
+          if (evt.s === '11:00') {
+              console.warn(`🔥 FOUND SERVER RECORD at ${monthStr}-${dayKey} 11:00! Status: ${evt.st}`);
+          }
+
           sessions.push({
             id: evt.i, 
             clientId: evt.c, 
@@ -654,6 +676,15 @@
         });
       });
     }
+    
+    // Остальные настройки...
+    if (data.settings) {
+      if (data.settings.pattern) availabilityPattern = data.settings.pattern;
+      if (data.settings.exceptions) dateExceptions = data.settings.exceptions;
+      if (data.settings.ranges) specialRanges = data.settings.ranges;
+    }
+    
+    console.groupEnd();
     reRenderBlocks();
     updateAllDayStats();
   }
@@ -1100,51 +1131,45 @@ async function commitDelete(deleteSeries) {
   
   // === CORE RENDER LOGIC WITH OVERLAP SUPPORT ===
  function renderEventsForColumn(col, dateStr, dayIdx) {
-    // Чистим старое
     col.querySelectorAll('.event-card').forEach(e => e.remove());
     let allEvents = [];
 
-    // 1. РЕАЛЬНЫЕ ЗАПИСИ (из массива sessions)
-    // Важно: мы НЕ фильтруем status !== 'cancelled' здесь, чтобы увидеть их в логах,
-    // но при добавлении в allEvents мы их пропустим визуально.
+    // --- ЛОГИРОВАНИЕ ТОЛЬКО ДЛЯ ПРОБЛЕМНОГО ДНЯ (чтобы не забить консоль) ---
+    // Впиши сюда дату, с которой борешься (или оставь проверку на 02 число)
+    const isDebugDay = dateStr.includes('2025-12-02'); 
     
+    if (isDebugDay) console.group(`🎨 Rendering Day: ${dateStr}`);
+
+    // 1. РЕАЛЬНЫЕ ЗАПИСИ (из sessions)
     const daySessions = sessions.filter(s => s.dateStr === dateStr);
     
     daySessions.forEach(s => {
+        if (isDebugDay) console.log(`📦 Found RAM Session: ${s.client} ${s.start} [Status: ${s.status}] ID:${s.id}`);
+        
         if (s.status !== 'cancelled') {
             allEvents.push({ data: s, type: 'real', ...getTimeRange(s.start, s.end) });
         } else {
-            // Раскомментируй, если хочешь видеть в консоли скрытые отмены
-            // console.log(`[RENDER] Skip cancelled: ${s.client} at ${s.start}`);
+            if (isDebugDay) console.log(`🛡️ Blocked by CANCELLED status: ${s.client} at ${s.start}`);
         }
     });
 
-    // 2. ФАНТОМЫ (из настроек клиентов)
+    // 2. ФАНТОМЫ (из clients.schedule)
     clients.forEach(client => {
         const daySched = client.schedule?.[dayIdx];
         if (daySched) {
             daySched.forEach(slot => {
                 if (slot.startFrom && dateStr < slot.startFrom) return;
 
-                // === КРИТИЧЕСКОЕ МЕСТО ===
-                // Проверяем, есть ли запись, которая перекрывает этот слот
+                // Проверка перекрытия
                 const exists = sessions.some(s => {
-                    // Строгое сравнение имен и времени
-                    const isNameMatch = s.client === client.name;
-                    const isDateMatch = s.dateStr === dateStr;
-                    const isTimeMatch = s.start === slot.s;
-                    
-                    // Если нашли совпадение - возвращаем true (значит фантом рисовать НЕ надо)
-                    return isNameMatch && isDateMatch && isTimeMatch;
+                    const match = (s.client === client.name && s.dateStr === dateStr && s.start === slot.s);
+                    // Если нашли match, логируем, почему фантом не будет создан
+                    if (match && isDebugDay) console.log(`✋ Phantom Blocked by Session: ${s.client} ${s.start} (Status: ${s.status})`);
+                    return match;
                 });
 
                 if (!exists) {
-                    // ЕСЛИ МЫ ТУТ — ЗНАЧИТ CИСТЕМА НЕ НАШЛА SESSION (ни активную, ни cancelled)
-                    // console.log(`👻 GHOST BORN: ${client.name} ${dateStr} ${slot.s}`);
-                    
-                    // DEBUG: Если мы удалили запись, а тут снова создается призрак,
-                    // значит exists === false. Почему?
-                    // Посмотри в консоль после удаления, если увидишь этот лог.
+                    if (isDebugDay) console.warn(`👻 CREATING GHOST: ${client.name} at ${slot.s}. Reason: No session found to block it.`);
                     
                     const ghost = {
                         id: `ghost-${client.id}-${dateStr}-${slot.s}`,
@@ -1158,14 +1183,14 @@ async function commitDelete(deleteSeries) {
                         linkedPatternSlot: { dayIdx, s: slot.s, e: slot.e, startFrom: slot.startFrom }
                     };
                     allEvents.push({ data: ghost, type: 'ghost', ...getTimeRange(slot.s, slot.e) });
-                } else {
-                    // console.log(`🛡️ GHOST BLOCKED: ${client.name} by real/cancelled session`);
                 }
             });
         }
     });
 
-    // ... (Дальше код сортировки и отрисовки остался прежним) ...
+    if (isDebugDay) console.groupEnd();
+
+    // ... (Сортировка и отрисовка без изменений) ...
     allEvents.sort((a, b) => {
         if (a.startMin !== b.startMin) return a.startMin - b.startMin;
         return (b.endMin - b.startMin) - (a.endMin - a.startMin);
@@ -1206,11 +1231,9 @@ async function commitDelete(deleteSeries) {
         const leftPercent = ev.colIndex * widthPercent;
 
         const el = createEventEl(ev.data);
-        
         el.style.width = `calc(${widthPercent}% - 4px)`; 
         el.style.left = `calc(${leftPercent}% + 2px)`;
         el.style.zIndex = 5 + ev.colIndex;
-
         col.appendChild(el);
     });
 }
