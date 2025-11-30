@@ -763,52 +763,91 @@
   }
 
   // === ОБНОВЛЕННАЯ ФУНКЦИЯ УДАЛЕНИЯ ===
+// === ИСПРАВЛЕННАЯ ФУНКЦИЯ УДАЛЕНИЯ ===
   function commitDelete(deleteSeries) {
     // Получаем дату ДО удаления (важно, если id "ghost")
     let dateToSync = document.getElementById('inpDate').value;
+    
+    // Пытаемся найти удаляемую сессию в массиве
+    let sToDelete = null;
     if(editingId && !String(editingId).startsWith('ghost')) {
-        const s = sessions.find(x => String(x.id) === String(editingId));
-        if(s) dateToSync = s.dateStr;
+        sToDelete = sessions.find(x => String(x.id) === String(editingId));
+        if(sToDelete) dateToSync = sToDelete.dateStr;
     }
 
     if (deleteSeries && editingLinkedPattern) {
-         // Удаление серии
-         const s = sessions.find(x => String(x.id) === String(editingId)) || { client: document.getElementById('inpClient').value };
+         // 1. Удаление ВСЕЙ СЕРИИ из настроек клиента
+         const s = sToDelete || { client: document.getElementById('inpClient').value };
+         
          updateClientPattern(s.client, editingLinkedPattern, null);
+         
          const cSave = clients.find(c => c.name === s.client);
          if(cSave) DataManager.fetchFromServer('save_client', { client: cSave });
          
-         // Удаляем эту конкретную запись из отображения
-         if(editingId && !String(editingId).startsWith('ghost')) sessions = sessions.filter(x => String(x.id) !== String(editingId));
+         // Удаляем текущую запись из отображения, если она была реальной
+         if(sToDelete) sessions = sessions.filter(x => String(x.id) !== String(editingId));
+         
          showToast("Серия удалена", false);
 
     } else {
-        if (!deleteSeries && editingLinkedPattern) {
-             // Исключение из серии (Cancel)
-             const clientName = document.getElementById('inpClient').value;
-             const dateStr = document.getElementById('inpDate').value;
-             
-             // Удаляем активную версию, если она была
-             if (editingId && !String(editingId).startsWith('ghost')) {
-                 sessions = sessions.filter(x => String(x.id) !== String(editingId));
-             }
+        // 2. Удаление ОДНОЙ тренировки
+        
+        // Сначала проверяем: это "Обычное удаление" или "Исключение из серии"?
+        // Проблема была тут: иногда editingLinkedPattern терялся или сессия просто совпадала по времени
+        
+        let needToCancel = false;
 
-             // Добавляем запись "Отменено"
-             const cancelledS = { 
-                 id: generateUniqueId(), 
-                 client: clientName, 
-                 dateStr: dateStr, 
-                 start: editingLinkedPattern.s, 
-                 end: editingLinkedPattern.e, 
-                 status: 'cancelled', 
-                 type: 'client',
-                 linkedPatternSlot: editingLinkedPattern 
-             };
-             sessions.push(cancelledS);
+        // Если явно передали pattern (пришло из Ghost)
+        if (!deleteSeries && editingLinkedPattern) {
+            needToCancel = true;
+        } 
+        // Если pattern не передан, проверим вручную: совпадает ли это время с шаблоном клиента?
+        else if (sToDelete) {
+             const cli = clients.find(c => c.name === sToDelete.client);
+             if (cli && cli.schedule) {
+                 const d = new Date(sToDelete.dateStr);
+                 let dayIdx = d.getDay() - 1; if(dayIdx === -1) dayIdx = 6;
+                 
+                 // Ищем в расписании клиента слот с таким же началом
+                 const isPatternMatch = cli.schedule[dayIdx]?.some(slot => slot.s === sToDelete.start);
+                 if (isPatternMatch) {
+                     needToCancel = true;
+                     // Восстанавливаем связь с паттерном, если она потерялась
+                     if (!editingLinkedPattern) {
+                         editingLinkedPattern = { dayIdx, s: sToDelete.start, e: sToDelete.end };
+                     }
+                 }
+             }
+        }
+
+        if (needToCancel) {
+             // === ЛОГИКА ОТМЕНЫ (ВМЕСТО УДАЛЕНИЯ) ===
+             
+             // Если запись уже есть (была "planned"), меняем ей статус
+             if (sToDelete) {
+                 sToDelete.status = 'cancelled';
+                 sToDelete.linkedPatternSlot = editingLinkedPattern; // Привязываем жестко
+             } else {
+                 // Если удаляли Ghost, создаем новую запись "cancelled"
+                 const clientName = document.getElementById('inpClient').value;
+                 const dateStr = document.getElementById('inpDate').value;
+                 
+                 const cancelledS = { 
+                     id: generateUniqueId(), 
+                     client: clientName, 
+                     dateStr: dateStr, 
+                     start: editingLinkedPattern.s, 
+                     end: editingLinkedPattern.e, 
+                     status: 'cancelled', 
+                     type: 'client',
+                     linkedPatternSlot: editingLinkedPattern 
+                 };
+                 sessions.push(cancelledS);
+             }
              showToast("Отменено", false);
 
-        } else if(editingId && !String(editingId).startsWith('ghost')) {
-            // Обычное удаление
+        } else if(sToDelete) {
+            // === ОБЫЧНОЕ УДАЛЕНИЕ (если это была просто разовая доп. тренировка) ===
             sessions = sessions.filter(x => String(x.id) !== String(editingId));
             showToast("Удалено", false);
         }
