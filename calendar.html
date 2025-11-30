@@ -1130,26 +1130,21 @@ async function commitDelete(deleteSeries) {
   }
   
   // === CORE RENDER LOGIC WITH OVERLAP SUPPORT ===
- function renderEventsForColumn(col, dateStr, dayIdx) {
+function renderEventsForColumn(col, dateStr, dayIdx) {
     col.querySelectorAll('.event-card').forEach(e => e.remove());
     let allEvents = [];
 
-    // --- ЛОГИРОВАНИЕ ТОЛЬКО ДЛЯ ПРОБЛЕМНОГО ДНЯ (чтобы не забить консоль) ---
-    // Впиши сюда дату, с которой борешься (или оставь проверку на 02 число)
+    // --- ЛОГИРОВАНИЕ ТОЛЬКО ДЛЯ ПРОБЛЕМНОГО ДНЯ ---
     const isDebugDay = dateStr.includes('2025-12-02'); 
     
-    if (isDebugDay) console.group(`🎨 Rendering Day: ${dateStr}`);
-
     // 1. РЕАЛЬНЫЕ ЗАПИСИ (из sessions)
     const daySessions = sessions.filter(s => s.dateStr === dateStr);
     
     daySessions.forEach(s => {
-        if (isDebugDay) console.log(`📦 Found RAM Session: ${s.client} ${s.start} [Status: ${s.status}] ID:${s.id}`);
-        
         if (s.status !== 'cancelled') {
             allEvents.push({ data: s, type: 'real', ...getTimeRange(s.start, s.end) });
         } else {
-            if (isDebugDay) console.log(`🛡️ Blocked by CANCELLED status: ${s.client} at ${s.start}`);
+            if (isDebugDay) console.log(`🛡️ Found BLOCKER (Cancelled): ${s.client} (ID:${s.clientId}) at ${s.start}`);
         }
     });
 
@@ -1160,17 +1155,32 @@ async function commitDelete(deleteSeries) {
             daySched.forEach(slot => {
                 if (slot.startFrom && dateStr < slot.startFrom) return;
 
-                // Проверка перекрытия
+                // === ГЛАВНЫЙ ФИКС ЗДЕСЬ ===
+                // Проверяем, есть ли запись, которая перекрывает этот слот
                 const exists = sessions.some(s => {
-                    const match = (s.client === client.name && s.dateStr === dateStr && s.start === slot.s);
-                    // Если нашли match, логируем, почему фантом не будет создан
-                    if (match && isDebugDay) console.log(`✋ Phantom Blocked by Session: ${s.client} ${s.start} (Status: ${s.status})`);
-                    return match;
+                    // 1. Сначала проверяем дату и время
+                    if (s.dateStr !== dateStr || s.start !== slot.s) return false;
+
+                    // 2. Теперь проверяем, относится ли это к клиенту
+                    
+                    // А. Совпадение по ID (Самое надежное)
+                    if (s.clientId && client.id && String(s.clientId) === String(client.id)) return true;
+                    
+                    // Б. Совпадение по Имени
+                    if (s.client === client.name) return true;
+
+                    // В. !!! СПАСАТЕЛЬНЫЙ КРУГ !!!
+                    // Если у сессии имя "?" (потерялось) или null, НО она 'cancelled' и время совпадает
+                    // МЫ СЧИТАЕМ ЭТО БЛОКИРОВКОЙ.
+                    if ((s.client === '?' || !s.client) && s.status === 'cancelled') {
+                        if (isDebugDay) console.log(`⚠️ Blocked by ORPHAN session (Name: ?, Time match)`);
+                        return true;
+                    }
+
+                    return false;
                 });
 
                 if (!exists) {
-                    if (isDebugDay) console.warn(`👻 CREATING GHOST: ${client.name} at ${slot.s}. Reason: No session found to block it.`);
-                    
                     const ghost = {
                         id: `ghost-${client.id}-${dateStr}-${slot.s}`,
                         client: client.name,
@@ -1183,14 +1193,14 @@ async function commitDelete(deleteSeries) {
                         linkedPatternSlot: { dayIdx, s: slot.s, e: slot.e, startFrom: slot.startFrom }
                     };
                     allEvents.push({ data: ghost, type: 'ghost', ...getTimeRange(slot.s, slot.e) });
+                } else {
+                    if (isDebugDay) console.log(`⛔️ Ghost for ${client.name} BLOCKED successfully.`);
                 }
             });
         }
     });
 
-    if (isDebugDay) console.groupEnd();
-
-    // ... (Сортировка и отрисовка без изменений) ...
+    // ... (Дальше без изменений) ...
     allEvents.sort((a, b) => {
         if (a.startMin !== b.startMin) return a.startMin - b.startMin;
         return (b.endMin - b.startMin) - (a.endMin - a.startMin);
