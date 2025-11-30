@@ -558,29 +558,47 @@
   /* ==========================================
        3. INIT
      ========================================== */
-  async function init() {
+ // === ПОЛНОСТЬЮ ЗАМЕНИТЬ ФУНКЦИЮ INIT НА ЭТУ ===
+async function init() {
     const tg = window.Telegram?.WebApp;
     if(tg) { tg.ready(); tg.expand(); try{tg.setHeaderColor('#050505');tg.setBackgroundColor('#050505');}catch(_){} }
 
     DataManager.loadLocal();
-    renderTimeColumn(); renderDayRange(startOffset, endOffset);
-    scrollToToday(); startClock();
+    renderTimeColumn(); 
+    renderDayRange(startOffset, endOffset);
+    scrollToToday(); 
+    startClock();
     reRenderBlocks();
     
     document.getElementById('matrixViewport').addEventListener('scroll', ()=>{ isScrolling=true; cancelLongPress(); onScroll(); handleInfiniteScroll(); }, {passive: true});
 
+    // --- НОВАЯ ЛОГИКА: ГРУЗИМ ТЕКУЩИЙ + СЛЕДУЮЩИЙ МЕСЯЦ ---
     const d = new Date();
-    const monthStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; 
+    
+    // 1. Текущий месяц (например, 2025-11)
+    const m1 = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+    
+    // 2. Следующий месяц (например, 2025-12)
+    const nextM = new Date(d);
+    nextM.setMonth(d.getMonth() + 1);
+    const m2 = `${nextM.getFullYear()}-${String(nextM.getMonth()+1).padStart(2,'0')}`;
 
+    console.log(`[Sync] Загружаем: ${m1} и ${m2}`);
+    
+    // Грузим оба месяца параллельно
     try {
-      const fresh = await DataManager.fetchFromServer('init_load', { month_str: monthStr });
-      applyDataToState(fresh, monthStr);
-      saveAllDataLocally();
-      showToast("Данные обновлены", true);
+        await Promise.all([
+            DataManager.fetchFromServer('init_load', { month_str: m1 }).then(data => applyDataToState(data, m1)),
+            DataManager.fetchFromServer('init_load', { month_str: m2 }).then(data => applyDataToState(data, m2))
+        ]);
+        
+        saveAllDataLocally();
+        showToast("Синхронизация завершена", true);
     } catch (e) {
-      showToast("Работа в оффлайн режиме", false);
+        console.error(e);
+        showToast("Работа в оффлайн режиме", false);
     }
-  }
+}
 
   function applyDataToState(data, monthStr) {
     if (!data) return;
