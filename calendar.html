@@ -765,101 +765,104 @@
   // === ОБНОВЛЕННАЯ ФУНКЦИЯ УДАЛЕНИЯ ===
 async function commitDelete(deleteSeries) {
     console.clear();
-    console.group("🔥 DEBUG: commitDelete (ZOMBIE KILLER MODE)");
+    console.group("🔥 DEBUG: commitDelete (SAFETY NET MODE)");
     
     let clientName = document.getElementById('inpClient').value;
     const dateStr = document.getElementById('inpDate').value;
-    // Определяем время начала: либо из паттерна, либо из инпута
+    // Время начала берем из паттерна, если есть, или из инпута
     const startTime = editingLinkedPattern ? editingLinkedPattern.s : document.getElementById('inpStart').value;
+    const endTime = editingLinkedPattern ? editingLinkedPattern.e : document.getElementById('inpEnd').value;
 
-    console.log(`🎯 Target: "${clientName}" | Date: ${dateStr} | Time: ${startTime}`);
+    // Пытаемся вытащить ID клиента из ID фантома (самый надежный способ)
+    let targetClientId = null;
+    if (editingId && String(editingId).startsWith('ghost-')) {
+        // Формат: ghost-ID-DATE-TIME
+        const parts = editingId.split('-');
+        if (parts[1]) targetClientId = parts[1];
+    } else if (editingId) {
+        // Если это реальная сессия
+        const existing = sessions.find(s => String(s.id) === String(editingId));
+        if (existing) targetClientId = existing.clientId;
+    }
 
-    // === 1. ЧИСТКА КЛИЕНТА (СЕРВЕРНАЯ ЧАСТЬ) ===
+    console.log(`🎯 Target: "${clientName}" (ID: ${targetClientId}) | Date: ${dateStr}`);
+
+    // === 1. УДАЛЕНИЕ ИЗ БУДУЩЕГО (CLIENT SCHEDULE) ===
     if (deleteSeries && editingLinkedPattern) {
-        let clientsUpdated = 0;
+        let found = false;
         
-        clients.forEach(c => {
-            // Ищем клиента по имени (trim убирает случайные пробелы)
-            if (c.name.trim() === clientName.trim()) {
-                if (c.schedule) {
-                    Object.keys(c.schedule).forEach(dayKey => {
-                        const arr = c.schedule[dayKey];
-                        // Ищем слот, который совпадает по времени
-                        const idx = arr.findIndex(sl => sl.s === editingLinkedPattern.s);
-                        
-                        if (idx !== -1) {
-                            console.log(`🔪 Found in Client[${c.name}] Day[${dayKey}]. Removing...`);
-                            arr.splice(idx, 1);
-                            
-                            // !!! ВАЖНОЕ ИЗМЕНЕНИЕ !!!
-                            // Не удаляем ключ (delete), а ставим пустой массив.
-                            // Это гарантирует, что сервер перезапишет данные.
-                            if (arr.length === 0) {
-                                c.schedule[dayKey] = []; 
-                            }
-                            
-                            clientsUpdated++;
-                            
-                            // Принудительно превращаем ID в строку для надежности сравнения на сервере
-                            const payloadClient = JSON.parse(JSON.stringify(c));
-                            payloadClient.id = String(payloadClient.id);
+        // Ищем клиента по ID (если есть) или по имени
+        const client = clients.find(c => 
+            (targetClientId && String(c.id) === String(targetClientId)) || 
+            c.name.trim() === clientName.trim()
+        );
 
-                            console.log("🚀 Sending CLEAN schedule to server:", payloadClient.schedule);
-                            
-                            // Отправляем
-                            DataManager.fetchFromServer('save_client', { client: payloadClient })
-                                .then(() => console.log("✅ Server save confirmed"))
-                                .catch(err => console.error("❌ Server save failed", err));
-                        }
-                    });
-                }
+        if (client) {
+            if (client.schedule) {
+                Object.keys(client.schedule).forEach(dayKey => {
+                    const arr = client.schedule[dayKey];
+                    // Ищем слот по времени
+                    const idx = arr.findIndex(sl => sl.s === startTime);
+                    
+                    if (idx !== -1) {
+                        console.log(`🔪 Removing pattern from Client[${client.name}] Day[${dayKey}]`);
+                        arr.splice(idx, 1);
+                        if (arr.length === 0) client.schedule[dayKey] = []; // Пишем пустой массив
+                        found = true;
+                    }
+                });
             }
-        });
-
-        if (clientsUpdated === 0) {
-            console.warn("⚠️ ALARM: Pattern not found in memory! Maybe check time format?");
+            
+            // Если нашли и изменили - отправляем на сервер
+            if (found) {
+                // Приводим ID к строке для надежности
+                const payload = JSON.parse(JSON.stringify(client));
+                payload.id = String(payload.id);
+                
+                console.log("🚀 Syncing Client to Server...");
+                DataManager.fetchFromServer('save_client', { client: payload })
+                    .catch(e => console.error("Client sync warn:", e));
+            }
         }
     }
 
-    // === 2. ЧИСТКА СЕССИЙ (ВИЗУАЛЬНАЯ ЧАСТЬ) ===
-    // Удаляем всё, что похоже на эту тренировку из оперативной памяти
-    const prevLen = sessions.length;
+    // === 2. МАСКИРОВКА В НАСТОЯЩЕМ (SESSIONS) ===
+    // Удаляем все активные/дублирующиеся записи из памяти
     sessions = sessions.filter(s => {
-        // Условие 1: Совпадение по ID (если редактировали существующую)
         const matchId = (editingId && String(s.id) === String(editingId));
-        // Условие 2: Совпадение по Времени и Имени (если это фантом или дубль)
         const matchTime = (s.client === clientName && s.dateStr === dateStr && s.start === startTime);
-        
-        if (matchId || matchTime) {
-            console.log(`🗑 Drop session ID: ${s.id}`);
-            return false; // Удаляем
-        }
-        return true; // Оставляем
+        if (matchId || matchTime) return false; // Удаляем из RAM
+        return true;
     });
 
-    // Если это была просто "Отмена" одной тренировки (не серии)
-    if (!deleteSeries && editingLinkedPattern) {
-        sessions.push({
-            id: generateUniqueId(),
-            client: clientName,
-            dateStr: dateStr,
-            start: startTime,
-            end: editingLinkedPattern.e,
-            status: 'cancelled',
-            type: 'client',
-            linkedPatternSlot: editingLinkedPattern
-        });
-        showToast("Тренировка отменена", false);
-    } else {
-        showToast("Удалено навсегда", false);
-    }
+    // !!! ГЛАВНЫЙ ФИКС !!!
+    // Даже если мы удалили серию, мы создаем "заглушку" со статусом cancelled на СЕГОДНЯ.
+    // Если после перезагрузки сервер вернет старое расписание, эта заглушка заблокирует отрисовку фантома.
+    
+    const safetySession = {
+        id: generateUniqueId(),
+        client: clientName,
+        clientId: targetClientId, // Важно сохранить ID
+        dateStr: dateStr,
+        start: startTime,
+        end: endTime,
+        status: 'cancelled', // <--- ЭТОТ СТАТУС СПАСЕТ ОТ ГЛЮКОВ
+        type: 'client',
+        linkedPatternSlot: editingLinkedPattern // Сохраняем связь
+    };
+    
+    sessions.push(safetySession);
+    console.log("🛡️ Created Safety Net Session (Cancelled):", safetySession);
 
-    // === 3. ФИНАЛИЗАЦИЯ ===
+    if (deleteSeries) showToast("Серия удалена", false);
+    else showToast("Отменено", false);
+
+    // === 3. СОХРАНЕНИЕ ===
     saveAllDataLocally();
     closeAllSheets();
     reRenderBlocks();
     
-    // Синхронизируем день, чтобы убрать возможные хвосты
+    // Синхронизируем день (отправляем нашу заглушку на сервер)
     syncDayToServer(dateStr);
     
     console.groupEnd();
