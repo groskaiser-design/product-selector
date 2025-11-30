@@ -764,40 +764,52 @@
 
   // === ОБНОВЛЕННАЯ ФУНКЦИЯ УДАЛЕНИЯ ===
   function commitDelete(deleteSeries) {
-    // Получаем дату ДО удаления (важно, если id "ghost")
     let dateToSync = document.getElementById('inpDate').value;
+    const clientName = document.getElementById('inpClient').value;
+    
+    // Ищем реальную сессию
+    let s = null;
     if(editingId && !String(editingId).startsWith('ghost')) {
-        const s = sessions.find(x => String(x.id) === String(editingId));
+        s = sessions.find(x => String(x.id) === String(editingId));
         if(s) dateToSync = s.dateStr;
     }
 
-    if (deleteSeries && editingLinkedPattern) {
-         // Удаление серии
-         const s = sessions.find(x => String(x.id) === String(editingId)) || { client: document.getElementById('inpClient').value };
-         updateClientPattern(s.client, editingLinkedPattern, null);
-         const cSave = clients.find(c => c.name === s.client);
+    if (deleteSeries) {
+         // === FIX: Если editingLinkedPattern пуст или сломан, чиним его ===
+         let patternToDelete = editingLinkedPattern;
+         
+         if (!patternToDelete) {
+             // Берем время прямо из полей ввода, чтобы точно попасть в цель
+             const uiStart = document.getElementById('inpStart').value;
+             const uiEnd = document.getElementById('inpEnd').value;
+             patternToDelete = { s: uiStart, e: uiEnd };
+             // День недели возьмет updateClientPattern из даты
+         }
+
+         // Удаляем серию у клиента
+         updateClientPattern(clientName, patternToDelete, null);
+         
+         // Сохраняем клиента на сервер
+         const cSave = clients.find(c => c.name === clientName);
          if(cSave) DataManager.fetchFromServer('save_client', { client: cSave });
          
-         // Удаляем эту конкретную запись из отображения
-         if(editingId && !String(editingId).startsWith('ghost')) sessions = sessions.filter(x => String(x.id) !== String(editingId));
-         showToast("Серия удалена", false);
+         // Удаляем конкретную запись с экрана
+         if(editingId && !String(editingId).startsWith('ghost')) {
+            sessions = sessions.filter(x => String(x.id) !== String(editingId));
+         }
+         
+         showToast("Серия и тренировка удалены", false);
 
     } else {
-        if (!deleteSeries && editingLinkedPattern) {
-             // Исключение из серии (Cancel)
-             const clientName = document.getElementById('inpClient').value;
-             const dateStr = document.getElementById('inpDate').value;
-             
-             // Удаляем активную версию, если она была
+        // ... (Код обычного удаления или отмены остался тем же, он работает)
+        if (editingLinkedPattern) {
              if (editingId && !String(editingId).startsWith('ghost')) {
                  sessions = sessions.filter(x => String(x.id) !== String(editingId));
              }
-
-             // Добавляем запись "Отменено"
              const cancelledS = { 
                  id: generateUniqueId(), 
                  client: clientName, 
-                 dateStr: dateStr, 
+                 dateStr: dateToSync, 
                  start: editingLinkedPattern.s, 
                  end: editingLinkedPattern.e, 
                  status: 'cancelled', 
@@ -805,10 +817,8 @@
                  linkedPatternSlot: editingLinkedPattern 
              };
              sessions.push(cancelledS);
-             showToast("Отменено", false);
-
+             showToast("Отменено (исключение)", false);
         } else if(editingId && !String(editingId).startsWith('ghost')) {
-            // Обычное удаление
             sessions = sessions.filter(x => String(x.id) !== String(editingId));
             showToast("Удалено", false);
         }
@@ -816,9 +826,7 @@
     
     saveAllDataLocally();
     closeAllSheets(); 
-    reRenderBlocks();
-
-    // СИНХРОНИЗИРУЕМ ДЕНЬ
+    reRenderBlocks(); // Перерисовка уберет "призрака"
     syncDayToServer(dateToSync);
   }
 
@@ -1186,29 +1194,51 @@
   function closeActionSheet() { document.getElementById('actionSheet').classList.remove('open'); document.getElementById('actionSheetOverlay').classList.remove('active'); }
 
     function updateClientPattern(clientName, oldSlot, newData) { 
-        const client = clients.find(c => c.name === clientName); 
-        if (!client) return; 
-    
-        if (oldSlot && client.schedule && client.schedule[oldSlot.dayIdx]) { 
-            const arr = client.schedule[oldSlot.dayIdx]; 
-            const idx = arr.findIndex(sl => sl.s === oldSlot.s && sl.e === oldSlot.e); 
-            if (idx !== -1) arr.splice(idx, 1); 
-        } 
-    
-        if (newData) { 
-            const newD = new Date(newData.dateStr); 
-            let newDayIdx = newD.getDay() - 1; 
-            if(newDayIdx === -1) newDayIdx = 6; 
-    
-            if (!client.schedule[newDayIdx]) client.schedule[newDayIdx] = []; 
-            
-            client.schedule[newDayIdx].push({ 
-                s: newData.start, 
-                e: newData.end, 
-                startFrom: newData.dateStr 
-            }); 
-        } 
-    }
+      const client = clients.find(c => c.name === clientName); 
+      if (!client) return; 
+
+      // === ЖЕСТКОЕ УДАЛЕНИЕ ===
+      if (oldSlot) { 
+          // 1. Определяем день недели
+          let dayIdx = oldSlot.dayIdx;
+          
+          // Если индекс дня потерялся, вычисляем его из даты на экране
+          if (dayIdx === undefined || dayIdx === null) {
+              const dateVal = document.getElementById('inpDate').value; // Берем дату из инпута
+              if (dateVal) {
+                  const d = new Date(dateVal);
+                  dayIdx = d.getDay() - 1; if(dayIdx === -1) dayIdx = 6;
+              }
+          }
+
+          // 2. Если день определен и у клиента есть расписание
+          if (dayIdx !== undefined && client.schedule && client.schedule[dayIdx]) { 
+              const beforeCount = client.schedule[dayIdx].length;
+              
+              // ФИЛЬТРАЦИЯ: Оставляем только те слоты, где время начала НЕ совпадает
+              client.schedule[dayIdx] = client.schedule[dayIdx].filter(sl => sl.s !== oldSlot.s);
+              
+              const afterCount = client.schedule[dayIdx].length;
+              console.log(`[Pattern] Удаление слота ${oldSlot.s}. Было: ${beforeCount}, Стало: ${afterCount}`);
+          } 
+      } 
+
+      // === ДОБАВЛЕНИЕ НОВОГО ===
+      if (newData) { 
+          const newD = new Date(newData.dateStr); 
+          let newDayIdx = newD.getDay() - 1; 
+          if(newDayIdx === -1) newDayIdx = 6; 
+
+          if (!client.schedule) client.schedule = {}; // Защита от null
+          if (!client.schedule[newDayIdx]) client.schedule[newDayIdx] = []; 
+          
+          client.schedule[newDayIdx].push({ 
+              s: newData.start, 
+              e: newData.end, 
+              startFrom: newData.dateStr 
+          }); 
+      } 
+  }
   
   function scrollToToday() { const today = getLocalDateStr(new Date()); const el = document.getElementById('header-' + today); const vp = document.getElementById('matrixViewport'); if(el && vp) { const vpW = vp.clientWidth; const elLeft = el.offsetLeft; const elW = el.offsetWidth; vp.scrollLeft = elLeft - (vpW / 2) + (elW / 2); vp.scrollTop = 12 * GRID_H - (vp.clientHeight / 2); } }
   function onScroll() { const vp=document.getElementById('matrixViewport'), headers=document.querySelectorAll('.day-col-header'); for(let h of headers) if(h.offsetLeft>=vp.scrollLeft) { const d=new Date(h.getAttribute('data-date')); document.getElementById('headerMonth').textContent=`${d.toLocaleString('ru',{month:'long'}).toUpperCase()} ${d.getFullYear()}`; break; } }
