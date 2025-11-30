@@ -799,37 +799,28 @@ async function commitDelete(deleteSeries) {
     const clientName = document.getElementById('inpClient').value;
     const dateStr = document.getElementById('inpDate').value;
     
-    // Определяем время. Если это фантом — берем из его данных. Если реальная — из инпута.
-    const startTime = editingLinkedPattern ? editingLinkedPattern.s : document.getElementById('inpStart').value;
+    // Получаем индекс дня (0-6), чтобы знать, какой день недели чистить
+    const d = new Date(dateStr);
+    let dayIdx = d.getDay() - 1; 
+    if(dayIdx === -1) dayIdx = 6;
 
-    // Блокируем UI
-    const toast = document.getElementById('toast');
     showToast("Удаление...", true);
 
     try {
-        // === ШАГ 1: ВЫКЛЮЧАЕМ ГЕНЕРАТОР (Если удаляем серию) ===
+        // === 1. УБИВАЕМ СЕРИЮ (ВЫЖИГАЕМ ДЕНЬ) ===
         if (deleteSeries) {
-            // Ищем клиента по имени (самое надежное, т.к. ID мог заглючить)
+            // Ищем клиента просто по имени
             const client = clients.find(c => c.name.trim() === clientName.trim());
             
             if (client && client.schedule) {
-                let patternFound = false;
-                
-                // Прочесываем все дни недели этого клиента
-                Object.keys(client.schedule).forEach(dayKey => {
-                    const arr = client.schedule[dayKey];
-                    // Ищем любой слот, который начинается в это время
-                    const idx = arr.findIndex(sl => sl.s === startTime);
+                // ТУПОЕ РЕШЕНИЕ: Просто удаляем весь этот день из расписания клиента
+                // Если там было несколько тренировок в этот день — удалятся все. 
+                // Зато фантом точно исчезнет.
+                if (client.schedule[dayIdx]) {
+                    console.log(`🧨 Nuking Day ${dayIdx} for ${client.name}`);
+                    client.schedule[dayIdx] = []; // Обнуляем массив
                     
-                    if (idx !== -1) {
-                        arr.splice(idx, 1); // Удаляем
-                        if (arr.length === 0) client.schedule[dayKey] = []; // Обнуляем день
-                        patternFound = true;
-                    }
-                });
-
-                if (patternFound) {
-                    // СРАЗУ отправляем измененного клиента на сервер и ЖДЕМ
+                    // Сохраняем на сервер
                     const payload = JSON.parse(JSON.stringify(client));
                     payload.id = String(payload.id);
                     await DataManager.fetchFromServer('save_client', { client: payload });
@@ -837,17 +828,20 @@ async function commitDelete(deleteSeries) {
             }
         }
 
-        // === ШАГ 2: ЧИСТИМ БАЗУ (SESSIONS) ===
-        // Удаляем ВСЁ, что совпадает по времени и дате.
-        // Не важно, какой там ID, есть ли имя или null. Если время совпало — в топку.
+        // === 2. ЧИСТИМ БАЗУ ОТ МУСОРА ===
+        // Удаляем любые записи на это время + любые записи с NULL (битые)
+        const startTime = editingLinkedPattern ? editingLinkedPattern.s : document.getElementById('inpStart').value;
         
         sessions = sessions.filter(s => {
-            const isTargetTime = (s.dateStr === dateStr && s.start === startTime);
-            // Если время совпало — удаляем (возвращаем false)
-            return !isTargetTime;
+            // Удаляем, если это тот самый фантом/запись
+            const isTarget = (s.dateStr === dateStr && s.start === startTime);
+            // Удаляем, если это "битый" мусор (cancelled с null)
+            const isGarbage = (s.status === 'cancelled' && !s.clientId);
+            
+            return !(isTarget || isGarbage);
         });
 
-        // Если это НЕ серия (просто отмена одной тренировки), ставим заглушку
+        // Если это одиночная отмена (не серия) — ставим заглушку
         if (!deleteSeries && editingLinkedPattern) {
             sessions.push({
                 id: generateUniqueId(),
@@ -861,19 +855,19 @@ async function commitDelete(deleteSeries) {
             });
         }
 
-        // === ШАГ 3: СОХРАНЯЕМ РЕЗУЛЬТАТ ===
+        // === 3. СОХРАНЯЕМ ===
         saveAllDataLocally();
         closeAllSheets();
-        reRenderBlocks(); // Визуально удалится мгновенно
-
-        // Отправляем чистый день на сервер
+        reRenderBlocks();
+        
+        // Перезаписываем день на сервере (это уберет мусор из JSON)
         await syncDayToServer(dateStr);
 
-        showToast("Удалено", true);
+        showToast("Удалено нахер", true);
 
     } catch (e) {
         console.error(e);
-        showToast("Ошибка удаления", false);
+        showToast("Ошибка", false);
     }
 }
 
