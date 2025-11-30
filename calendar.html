@@ -1260,51 +1260,48 @@ async function commitDelete(deleteSeries) {
   function openActionSheet(type) { const sheet = document.getElementById('actionSheet'); const overlay = document.getElementById('actionSheetOverlay'); const title = document.getElementById('asTitle'); const btnOne = document.getElementById('asBtnOne'); const btnSeries = document.getElementById('asBtnSeries'); overlay.classList.add('active'); sheet.classList.add('open'); if (type === 'save') { title.textContent = "Изменение повторяющегося события"; btnOne.textContent = "Только эта тренировка"; btnOne.className = "as-button"; btnOne.onclick = () => { closeActionSheet(); commitSave(tempSessionData, false); }; btnSeries.textContent = "Изменить всю серию"; btnSeries.className = "as-button bold"; btnSeries.onclick = () => { closeActionSheet(); commitSave(tempSessionData, true); }; } else if (type === 'delete') { title.textContent = "Удаление события"; btnOne.textContent = "Только эту тренировку"; btnOne.className = "as-button danger"; btnOne.onclick = () => { closeActionSheet(); commitDelete(false); }; btnSeries.textContent = "Удалить из расписания"; btnSeries.className = "as-button danger bold"; btnSeries.onclick = () => { closeActionSheet(); commitDelete(true); }; } }
   function closeActionSheet() { document.getElementById('actionSheet').classList.remove('open'); document.getElementById('actionSheetOverlay').classList.remove('active'); }
 
-    function updateClientPattern(clientName, oldSlot, newData) {
-    console.group("🛠 updateClientPattern");
-    console.log(`Searching for client: "${clientName}"`);
+function updateClientPattern(clientName, oldSlot, newData) {
+    console.group("🛠 updateClientPattern (NUCLEAR FIX)");
     
-    // 1. Ищем клиента (игнорируем регистр и пробелы для надежности)
+    // 1. Ищем клиента
     const client = clients.find(c => c.name.trim() === clientName.trim());
-    
     if (!client) {
-        console.error("❌ Client not found in memory!");
-        console.groupEnd();
-        return;
+        console.error("❌ Client not found!"); 
+        console.groupEnd(); 
+        return; 
     }
 
-    // 2. УДАЛЕНИЕ СТАРОГО СЛОТА
+    // 2. УДАЛЕНИЕ (Ищем во ВСЕХ днях, игнорируя кривой dayIdx)
     if (oldSlot) {
-        // Убеждаемся, что schedule существует
         if (!client.schedule) client.schedule = {};
         
-        const dayIdx = oldSlot.dayIdx;
-        const arr = client.schedule[dayIdx];
+        let removedCount = 0;
         
-        console.log(`Checking Day ${dayIdx}. Schedule array:`, JSON.parse(JSON.stringify(arr || [])));
-        console.log(`Looking for slot starting at: ${oldSlot.s}`);
+        // Проходимся по всем ключам (дням), которые есть у клиента
+        Object.keys(client.schedule).forEach(dayKey => {
+            const arr = client.schedule[dayKey];
+            if (!arr) return;
 
-        if (arr && arr.length > 0) {
-            // Ищем индекс только по времени начала (так надежнее)
-            const idx = arr.findIndex(sl => sl.s === oldSlot.s);
+            // Ищем слот по времени начала (s) и конца (e)
+            // Это защитит от случайного удаления другого слота в другое время
+            const idx = arr.findIndex(sl => sl.s === oldSlot.s && sl.e === oldSlot.e);
             
             if (idx !== -1) {
-                console.log(`✅ FOUND at index ${idx}. REMOVING.`);
-                arr.splice(idx, 1); // Удаляем
+                console.log(`🔥 FOUND in Day[${dayKey}] index ${idx}. KILLING IT.`);
+                arr.splice(idx, 1);
+                removedCount++;
                 
-                // Если массив пуст - можно его удалить (опционально)
-                if (arr.length === 0) delete client.schedule[dayIdx];
-            } else {
-                console.warn("⚠️ Slot not found by start time!");
+                // Если день пустой, чистим ключ
+                if (arr.length === 0) delete client.schedule[dayKey];
             }
-        } else {
-            console.warn("⚠️ No schedule for this day index.");
+        });
+
+        if (removedCount === 0) {
+            console.warn(`⚠️ Slot ${oldSlot.s}-${oldSlot.e} not found in ANY day.`);
         }
-    } else {
-        console.log("No oldSlot provided (New entry?)");
     }
 
-    // 3. ДОБАВЛЕНИЕ НОВОГО (Если мы редактируем, а не удаляем)
+    // 3. ДОБАВЛЕНИЕ НОВОГО (Тут используем твою логику -1, чтобы новые записи были консистентны)
     if (newData) {
         const newD = new Date(newData.dateStr);
         let newDayIdx = newD.getDay() - 1; 
@@ -1313,16 +1310,15 @@ async function commitDelete(deleteSeries) {
         if (!client.schedule) client.schedule = {};
         if (!client.schedule[newDayIdx]) client.schedule[newDayIdx] = [];
         
-        console.log(`Adding new slot to Day ${newDayIdx}: ${newData.start}-${newData.end}`);
-        
         client.schedule[newDayIdx].push({ 
             s: newData.start, 
             e: newData.end, 
             startFrom: newData.dateStr 
         });
+        console.log(`Added to Day[${newDayIdx}]`);
     }
     
-    console.log("Final Client Schedule:", JSON.parse(JSON.stringify(client.schedule)));
+    console.log("Final Schedule:", JSON.parse(JSON.stringify(client.schedule)));
     console.groupEnd();
 }
   
