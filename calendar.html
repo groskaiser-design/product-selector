@@ -489,8 +489,8 @@
 
 <script>
   // 1. CONFIG
-  const APP_VERSION = 'v6.1-STABLE';
-  // 👇 ВСТАВЬ СЮДА СВОЮ ССЫЛКУ ИЗ DEPLOY (exec) 👇
+  const APP_VERSION = 'v8.0-SYNC-DAY';
+  // 👇 ПРОВЕРЬ, ЧТО ТУТ СТОИТ ТВОЯ ССЫЛКУ 👇
   const API_URL = 'https://script.google.com/macros/s/AKfycby6VgXHlaBk4iGY1W9GeHMzF6g_EsLhEEpg_sSn1ZmLYdGP0TjjVAz_KCmiHiDjxxotiw/exec'; 
 
   const GRID_H = 60;
@@ -556,10 +556,42 @@
   };
 
   /* ==========================================
-       3. INIT
+       3. INIT & SYNC HELPERS
      ========================================== */
- // === ПОЛНОСТЬЮ ЗАМЕНИТЬ ФУНКЦИЮ INIT НА ЭТУ ===
-async function init() {
+  
+  // === ГЕНЕРАТОР УНИКАЛЬНОГО ID (Защита от дублей) ===
+  function generateUniqueId() {
+      return Date.now() + Math.floor(Math.random() * 1000000);
+  }
+
+  // === НОВАЯ ФУНКЦИЯ: ОТПРАВКА ВСЕГО ДНЯ ===
+  
+  async function syncDayToServer(dateStr) {
+      // 1. Собираем все сессии за этот день (включая статус cancelled)
+      const daySessions = sessions.filter(s => s.dateStr === dateStr);
+      
+      // 2. Ужимаем данные
+      const payload = daySessions.map(s => ({
+        i: s.id,
+        c: s.clientId,
+        s: s.start,
+        e: s.end,
+        st: s.status,
+        n: s.note,
+        l: s.linkedPatternSlot
+      }));
+
+      console.log(`[Sync] Day ${dateStr}:`, payload);
+
+      // 3. Отправляем полной перезаписью
+      try {
+        await DataManager.fetchFromServer('sync_day', { date: dateStr, day_data: payload });
+      } catch(e) {
+        console.error("Sync failed", e);
+      }
+  }
+
+  async function init() {
     const tg = window.Telegram?.WebApp;
     if(tg) { tg.ready(); tg.expand(); try{tg.setHeaderColor('#050505');tg.setBackgroundColor('#050505');}catch(_){} }
 
@@ -572,20 +604,14 @@ async function init() {
     
     document.getElementById('matrixViewport').addEventListener('scroll', ()=>{ isScrolling=true; cancelLongPress(); onScroll(); handleInfiniteScroll(); }, {passive: true});
 
-    // --- НОВАЯ ЛОГИКА: ГРУЗИМ ТЕКУЩИЙ + СЛЕДУЮЩИЙ МЕСЯЦ ---
     const d = new Date();
-    
-    // 1. Текущий месяц (например, 2025-11)
     const m1 = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-    
-    // 2. Следующий месяц (например, 2025-12)
     const nextM = new Date(d);
     nextM.setMonth(d.getMonth() + 1);
     const m2 = `${nextM.getFullYear()}-${String(nextM.getMonth()+1).padStart(2,'0')}`;
 
     console.log(`[Sync] Загружаем: ${m1} и ${m2}`);
     
-    // Грузим оба месяца параллельно
     try {
         await Promise.all([
             DataManager.fetchFromServer('init_load', { month_str: m1 }).then(data => applyDataToState(data, m1)),
@@ -598,7 +624,7 @@ async function init() {
         console.error(e);
         showToast("Работа в оффлайн режиме", false);
     }
-}
+  }
 
   function applyDataToState(data, monthStr) {
     if (!data) return;
@@ -609,7 +635,6 @@ async function init() {
     }
     if (data.clients) clients = data.clients;
     if (data.calendar) {
-      // Очищаем старые данные только за текущий месяц загрузки
       sessions = sessions.filter(s => !s.dateStr.startsWith(monthStr));
       Object.keys(data.calendar).forEach(dayKey => {
         data.calendar[dayKey].forEach(evt => {
@@ -624,7 +649,6 @@ async function init() {
             status: evt.st, 
             note: evt.n, 
             type: 'client',
-            // !!! ВАЖНОЕ: Бэкенд должен возвращать 'l' для серий
             linkedPatternSlot: evt.l || null 
           });
         });
@@ -644,9 +668,9 @@ async function init() {
   }
 
   /* ==========================================
-       4. ACTIONS & SAVING
+       4. ACTIONS & SAVING (UPDATED)
      ========================================== */
- async function trySaveSession() {
+  async function trySaveSession() {
     const clientName = document.getElementById('inpClient').value;
     const dateStr = document.getElementById('inpDate').value;
     const start = document.getElementById('inpStart').value;
@@ -661,13 +685,10 @@ async function init() {
     }
 
     const val = validateAppointment(dateStr, start, end, editingId, clientObj.id); 
-    
-    // Если валидация вернула false (например, тот же клиент дважды) - стоп
     if(!val.valid) { 
         showToast(val.msg, false);
         return;
     } 
-    // Если есть предупреждение (пересечение с другим), покажем тост, но продолжим
     if(val.warning) {
         showToast(val.warning + " (Сохраняем...)", false);
     }
@@ -703,6 +724,7 @@ async function init() {
     commitSave(newData, false);
   }
 
+  // === ОБНОВЛЕННАЯ ФУНКЦИЯ СОХРАНЕНИЯ ===
   function commitSave(data, updateSeries) {
     if (updateSeries && editingLinkedPattern) {
         updateClientPattern(data.client, editingLinkedPattern, data);
@@ -711,26 +733,27 @@ async function init() {
         showToast("Серия обновлена", true);
     }
 
+    // 1. Обновляем локальный массив (Используем generateUniqueId)
     let finalId = editingId;
     if(editingId && !String(editingId).startsWith('ghost')) {
         const idx = sessions.findIndex(s => String(s.id) === String(editingId));
         if (idx !== -1) { 
            sessions[idx] = { ...sessions[idx], ...data, linkedPatternSlot: updateSeries ? null : sessions[idx].linkedPatternSlot };
-        } else { sessions.push({ id: editingId, ...data }); }
+        } else { 
+            sessions.push({ id: finalId, ...data }); 
+        }
     } else {
-        finalId = Date.now();
+        finalId = generateUniqueId(); // НОВЫЙ ID
         sessions.push({ id: finalId, ...data });
     }
 
     saveAllDataLocally();
-    closeAllSheets(); reRenderBlocks(); 
+    closeAllSheets(); 
+    reRenderBlocks(); 
 
-    const sessionToSend = { ...data, id: finalId };
-    DataManager.fetchFromServer('save_session', { date: data.dateStr, session: sessionToSend }).then(res => {
-        if(res.saved_id) {
-           const s = sessions.find(sess => String(sess.id) === String(finalId));
-           if(s) { s.id = res.saved_id; saveAllDataLocally(); }
-        }
+    // 2. ОТПРАВЛЯЕМ ВЕСЬ ДЕНЬ
+    syncDayToServer(data.dateStr).then(() => {
+       showToast("Сохранено (Облако)", true);
     });
   }
 
@@ -739,51 +762,54 @@ async function init() {
     else commitDelete(false);
   }
 
-function commitDelete(deleteSeries) {
+  // === ОБНОВЛЕННАЯ ФУНКЦИЯ УДАЛЕНИЯ ===
+  function commitDelete(deleteSeries) {
+    // Получаем дату ДО удаления (важно, если id "ghost")
+    let dateToSync = document.getElementById('inpDate').value;
+    if(editingId && !String(editingId).startsWith('ghost')) {
+        const s = sessions.find(x => String(x.id) === String(editingId));
+        if(s) dateToSync = s.dateStr;
+    }
+
     if (deleteSeries && editingLinkedPattern) {
-         // Удаление всей серии (логика верная)
+         // Удаление серии
          const s = sessions.find(x => String(x.id) === String(editingId)) || { client: document.getElementById('inpClient').value };
          updateClientPattern(s.client, editingLinkedPattern, null);
          const cSave = clients.find(c => c.name === s.client);
          if(cSave) DataManager.fetchFromServer('save_client', { client: cSave });
+         
+         // Удаляем эту конкретную запись из отображения
          if(editingId && !String(editingId).startsWith('ghost')) sessions = sessions.filter(x => String(x.id) !== String(editingId));
          showToast("Серия удалена", false);
+
     } else {
         if (!deleteSeries && editingLinkedPattern) {
-             // === ИСПРАВЛЕНИЕ ЗДЕСЬ ===
+             // Исключение из серии (Cancel)
              const clientName = document.getElementById('inpClient').value;
              const dateStr = document.getElementById('inpDate').value;
              
-             // 1. Определяем ID. Если это реальная запись (не ghost), берем её старый ID.
-             let finalId = Date.now();
+             // Удаляем активную версию, если она была
              if (editingId && !String(editingId).startsWith('ghost')) {
-                 finalId = editingId;
-                 // Удаляем старую "активную" версию из массива sessions, чтобы заменить её на cancelled
-                 sessions = sessions.filter(x => String(x.id) !== String(finalId));
+                 sessions = sessions.filter(x => String(x.id) !== String(editingId));
              }
 
-             // 2. Создаем объект отмены с правильным ID
+             // Добавляем запись "Отменено"
              const cancelledS = { 
-                 id: finalId, 
+                 id: generateUniqueId(), 
                  client: clientName, 
                  dateStr: dateStr, 
                  start: editingLinkedPattern.s, 
                  end: editingLinkedPattern.e, 
-                 status: 'cancelled', // Статус отмены скрывает событие при рендере
-                 type: 'client' 
+                 status: 'cancelled', 
+                 type: 'client',
+                 linkedPatternSlot: editingLinkedPattern 
              };
-             
              sessions.push(cancelledS);
-             
-             // 3. Отправляем на сервер (он перезапишет старую запись, так как ID совпадают)
-             DataManager.fetchFromServer('save_session', { date: dateStr, session: cancelledS });
-             showToast("Тренировка отменена", false);
+             showToast("Отменено", false);
 
         } else if(editingId && !String(editingId).startsWith('ghost')) {
-            // Обычное удаление (не серийное) - тут все работало верно
-            const s = sessions.find(x => String(x.id) === String(editingId));
+            // Обычное удаление
             sessions = sessions.filter(x => String(x.id) !== String(editingId));
-            if(s) DataManager.fetchFromServer('save_session', { date: s.dateStr, session: { id: s.id }, is_delete: true });
             showToast("Удалено", false);
         }
     }
@@ -791,6 +817,9 @@ function commitDelete(deleteSeries) {
     saveAllDataLocally();
     closeAllSheets(); 
     reRenderBlocks();
+
+    // СИНХРОНИЗИРУЕМ ДЕНЬ
+    syncDayToServer(dateToSync);
   }
 
   async function saveClient() {
