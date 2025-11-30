@@ -998,19 +998,52 @@
   function updateDayStats(dateStr) {
     const track = document.getElementById(`stat-${dateStr}`); if (!track) return;
     const dayDate = new Date(dateStr); let dayIdx = dayDate.getDay() - 1; if (dayIdx === -1) dayIdx = 6;
+    
+    // 1. Блокировка по графику работы (серые полоски)
     let blockedIntervals = []; const pat = availabilityPattern[dayIdx] || [];
     pat.forEach(h => { blockedIntervals.push([h * 60, (h + 1) * 60]); });
+    
+    // 2. Блокировка по отпускам (Ranges)
     specialRanges.forEach(r => { const rS = new Date(r.start).getTime(); const rE = new Date(r.end).getTime(); const dayStart = new Date(dateStr + 'T00:00:00').getTime(); const dayEnd = new Date(dateStr + 'T23:59:59').getTime(); const s = Math.max(dayStart, rS), e = Math.min(dayEnd, rE); if (s < e) { blockedIntervals.push([Math.floor((s - dayStart) / 60000), Math.floor((e - dayStart) / 60000)]); } });
+    
     let totalBlocked = 0; blockedIntervals.forEach(iv => totalBlocked += (iv[1] - iv[0])); 
     let totalWorkingMinutes = 1440 - totalBlocked;
+    
     if (dateExceptions[dateStr] === 'off') { track.style.display = 'none'; return; }
+    
     let busyIntervals = [];
+    
+    // 3. РЕАЛЬНЫЕ ЗАПИСИ (Тут все ок, у них есть жесткая дата)
     sessions.filter(s => s.dateStr === dateStr && s.status !== 'cancelled').forEach(s => { const [h1, m1] = s.start.split(':').map(Number); const [h2, m2] = s.end.split(':').map(Number); busyIntervals.push([h1 * 60 + m1, h2 * 60 + m2]); });
-    clients.forEach(client => { const daySched = client.schedule?.[dayIdx]; if (daySched) { daySched.forEach(slot => { const existsOrCancelled = sessions.some(s => s.client === client.name && s.dateStr === dateStr && s.start === slot.s); if (!existsOrCancelled) { const [h1, m1] = slot.s.split(':').map(Number); const [h2, m2] = slot.e.split(':').map(Number); busyIntervals.push([h1 * 60 + m1, h2 * 60 + m2]); } }); } });
+    
+    // 4. СЕРИИ (GHOSTS) — ВОТ ТУТ НУЖНА ПРОВЕРКА
+    clients.forEach(client => { 
+        const daySched = client.schedule?.[dayIdx]; 
+        if (daySched) { 
+            daySched.forEach(slot => { 
+                // === ВАЖНАЯ СТРОКА ===
+                // Если у серии есть дата начала, и этот день (dateStr) был РАНЬШЕ начала — пропускаем.
+                if (slot.startFrom && dateStr < slot.startFrom) return;
+
+                // Проверяем, нет ли уже реальной записи поверх этого слота
+                const existsOrCancelled = sessions.some(s => s.client === client.name && s.dateStr === dateStr && s.start === slot.s); 
+                if (!existsOrCancelled) { 
+                    const [h1, m1] = slot.s.split(':').map(Number); 
+                    const [h2, m2] = slot.e.split(':').map(Number); 
+                    busyIntervals.push([h1 * 60 + m1, h2 * 60 + m2]); 
+                } 
+            }); 
+        } 
+    });
+    
+    // Считаем проценты
     busyIntervals.sort((a, b) => a[0] - b[0]); let mergedBusy = [];
     if (busyIntervals.length > 0) { let curr = busyIntervals[0]; for (let i = 1; i < busyIntervals.length; i++) { if (busyIntervals[i][0] < curr[1]) { curr[1] = Math.max(curr[1], busyIntervals[i][1]); } else { mergedBusy.push(curr); curr = busyIntervals[i]; } } mergedBusy.push(curr); }
+    
     let totalBusyMinutes = 0; mergedBusy.forEach(iv => totalBusyMinutes += (iv[1] - iv[0]));
+    
     if (totalBusyMinutes === 0) { track.style.display = 'none'; track.classList.remove('has-data'); return; }
+    
     track.style.display = 'flex'; track.classList.add('has-data');
     let percent = totalWorkingMinutes > 0 ? (totalBusyMinutes / totalWorkingMinutes) * 100 : 100;
     const fill = track.querySelector('.dch-stats-fill');
