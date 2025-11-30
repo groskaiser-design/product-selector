@@ -670,27 +670,7 @@
   /* ==========================================
        4. ACTIONS & SAVING (UPDATED)
      ========================================== */
-
-// === ИСПРАВЛЕННАЯ ФУНКЦИЯ: ОТПРАВКА УВЕДОМЛЕНИЙ (С ЗАДЕРЖКОЙ) ===
-  function sendNotification(type, targetId, details) {
-    if (!targetId || targetId === 'guest' || String(targetId).length < 5) return;
-    
-    const [y, m, d] = details.date.split('-');
-    const prettyDate = `${d}.${m}`;
-
-    console.log(`[Notify] Scheduled for ${type} -> ${targetId}`);
-
-    // ЗАДЕРЖКА 1000мс (1 сек), чтобы сначала успели уйти данные сохранения (sync_day)
-    setTimeout(() => {
-        DataManager.fetchFromServer('notify', {
-          target_id: targetId,
-          type: type,
-          details: { ...details, date: prettyDate }
-        }).catch(err => console.error("Notify failed (background)", err));
-    }, 1000); 
-  }
-  
-async function trySaveSession() {
+  async function trySaveSession() {
     const clientName = document.getElementById('inpClient').value;
     const dateStr = document.getElementById('inpDate').value;
     const start = document.getElementById('inpStart').value;
@@ -712,32 +692,6 @@ async function trySaveSession() {
     if(val.warning) {
         showToast(val.warning + " (Сохраняем...)", false);
     }
-
-    // === ЛОГИКА УВЕДОМЛЕНИЙ (НАЧАЛО) ===
-    let notifyType = null;
-    // Данные для сообщения
-    let notifyDetails = { date: dateStr, time: `${start}-${end}`, note: note };
-    
-    // Ищем старую версию этой тренировки в базе
-    const oldSession = sessions.find(s => String(s.id) === String(editingId));
-
-    if (!oldSession) {
-        // Если старой нет (или это был ghost-слот) -> значит это НОВАЯ запись
-        notifyType = 'new';
-    } else {
-        // Если старая есть -> проверяем, изменилось ли время или дата
-        if (oldSession.start !== start || oldSession.end !== end || oldSession.dateStr !== dateStr) {
-            notifyType = 'move';
-            // Для переноса добавляем старое и новое время
-            notifyDetails.old_time = `${oldSession.start}-${oldSession.end}`;
-            notifyDetails.new_time = `${start}-${end}`;
-        }
-    }
-    // Если определили тип и у клиента есть ID -> отправляем
-    if (notifyType && clientObj.id) {
-        sendNotification(notifyType, clientObj.id, notifyDetails);
-    }
-    // === ЛОГИКА УВЕДОМЛЕНИЙ (КОНЕЦ) ===
 
     const newData = { 
         client: clientName, 
@@ -769,34 +723,27 @@ async function trySaveSession() {
     
     commitSave(newData, false);
   }
-  
 
   // === ОБНОВЛЕННАЯ ФУНКЦИЯ СОХРАНЕНИЯ ===
- // === ИСПРАВЛЕННОЕ СОХРАНЕНИЕ (Ждем обновления Клиента И Календаря) ===
   function commitSave(data, updateSeries) {
-    const networkPromises = []; // Очередь запросов
-
     if (updateSeries && editingLinkedPattern) {
         updateClientPattern(data.client, editingLinkedPattern, data);
         const cSave = clients.find(c => c.name === data.client);
-        // Добавляем сохранение клиента в очередь
-        if(cSave) networkPromises.push(DataManager.fetchFromServer('save_client', { client: cSave }));
+        if(cSave) DataManager.fetchFromServer('save_client', { client: cSave });
         showToast("Серия обновлена", true);
     }
 
-    // Если это новая серия (создается при trySaveSession, но здесь мы просто проверяем логику сохранения)
-    // В текущей логике создание серии обрабатывается выше, но если вдруг данные клиента изменились:
-    const potentialClientUpdate = clients.find(c => c.name === data.client);
-    // Если мы только что добавили серию в trySaveSession, нам нужно убедиться, что save_client ушел.
-    // Но так как trySaveSession вызывает commitSave, мы полагаемся на то, что pattern уже обновлен в объекте.
-    
+    // 1. Обновляем локальный массив (Используем generateUniqueId)
     let finalId = editingId;
     if(editingId && !String(editingId).startsWith('ghost')) {
         const idx = sessions.findIndex(s => String(s.id) === String(editingId));
-        if (idx !== -1) sessions[idx] = { ...sessions[idx], ...data, linkedPatternSlot: updateSeries ? null : sessions[idx].linkedPatternSlot };
-        else sessions.push({ id: finalId, ...data }); 
+        if (idx !== -1) { 
+           sessions[idx] = { ...sessions[idx], ...data, linkedPatternSlot: updateSeries ? null : sessions[idx].linkedPatternSlot };
+        } else { 
+            sessions.push({ id: finalId, ...data }); 
+        }
     } else {
-        finalId = generateUniqueId();
+        finalId = generateUniqueId(); // НОВЫЙ ID
         sessions.push({ id: finalId, ...data });
     }
 
@@ -804,17 +751,10 @@ async function trySaveSession() {
     closeAllSheets(); 
     reRenderBlocks(); 
 
-    // Добавляем сохранение дня в очередь
-    networkPromises.push(syncDayToServer(data.dateStr));
-
-    // ЖДЕМ ВСЕ И ОТПРАВЛЯЕМ СМС
-    Promise.all(networkPromises).then(() => {
-        if (data._notify) {
-           sendNotification(data._notify.action, data.clientId, data._notify.details);
-           delete data._notify; 
-        }
-        showToast("Сохранено (Облако)", true);
-    }).catch(err => console.error("Save error", err));
+    // 2. ОТПРАВЛЯЕМ ВЕСЬ ДЕНЬ
+    syncDayToServer(data.dateStr).then(() => {
+       showToast("Сохранено (Облако)", true);
+    });
   }
 
   function tryDeleteSession() {
@@ -823,58 +763,52 @@ async function trySaveSession() {
   }
 
   // === ОБНОВЛЕННАЯ ФУНКЦИЯ УДАЛЕНИЯ ===
-// === ИСПРАВЛЕННОЕ УДАЛЕНИЕ (Ждем обновления Клиента И Календаря) ===
   function commitDelete(deleteSeries) {
+    // Получаем дату ДО удаления (важно, если id "ghost")
     let dateToSync = document.getElementById('inpDate').value;
-    
-    let s = sessions.find(x => String(x.id) === String(editingId));
-    let notificationPayload = null;
-
-    if (!s) {
-        const cName = document.getElementById('inpClient').value;
-        const cObj = clients.find(c => c.name === cName);
-        s = {
-            clientId: cObj ? cObj.id : null,
-            dateStr: dateToSync,
-            start: document.getElementById('inpStart').value,
-            end: document.getElementById('inpEnd').value
-        };
-    } else {
-        dateToSync = s.dateStr;
+    if(editingId && !String(editingId).startsWith('ghost')) {
+        const s = sessions.find(x => String(x.id) === String(editingId));
+        if(s) dateToSync = s.dateStr;
     }
-
-    if (s && s.clientId) {
-        notificationPayload = { targetId: s.clientId, details: { date: s.dateStr, time: `${s.start}-${s.end}` } };
-    }
-
-    // ОЧЕРЕДЬ ЗАПРОСОВ НА СЕРВЕР
-    const networkPromises = [];
 
     if (deleteSeries && editingLinkedPattern) {
-          const sForName = sessions.find(x => String(x.id) === String(editingId)) || { client: document.getElementById('inpClient').value };
-          updateClientPattern(sForName.client, editingLinkedPattern, null);
-          const cSave = clients.find(c => c.name === sForName.client);
-          
-          // ДОБАВЛЯЕМ В ОЧЕРЕДЬ: Сохранение клиента
-          if(cSave) networkPromises.push(DataManager.fetchFromServer('save_client', { client: cSave }));
-          
-          if(editingId && !String(editingId).startsWith('ghost')) sessions = sessions.filter(x => String(x.id) !== String(editingId));
-          showToast("Серия удалена", false);
+         // Удаление серии
+         const s = sessions.find(x => String(x.id) === String(editingId)) || { client: document.getElementById('inpClient').value };
+         updateClientPattern(s.client, editingLinkedPattern, null);
+         const cSave = clients.find(c => c.name === s.client);
+         if(cSave) DataManager.fetchFromServer('save_client', { client: cSave });
+         
+         // Удаляем эту конкретную запись из отображения
+         if(editingId && !String(editingId).startsWith('ghost')) sessions = sessions.filter(x => String(x.id) !== String(editingId));
+         showToast("Серия удалена", false);
 
     } else {
         if (!deleteSeries && editingLinkedPattern) {
-              const clientName = document.getElementById('inpClient').value;
-              if (editingId && !String(editingId).startsWith('ghost')) {
-                  sessions = sessions.filter(x => String(x.id) !== String(editingId));
-              }
-              const cancelledS = { 
-                  id: generateUniqueId(), client: clientName, clientId: s.clientId,
-                  dateStr: dateToSync, start: editingLinkedPattern.s, end: editingLinkedPattern.e, 
-                  status: 'cancelled', type: 'client', linkedPatternSlot: editingLinkedPattern 
-              };
-              sessions.push(cancelledS);
-              showToast("Отменено", false);
+             // Исключение из серии (Cancel)
+             const clientName = document.getElementById('inpClient').value;
+             const dateStr = document.getElementById('inpDate').value;
+             
+             // Удаляем активную версию, если она была
+             if (editingId && !String(editingId).startsWith('ghost')) {
+                 sessions = sessions.filter(x => String(x.id) !== String(editingId));
+             }
+
+             // Добавляем запись "Отменено"
+             const cancelledS = { 
+                 id: generateUniqueId(), 
+                 client: clientName, 
+                 dateStr: dateStr, 
+                 start: editingLinkedPattern.s, 
+                 end: editingLinkedPattern.e, 
+                 status: 'cancelled', 
+                 type: 'client',
+                 linkedPatternSlot: editingLinkedPattern 
+             };
+             sessions.push(cancelledS);
+             showToast("Отменено", false);
+
         } else if(editingId && !String(editingId).startsWith('ghost')) {
+            // Обычное удаление
             sessions = sessions.filter(x => String(x.id) !== String(editingId));
             showToast("Удалено", false);
         }
@@ -884,18 +818,8 @@ async function trySaveSession() {
     closeAllSheets(); 
     reRenderBlocks();
 
-    // ДОБАВЛЯЕМ В ОЧЕРЕДЬ: Сохранение дня
-    networkPromises.push(syncDayToServer(dateToSync));
-
-    // === ГЛАВНОЕ ИСПРАВЛЕНИЕ: ЖДЕМ ВСЕ ЗАПРОСЫ ===
-    Promise.all(networkPromises).then(() => {
-        if (notificationPayload) {
-            console.log("All data saved (Client+Day). Sending SMS...");
-            sendNotification('cancel', notificationPayload.targetId, notificationPayload.details);
-        }
-    }).catch(err => {
-        console.error("Error saving data:", err);
-    });
+    // СИНХРОНИЗИРУЕМ ДЕНЬ
+    syncDayToServer(dateToSync);
   }
 
   async function saveClient() {
