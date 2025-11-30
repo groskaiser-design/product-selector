@@ -140,11 +140,20 @@
   .global-time-line { position: absolute; left: 0; width: 100%; height: 1px; background: var(--acc-current); z-index: 10; pointer-events: none; display: none; }
   .global-time-line::before { content: ''; position: absolute; left: -4px; top: -3px; width: 7px; height: 7px; background: var(--acc-current); border-radius: 50%; }
   
-  /* EVENT CARD */
+  /* === EVENT CARD (UPDATED FOR OVERLAP) === */
   .event-card { 
-    position: absolute; left: 2px; right: 2px; border-radius: 6px; padding: 3px 5px; overflow: hidden; 
+    position: absolute; 
+    left: 0; /* Dynamic left in JS */
+    border-radius: 6px; 
+    padding: 3px 5px; 
+    overflow: hidden; 
     border-left: 3px solid; 
-    cursor: pointer; z-index: 5; box-shadow: 0 2px 8px rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); transition: transform 0.1s; 
+    cursor: pointer; 
+    z-index: 5; 
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3); 
+    border: 1px solid rgba(255,255,255,0.1); 
+    /* Animations for smooth sorting */
+    transition: transform 0.1s, width 0.2s, left 0.2s; 
   }
   .event-card:active { transform: scale(0.96); }
   .event-card.ghost { opacity: 1; }
@@ -280,18 +289,14 @@
   .pattern-editor-overlay .day-col-header, .pattern-editor-overlay .day-column { width: auto; flex: 1; }
 
   .pattern-editor-overlay .blocked-slot { 
-      /* Убираем жесткий background, чтобы сработал наш красивый .stripe-bg */
       pointer-events: auto; 
       cursor: pointer; 
-      /* Делаем границы нейтральными (еле заметными), как на главном экране */
       border-top: 1px solid rgba(255,255,255,0.08); 
       border-bottom: 1px solid rgba(255,255,255,0.08); 
   }
 
-  
-  /* Единый стиль штриховки (ИСПРАВЛЕННЫЙ) */
+  /* STRIPED BACKGROUND */
   .stripe-bg {
-      /* Используем точный квадратный паттерн */
       background-image: linear-gradient(
           45deg,
           rgba(255, 255, 255, 0.03) 25%,
@@ -302,29 +307,25 @@
           transparent 75%,
           transparent
       );
-      /* Размер 28.28px обеспечивает идеальный стык под 45 градусов для шага 20px */
       background-size: 28.28px 28.28px;
       background-repeat: repeat;
   }
-  /* --- ВСТАВИТЬ В КОНЕЦ <style> --- */
 
-/* 1. Добавляем текстуру "шума" в редактор. 
-   Это сделает фон таким же живым, как на главной, но без цветных пятен. */
-.pattern-editor-overlay::before {
+  /* NOISE TEXTURE */
+  .pattern-editor-overlay::before {
     content: "";
     position: absolute;
     inset: 0;
-    opacity: 0.04; /* Прозрачность как на главной */
+    opacity: 0.04;
     background: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
     pointer-events: none;
     z-index: 0;
-}
+  }
 
-/* 2. Гарантируем, что кнопки и сетка будут лежать ПОВЕРХ шума */
-.pattern-editor-overlay > * {
+  .pattern-editor-overlay > * {
     position: relative;
     z-index: 2;
-}
+  }
 </style>
 </head>
 <body oncontextmenu="return false;">
@@ -454,7 +455,6 @@
   </div>
   
   <div class="sheet-scroll-area">
-    <!-- Добавлен ID "ceColorGroup" для скрытия -->
     <div class="form-group" id="ceColorGroup">
       <div class="form-label">Цвет</div>
       <div class="color-grid" id="ceColorGrid"></div>
@@ -520,10 +520,8 @@
   const DataManager = {
     getUserId() { return window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'guest'; },
 
-    // DUAL-SAVE: Save to local storage AND to server
     saveLocally(key, data) { localStorage.setItem(key, JSON.stringify(data)); },
     
-    // Load local data for instant render
     loadLocal() {
        try {
         const p = localStorage.getItem(KEY_PATTERN); if(p) availabilityPattern = JSON.parse(p); else { availabilityPattern[0]=[0,1,2,3,4,5,6,7]; availabilityPattern[6]=Array.from({length:24},(_,i)=>i); }
@@ -564,7 +562,6 @@
     const tg = window.Telegram?.WebApp;
     if(tg) { tg.ready(); tg.expand(); try{tg.setHeaderColor('#050505');tg.setBackgroundColor('#050505');}catch(_){} }
 
-    // 1. Load Local & Render Immediately
     DataManager.loadLocal();
     renderTimeColumn(); renderDayRange(startOffset, endOffset);
     scrollToToday(); startClock();
@@ -572,14 +569,13 @@
     
     document.getElementById('matrixViewport').addEventListener('scroll', ()=>{ isScrolling=true; cancelLongPress(); onScroll(); handleInfiniteScroll(); }, {passive: true});
 
-    // 2. Fetch from Server Background
     const d = new Date();
     const monthStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; 
 
     try {
       const fresh = await DataManager.fetchFromServer('init_load', { month_str: monthStr });
       applyDataToState(fresh, monthStr);
-      saveAllDataLocally(); // Sync local with server
+      saveAllDataLocally();
       showToast("Данные обновлены", true);
     } catch (e) {
       showToast("Работа в оффлайн режиме", false);
@@ -595,7 +591,6 @@
     }
     if (data.clients) clients = data.clients;
     if (data.calendar) {
-      // Merge strategy: remove old month data, add fresh
       sessions = sessions.filter(s => !s.dateStr.startsWith(monthStr));
       Object.keys(data.calendar).forEach(dayKey => {
         data.calendar[dayKey].forEach(evt => {
@@ -624,74 +619,87 @@
   /* ==========================================
        4. ACTIONS & SAVING
      ========================================== */
-  // 2. Функция сохранения (заменяем полностью, чтобы передать имя в проверку)
-async function trySaveSession() {
-  const clientName = document.getElementById('inpClient').value;
-  const dateStr = document.getElementById('inpDate').value;
-  const start = document.getElementById('inpStart').value;
-  const end = document.getElementById('inpEnd').value;
-  const note = document.getElementById('inpNote').value;
-  const isRecurring = document.getElementById('inpRecurring').checked;
+  async function trySaveSession() {
+    const clientName = document.getElementById('inpClient').value;
+    const dateStr = document.getElementById('inpDate').value;
+    const start = document.getElementById('inpStart').value;
+    const end = document.getElementById('inpEnd').value;
+    const note = document.getElementById('inpNote').value;
+    const isRecurring = document.getElementById('inpRecurring').checked;
 
-  // 1. Ищем клиента
-  let clientObj = clients.find(c => c.name === clientName);
-  
-  if (!clientObj) {
-      showToast("Ошибка: Клиент не найден в базе", false);
-      return;
+    let clientObj = clients.find(c => c.name === clientName);
+    if (!clientObj) {
+        showToast("Ошибка: Клиент не найден в базе", false);
+        return;
+    }
+
+    const val = validateAppointment(dateStr, start, end, editingId, clientObj.id); 
+    if(!val.valid) { 
+        showToast(val.msg, false);
+        return;
+    } 
+
+    const newData = { 
+        client: clientName, 
+        clientId: clientObj.id,
+        dateStr, start, end, note, status: 'planned', type: 'client'
+    };
+
+    if (editingLinkedPattern) {
+        const newD = new Date(dateStr);
+        let newDayIdx = newD.getDay() - 1; if(newDayIdx === -1) newDayIdx = 6;
+        const isTimeChanged = (start !== editingLinkedPattern.s || end !== editingLinkedPattern.e);
+        const isDayChanged = (newDayIdx !== editingLinkedPattern.dayIdx);
+        if (isTimeChanged || isDayChanged) {
+            tempSessionData = newData; 
+            openActionSheet('save');
+            return;
+        }
+    }
+
+    if (!editingLinkedPattern && isRecurring) {
+        const newD = new Date(dateStr);
+        let newDayIdx = newD.getDay() - 1; if(newDayIdx === -1) newDayIdx = 6;
+        updateClientPattern(clientName, null, { dateStr, start, end });
+        const cSave = clients.find(c => c.name === clientName);
+        if(cSave) DataManager.fetchFromServer('save_client', { client: cSave });
+        newData.linkedPatternSlot = { dayIdx: newDayIdx, s: start, e: end };
+        showToast("Серия создана", true);
+    }
+    
+    commitSave(newData, false);
   }
 
-  // 2. ВАЛИДАЦИЯ ТЕКУЩЕГО СЛОТА (Единичная запись)
-  const val = validateAppointment(dateStr, start, end, editingId, clientObj.id); 
-  
-  if(!val.valid) { 
-      showToast(val.msg, false); 
-      return; 
-  } 
+  function commitSave(data, updateSeries) {
+    if (updateSeries && editingLinkedPattern) {
+        updateClientPattern(data.client, editingLinkedPattern, data);
+        const cSave = clients.find(c => c.name === data.client);
+        if(cSave) DataManager.fetchFromServer('save_client', { client: cSave });
+        showToast("Серия обновлена", true);
+    }
 
-  // 3. Сборка данных
-  const newData = { 
-      client: clientName, 
-      clientId: clientObj.id, 
-      dateStr, start, end, note, status: 'planned', type: 'client'
-  };
+    let finalId = editingId;
+    if(editingId && !String(editingId).startsWith('ghost')) {
+        const idx = sessions.findIndex(s => s.id == editingId);
+        if (idx !== -1) { 
+           sessions[idx] = { ...sessions[idx], ...data, linkedPatternSlot: updateSeries ? null : sessions[idx].linkedPatternSlot };
+        } else { sessions.push({ id: editingId, ...data }); }
+    } else {
+        finalId = Date.now();
+        sessions.push({ id: finalId, ...data });
+    }
 
-  // 4. Логика изменения СУЩЕСТВУЮЩЕЙ серии
-  if (editingLinkedPattern) {
-      const newD = new Date(dateStr);
-      let newDayIdx = newD.getDay() - 1; if(newDayIdx === -1) newDayIdx = 6;
-      const isTimeChanged = (start !== editingLinkedPattern.s || end !== editingLinkedPattern.e);
-      const isDayChanged = (newDayIdx !== editingLinkedPattern.dayIdx);
-      if (isTimeChanged || isDayChanged) {
-          tempSessionData = newData; 
-          openActionSheet('save');
-          return;
-      }
+    saveAllDataLocally();
+    closeAllSheets(); reRenderBlocks(); 
+
+    const sessionToSend = { ...data, id: finalId };
+    DataManager.fetchFromServer('save_session', { date: data.dateStr, session: sessionToSend }).then(res => {
+        if(res.saved_id) {
+           const s = sessions.find(sess => sess.id == finalId);
+           if(s) { s.id = res.saved_id; saveAllDataLocally(); }
+        }
+    });
   }
-
-  // 5. Логика создания НОВОЙ серии
-  if (!editingLinkedPattern && isRecurring) {
-      const newD = new Date(dateStr);
-      let newDayIdx = newD.getDay() - 1; if(newDayIdx === -1) newDayIdx = 6;
-
-      // === ПРОВЕРКА НА БУДУЩИЕ КОНФЛИКТЫ ===
-      // Проверяем, не наедет ли серия на уже созданные тренировки в будущем
-      const seriesVal = validateSeriesConflict(newDayIdx, start, end, dateStr, clientObj.id);
-      if (!seriesVal.valid) {
-          showToast(seriesVal.msg, false); 
-          return; // Блокируем создание серии
-      }
-      // ============================================
-
-      updateClientPattern(clientName, null, { dateStr, start, end });
-      const cSave = clients.find(c => c.name === clientName);
-      if(cSave) DataManager.fetchFromServer('save_client', { client: cSave });
-      newData.linkedPatternSlot = { dayIdx: newDayIdx, s: start, e: end, startFrom: dateStr };
-      showToast("Серия создана", true);
-  }
-  
-  commitSave(newData, false);
-}
 
   function tryDeleteSession() {
     if (editingLinkedPattern) openActionSheet('delete');
@@ -708,7 +716,6 @@ async function trySaveSession() {
          showToast("Серия удалена", false);
     } else {
         if (!deleteSeries && editingLinkedPattern) {
-             // Create Cancelled Session to hide ghost
              const clientName = document.getElementById('inpClient').value;
              const dateStr = document.getElementById('inpDate').value;
              const cancelledS = { id: Date.now(), client: clientName, dateStr: dateStr, start: editingLinkedPattern.s, end: editingLinkedPattern.e, status: 'cancelled', type: 'client' };
@@ -730,9 +737,6 @@ async function trySaveSession() {
     const name = document.getElementById('ceName').value; 
     if(!name) return alert('Введите имя'); 
     editingClient.name = name;
-    // ID already set in openClientEdit (Date.now() for new, existing ID for edit)
-    // Color handled by grid, Schedule handled by grid
-    // Only saving minimal data:
     const idx = clients.findIndex(c => c.id === editingClient.id);
     if(idx !== -1) clients[idx] = editingClient; else clients.push(editingClient);
     
@@ -765,6 +769,27 @@ async function trySaveSession() {
     resetRangeForm(); renderRangesList(); reRenderBlocks(); syncSettings();
   }
   function deleteRange(i) { specialRanges.splice(i, 1); if (editingRangeIndex === i) resetRangeForm(); renderRangesList(); reRenderBlocks(); syncSettings(); }
+  
+  function editRange(i) {
+      editingRangeIndex = i;
+      const r = specialRanges[i];
+      const startD = new Date(r.start);
+      const endD = new Date(r.end);
+      document.getElementById('rangeStartDate').value = getLocalDateStr(startD);
+      document.getElementById('rangeStartTime').value = startD.toTimeString().slice(0,5);
+      document.getElementById('rangeEndDate').value = getLocalDateStr(endD);
+      document.getElementById('rangeEndTime').value = endD.toTimeString().slice(0,5);
+      document.getElementById('rangeSubmitBtn').textContent = 'Сохранить изменения';
+  }
+
+  function resetRangeForm() {
+      document.getElementById('rangeStartDate').value = '';
+      document.getElementById('rangeStartTime').value = '00:00';
+      document.getElementById('rangeEndDate').value = '';
+      document.getElementById('rangeEndTime').value = '23:59';
+      editingRangeIndex = null;
+      document.getElementById('rangeSubmitBtn').textContent = 'Добавить период';
+  }
 
   function renderRangesList() {
       const l = document.getElementById('rangesList');
@@ -823,31 +848,25 @@ async function trySaveSession() {
 
   function reRenderBlocks() {
   document.querySelectorAll('#gridColumns .day-column').forEach(col => {
-    // Чистим старое
     col.querySelectorAll('.blocked-slot, .day-off-overlay, .blocked-range-part').forEach(e => e.remove());
     
     const dateStr = col.getAttribute('data-date');
     const dayIdx = parseInt(col.getAttribute('data-day-idx'));
-    
-    // ГЛАВНОЕ: Берем координату колонки для синхронизации фона
     const colLeft = Math.round(col.offsetLeft); 
 
-    // 1. Отрисовка обычного графика
     (availabilityPattern[dayIdx] || []).forEach(h => {
       const b = document.createElement('div');
       b.className = 'blocked-slot stripe-bg';
       const top = h * GRID_H;
       b.style.top = `${top}px`;
-      // Сдвигаем фон обратно на позицию колонки
       b.style.backgroundPosition = `-${colLeft}px -${top}px`;
       col.appendChild(b);
     });
     
-    // 2. Отрисовка выходных и отпусков
     if (dateExceptions[dateStr] === 'off') {
       const o = document.createElement('div');
       o.className = 'day-off-overlay stripe-bg';
-      o.style.backgroundPosition = `-${colLeft}px 0px`; // Синхронизация
+      o.style.backgroundPosition = `-${colLeft}px 0px`;
       col.appendChild(o);
     } else {
       const cS = new Date(dateStr + 'T00:00:00').getTime();
@@ -864,7 +883,7 @@ async function trySaveSession() {
             if (!col.querySelector('.day-off-overlay')) {
               const o = document.createElement('div');
               o.className = 'day-off-overlay stripe-bg';
-              o.style.backgroundPosition = `-${colLeft}px 0px`; // Синхронизация
+              o.style.backgroundPosition = `-${colLeft}px 0px`; 
               col.appendChild(o);
             }
           } else {
@@ -874,7 +893,6 @@ async function trySaveSession() {
             p.className = 'blocked-range-part stripe-bg';
             p.style.top = `${top}px`;
             p.style.height = `${h}px`;
-            // Синхронизация
             p.style.backgroundPosition = `-${colLeft}px -${top}px`;
             col.appendChild(p);
           }
@@ -911,54 +929,105 @@ async function trySaveSession() {
     fill.style.background = (totalBusyMinutes > totalWorkingMinutes) ? 'var(--acc-red)' : 'var(--acc-current)';
   }
   
+  // === CORE RENDER LOGIC WITH OVERLAP SUPPORT ===
   function renderEventsForColumn(col, dateStr, dayIdx) {
-    col.querySelectorAll('.event-card').forEach(e => e.remove());
-    
-    // 1. Рендерим реальные (сохраненные) записи
-    // Они выводятся всегда, так как уже записаны в историю
-    sessions.filter(s => s.dateStr === dateStr && s.status !== 'cancelled').forEach(s => { 
-        col.appendChild(createEventEl(s));
-    });
-    
-    // 2. Рендерим "Призраков" (серии) с учетом даты старта
-    clients.forEach(client => { 
-        const daySched = client.schedule?.[dayIdx]; 
-        if(daySched) { 
-            daySched.forEach(slot => { 
-                // ЛОГИКА ДАТЫ СТАРТА:
-                // Если у слота есть дата старта, и текущая колонка (dateStr) 
-                // находится "раньше" этой даты — пропускаем (не рисуем).
-                // Сравнение строк "YYYY-MM-DD" работает корректно (лексикографически).
-                if (slot.startFrom && dateStr < slot.startFrom) {
-                    return; 
-                }
+      col.querySelectorAll('.event-card').forEach(e => e.remove());
 
-                // Проверяем, не перекрыт ли призрак реальной записью
-                const existsOrCancelled = sessions.some(s => 
-                    s.client === client.name && 
-                    s.dateStr === dateStr && 
-                    s.start === slot.s
-                ); 
+      // 1. Gather all events (Real + Ghosts)
+      let allEvents = [];
 
-                if(!existsOrCancelled) { 
-                    const ghost = { 
-                        id: `ghost-${client.id}-${dateStr}-${slot.s}`, 
-                        client: client.name, 
-                        dateStr: dateStr, 
-                        start: slot.s, 
-                        end: slot.e, 
-                        type: 'client', 
-                        status: 'ghost', 
-                        clientId: client.id, 
-                        // Передаем startFrom в linkedPatternSlot, чтобы при редактировании серия не ломалась
-                        linkedPatternSlot: { dayIdx, s: slot.s, e: slot.e, startFrom: slot.startFrom } 
-                    }; 
-                    col.appendChild(createEventEl(ghost)); 
-                } 
-            }); 
-        } 
-    });
-}
+      sessions.filter(s => s.dateStr === dateStr && s.status !== 'cancelled').forEach(s => {
+          allEvents.push({ data: s, type: 'real', ...getTimeRange(s.start, s.end) });
+      });
+
+      clients.forEach(client => {
+          const daySched = client.schedule?.[dayIdx];
+          if (daySched) {
+              daySched.forEach(slot => {
+                  if (slot.startFrom && dateStr < slot.startFrom) return;
+                  const exists = sessions.some(s => 
+                      s.client === client.name && 
+                      s.dateStr === dateStr && 
+                      s.start === slot.s
+                  );
+
+                  if (!exists) {
+                      const ghost = {
+                          id: `ghost-${client.id}-${dateStr}-${slot.s}`,
+                          client: client.name,
+                          dateStr: dateStr,
+                          start: slot.s,
+                          end: slot.e,
+                          type: 'client',
+                          status: 'ghost',
+                          clientId: client.id,
+                          linkedPatternSlot: { dayIdx, s: slot.s, e: slot.e, startFrom: slot.startFrom }
+                      };
+                      allEvents.push({ data: ghost, type: 'ghost', ...getTimeRange(slot.s, slot.e) });
+                  }
+              });
+          }
+      });
+
+      // 2. Sort by Start Time, then Duration
+      allEvents.sort((a, b) => {
+          if (a.startMin !== b.startMin) return a.startMin - b.startMin;
+          return (b.endMin - b.startMin) - (a.endMin - a.startMin);
+      });
+
+      // 3. Cluster & Column Packing
+      let columns = [];
+      allEvents.forEach(ev => {
+          let placed = false;
+          for (let i = 0; i < columns.length; i++) {
+              let colEvents = columns[i];
+              let lastInCol = colEvents[colEvents.length - 1];
+              if (ev.startMin >= lastInCol.endMin) {
+                  colEvents.push(ev);
+                  ev.colIndex = i;
+                  placed = true;
+                  break;
+              }
+          }
+          if (!placed) {
+              columns.push([ev]);
+              ev.colIndex = columns.length - 1;
+          }
+      });
+
+      // 4. Render with calculated widths
+      allEvents.forEach(ev => {
+          // Find overlapping group to determine width
+          const overlappingEvents = allEvents.filter(other => 
+              other !== ev && 
+              Math.max(ev.startMin, other.startMin) < Math.min(ev.endMin, other.endMin)
+          );
+
+          let maxColIndex = ev.colIndex;
+          overlappingEvents.forEach(oe => {
+              if (oe.colIndex > maxColIndex) maxColIndex = oe.colIndex;
+          });
+          
+          const totalCols = maxColIndex + 1; 
+          const widthPercent = 100 / totalCols;
+          const leftPercent = ev.colIndex * widthPercent;
+
+          const el = createEventEl(ev.data);
+          
+          // Apply Layout
+          el.style.width = `calc(${widthPercent}% - 4px)`; 
+          el.style.left = `calc(${leftPercent}% + 2px)`;
+          el.style.zIndex = 5 + ev.colIndex;
+
+          col.appendChild(el);
+      });
+  }
+
+  function getTimeRange(start, end) {
+      const [h1, m1] = start.split(':').map(Number);
+      const [h2, m2] = end.split(':').map(Number);
+      return { startMin: h1 * 60 + m1, endMin: h2 * 60 + m2 };
+  }
   
   function createEventEl(s) { 
       const [h,m]=s.start.split(':').map(Number); 
@@ -967,7 +1036,7 @@ async function trySaveSession() {
       const div=document.createElement('div'); 
       div.className=`event-card ${s.status||''}`; 
       div.style.top=`${top}px`; div.style.height=`${Math.max(height,20)}px`; 
-      // Robust lookup by ID first, then Name
+      
       const cli = clients.find(c => (s.clientId && c.id == s.clientId) || c.name === s.client); 
       const color = cli ? cli.color : '#0a84ff'; 
       div.style.borderLeftColor = color; div.style.backgroundColor = hexToRgba(color, 0.85); 
@@ -996,15 +1065,12 @@ async function trySaveSession() {
         const client = clients.find(c => c.name === clientName); 
         if (!client) return; 
     
-        // Удаление старого слота (если меняем или удаляем серию)
         if (oldSlot && client.schedule && client.schedule[oldSlot.dayIdx]) { 
             const arr = client.schedule[oldSlot.dayIdx]; 
-            // Ищем слот по времени
             const idx = arr.findIndex(sl => sl.s === oldSlot.s && sl.e === oldSlot.e); 
             if (idx !== -1) arr.splice(idx, 1); 
         } 
     
-        // Добавление нового слота (если создаем или меняем)
         if (newData) { 
             const newD = new Date(newData.dateStr); 
             let newDayIdx = newD.getDay() - 1; 
@@ -1012,11 +1078,10 @@ async function trySaveSession() {
     
             if (!client.schedule[newDayIdx]) client.schedule[newDayIdx] = []; 
             
-            // ВАЖНО: Добавляем startFrom: newData.dateStr
             client.schedule[newDayIdx].push({ 
                 s: newData.start, 
                 e: newData.end, 
-                startFrom: newData.dateStr // <--- ВОТ ЭТО КЛЮЧЕВОЕ ИЗМЕНЕНИЕ
+                startFrom: newData.dateStr 
             }); 
         } 
     }
@@ -1029,14 +1094,12 @@ async function trySaveSession() {
   function openClientEdit(client = null) { 
     closeAllSheets(); 
     
-    // Проверяем, редактирование это или создание нового
     const isEditing = !!client;
 
     editingClient = client ? JSON.parse(JSON.stringify(client)) : { id: Date.now(), name: '', color: colorPalette[0], schedule: {} }; 
     
     document.getElementById('ceTitle').textContent = isEditing ? 'Карточка клиента' : 'Новый клиент'; 
     
-    // Логика для Имени
     const nameInput = document.getElementById('ceName');
     nameInput.value = editingClient.name;
     if (isEditing) {
@@ -1047,7 +1110,6 @@ async function trySaveSession() {
         nameInput.style.opacity = '1';
     }
 
-    // Логика для Цвета (скрываем блок целиком)
     const colorGroup = document.getElementById('ceColorGroup');
     if (colorGroup) {
         colorGroup.style.display = isEditing ? 'none' : 'block';
@@ -1066,89 +1128,29 @@ async function trySaveSession() {
   function closeTimeSlotSheet() { document.getElementById('timeSlotSheet').classList.remove('open'); }
   function confirmTimeSlot() { const s = document.getElementById('tsStart').value; const e = document.getElementById('tsEnd').value; if(!editingClient.schedule[editingDayIdx]) editingClient.schedule[editingDayIdx] = []; checkScheduleConflict(editingDayIdx, s, e); editingClient.schedule[editingDayIdx].push({s, e}); closeTimeSlotSheet(); renderClientSchedule(); }
   function checkScheduleConflict(dayIdx, start, end) { const blockedHours = availabilityPattern[dayIdx] || []; if(blockedHours.length === 0) return; const [h1, m1] = start.split(':').map(Number); const [h2, m2] = end.split(':').map(Number); const startMins = h1 * 60 + m1; const endMins = h2 * 60 + m2; let hasConflict = false; for(let h of blockedHours) { const bStart = h * 60; const bEnd = (h + 1) * 60; if (Math.max(startMins, bStart) < Math.min(endMins, bEnd)) { hasConflict = true; break; } } if(hasConflict) { showToast("Обратите внимание: обычно вы не работаете в это время"); } }
- 
-  function validateSeriesConflict(dayIdx, start, end, startDateStr, checkClientId) {
-    const targetIdNum = Number(checkClientId);
-    
-    // Переводим время серии в минуты
-    const [h1, m1] = start.split(':').map(Number);
-    const [h2, m2] = end.split(':').map(Number);
-    const startMins = h1 * 60 + m1;
-    const endMins = h2 * 60 + m2;
-
-    // Бежим по всем СУЩЕСТВУЮЩИМ записям
-    for (let s of sessions) {
-        if (s.status === 'cancelled') continue;
-
-        // 1. Проверяем дату: конфликт возможен только если запись >= даты начала серии
-        if (s.dateStr < startDateStr) continue;
-
-        // 2. Проверяем день недели
-        const sDate = new Date(s.dateStr);
-        let sDay = sDate.getDay() - 1; 
-        if (sDay === -1) sDay = 6;
-
-        if (sDay !== dayIdx) continue; // Если дни недели разные — конфликта нет
-
-        // 3. Проверяем Клиента (только если ID совпадает)
-        if (!s.clientId || Number(s.clientId) !== targetIdNum) continue;
-
-        // 4. Проверяем Пересечение времени
-        const [sH1, sM1] = s.start.split(':').map(Number);
-        const [sH2, sM2] = s.end.split(':').map(Number);
-        const sStart = sH1 * 60 + sM1;
-        const sEnd = sH2 * 60 + sM2;
-
-        if (Math.max(startMins, sStart) < Math.min(endMins, sEnd)) {
-            // НАШЛИ КОНФЛИКТ!
-            return {
-                valid: false,
-                msg: `Конфликт! ${s.dateStr} уже есть запись этого клиента.`
-            };
-        }
-    }
-
-    return { valid: true };
-}
   
   // 1. Функция проверки (заменяем полностью)
-  // Функция валидации с проверкой по ID и детальным сообщением
-function validateAppointment(dateStr, start, end, excludeSessionId, checkClientId) { 
-    // 1. Подготовка времени (перевод в минуты)
+  function validateAppointment(dateStr, start, end, excludeSessionId, checkClientId) { 
     const [h1, m1] = start.split(':').map(Number); 
     const [h2, m2] = end.split(':').map(Number); 
     const startMins = h1 * 60 + m1; 
     const endMins = h2 * 60 + m2; 
 
-    // 2. ЖЕСТКАЯ ТРАНСФОРМАЦИЯ ПРОВЕРЯЕМОГО ID В ЧИСЛО
-    // Даже если пришла строка "196047220", станет числом 196047220
     const targetIdNum = Number(checkClientId);
 
     for (let s of sessions) { 
-        // Пропускаем другие дни и отмененные записи
         if (s.dateStr !== dateStr) continue; 
         if (s.status === 'cancelled') continue;
-
-        // Пропускаем саму себя при редактировании (сравнение по ID записи)
-        // Тут оставляем String, так как ID сессий могут быть 'ghost-...'
         if (excludeSessionId && String(s.id) === String(excludeSessionId)) continue; 
 
-        // Разбираем время текущей сессии в цикле
         const [sH1, sM1] = s.start.split(':').map(Number); 
         const [sH2, sM2] = s.end.split(':').map(Number); 
         const sStart = sH1 * 60 + sM1; 
         const sEnd = sH2 * 60 + sM2; 
 
-        // 3. ЕСТЬ ЛИ ПЕРЕСЕЧЕНИЕ ПО ВРЕМЕНИ?
         if (Math.max(startMins, sStart) < Math.min(endMins, sEnd)) {
-            
-            // 4. ПРОВЕРКА ПО ID (ТОЛЬКО ЧИСЛА)
-            // Если у существующей сессии есть clientId
             if (s.clientId) {
-                // Превращаем ID из базы в число
                 const existingIdNum = Number(s.clientId);
-
-                // СРАВНИВАЕМ КАК ЧИСЛА
                 if (existingIdNum === targetIdNum) {
                     return { 
                         valid: false, 
@@ -1161,7 +1163,6 @@ function validateAppointment(dateStr, start, end, excludeSessionId, checkClientI
     
     return { valid: true }; 
 }
-  
   
   function showToast(msg, isSuccess = false) { const t = document.getElementById('toast'); t.className = 'toast-notification ' + (isSuccess ? 'success' : ''); document.getElementById('toastTitle').textContent = isSuccess ? "Успешно" : "Обратите внимание"; document.getElementById('toastMessage').textContent = msg; t.classList.add('show'); setTimeout(() => { t.classList.remove('show'); }, 3500); }
   function populateClientSelect() { const sel = document.getElementById('inpClient'); sel.innerHTML = ''; clients.forEach(c => { const opt = document.createElement('option'); opt.value = c.name; opt.textContent = c.name; sel.appendChild(opt); }); }
@@ -1177,7 +1178,6 @@ function validateAppointment(dateStr, start, end, excludeSessionId, checkClientI
   
   function renderPCol(c, d) {
   c.innerHTML = '';
-  // Берем отступ колонки внутри редактора
   const colLeft = Math.round(c.offsetLeft);
   
   (availabilityPattern[d] || []).forEach(x => {
@@ -1185,7 +1185,6 @@ function validateAppointment(dateStr, start, end, excludeSessionId, checkClientI
     b.className = 'blocked-slot stripe-bg';
     const top = x * GRID_H;
     b.style.top = `${top}px`;
-    // Синхронизируем фон
     b.style.backgroundPosition = `-${colLeft}px -${top}px`;
     b.onclick = (e) => { e.stopPropagation(); toggleSinglePattern(d, x); };
     c.appendChild(b);
@@ -1203,7 +1202,6 @@ function validateAppointment(dateStr, start, end, excludeSessionId, checkClientI
   div.style.top = `${top}px`;
   div.style.height = `${Math.max(height, 20)}px`;
   
-  // Синхронизация фона (если передан colLeft)
   div.style.backgroundPosition = `-${colLeft}px -${top}px`;
   return div;
 }
