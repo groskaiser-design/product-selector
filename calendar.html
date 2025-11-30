@@ -633,7 +633,7 @@ async function trySaveSession() {
   const note = document.getElementById('inpNote').value;
   const isRecurring = document.getElementById('inpRecurring').checked;
 
-  // 1. Ищем клиента, чтобы получить его ID
+  // 1. Ищем клиента
   let clientObj = clients.find(c => c.name === clientName);
   
   if (!clientObj) {
@@ -641,24 +641,22 @@ async function trySaveSession() {
       return;
   }
 
-  // 2. ВАЛИДАЦИЯ
-  // Передаем clientObj.id. Внутри функции он будет превращен в Number.
+  // 2. ВАЛИДАЦИЯ ТЕКУЩЕГО СЛОТА (Единичная запись)
   const val = validateAppointment(dateStr, start, end, editingId, clientObj.id); 
   
   if(!val.valid) { 
-      showToast(val.msg, false); // Показываем ошибку (дубликат)
-      return; // Блокируем сохранение
+      showToast(val.msg, false); 
+      return; 
   } 
 
   // 3. Сборка данных
   const newData = { 
       client: clientName, 
-      clientId: clientObj.id, // Сохраняем ID как есть (в валидаторе он все равно будет числом)
+      clientId: clientObj.id, 
       dateStr, start, end, note, status: 'planned', type: 'client'
   };
 
-  // --- ДАЛЕЕ КОД БЕЗ ИЗМЕНЕНИЙ ---
-  
+  // 4. Логика изменения СУЩЕСТВУЮЩЕЙ серии
   if (editingLinkedPattern) {
       const newD = new Date(dateStr);
       let newDayIdx = newD.getDay() - 1; if(newDayIdx === -1) newDayIdx = 6;
@@ -671,52 +669,29 @@ async function trySaveSession() {
       }
   }
 
+  // 5. Логика создания НОВОЙ серии
   if (!editingLinkedPattern && isRecurring) {
       const newD = new Date(dateStr);
       let newDayIdx = newD.getDay() - 1; if(newDayIdx === -1) newDayIdx = 6;
+
+      // === ПРОВЕРКА НА БУДУЩИЕ КОНФЛИКТЫ ===
+      // Проверяем, не наедет ли серия на уже созданные тренировки в будущем
+      const seriesVal = validateSeriesConflict(newDayIdx, start, end, dateStr, clientObj.id);
+      if (!seriesVal.valid) {
+          showToast(seriesVal.msg, false); 
+          return; // Блокируем создание серии
+      }
+      // ============================================
+
       updateClientPattern(clientName, null, { dateStr, start, end });
       const cSave = clients.find(c => c.name === clientName);
       if(cSave) DataManager.fetchFromServer('save_client', { client: cSave });
-      newData.linkedPatternSlot = { dayIdx: newDayIdx, s: start, e: end };
+      newData.linkedPatternSlot = { dayIdx: newDayIdx, s: start, e: end, startFrom: dateStr };
       showToast("Серия создана", true);
   }
   
   commitSave(newData, false);
 }
-
-  function commitSave(data, updateSeries) {
-    if (updateSeries && editingLinkedPattern) {
-        updateClientPattern(data.client, editingLinkedPattern, data);
-        const cSave = clients.find(c => c.name === data.client);
-        if(cSave) DataManager.fetchFromServer('save_client', { client: cSave });
-        showToast("Серия обновлена", true);
-    }
-
-    // OPTIMISTIC LOCAL UPDATE
-    let finalId = editingId;
-    if(editingId && !String(editingId).startsWith('ghost')) {
-        const idx = sessions.findIndex(s => s.id == editingId);
-        if (idx !== -1) { 
-           sessions[idx] = { ...sessions[idx], ...data, linkedPatternSlot: updateSeries ? null : sessions[idx].linkedPatternSlot };
-        } else { sessions.push({ id: editingId, ...data }); }
-    } else {
-        finalId = Date.now();
-        sessions.push({ id: finalId, ...data });
-    }
-
-    // SYNC
-    saveAllDataLocally();
-    closeAllSheets(); reRenderBlocks(); 
-
-    // SERVER SAVE
-    const sessionToSend = { ...data, id: finalId };
-    DataManager.fetchFromServer('save_session', { date: data.dateStr, session: sessionToSend }).then(res => {
-        if(res.saved_id) {
-           const s = sessions.find(sess => sess.id == finalId);
-           if(s) { s.id = res.saved_id; saveAllDataLocally(); } // Update ID confirmed by server
-        }
-    });
-  }
 
   function tryDeleteSession() {
     if (editingLinkedPattern) openActionSheet('delete');
@@ -1091,6 +1066,51 @@ async function trySaveSession() {
   function closeTimeSlotSheet() { document.getElementById('timeSlotSheet').classList.remove('open'); }
   function confirmTimeSlot() { const s = document.getElementById('tsStart').value; const e = document.getElementById('tsEnd').value; if(!editingClient.schedule[editingDayIdx]) editingClient.schedule[editingDayIdx] = []; checkScheduleConflict(editingDayIdx, s, e); editingClient.schedule[editingDayIdx].push({s, e}); closeTimeSlotSheet(); renderClientSchedule(); }
   function checkScheduleConflict(dayIdx, start, end) { const blockedHours = availabilityPattern[dayIdx] || []; if(blockedHours.length === 0) return; const [h1, m1] = start.split(':').map(Number); const [h2, m2] = end.split(':').map(Number); const startMins = h1 * 60 + m1; const endMins = h2 * 60 + m2; let hasConflict = false; for(let h of blockedHours) { const bStart = h * 60; const bEnd = (h + 1) * 60; if (Math.max(startMins, bStart) < Math.min(endMins, bEnd)) { hasConflict = true; break; } } if(hasConflict) { showToast("Обратите внимание: обычно вы не работаете в это время"); } }
+ 
+  function validateSeriesConflict(dayIdx, start, end, startDateStr, checkClientId) {
+    const targetIdNum = Number(checkClientId);
+    
+    // Переводим время серии в минуты
+    const [h1, m1] = start.split(':').map(Number);
+    const [h2, m2] = end.split(':').map(Number);
+    const startMins = h1 * 60 + m1;
+    const endMins = h2 * 60 + m2;
+
+    // Бежим по всем СУЩЕСТВУЮЩИМ записям
+    for (let s of sessions) {
+        if (s.status === 'cancelled') continue;
+
+        // 1. Проверяем дату: конфликт возможен только если запись >= даты начала серии
+        if (s.dateStr < startDateStr) continue;
+
+        // 2. Проверяем день недели
+        const sDate = new Date(s.dateStr);
+        let sDay = sDate.getDay() - 1; 
+        if (sDay === -1) sDay = 6;
+
+        if (sDay !== dayIdx) continue; // Если дни недели разные — конфликта нет
+
+        // 3. Проверяем Клиента (только если ID совпадает)
+        if (!s.clientId || Number(s.clientId) !== targetIdNum) continue;
+
+        // 4. Проверяем Пересечение времени
+        const [sH1, sM1] = s.start.split(':').map(Number);
+        const [sH2, sM2] = s.end.split(':').map(Number);
+        const sStart = sH1 * 60 + sM1;
+        const sEnd = sH2 * 60 + sM2;
+
+        if (Math.max(startMins, sStart) < Math.min(endMins, sEnd)) {
+            // НАШЛИ КОНФЛИКТ!
+            return {
+                valid: false,
+                msg: `Конфликт! ${s.dateStr} уже есть запись этого клиента.`
+            };
+        }
+    }
+
+    return { valid: true };
+}
+  
   // 1. Функция проверки (заменяем полностью)
   // Функция валидации с проверкой по ID и детальным сообщением
 function validateAppointment(dateStr, start, end, excludeSessionId, checkClientId) { 
