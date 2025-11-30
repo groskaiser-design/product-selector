@@ -627,14 +627,14 @@
   // 2. Функция сохранения (заменяем полностью, чтобы передать имя в проверку)
   async function trySaveSession() {
   const clientName = document.getElementById('inpClient').value;
-  
   const dateStr = document.getElementById('inpDate').value;
   const start = document.getElementById('inpStart').value;
   const end = document.getElementById('inpEnd').value;
   const note = document.getElementById('inpNote').value;
   const isRecurring = document.getElementById('inpRecurring').checked;
 
-  // --- ИЗМЕНЕНИЕ 1: Сначала ищем клиента, чтобы получить ID ---
+  // --- ШАГ 1: Ищем объект клиента по имени ---
+  // Это нужно, чтобы получить его уникальный ID для проверки
   let clientObj = clients.find(c => c.name === clientName);
   
   if (!clientObj) {
@@ -642,33 +642,31 @@
       return;
   }
 
-  // --- ИЗМЕНЕНИЕ 2: Валидируем по ID, а не по имени ---
-  // Передаем clientObj.id пятым параметром
+  // --- ШАГ 2: Вызываем валидатор с передачей ID ---
+  // Передаем clientObj.id пятым аргументом!
   const val = validateAppointment(dateStr, start, end, editingId, clientObj.id); 
   
+  // Если валидатор вернул false — прерываем сохранение
   if(!val.valid) { 
-      // false во втором параметре означает "стиль ошибки" (красный)
-      showToast(val.msg, false); 
-      return; 
+      showToast(val.msg, false); // Показываем ошибку (красный тост)
+      return; // ВАЖНО: Останавливаем выполнение функции
   } 
 
-  // Если проверки пройдены, собираем объект
+  // --- ШАГ 3: Если всё ок, собираем данные ---
   const newData = { 
       client: clientName, 
-      clientId: clientObj.id, // Гарантированно пишем ID
+      clientId: clientObj.id, // Обязательно сохраняем ID
       dateStr, start, end, note, status: 'planned', type: 'client'
   };
 
-  // --- ДАЛЕЕ СТАРАЯ ЛОГИКА (БЕЗ ИЗМЕНЕНИЙ) ---
-
-  // Логика конфликтов серии (изменение существующей)
+  // ... ДАЛЬШЕ ВАШ КОД БЕЗ ИЗМЕНЕНИЙ (if editingLinkedPattern ...) ...
+  
+  // Для справки, вот хвост функции, чтобы вы не потерялись:
   if (editingLinkedPattern) {
       const newD = new Date(dateStr);
       let newDayIdx = newD.getDay() - 1; if(newDayIdx === -1) newDayIdx = 6;
       const isTimeChanged = (start !== editingLinkedPattern.s || end !== editingLinkedPattern.e);
       const isDayChanged = (newDayIdx !== editingLinkedPattern.dayIdx);
-      
-      // Если меняется время или день недели в серийном событии -> спрашиваем подтверждение
       if (isTimeChanged || isDayChanged) {
           tempSessionData = newData; 
           openActionSheet('save');
@@ -676,23 +674,16 @@
       }
   }
 
-  // Логика создания новой серии
   if (!editingLinkedPattern && isRecurring) {
       const newD = new Date(dateStr);
       let newDayIdx = newD.getDay() - 1; if(newDayIdx === -1) newDayIdx = 6;
-      
-      // Обновляем паттерн клиента
       updateClientPattern(clientName, null, { dateStr, start, end });
-      
-      // Сохраняем клиента на сервере сразу
       const cSave = clients.find(c => c.name === clientName);
       if(cSave) DataManager.fetchFromServer('save_client', { client: cSave });
-      
       newData.linkedPatternSlot = { dayIdx: newDayIdx, s: start, e: end };
       showToast("Серия создана", true);
   }
   
-  // Финальное сохранение (локально + сервер)
   commitSave(newData, false);
 }
 
@@ -1061,40 +1052,48 @@
   // 1. Функция проверки (заменяем полностью)
   // Функция валидации с проверкой по ID и детальным сообщением
 function validateAppointment(dateStr, start, end, excludeId = null, checkClientId = null) { 
+    // Переводим время в минуты для сравнения
     const [h1, m1] = start.split(':').map(Number); 
     const [h2, m2] = end.split(':').map(Number); 
     const startMins = h1 * 60 + m1; 
     const endMins = h2 * 60 + m2; 
     
     for (let s of sessions) { 
-        // 1. Фильтруем лишнее: другая дата, отмененные, редактируемая сессия
+        // 1. Пропускаем сессии в другие дни или отмененные
         if (s.dateStr !== dateStr) continue; 
         if (s.status === 'cancelled') continue;
+
+        // 2. Пропускаем саму себя (при редактировании), чтобы не конфликтовать с собой же
+        // Используем String() для надежности сравнения
         if (excludeId && String(s.id) === String(excludeId)) continue; 
         
+        // Разбираем время существующей сессии
         const [sH1, sM1] = s.start.split(':').map(Number); 
         const [sH2, sM2] = s.end.split(':').map(Number); 
         const sStart = sH1 * 60 + sM1; 
         const sEnd = sH2 * 60 + sM2; 
         
-        // 2. Проверяем пересечение времени
+        // 3. МАТЕМАТИКА: Проверяем физическое пересечение времени
+        // (Максимум из начал < Минимум из концов)
         if (Math.max(startMins, sStart) < Math.min(endMins, sEnd)) {
             
-            // 3. UX FIX: Если передан ID клиента, проверяем жесткое совпадение
-            if (checkClientId && String(s.clientId) === String(checkClientId)) {
-                return { 
-                    valid: false, 
-                    // Показываем пользователю точное время конфликта
-                    msg: `Этот клиент уже записан на ${s.start}-${s.end}` 
-                }; 
+            // 4. ЛОГИКА: Если пересечение есть, проверяем КТО это
+            if (checkClientId) {
+                // Если ID клиентов совпадают — ЭТО ОШИБКА
+                if (String(s.clientId) === String(checkClientId)) {
+                    return { 
+                        valid: false, 
+                        msg: `Клиент ${s.client} уже записан на ${s.start}-${s.end}` 
+                    }; 
+                }
             }
             
-            // Здесь можно добавить логику для Тренера (если тренер не может вести 2 тренировки сразу)
-            // Если вы хотите разрешить накладки для РАЗНЫХ клиентов (группа), то return здесь не нужен.
-            // Если вы работаете один на один, раскомментируйте строчку ниже:
-            // return { valid: false, msg: "Это время уже занято другой тренировкой" };
+            // Если клиенты РАЗНЫЕ — мы ничего не возвращаем, цикл идет дальше.
+            // Это позволяет накладывать разных людей друг на друга (групповая тренировка).
         }
     } 
+    
+    // Если цикл прошел и конфликтов ID не найдено
     return { valid: true }; 
 }
   
@@ -1105,10 +1104,7 @@ function validateAppointment(dateStr, start, end, excludeId = null, checkClientI
   function openSheet(id){document.getElementById('overlay').classList.add('active');document.getElementById(id).classList.add('open');}
   function closeAllSheets(){document.getElementById('overlay').classList.remove('active');document.querySelectorAll('.sheet').forEach(s=>s.classList.remove('open'));}
   function openRangesSheet(){closeAllSheets();resetRangeForm();renderRangesList();openSheet('rangesSheet');}
-  function resetRangeForm(){editingRangeIndex=null;document.getElementById('rangeStartDate').value='';document.getElementById('rangeStartTime').value='00:00';document.getElementById('rangeEndDate').value='';document.getElementById('rangeEndTime').value='23:59';document.getElementById('rangeSubmitBtn').textContent='Добавить период';}
-  function addRange(){ const dS=document.getElementById('rangeStartDate').value, tS=document.getElementById('rangeStartTime').value; const dE=document.getElementById('rangeEndDate').value, tE=document.getElementById('rangeEndTime').value; if(!dS||!tS||!dE||!tE)return alert('Заполните все поля'); const start=`${dS}T${tS}`, end=`${dE}T${tE}`; if(start>=end)return alert('Ошибка дат'); const nr={start,end}; if(editingRangeIndex!==null)specialRanges[editingRangeIndex]=nr; else specialRanges.push(nr); resetRangeForm(); renderRangesList(); reRenderBlocks(); syncSettings(); }
-  function editRange(i){const r=specialRanges[i]; editingRangeIndex=i; const [d1,t1]=r.start.split('T'), [d2,t2]=r.end.split('T'); document.getElementById('rangeStartDate').value=d1; document.getElementById('rangeStartTime').value=t1.substring(0,5); document.getElementById('rangeEndDate').value=d2; document.getElementById('rangeEndTime').value=t2.substring(0,5); document.getElementById('rangeSubmitBtn').textContent='Сохранить';}
-  function deleteRange(i){specialRanges.splice(i,1); if(editingRangeIndex===i) resetRangeForm(); renderRangesList(); reRenderBlocks(); syncSettings(); }
+  
   function openPatternEditor(){closeAllSheets();document.getElementById('patternEditor').classList.add('open');renderPatternEditor();}
   function closePatternEditor(){document.getElementById('patternEditor').classList.remove('open');} 
   function renderPatternEditor(){ const t=document.getElementById('peTimeColumn'); t.innerHTML=''; for(let i=0;i<24;i++){const e=document.createElement('div');e.className='time-label'; if(i > 0) e.innerHTML=`<span>${String(i).padStart(2,'0')}:00</span>`;e.onclick=()=>toggleRowPattern(i);t.appendChild(e);} const h=document.getElementById('peHeaderTrack'); h.innerHTML=''; const w=['ПН','ВТ','СР','ЧТ','ПТ','СБ','ВС']; for(let i=0;i<7;i++){const e=document.createElement('div');e.className='day-col-header';e.innerHTML=`<div class="dch-day" style="margin-top:16px">${w[i]}</div>`;e.onclick=()=>toggleColPattern(i);h.appendChild(e);} const g=document.getElementById('peGridColumns'); g.innerHTML=''; for(let i=0;i<7;i++){const c=document.createElement('div');c.className='day-column';c.onclick=(e)=>{if(e.target!==c)return;toggleSinglePattern(i,Math.floor(e.offsetY/GRID_H));};renderPCol(c,i);g.appendChild(c);} }
