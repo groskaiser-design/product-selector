@@ -491,7 +491,7 @@
   // 1. CONFIG
   const APP_VERSION = 'v8.0-SYNC-DAY';
   // 👇 ПРОВЕРЬ, ЧТО ТУТ СТОИТ ТВОЯ ССЫЛКУ 👇
-  const API_URL = 'https://script.google.com/macros/s/AKfycby1RAtXa0ITPP1G0tyErMSWyK9Uct10rHZbGtMftZkOBIJQlVSGIRy3Y4zp4By_VyyLiA/exec'; 
+  const API_URL = 'https://script.google.com/macros/s/AKfycbx9wM-OzH88XXUnEeA80Nh2QCA84D2AvQroJyl8xk6F0weMSmJNXII01oI5j20odNCnAg/exec'; 
 
   const GRID_H = 60;
   let startOffset = -30, endOffset = 60;
@@ -628,39 +628,17 @@
 
   function applyDataToState(data, monthStr) {
     if (!data) return;
-    
-    console.groupCollapsed(`📥 Server Data Load: ${monthStr}`); // Свернутая группа, чтобы не спамить
-
-    // 1. НАСТРОЙКИ (ПАТТЕРНЫ)
-    if (data.clients) {
-        clients = data.clients;
-        // Проверяем, есть ли у кого-то расписание
-        clients.forEach(c => {
-            if (c.schedule && Object.keys(c.schedule).length > 0) {
-                console.log(`👤 Client Pattern Loaded: ${c.name}`, JSON.parse(JSON.stringify(c.schedule)));
-            }
-        });
+    if (data.settings) {
+      if (data.settings.pattern) availabilityPattern = data.settings.pattern;
+      if (data.settings.exceptions) dateExceptions = data.settings.exceptions;
+      if (data.settings.ranges) specialRanges = data.settings.ranges;
     }
-
-    // 2. КАЛЕНДАРЬ (СЕССИИ)
+    if (data.clients) clients = data.clients;
     if (data.calendar) {
-      // Чистим старые сессии этого месяца
       sessions = sessions.filter(s => !s.dateStr.startsWith(monthStr));
-      
       Object.keys(data.calendar).forEach(dayKey => {
-        const evts = data.calendar[dayKey];
-        if (evts.length > 0) {
-             console.log(`📅 Date ${monthStr}-${dayKey} has ${evts.length} records from server:`, evts);
-        }
-
-        evts.forEach(evt => {
+        data.calendar[dayKey].forEach(evt => {
           const clientObj = clients.find(c => String(c.id) === String(evt.c)) || { name: '?', color: '#555' };
-          
-          // Логируем, если это та самая проблемная запись (например, на 11:00)
-          if (evt.s === '11:00') {
-              console.warn(`🔥 FOUND SERVER RECORD at ${monthStr}-${dayKey} 11:00! Status: ${evt.st}`);
-          }
-
           sessions.push({
             id: evt.i, 
             clientId: evt.c, 
@@ -676,15 +654,6 @@
         });
       });
     }
-    
-    // Остальные настройки...
-    if (data.settings) {
-      if (data.settings.pattern) availabilityPattern = data.settings.pattern;
-      if (data.settings.exceptions) dateExceptions = data.settings.exceptions;
-      if (data.settings.ranges) specialRanges = data.settings.ranges;
-    }
-    
-    console.groupEnd();
     reRenderBlocks();
     updateAllDayStats();
   }
@@ -794,83 +763,64 @@
   }
 
   // === ОБНОВЛЕННАЯ ФУНКЦИЯ УДАЛЕНИЯ ===
-async function commitDelete(deleteSeries) {
-    console.clear();
-    const clientName = document.getElementById('inpClient').value;
-    const dateStr = document.getElementById('inpDate').value;
-    
-    // Получаем индекс дня (0-6), чтобы знать, какой день недели чистить
-    const d = new Date(dateStr);
-    let dayIdx = d.getDay() - 1; 
-    if(dayIdx === -1) dayIdx = 6;
-
-    showToast("Удаление...", true);
-
-    try {
-        // === 1. УБИВАЕМ СЕРИЮ (ВЫЖИГАЕМ ДЕНЬ) ===
-        if (deleteSeries) {
-            // Ищем клиента просто по имени
-            const client = clients.find(c => c.name.trim() === clientName.trim());
-            
-            if (client && client.schedule) {
-                // ТУПОЕ РЕШЕНИЕ: Просто удаляем весь этот день из расписания клиента
-                // Если там было несколько тренировок в этот день — удалятся все. 
-                // Зато фантом точно исчезнет.
-                if (client.schedule[dayIdx]) {
-                    console.log(`🧨 Nuking Day ${dayIdx} for ${client.name}`);
-                    client.schedule[dayIdx] = []; // Обнуляем массив
-                    
-                    // Сохраняем на сервер
-                    const payload = JSON.parse(JSON.stringify(client));
-                    payload.id = String(payload.id);
-                    await DataManager.fetchFromServer('save_client', { client: payload });
-                }
-            }
-        }
-
-        // === 2. ЧИСТИМ БАЗУ ОТ МУСОРА ===
-        // Удаляем любые записи на это время + любые записи с NULL (битые)
-        const startTime = editingLinkedPattern ? editingLinkedPattern.s : document.getElementById('inpStart').value;
-        
-        sessions = sessions.filter(s => {
-            // Удаляем, если это тот самый фантом/запись
-            const isTarget = (s.dateStr === dateStr && s.start === startTime);
-            // Удаляем, если это "битый" мусор (cancelled с null)
-            const isGarbage = (s.status === 'cancelled' && !s.clientId);
-            
-            return !(isTarget || isGarbage);
-        });
-
-        // Если это одиночная отмена (не серия) — ставим заглушку
-        if (!deleteSeries && editingLinkedPattern) {
-            sessions.push({
-                id: generateUniqueId(),
-                client: clientName,
-                dateStr: dateStr,
-                start: startTime,
-                end: document.getElementById('inpEnd').value,
-                status: 'cancelled',
-                type: 'client',
-                linkedPatternSlot: editingLinkedPattern
-            });
-        }
-
-        // === 3. СОХРАНЯЕМ ===
-        saveAllDataLocally();
-        closeAllSheets();
-        reRenderBlocks();
-        
-        // Перезаписываем день на сервере (это уберет мусор из JSON)
-        await syncDayToServer(dateStr);
-
-        showToast("Удалено нахер", true);
-
-    } catch (e) {
-        console.error(e);
-        showToast("Ошибка", false);
+  function commitDelete(deleteSeries) {
+    // Получаем дату ДО удаления (важно, если id "ghost")
+    let dateToSync = document.getElementById('inpDate').value;
+    if(editingId && !String(editingId).startsWith('ghost')) {
+        const s = sessions.find(x => String(x.id) === String(editingId));
+        if(s) dateToSync = s.dateStr;
     }
-}
 
+    if (deleteSeries && editingLinkedPattern) {
+         // Удаление серии
+         const s = sessions.find(x => String(x.id) === String(editingId)) || { client: document.getElementById('inpClient').value };
+         updateClientPattern(s.client, editingLinkedPattern, null);
+         const cSave = clients.find(c => c.name === s.client);
+         if(cSave) DataManager.fetchFromServer('save_client', { client: cSave });
+         
+         // Удаляем эту конкретную запись из отображения
+         if(editingId && !String(editingId).startsWith('ghost')) sessions = sessions.filter(x => String(x.id) !== String(editingId));
+         showToast("Серия удалена", false);
+
+    } else {
+        if (!deleteSeries && editingLinkedPattern) {
+             // Исключение из серии (Cancel)
+             const clientName = document.getElementById('inpClient').value;
+             const dateStr = document.getElementById('inpDate').value;
+             
+             // Удаляем активную версию, если она была
+             if (editingId && !String(editingId).startsWith('ghost')) {
+                 sessions = sessions.filter(x => String(x.id) !== String(editingId));
+             }
+
+             // Добавляем запись "Отменено"
+             const cancelledS = { 
+                 id: generateUniqueId(), 
+                 client: clientName, 
+                 dateStr: dateStr, 
+                 start: editingLinkedPattern.s, 
+                 end: editingLinkedPattern.e, 
+                 status: 'cancelled', 
+                 type: 'client',
+                 linkedPatternSlot: editingLinkedPattern 
+             };
+             sessions.push(cancelledS);
+             showToast("Отменено", false);
+
+        } else if(editingId && !String(editingId).startsWith('ghost')) {
+            // Обычное удаление
+            sessions = sessions.filter(x => String(x.id) !== String(editingId));
+            showToast("Удалено", false);
+        }
+    }
+    
+    saveAllDataLocally();
+    closeAllSheets(); 
+    reRenderBlocks();
+
+    // СИНХРОНИЗИРУЕМ ДЕНЬ
+    syncDayToServer(dateToSync);
+  }
 
   async function saveClient() {
     const name = document.getElementById('ceName').value; 
@@ -1102,123 +1052,92 @@ async function commitDelete(deleteSeries) {
   }
   
   // === CORE RENDER LOGIC WITH OVERLAP SUPPORT ===
-function renderEventsForColumn(col, dateStr, dayIdx) {
-    col.querySelectorAll('.event-card').forEach(e => e.remove());
-    let allEvents = [];
+  function renderEventsForColumn(col, dateStr, dayIdx) {
+      col.querySelectorAll('.event-card').forEach(e => e.remove());
 
-    // --- ЛОГИРОВАНИЕ ТОЛЬКО ДЛЯ ПРОБЛЕМНОГО ДНЯ ---
-    const isDebugDay = dateStr.includes('2025-12-02'); 
-    
-    // 1. РЕАЛЬНЫЕ ЗАПИСИ (из sessions)
-    const daySessions = sessions.filter(s => s.dateStr === dateStr);
-    
-    daySessions.forEach(s => {
-        if (s.status !== 'cancelled') {
-            allEvents.push({ data: s, type: 'real', ...getTimeRange(s.start, s.end) });
-        } else {
-            if (isDebugDay) console.log(`🛡️ Found BLOCKER (Cancelled): ${s.client} (ID:${s.clientId}) at ${s.start}`);
-        }
-    });
+      let allEvents = [];
 
-    // 2. ФАНТОМЫ (из clients.schedule)
-    clients.forEach(client => {
-        const daySched = client.schedule?.[dayIdx];
-        if (daySched) {
-            daySched.forEach(slot => {
-                if (slot.startFrom && dateStr < slot.startFrom) return;
+      sessions.filter(s => s.dateStr === dateStr && s.status !== 'cancelled').forEach(s => {
+          allEvents.push({ data: s, type: 'real', ...getTimeRange(s.start, s.end) });
+      });
 
-                // === ГЛАВНЫЙ ФИКС ЗДЕСЬ ===
-                // Проверяем, есть ли запись, которая перекрывает этот слот
-                const exists = sessions.some(s => {
-                    // 1. Сначала проверяем дату и время
-                    if (s.dateStr !== dateStr || s.start !== slot.s) return false;
+      clients.forEach(client => {
+          const daySched = client.schedule?.[dayIdx];
+          if (daySched) {
+              daySched.forEach(slot => {
+                  if (slot.startFrom && dateStr < slot.startFrom) return;
+                  const exists = sessions.some(s => 
+                      s.client === client.name && 
+                      s.dateStr === dateStr && 
+                      s.start === slot.s
+                  );
 
-                    // 2. Теперь проверяем, относится ли это к клиенту
-                    
-                    // А. Совпадение по ID (Самое надежное)
-                    if (s.clientId && client.id && String(s.clientId) === String(client.id)) return true;
-                    
-                    // Б. Совпадение по Имени
-                    if (s.client === client.name) return true;
+                  if (!exists) {
+                      const ghost = {
+                          id: `ghost-${client.id}-${dateStr}-${slot.s}`,
+                          client: client.name,
+                          dateStr: dateStr,
+                          start: slot.s,
+                          end: slot.e,
+                          type: 'client',
+                          status: 'ghost',
+                          clientId: client.id,
+                          linkedPatternSlot: { dayIdx, s: slot.s, e: slot.e, startFrom: slot.startFrom }
+                      };
+                      allEvents.push({ data: ghost, type: 'ghost', ...getTimeRange(slot.s, slot.e) });
+                  }
+              });
+          }
+      });
 
-                    // В. !!! СПАСАТЕЛЬНЫЙ КРУГ !!!
-                    // Если у сессии имя "?" (потерялось) или null, НО она 'cancelled' и время совпадает
-                    // МЫ СЧИТАЕМ ЭТО БЛОКИРОВКОЙ.
-                    if ((s.client === '?' || !s.client) && s.status === 'cancelled') {
-                        if (isDebugDay) console.log(`⚠️ Blocked by ORPHAN session (Name: ?, Time match)`);
-                        return true;
-                    }
+      allEvents.sort((a, b) => {
+          if (a.startMin !== b.startMin) return a.startMin - b.startMin;
+          return (b.endMin - b.startMin) - (a.endMin - a.startMin);
+      });
 
-                    return false;
-                });
+      let columns = [];
+      allEvents.forEach(ev => {
+          let placed = false;
+          for (let i = 0; i < columns.length; i++) {
+              let colEvents = columns[i];
+              let lastInCol = colEvents[colEvents.length - 1];
+              if (ev.startMin >= lastInCol.endMin) {
+                  colEvents.push(ev);
+                  ev.colIndex = i;
+                  placed = true;
+                  break;
+              }
+          }
+          if (!placed) {
+              columns.push([ev]);
+              ev.colIndex = columns.length - 1;
+          }
+      });
 
-                if (!exists) {
-                    const ghost = {
-                        id: `ghost-${client.id}-${dateStr}-${slot.s}`,
-                        client: client.name,
-                        dateStr: dateStr,
-                        start: slot.s,
-                        end: slot.e,
-                        type: 'client',
-                        status: 'ghost',
-                        clientId: client.id,
-                        linkedPatternSlot: { dayIdx, s: slot.s, e: slot.e, startFrom: slot.startFrom }
-                    };
-                    allEvents.push({ data: ghost, type: 'ghost', ...getTimeRange(slot.s, slot.e) });
-                } else {
-                    if (isDebugDay) console.log(`⛔️ Ghost for ${client.name} BLOCKED successfully.`);
-                }
-            });
-        }
-    });
+      allEvents.forEach(ev => {
+          const overlappingEvents = allEvents.filter(other => 
+              other !== ev && 
+              Math.max(ev.startMin, other.startMin) < Math.min(ev.endMin, other.endMin)
+          );
 
-    // ... (Дальше без изменений) ...
-    allEvents.sort((a, b) => {
-        if (a.startMin !== b.startMin) return a.startMin - b.startMin;
-        return (b.endMin - b.startMin) - (a.endMin - a.startMin);
-    });
+          let maxColIndex = ev.colIndex;
+          overlappingEvents.forEach(oe => {
+              if (oe.colIndex > maxColIndex) maxColIndex = oe.colIndex;
+          });
+          
+          const totalCols = maxColIndex + 1; 
+          const widthPercent = 100 / totalCols;
+          const leftPercent = ev.colIndex * widthPercent;
 
-    let columns = [];
-    allEvents.forEach(ev => {
-        let placed = false;
-        for (let i = 0; i < columns.length; i++) {
-            let colEvents = columns[i];
-            let lastInCol = colEvents[colEvents.length - 1];
-            if (ev.startMin >= lastInCol.endMin) {
-                colEvents.push(ev);
-                ev.colIndex = i;
-                placed = true;
-                break;
-            }
-        }
-        if (!placed) {
-            columns.push([ev]);
-            ev.colIndex = columns.length - 1;
-        }
-    });
+          const el = createEventEl(ev.data);
+          
+          el.style.width = `calc(${widthPercent}% - 4px)`; 
+          el.style.left = `calc(${leftPercent}% + 2px)`;
+          el.style.zIndex = 5 + ev.colIndex;
 
-    allEvents.forEach(ev => {
-        const overlappingEvents = allEvents.filter(other => 
-            other !== ev && 
-            Math.max(ev.startMin, other.startMin) < Math.min(ev.endMin, other.endMin)
-        );
-
-        let maxColIndex = ev.colIndex;
-        overlappingEvents.forEach(oe => {
-            if (oe.colIndex > maxColIndex) maxColIndex = oe.colIndex;
-        });
-        
-        const totalCols = maxColIndex + 1; 
-        const widthPercent = 100 / totalCols;
-        const leftPercent = ev.colIndex * widthPercent;
-
-        const el = createEventEl(ev.data);
-        el.style.width = `calc(${widthPercent}% - 4px)`; 
-        el.style.left = `calc(${leftPercent}% + 2px)`;
-        el.style.zIndex = 5 + ev.colIndex;
-        col.appendChild(el);
-    });
-}
+          col.appendChild(el);
+      });
+  }
 
   function getTimeRange(start, end) {
       const [h1, m1] = start.split(':').map(Number);
@@ -1266,67 +1185,30 @@ function renderEventsForColumn(col, dateStr, dayIdx) {
   function openActionSheet(type) { const sheet = document.getElementById('actionSheet'); const overlay = document.getElementById('actionSheetOverlay'); const title = document.getElementById('asTitle'); const btnOne = document.getElementById('asBtnOne'); const btnSeries = document.getElementById('asBtnSeries'); overlay.classList.add('active'); sheet.classList.add('open'); if (type === 'save') { title.textContent = "Изменение повторяющегося события"; btnOne.textContent = "Только эта тренировка"; btnOne.className = "as-button"; btnOne.onclick = () => { closeActionSheet(); commitSave(tempSessionData, false); }; btnSeries.textContent = "Изменить всю серию"; btnSeries.className = "as-button bold"; btnSeries.onclick = () => { closeActionSheet(); commitSave(tempSessionData, true); }; } else if (type === 'delete') { title.textContent = "Удаление события"; btnOne.textContent = "Только эту тренировку"; btnOne.className = "as-button danger"; btnOne.onclick = () => { closeActionSheet(); commitDelete(false); }; btnSeries.textContent = "Удалить из расписания"; btnSeries.className = "as-button danger bold"; btnSeries.onclick = () => { closeActionSheet(); commitDelete(true); }; } }
   function closeActionSheet() { document.getElementById('actionSheet').classList.remove('open'); document.getElementById('actionSheetOverlay').classList.remove('active'); }
 
-function updateClientPattern(clientName, oldSlot, newData) {
-    console.group("🛠 updateClientPattern (NUCLEAR FIX)");
+    function updateClientPattern(clientName, oldSlot, newData) { 
+        const client = clients.find(c => c.name === clientName); 
+        if (!client) return; 
     
-    // 1. Ищем клиента
-    const client = clients.find(c => c.name.trim() === clientName.trim());
-    if (!client) {
-        console.error("❌ Client not found!"); 
-        console.groupEnd(); 
-        return; 
-    }
-
-    // 2. УДАЛЕНИЕ (Ищем во ВСЕХ днях, игнорируя кривой dayIdx)
-    if (oldSlot) {
-        if (!client.schedule) client.schedule = {};
-        
-        let removedCount = 0;
-        
-        // Проходимся по всем ключам (дням), которые есть у клиента
-        Object.keys(client.schedule).forEach(dayKey => {
-            const arr = client.schedule[dayKey];
-            if (!arr) return;
-
-            // Ищем слот по времени начала (s) и конца (e)
-            // Это защитит от случайного удаления другого слота в другое время
-            const idx = arr.findIndex(sl => sl.s === oldSlot.s && sl.e === oldSlot.e);
+        if (oldSlot && client.schedule && client.schedule[oldSlot.dayIdx]) { 
+            const arr = client.schedule[oldSlot.dayIdx]; 
+            const idx = arr.findIndex(sl => sl.s === oldSlot.s && sl.e === oldSlot.e); 
+            if (idx !== -1) arr.splice(idx, 1); 
+        } 
+    
+        if (newData) { 
+            const newD = new Date(newData.dateStr); 
+            let newDayIdx = newD.getDay() - 1; 
+            if(newDayIdx === -1) newDayIdx = 6; 
+    
+            if (!client.schedule[newDayIdx]) client.schedule[newDayIdx] = []; 
             
-            if (idx !== -1) {
-                console.log(`🔥 FOUND in Day[${dayKey}] index ${idx}. KILLING IT.`);
-                arr.splice(idx, 1);
-                removedCount++;
-                
-                // Если день пустой, чистим ключ
-                if (arr.length === 0) delete client.schedule[dayKey];
-            }
-        });
-
-        if (removedCount === 0) {
-            console.warn(`⚠️ Slot ${oldSlot.s}-${oldSlot.e} not found in ANY day.`);
-        }
+            client.schedule[newDayIdx].push({ 
+                s: newData.start, 
+                e: newData.end, 
+                startFrom: newData.dateStr 
+            }); 
+        } 
     }
-
-    // 3. ДОБАВЛЕНИЕ НОВОГО (Тут используем твою логику -1, чтобы новые записи были консистентны)
-    if (newData) {
-        const newD = new Date(newData.dateStr);
-        let newDayIdx = newD.getDay() - 1; 
-        if(newDayIdx === -1) newDayIdx = 6;
-
-        if (!client.schedule) client.schedule = {};
-        if (!client.schedule[newDayIdx]) client.schedule[newDayIdx] = [];
-        
-        client.schedule[newDayIdx].push({ 
-            s: newData.start, 
-            e: newData.end, 
-            startFrom: newData.dateStr 
-        });
-        console.log(`Added to Day[${newDayIdx}]`);
-    }
-    
-    console.log("Final Schedule:", JSON.parse(JSON.stringify(client.schedule)));
-    console.groupEnd();
-}
   
   function scrollToToday() { const today = getLocalDateStr(new Date()); const el = document.getElementById('header-' + today); const vp = document.getElementById('matrixViewport'); if(el && vp) { const vpW = vp.clientWidth; const elLeft = el.offsetLeft; const elW = el.offsetWidth; vp.scrollLeft = elLeft - (vpW / 2) + (elW / 2); vp.scrollTop = 12 * GRID_H - (vp.clientHeight / 2); } }
   function onScroll() { const vp=document.getElementById('matrixViewport'), headers=document.querySelectorAll('.day-col-header'); for(let h of headers) if(h.offsetLeft>=vp.scrollLeft) { const d=new Date(h.getAttribute('data-date')); document.getElementById('headerMonth').textContent=`${d.toLocaleString('ru',{month:'long'}).toUpperCase()} ${d.getFullYear()}`; break; } }
@@ -1463,9 +1345,7 @@ function validateAppointment(dateStr, start, end, excludeSessionId, checkClientI
   function updateClock(){const n=new Date(),l=document.getElementById('globalTimeLine'),b=document.getElementById('timeLineBadge'),px=(n.getHours()*60+n.getMinutes())/60*GRID_H;l.style.top=`${px}px`;l.style.display='block';b.textContent=`${String(n.getHours()).padStart(2,'0')}:${String(n.getMinutes()).padStart(2,'0')}`;b.style.display='block';b.style.top=`${px}px`;}
 
   document.addEventListener('DOMContentLoaded', init);
-
-
-
 </script>
+
 </body>
 </html>
