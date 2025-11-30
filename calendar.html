@@ -763,103 +763,100 @@
   }
 
   // === ОБНОВЛЕННАЯ ФУНКЦИЯ УДАЛЕНИЯ ===
-// === ИСПРАВЛЕННАЯ ФУНКЦИЯ УДАЛЕНИЯ ===
-  function commitDelete(deleteSeries) {
-    // Получаем дату ДО удаления (важно, если id "ghost")
+function commitDelete(deleteSeries) {
+    console.group("🔥 DEBUG: commitDelete Started");
+    console.log("Input:", { deleteSeries, editingId, editingLinkedPattern });
+
     let dateToSync = document.getElementById('inpDate').value;
-    
-    // Пытаемся найти удаляемую сессию в массиве
     let sToDelete = null;
-    if(editingId && !String(editingId).startsWith('ghost')) {
+
+    // 1. Ищем сессию в памяти
+    if (editingId && !String(editingId).startsWith('ghost')) {
         sToDelete = sessions.find(x => String(x.id) === String(editingId));
-        if(sToDelete) dateToSync = sToDelete.dateStr;
+        console.log("Found session in RAM:", sToDelete);
+        if (sToDelete) dateToSync = sToDelete.dateStr;
+    } else {
+        console.log("Deleting a Ghost (not in RAM yet)");
     }
 
     if (deleteSeries && editingLinkedPattern) {
-         // 1. Удаление ВСЕЙ СЕРИИ из настроек клиента
-         const s = sToDelete || { client: document.getElementById('inpClient').value };
-         
-         updateClientPattern(s.client, editingLinkedPattern, null);
-         
-         const cSave = clients.find(c => c.name === s.client);
-         if(cSave) DataManager.fetchFromServer('save_client', { client: cSave });
-         
-         // Удаляем текущую запись из отображения, если она была реальной
-         if(sToDelete) sessions = sessions.filter(x => String(x.id) !== String(editingId));
-         
-         showToast("Серия удалена", false);
+        console.log(">> MODE: Delete Entire Series");
+        const s = sToDelete || { client: document.getElementById('inpClient').value };
+        updateClientPattern(s.client, editingLinkedPattern, null);
+        
+        // Удаляем визуал
+        if (sToDelete) sessions = sessions.filter(x => String(x.id) !== String(editingId));
+        showToast("Серия удалена", false);
 
     } else {
-        // 2. Удаление ОДНОЙ тренировки
-        
-        // Сначала проверяем: это "Обычное удаление" или "Исключение из серии"?
-        // Проблема была тут: иногда editingLinkedPattern терялся или сессия просто совпадала по времени
-        
+        console.log(">> MODE: Single Session Delete");
         let needToCancel = false;
 
-        // Если явно передали pattern (пришло из Ghost)
+        // ПРОВЕРКА: Должны ли мы отменять (cancel) или удалять (delete)?
         if (!deleteSeries && editingLinkedPattern) {
+            console.log("Reason: editingLinkedPattern is present -> Cancel");
             needToCancel = true;
-        } 
-        // Если pattern не передан, проверим вручную: совпадает ли это время с шаблоном клиента?
-        else if (sToDelete) {
-             const cli = clients.find(c => c.name === sToDelete.client);
-             if (cli && cli.schedule) {
-                 const d = new Date(sToDelete.dateStr);
-                 let dayIdx = d.getDay() - 1; if(dayIdx === -1) dayIdx = 6;
-                 
-                 // Ищем в расписании клиента слот с таким же началом
-                 const isPatternMatch = cli.schedule[dayIdx]?.some(slot => slot.s === sToDelete.start);
-                 if (isPatternMatch) {
-                     needToCancel = true;
-                     // Восстанавливаем связь с паттерном, если она потерялась
-                     if (!editingLinkedPattern) {
-                         editingLinkedPattern = { dayIdx, s: sToDelete.start, e: sToDelete.end };
-                     }
-                 }
-             }
+        } else if (sToDelete) {
+            console.log("Checking client schedule for match...");
+            const cli = clients.find(c => c.name === sToDelete.client);
+            if (cli && cli.schedule) {
+                const d = new Date(sToDelete.dateStr);
+                let dayIdx = d.getDay() - 1; if (dayIdx === -1) dayIdx = 6;
+                const isPatternMatch = cli.schedule[dayIdx]?.some(slot => slot.s === sToDelete.start);
+                console.log(`Client: ${cli.name}, DayIdx: ${dayIdx}, Time: ${sToDelete.start}, Match Found: ${isPatternMatch}`);
+                
+                if (isPatternMatch) {
+                    needToCancel = true;
+                    if (!editingLinkedPattern) {
+                        editingLinkedPattern = { dayIdx, s: sToDelete.start, e: sToDelete.end };
+                        console.log("Reconstructed missing pattern link");
+                    }
+                }
+            }
         }
 
         if (needToCancel) {
-             // === ЛОГИКА ОТМЕНЫ (ВМЕСТО УДАЛЕНИЯ) ===
-             
-             // Если запись уже есть (была "planned"), меняем ей статус
-             if (sToDelete) {
-                 sToDelete.status = 'cancelled';
-                 sToDelete.linkedPatternSlot = editingLinkedPattern; // Привязываем жестко
-             } else {
-                 // Если удаляли Ghost, создаем новую запись "cancelled"
-                 const clientName = document.getElementById('inpClient').value;
-                 const dateStr = document.getElementById('inpDate').value;
-                 
-                 const cancelledS = { 
-                     id: generateUniqueId(), 
-                     client: clientName, 
-                     dateStr: dateStr, 
-                     start: editingLinkedPattern.s, 
-                     end: editingLinkedPattern.e, 
-                     status: 'cancelled', 
-                     type: 'client',
-                     linkedPatternSlot: editingLinkedPattern 
-                 };
-                 sessions.push(cancelledS);
-             }
-             showToast("Отменено", false);
-
-        } else if(sToDelete) {
-            // === ОБЫЧНОЕ УДАЛЕНИЕ (если это была просто разовая доп. тренировка) ===
+            console.log("✅ DECISION: SET STATUS 'CANCELLED'");
+            if (sToDelete) {
+                sToDelete.status = 'cancelled';
+                sToDelete.linkedPatternSlot = editingLinkedPattern;
+                console.log("Updated existing session:", sToDelete);
+            } else {
+                const clientName = document.getElementById('inpClient').value;
+                const dateStr = document.getElementById('inpDate').value;
+                const cancelledS = {
+                    id: generateUniqueId(),
+                    client: clientName,
+                    dateStr: dateStr,
+                    start: editingLinkedPattern.s,
+                    end: editingLinkedPattern.e,
+                    status: 'cancelled',
+                    type: 'client',
+                    linkedPatternSlot: editingLinkedPattern
+                };
+                sessions.push(cancelledS);
+                console.log("Created new CANCELLED session:", cancelledS);
+            }
+            showToast("Отменено", false);
+        } else if (sToDelete) {
+            console.log("❌ DECISION: HARD DELETE (Splice)");
             sessions = sessions.filter(x => String(x.id) !== String(editingId));
             showToast("Удалено", false);
         }
     }
-    
-    saveAllDataLocally();
-    closeAllSheets(); 
-    reRenderBlocks();
 
-    // СИНХРОНИЗИРУЕМ ДЕНЬ
+    // ЛОГ ПОСЛЕ ОПЕРАЦИИ
+    const debugDate = dateToSync;
+    const sessionsOnDate = sessions.filter(s => s.dateStr === debugDate);
+    console.log(`Sessions remaining on ${debugDate}:`, JSON.parse(JSON.stringify(sessionsOnDate)));
+    console.groupEnd();
+
+    saveAllDataLocally();
+    closeAllSheets();
+    reRenderBlocks();
     syncDayToServer(dateToSync);
-  }
+}
+
 
   async function saveClient() {
     const name = document.getElementById('ceName').value; 
@@ -1091,92 +1088,121 @@
   }
   
   // === CORE RENDER LOGIC WITH OVERLAP SUPPORT ===
-  function renderEventsForColumn(col, dateStr, dayIdx) {
-      col.querySelectorAll('.event-card').forEach(e => e.remove());
+ function renderEventsForColumn(col, dateStr, dayIdx) {
+    // Чистим старое
+    col.querySelectorAll('.event-card').forEach(e => e.remove());
+    let allEvents = [];
 
-      let allEvents = [];
+    // 1. РЕАЛЬНЫЕ ЗАПИСИ (из массива sessions)
+    // Важно: мы НЕ фильтруем status !== 'cancelled' здесь, чтобы увидеть их в логах,
+    // но при добавлении в allEvents мы их пропустим визуально.
+    
+    const daySessions = sessions.filter(s => s.dateStr === dateStr);
+    
+    daySessions.forEach(s => {
+        if (s.status !== 'cancelled') {
+            allEvents.push({ data: s, type: 'real', ...getTimeRange(s.start, s.end) });
+        } else {
+            // Раскомментируй, если хочешь видеть в консоли скрытые отмены
+            // console.log(`[RENDER] Skip cancelled: ${s.client} at ${s.start}`);
+        }
+    });
 
-      sessions.filter(s => s.dateStr === dateStr && s.status !== 'cancelled').forEach(s => {
-          allEvents.push({ data: s, type: 'real', ...getTimeRange(s.start, s.end) });
-      });
+    // 2. ФАНТОМЫ (из настроек клиентов)
+    clients.forEach(client => {
+        const daySched = client.schedule?.[dayIdx];
+        if (daySched) {
+            daySched.forEach(slot => {
+                if (slot.startFrom && dateStr < slot.startFrom) return;
 
-      clients.forEach(client => {
-          const daySched = client.schedule?.[dayIdx];
-          if (daySched) {
-              daySched.forEach(slot => {
-                  if (slot.startFrom && dateStr < slot.startFrom) return;
-                  const exists = sessions.some(s => 
-                      s.client === client.name && 
-                      s.dateStr === dateStr && 
-                      s.start === slot.s
-                  );
+                // === КРИТИЧЕСКОЕ МЕСТО ===
+                // Проверяем, есть ли запись, которая перекрывает этот слот
+                const exists = sessions.some(s => {
+                    // Строгое сравнение имен и времени
+                    const isNameMatch = s.client === client.name;
+                    const isDateMatch = s.dateStr === dateStr;
+                    const isTimeMatch = s.start === slot.s;
+                    
+                    // Если нашли совпадение - возвращаем true (значит фантом рисовать НЕ надо)
+                    return isNameMatch && isDateMatch && isTimeMatch;
+                });
 
-                  if (!exists) {
-                      const ghost = {
-                          id: `ghost-${client.id}-${dateStr}-${slot.s}`,
-                          client: client.name,
-                          dateStr: dateStr,
-                          start: slot.s,
-                          end: slot.e,
-                          type: 'client',
-                          status: 'ghost',
-                          clientId: client.id,
-                          linkedPatternSlot: { dayIdx, s: slot.s, e: slot.e, startFrom: slot.startFrom }
-                      };
-                      allEvents.push({ data: ghost, type: 'ghost', ...getTimeRange(slot.s, slot.e) });
-                  }
-              });
-          }
-      });
+                if (!exists) {
+                    // ЕСЛИ МЫ ТУТ — ЗНАЧИТ CИСТЕМА НЕ НАШЛА SESSION (ни активную, ни cancelled)
+                    // console.log(`👻 GHOST BORN: ${client.name} ${dateStr} ${slot.s}`);
+                    
+                    // DEBUG: Если мы удалили запись, а тут снова создается призрак,
+                    // значит exists === false. Почему?
+                    // Посмотри в консоль после удаления, если увидишь этот лог.
+                    
+                    const ghost = {
+                        id: `ghost-${client.id}-${dateStr}-${slot.s}`,
+                        client: client.name,
+                        dateStr: dateStr,
+                        start: slot.s,
+                        end: slot.e,
+                        type: 'client',
+                        status: 'ghost',
+                        clientId: client.id,
+                        linkedPatternSlot: { dayIdx, s: slot.s, e: slot.e, startFrom: slot.startFrom }
+                    };
+                    allEvents.push({ data: ghost, type: 'ghost', ...getTimeRange(slot.s, slot.e) });
+                } else {
+                    // console.log(`🛡️ GHOST BLOCKED: ${client.name} by real/cancelled session`);
+                }
+            });
+        }
+    });
 
-      allEvents.sort((a, b) => {
-          if (a.startMin !== b.startMin) return a.startMin - b.startMin;
-          return (b.endMin - b.startMin) - (a.endMin - a.startMin);
-      });
+    // ... (Дальше код сортировки и отрисовки остался прежним) ...
+    allEvents.sort((a, b) => {
+        if (a.startMin !== b.startMin) return a.startMin - b.startMin;
+        return (b.endMin - b.startMin) - (a.endMin - a.startMin);
+    });
 
-      let columns = [];
-      allEvents.forEach(ev => {
-          let placed = false;
-          for (let i = 0; i < columns.length; i++) {
-              let colEvents = columns[i];
-              let lastInCol = colEvents[colEvents.length - 1];
-              if (ev.startMin >= lastInCol.endMin) {
-                  colEvents.push(ev);
-                  ev.colIndex = i;
-                  placed = true;
-                  break;
-              }
-          }
-          if (!placed) {
-              columns.push([ev]);
-              ev.colIndex = columns.length - 1;
-          }
-      });
+    let columns = [];
+    allEvents.forEach(ev => {
+        let placed = false;
+        for (let i = 0; i < columns.length; i++) {
+            let colEvents = columns[i];
+            let lastInCol = colEvents[colEvents.length - 1];
+            if (ev.startMin >= lastInCol.endMin) {
+                colEvents.push(ev);
+                ev.colIndex = i;
+                placed = true;
+                break;
+            }
+        }
+        if (!placed) {
+            columns.push([ev]);
+            ev.colIndex = columns.length - 1;
+        }
+    });
 
-      allEvents.forEach(ev => {
-          const overlappingEvents = allEvents.filter(other => 
-              other !== ev && 
-              Math.max(ev.startMin, other.startMin) < Math.min(ev.endMin, other.endMin)
-          );
+    allEvents.forEach(ev => {
+        const overlappingEvents = allEvents.filter(other => 
+            other !== ev && 
+            Math.max(ev.startMin, other.startMin) < Math.min(ev.endMin, other.endMin)
+        );
 
-          let maxColIndex = ev.colIndex;
-          overlappingEvents.forEach(oe => {
-              if (oe.colIndex > maxColIndex) maxColIndex = oe.colIndex;
-          });
-          
-          const totalCols = maxColIndex + 1; 
-          const widthPercent = 100 / totalCols;
-          const leftPercent = ev.colIndex * widthPercent;
+        let maxColIndex = ev.colIndex;
+        overlappingEvents.forEach(oe => {
+            if (oe.colIndex > maxColIndex) maxColIndex = oe.colIndex;
+        });
+        
+        const totalCols = maxColIndex + 1; 
+        const widthPercent = 100 / totalCols;
+        const leftPercent = ev.colIndex * widthPercent;
 
-          const el = createEventEl(ev.data);
-          
-          el.style.width = `calc(${widthPercent}% - 4px)`; 
-          el.style.left = `calc(${leftPercent}% + 2px)`;
-          el.style.zIndex = 5 + ev.colIndex;
+        const el = createEventEl(ev.data);
+        
+        el.style.width = `calc(${widthPercent}% - 4px)`; 
+        el.style.left = `calc(${leftPercent}% + 2px)`;
+        el.style.zIndex = 5 + ev.colIndex;
 
-          col.appendChild(el);
-      });
-  }
+        col.appendChild(el);
+    });
+}
 
   function getTimeRange(start, end) {
       const [h1, m1] = start.split(':').map(Number);
