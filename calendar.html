@@ -937,19 +937,34 @@ async function trySaveSession() {
   }
   
   function renderEventsForColumn(col, dateStr, dayIdx) {
-    col.querySelectorAll('.event-card').forEach(e=>e.remove());
+    col.querySelectorAll('.event-card').forEach(e => e.remove());
     
-    // 1. Render Real Sessions
-    sessions.filter(s=>s.dateStr===dateStr && s.status !== 'cancelled').forEach(s => { 
+    // 1. Рендерим реальные (сохраненные) записи
+    // Они выводятся всегда, так как уже записаны в историю
+    sessions.filter(s => s.dateStr === dateStr && s.status !== 'cancelled').forEach(s => { 
         col.appendChild(createEventEl(s));
     });
     
-    // 2. Render Ghosts
+    // 2. Рендерим "Призраков" (серии) с учетом даты старта
     clients.forEach(client => { 
         const daySched = client.schedule?.[dayIdx]; 
         if(daySched) { 
             daySched.forEach(slot => { 
-                const existsOrCancelled = sessions.some(s => s.client === client.name && s.dateStr === dateStr && s.start === slot.s); 
+                // ЛОГИКА ДАТЫ СТАРТА:
+                // Если у слота есть дата старта, и текущая колонка (dateStr) 
+                // находится "раньше" этой даты — пропускаем (не рисуем).
+                // Сравнение строк "YYYY-MM-DD" работает корректно (лексикографически).
+                if (slot.startFrom && dateStr < slot.startFrom) {
+                    return; 
+                }
+
+                // Проверяем, не перекрыт ли призрак реальной записью
+                const existsOrCancelled = sessions.some(s => 
+                    s.client === client.name && 
+                    s.dateStr === dateStr && 
+                    s.start === slot.s
+                ); 
+
                 if(!existsOrCancelled) { 
                     const ghost = { 
                         id: `ghost-${client.id}-${dateStr}-${slot.s}`, 
@@ -960,14 +975,15 @@ async function trySaveSession() {
                         type: 'client', 
                         status: 'ghost', 
                         clientId: client.id, 
-                        linkedPatternSlot: { dayIdx, s: slot.s, e: slot.e } 
+                        // Передаем startFrom в linkedPatternSlot, чтобы при редактировании серия не ломалась
+                        linkedPatternSlot: { dayIdx, s: slot.s, e: slot.e, startFrom: slot.startFrom } 
                     }; 
                     col.appendChild(createEventEl(ghost)); 
                 } 
             }); 
         } 
     });
-  }
+}
   
   function createEventEl(s) { 
       const [h,m]=s.start.split(':').map(Number); 
@@ -1000,7 +1016,36 @@ async function trySaveSession() {
   function updateDateDisplay() { const val = document.getElementById('inpDate').value; const disp = document.getElementById('dateDisplay'); if (!val) { disp.textContent = ''; return; } const d = new Date(val); const options = { weekday: 'long', month: 'long', day: 'numeric' }; disp.textContent = d.toLocaleDateString('ru-RU', options); }
   function openActionSheet(type) { const sheet = document.getElementById('actionSheet'); const overlay = document.getElementById('actionSheetOverlay'); const title = document.getElementById('asTitle'); const btnOne = document.getElementById('asBtnOne'); const btnSeries = document.getElementById('asBtnSeries'); overlay.classList.add('active'); sheet.classList.add('open'); if (type === 'save') { title.textContent = "Изменение повторяющегося события"; btnOne.textContent = "Только эта тренировка"; btnOne.className = "as-button"; btnOne.onclick = () => { closeActionSheet(); commitSave(tempSessionData, false); }; btnSeries.textContent = "Изменить всю серию"; btnSeries.className = "as-button bold"; btnSeries.onclick = () => { closeActionSheet(); commitSave(tempSessionData, true); }; } else if (type === 'delete') { title.textContent = "Удаление события"; btnOne.textContent = "Только эту тренировку"; btnOne.className = "as-button danger"; btnOne.onclick = () => { closeActionSheet(); commitDelete(false); }; btnSeries.textContent = "Удалить из расписания"; btnSeries.className = "as-button danger bold"; btnSeries.onclick = () => { closeActionSheet(); commitDelete(true); }; } }
   function closeActionSheet() { document.getElementById('actionSheet').classList.remove('open'); document.getElementById('actionSheetOverlay').classList.remove('active'); }
-  function updateClientPattern(clientName, oldSlot, newData) { const client = clients.find(c => c.name === clientName); if (!client) return; if (oldSlot && client.schedule && client.schedule[oldSlot.dayIdx]) { const arr = client.schedule[oldSlot.dayIdx]; const idx = arr.findIndex(sl => sl.s === oldSlot.s && sl.e === oldSlot.e); if (idx !== -1) arr.splice(idx, 1); } if (newData) { const newD = new Date(newData.dateStr); let newDayIdx = newD.getDay() - 1; if(newDayIdx === -1) newDayIdx = 6; if (!client.schedule[newDayIdx]) client.schedule[newDayIdx] = []; client.schedule[newDayIdx].push({ s: newData.start, e: newData.end }); } }
+
+    function updateClientPattern(clientName, oldSlot, newData) { 
+        const client = clients.find(c => c.name === clientName); 
+        if (!client) return; 
+    
+        // Удаление старого слота (если меняем или удаляем серию)
+        if (oldSlot && client.schedule && client.schedule[oldSlot.dayIdx]) { 
+            const arr = client.schedule[oldSlot.dayIdx]; 
+            // Ищем слот по времени
+            const idx = arr.findIndex(sl => sl.s === oldSlot.s && sl.e === oldSlot.e); 
+            if (idx !== -1) arr.splice(idx, 1); 
+        } 
+    
+        // Добавление нового слота (если создаем или меняем)
+        if (newData) { 
+            const newD = new Date(newData.dateStr); 
+            let newDayIdx = newD.getDay() - 1; 
+            if(newDayIdx === -1) newDayIdx = 6; 
+    
+            if (!client.schedule[newDayIdx]) client.schedule[newDayIdx] = []; 
+            
+            // ВАЖНО: Добавляем startFrom: newData.dateStr
+            client.schedule[newDayIdx].push({ 
+                s: newData.start, 
+                e: newData.end, 
+                startFrom: newData.dateStr // <--- ВОТ ЭТО КЛЮЧЕВОЕ ИЗМЕНЕНИЕ
+            }); 
+        } 
+    }
+  
   function scrollToToday() { const today = getLocalDateStr(new Date()); const el = document.getElementById('header-' + today); const vp = document.getElementById('matrixViewport'); if(el && vp) { const vpW = vp.clientWidth; const elLeft = el.offsetLeft; const elW = el.offsetWidth; vp.scrollLeft = elLeft - (vpW / 2) + (elW / 2); vp.scrollTop = 12 * GRID_H - (vp.clientHeight / 2); } }
   function onScroll() { const vp=document.getElementById('matrixViewport'), headers=document.querySelectorAll('.day-col-header'); for(let h of headers) if(h.offsetLeft>=vp.scrollLeft) { const d=new Date(h.getAttribute('data-date')); document.getElementById('headerMonth').textContent=`${d.toLocaleString('ru',{month:'long'}).toUpperCase()} ${d.getFullYear()}`; break; } }
   function openClientsSheet() { closeAllSheets(); renderClientsList(); openSheet('clientsSheet'); }
