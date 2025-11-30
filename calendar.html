@@ -739,8 +739,9 @@ async function init() {
     else commitDelete(false);
   }
 
-  function commitDelete(deleteSeries) {
+function commitDelete(deleteSeries) {
     if (deleteSeries && editingLinkedPattern) {
+         // Удаление всей серии (логика верная)
          const s = sessions.find(x => String(x.id) === String(editingId)) || { client: document.getElementById('inpClient').value };
          updateClientPattern(s.client, editingLinkedPattern, null);
          const cSave = clients.find(c => c.name === s.client);
@@ -749,21 +750,47 @@ async function init() {
          showToast("Серия удалена", false);
     } else {
         if (!deleteSeries && editingLinkedPattern) {
+             // === ИСПРАВЛЕНИЕ ЗДЕСЬ ===
              const clientName = document.getElementById('inpClient').value;
              const dateStr = document.getElementById('inpDate').value;
-             const cancelledS = { id: Date.now(), client: clientName, dateStr: dateStr, start: editingLinkedPattern.s, end: editingLinkedPattern.e, status: 'cancelled', type: 'client' };
+             
+             // 1. Определяем ID. Если это реальная запись (не ghost), берем её старый ID.
+             let finalId = Date.now();
+             if (editingId && !String(editingId).startsWith('ghost')) {
+                 finalId = editingId;
+                 // Удаляем старую "активную" версию из массива sessions, чтобы заменить её на cancelled
+                 sessions = sessions.filter(x => String(x.id) !== String(finalId));
+             }
+
+             // 2. Создаем объект отмены с правильным ID
+             const cancelledS = { 
+                 id: finalId, 
+                 client: clientName, 
+                 dateStr: dateStr, 
+                 start: editingLinkedPattern.s, 
+                 end: editingLinkedPattern.e, 
+                 status: 'cancelled', // Статус отмены скрывает событие при рендере
+                 type: 'client' 
+             };
+             
              sessions.push(cancelledS);
+             
+             // 3. Отправляем на сервер (он перезапишет старую запись, так как ID совпадают)
              DataManager.fetchFromServer('save_session', { date: dateStr, session: cancelledS });
+             showToast("Тренировка отменена", false);
+
         } else if(editingId && !String(editingId).startsWith('ghost')) {
+            // Обычное удаление (не серийное) - тут все работало верно
             const s = sessions.find(x => String(x.id) === String(editingId));
             sessions = sessions.filter(x => String(x.id) !== String(editingId));
             if(s) DataManager.fetchFromServer('save_session', { date: s.dateStr, session: { id: s.id }, is_delete: true });
+            showToast("Удалено", false);
         }
-        showToast("Удалено", false);
     }
     
     saveAllDataLocally();
-    closeAllSheets(); reRenderBlocks();
+    closeAllSheets(); 
+    reRenderBlocks();
   }
 
   async function saveClient() {
