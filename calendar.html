@@ -625,7 +625,7 @@
        4. ACTIONS & SAVING
      ========================================== */
   // 2. Функция сохранения (заменяем полностью, чтобы передать имя в проверку)
-  async function trySaveSession() {
+async function trySaveSession() {
   const clientName = document.getElementById('inpClient').value;
   const dateStr = document.getElementById('inpDate').value;
   const start = document.getElementById('inpStart').value;
@@ -633,8 +633,7 @@
   const note = document.getElementById('inpNote').value;
   const isRecurring = document.getElementById('inpRecurring').checked;
 
-  // --- ШАГ 1: Ищем объект клиента по имени ---
-  // Это нужно, чтобы получить его уникальный ID для проверки
+  // 1. Ищем клиента, чтобы получить его ID
   let clientObj = clients.find(c => c.name === clientName);
   
   if (!clientObj) {
@@ -642,26 +641,24 @@
       return;
   }
 
-  // --- ШАГ 2: Вызываем валидатор с передачей ID ---
-  // Передаем clientObj.id пятым аргументом!
+  // 2. ВАЛИДАЦИЯ
+  // Передаем clientObj.id. Внутри функции он будет превращен в Number.
   const val = validateAppointment(dateStr, start, end, editingId, clientObj.id); 
   
-  // Если валидатор вернул false — прерываем сохранение
   if(!val.valid) { 
-      showToast(val.msg, false); // Показываем ошибку (красный тост)
-      return; // ВАЖНО: Останавливаем выполнение функции
+      showToast(val.msg, false); // Показываем ошибку (дубликат)
+      return; // Блокируем сохранение
   } 
 
-  // --- ШАГ 3: Если всё ок, собираем данные ---
+  // 3. Сборка данных
   const newData = { 
       client: clientName, 
-      clientId: clientObj.id, // Обязательно сохраняем ID
+      clientId: clientObj.id, // Сохраняем ID как есть (в валидаторе он все равно будет числом)
       dateStr, start, end, note, status: 'planned', type: 'client'
   };
 
-  // ... ДАЛЬШЕ ВАШ КОД БЕЗ ИЗМЕНЕНИЙ (if editingLinkedPattern ...) ...
+  // --- ДАЛЕЕ КОД БЕЗ ИЗМЕНЕНИЙ ---
   
-  // Для справки, вот хвост функции, чтобы вы не потерялись:
   if (editingLinkedPattern) {
       const newD = new Date(dateStr);
       let newDayIdx = newD.getDay() - 1; if(newDayIdx === -1) newDayIdx = 6;
@@ -1051,51 +1048,55 @@
   function checkScheduleConflict(dayIdx, start, end) { const blockedHours = availabilityPattern[dayIdx] || []; if(blockedHours.length === 0) return; const [h1, m1] = start.split(':').map(Number); const [h2, m2] = end.split(':').map(Number); const startMins = h1 * 60 + m1; const endMins = h2 * 60 + m2; let hasConflict = false; for(let h of blockedHours) { const bStart = h * 60; const bEnd = (h + 1) * 60; if (Math.max(startMins, bStart) < Math.min(endMins, bEnd)) { hasConflict = true; break; } } if(hasConflict) { showToast("Обратите внимание: обычно вы не работаете в это время"); } }
   // 1. Функция проверки (заменяем полностью)
   // Функция валидации с проверкой по ID и детальным сообщением
-function validateAppointment(dateStr, start, end, excludeId = null, checkClientId = null) { 
-    // Переводим время в минуты для сравнения
+function validateAppointment(dateStr, start, end, excludeSessionId, checkClientId) { 
+    // 1. Подготовка времени (перевод в минуты)
     const [h1, m1] = start.split(':').map(Number); 
     const [h2, m2] = end.split(':').map(Number); 
     const startMins = h1 * 60 + m1; 
     const endMins = h2 * 60 + m2; 
-    
+
+    // 2. ЖЕСТКАЯ ТРАНСФОРМАЦИЯ ПРОВЕРЯЕМОГО ID В ЧИСЛО
+    // Даже если пришла строка "196047220", станет числом 196047220
+    const targetIdNum = Number(checkClientId);
+
     for (let s of sessions) { 
-        // 1. Пропускаем сессии в другие дни или отмененные
+        // Пропускаем другие дни и отмененные записи
         if (s.dateStr !== dateStr) continue; 
         if (s.status === 'cancelled') continue;
 
-        // 2. Пропускаем саму себя (при редактировании), чтобы не конфликтовать с собой же
-        // Используем String() для надежности сравнения
-        if (excludeId && String(s.id) === String(excludeId)) continue; 
-        
-        // Разбираем время существующей сессии
+        // Пропускаем саму себя при редактировании (сравнение по ID записи)
+        // Тут оставляем String, так как ID сессий могут быть 'ghost-...'
+        if (excludeSessionId && String(s.id) === String(excludeSessionId)) continue; 
+
+        // Разбираем время текущей сессии в цикле
         const [sH1, sM1] = s.start.split(':').map(Number); 
         const [sH2, sM2] = s.end.split(':').map(Number); 
         const sStart = sH1 * 60 + sM1; 
         const sEnd = sH2 * 60 + sM2; 
-        
-        // 3. МАТЕМАТИКА: Проверяем физическое пересечение времени
-        // (Максимум из начал < Минимум из концов)
+
+        // 3. ЕСТЬ ЛИ ПЕРЕСЕЧЕНИЕ ПО ВРЕМЕНИ?
         if (Math.max(startMins, sStart) < Math.min(endMins, sEnd)) {
             
-            // 4. ЛОГИКА: Если пересечение есть, проверяем КТО это
-            if (checkClientId) {
-                // Если ID клиентов совпадают — ЭТО ОШИБКА
-                if (String(s.clientId) === String(checkClientId)) {
+            // 4. ПРОВЕРКА ПО ID (ТОЛЬКО ЧИСЛА)
+            // Если у существующей сессии есть clientId
+            if (s.clientId) {
+                // Превращаем ID из базы в число
+                const existingIdNum = Number(s.clientId);
+
+                // СРАВНИВАЕМ КАК ЧИСЛА
+                if (existingIdNum === targetIdNum) {
                     return { 
                         valid: false, 
-                        msg: `Клиент ${s.client} уже записан на ${s.start}-${s.end}` 
+                        msg: `Клиент ${s.client} уже записан на это время!` 
                     }; 
                 }
             }
-            
-            // Если клиенты РАЗНЫЕ — мы ничего не возвращаем, цикл идет дальше.
-            // Это позволяет накладывать разных людей друг на друга (групповая тренировка).
         }
     } 
     
-    // Если цикл прошел и конфликтов ID не найдено
     return { valid: true }; 
 }
+  
   
   function showToast(msg, isSuccess = false) { const t = document.getElementById('toast'); t.className = 'toast-notification ' + (isSuccess ? 'success' : ''); document.getElementById('toastTitle').textContent = isSuccess ? "Успешно" : "Обратите внимание"; document.getElementById('toastMessage').textContent = msg; t.classList.add('show'); setTimeout(() => { t.classList.remove('show'); }, 3500); }
   function populateClientSelect() { const sel = document.getElementById('inpClient'); sel.innerHTML = ''; clients.forEach(c => { const opt = document.createElement('option'); opt.value = c.name; opt.textContent = c.name; sel.appendChild(opt); }); }
