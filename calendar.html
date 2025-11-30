@@ -796,113 +796,85 @@
   // === ОБНОВЛЕННАЯ ФУНКЦИЯ УДАЛЕНИЯ ===
 async function commitDelete(deleteSeries) {
     console.clear();
-    console.group("🔥 DEBUG: commitDelete (CLEAN DB MODE)");
-    
-    // Блокируем интерфейс
-    showToast("Синхронизация...", true);
-
-    let clientName = document.getElementById('inpClient').value;
+    const clientName = document.getElementById('inpClient').value;
     const dateStr = document.getElementById('inpDate').value;
-    // Время берем из паттерна (если это фантом) или из инпутов (если реальная)
+    
+    // Определяем время. Если это фантом — берем из его данных. Если реальная — из инпута.
     const startTime = editingLinkedPattern ? editingLinkedPattern.s : document.getElementById('inpStart').value;
-    const endTime = editingLinkedPattern ? editingLinkedPattern.e : document.getElementById('inpEnd').value;
 
-    // === 1. ПОЛУЧАЕМ ПРАВИЛЬНЫЙ ID КЛИЕНТА (ЧТОБЫ НЕ БЫЛО NULL) ===
-    let targetClientId = null;
-    
-    // Попытка А: Найти в списке клиентов по имени
-    let clientObj = clients.find(c => c.name.trim() === clientName.trim());
-    
-    // Попытка Б: Если удаляем Ghost, вытащить ID из строки 'ghost-12345-...'
-    if (!clientObj && editingId && String(editingId).startsWith('ghost-')) {
-        const parts = editingId.split('-');
-        // parts[0]=ghost, parts[1]=clientId
-        if (parts[1]) {
-            targetClientId = parts[1];
-            // Ищем объект по этому ID, чтобы убедиться
-            clientObj = clients.find(c => String(c.id) === String(targetClientId));
-        }
-    }
-
-    if (clientObj) targetClientId = clientObj.id;
-
-    console.log(`🎯 Target: "${clientName}" (ID: ${targetClientId})`);
+    // Блокируем UI
+    const toast = document.getElementById('toast');
+    showToast("Удаление...", true);
 
     try {
-        // === ШАГ 2: УДАЛЕНИЕ ПАТТЕРНА ИЗ ГРАФИКА (С ОЖИДАНИЕМ) ===
-        if (deleteSeries && editingLinkedPattern && clientObj && clientObj.schedule) {
-            let modified = false;
-            Object.keys(clientObj.schedule).forEach(dayKey => {
-                const arr = clientObj.schedule[dayKey];
-                const idx = arr.findIndex(sl => sl.s === editingLinkedPattern.s);
-                if (idx !== -1) {
-                    console.log(`🔪 Cleaned pattern from Day[${dayKey}]`);
-                    arr.splice(idx, 1);
-                    if (arr.length === 0) clientObj.schedule[dayKey] = [];
-                    modified = true;
-                }
-            });
+        // === ШАГ 1: ВЫКЛЮЧАЕМ ГЕНЕРАТОР (Если удаляем серию) ===
+        if (deleteSeries) {
+            // Ищем клиента по имени (самое надежное, т.к. ID мог заглючить)
+            const client = clients.find(c => c.name.trim() === clientName.trim());
+            
+            if (client && client.schedule) {
+                let patternFound = false;
+                
+                // Прочесываем все дни недели этого клиента
+                Object.keys(client.schedule).forEach(dayKey => {
+                    const arr = client.schedule[dayKey];
+                    // Ищем любой слот, который начинается в это время
+                    const idx = arr.findIndex(sl => sl.s === startTime);
+                    
+                    if (idx !== -1) {
+                        arr.splice(idx, 1); // Удаляем
+                        if (arr.length === 0) client.schedule[dayKey] = []; // Обнуляем день
+                        patternFound = true;
+                    }
+                });
 
-            if (modified) {
-                console.log("⏳ Saving client settings...");
-                const payload = JSON.parse(JSON.stringify(clientObj));
-                payload.id = String(payload.id); // Защита типов
-                await DataManager.fetchFromServer('save_client', { client: payload });
+                if (patternFound) {
+                    // СРАЗУ отправляем измененного клиента на сервер и ЖДЕМ
+                    const payload = JSON.parse(JSON.stringify(client));
+                    payload.id = String(payload.id);
+                    await DataManager.fetchFromServer('save_client', { client: payload });
+                }
             }
         }
 
-        // === ШАГ 3: ЧИСТКА СЕССИЙ (УБИРАЕМ ДУБЛИ И NULL) ===
+        // === ШАГ 2: ЧИСТИМ БАЗУ (SESSIONS) ===
+        // Удаляем ВСЁ, что совпадает по времени и дате.
+        // Не важно, какой там ID, есть ли имя или null. Если время совпало — в топку.
         
-        // Сначала удаляем ВСЁ, что касается этого времени (и старые null, и дубли, и активные)
-        const countBefore = sessions.length;
         sessions = sessions.filter(s => {
-            // Совпадение по ID
-            const matchId = (editingId && String(s.id) === String(editingId));
-            // Совпадение по Времени + Дате (для фантомов и дублей)
-            // Важно: проверяем время, даже если имя другое (например '?')
-            const matchTime = (s.dateStr === dateStr && s.start === startTime);
-            
-            // Если совпало - удаляем. Мы перезапишем это место чистой записью.
-            return !(matchId || matchTime);
+            const isTargetTime = (s.dateStr === dateStr && s.start === startTime);
+            // Если время совпало — удаляем (возвращаем false)
+            return !isTargetTime;
         });
-        
-        console.log(`🧹 Purged ${countBefore - sessions.length} old records/duplicates.`);
 
-        // Создаем ОДНУ чистую запись
-        const cleanSession = {
-            id: generateUniqueId(),
-            client: clientName,
-            clientId: targetClientId, // ТЕПЕРЬ ТУТ БУДЕТ ID, А НЕ NULL
-            dateStr: dateStr,
-            start: startTime,
-            end: endTime,
-            status: 'cancelled', // Блокиратор фантомов
-            type: 'client',
-            linkedPatternSlot: editingLinkedPattern
-        };
-        
-        sessions.push(cleanSession);
-        console.log("✨ Created single CLEAN record:", cleanSession);
+        // Если это НЕ серия (просто отмена одной тренировки), ставим заглушку
+        if (!deleteSeries && editingLinkedPattern) {
+            sessions.push({
+                id: generateUniqueId(),
+                client: clientName,
+                dateStr: dateStr,
+                start: startTime,
+                end: document.getElementById('inpEnd').value,
+                status: 'cancelled',
+                type: 'client',
+                linkedPatternSlot: editingLinkedPattern
+            });
+        }
 
-        // === ШАГ 4: ОТПРАВКА НА СЕРВЕР ===
+        // === ШАГ 3: СОХРАНЯЕМ РЕЗУЛЬТАТ ===
         saveAllDataLocally();
         closeAllSheets();
-        reRenderBlocks();
+        reRenderBlocks(); // Визуально удалится мгновенно
 
-        console.log("⏳ Syncing day data...");
-        // Эта функция перезаписывает ВЕСЬ день на сервере. 
-        // Так как мы почистили массив sessions, дубли с сервера исчезнут.
-        await syncDayToServer(dateStr); 
-        
-        console.log("✅ Sync complete. DB is clean.");
-        if (deleteSeries) showToast("Серия удалена", true);
-        else showToast("Отменено", true);
+        // Отправляем чистый день на сервер
+        await syncDayToServer(dateStr);
+
+        showToast("Удалено", true);
 
     } catch (e) {
-        console.error("SYNC ERROR:", e);
-        showToast("Ошибка связи с сервером", false);
+        console.error(e);
+        showToast("Ошибка удаления", false);
     }
-    console.groupEnd();
 }
 
 
@@ -1498,65 +1470,7 @@ function validateAppointment(dateStr, start, end, excludeSessionId, checkClientI
 
   document.addEventListener('DOMContentLoaded', init);
 
-async function runGarbageCollector() {
-    console.group("🚛 GARBAGE COLLECTOR STARTED");
-    const initialCount = sessions.length;
-    const affectedDays = new Set(); // Запоминаем дни, которые надо перезалить
 
-    // 1. ЧИСТКА ОТ БИТЫХ ЗАПИСЕЙ (NULL)
-    sessions = sessions.filter(s => {
-        // Условие мусора: статус cancelled И (нет ID клиента ИЛИ нет имени)
-        const isGarbage = s.status === 'cancelled' && (!s.clientId || !s.client || s.client === '?');
-        
-        if (isGarbage) {
-            console.log(`🗑 Found NULL garbage: ${s.dateStr} ${s.start}`, s);
-            affectedDays.add(s.dateStr); // Помечаем день для синхронизации
-            return false; // Удаляем
-        }
-        return true; // Оставляем
-    });
-
-    // 2. ЧИСТКА ДУБЛЕЙ
-    // Если на одно время приходится несколько записей, оставляем одну
-    const uniqueMap = new Set();
-    const cleanSessions = [];
-    
-    sessions.forEach(s => {
-        // Создаем уникальный ключ: Дата + Время + Клиент
-        const key = `${s.dateStr}|${s.start}|${s.clientId || s.client}`;
-        
-        if (uniqueMap.has(key)) {
-            console.log(`👯 Found DUPLICATE: ${key}`, s);
-            affectedDays.add(s.dateStr);
-        } else {
-            uniqueMap.add(key);
-            cleanSessions.push(s);
-        }
-    });
-    sessions = cleanSessions;
-
-    const deletedCount = initialCount - sessions.length;
-    console.log(`✅ SCAN COMPLETE. Deleted ${deletedCount} garbage records.`);
-    console.log(`Days to sync:`, Array.from(affectedDays));
-
-    // 3. СОХРАНЕНИЕ И СИНХРОНИЗАЦИЯ
-    if (deletedCount > 0) {
-        saveAllDataLocally();
-        reRenderBlocks();
-        
-        showToast(`Удаляем ${deletedCount} мусорных записей...`, true);
-        
-        // Перезаливаем каждый затронутый день на сервер
-        for (const dateStr of affectedDays) {
-            console.log(`🚀 Syncing clean day: ${dateStr}...`);
-            await syncDayToServer(dateStr);
-        }
-        showToast("База полностью очищена!", true);
-    } else {
-        showToast("Мусора не найдено", true);
-    }
-    console.groupEnd();
-}
 
 </script>
 </body>
