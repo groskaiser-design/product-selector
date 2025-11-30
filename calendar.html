@@ -763,71 +763,98 @@
   }
 
   // === ОБНОВЛЕННАЯ ФУНКЦИЯ УДАЛЕНИЯ ===
-function commitDelete(deleteSeries) {
-    console.group("🔥 DEBUG: commitDelete Started");
-    console.log("Input:", { deleteSeries, editingId, editingLinkedPattern });
-
-    let dateToSync = document.getElementById('inpDate').value;
+// === ФИНАЛЬНАЯ ВЕРСИЯ УДАЛЕНИЯ (FIX: SYNC CLIENT) ===
+async function commitDelete(deleteSeries) {
+    console.group("🔥 DEBUG: commitDelete v2");
+    
+    // 1. Определяем ID и Имя клиента
     let sToDelete = null;
+    let clientIdToSave = null;
+    let clientName = document.getElementById('inpClient').value; // Берем из инпута по дефолту
 
-    // 1. Ищем сессию в памяти
+    // Если это реальная запись, берем данные из неё
     if (editingId && !String(editingId).startsWith('ghost')) {
         sToDelete = sessions.find(x => String(x.id) === String(editingId));
-        console.log("Found session in RAM:", sToDelete);
-        if (sToDelete) dateToSync = sToDelete.dateStr;
-    } else {
-        console.log("Deleting a Ghost (not in RAM yet)");
+        if (sToDelete) {
+            clientIdToSave = sToDelete.clientId;
+            clientName = sToDelete.client;
+        }
+    } 
+    // Если это GHOST, вытаскиваем ID клиента из ID события (формат: ghost-CLIENTID-DATE-TIME)
+    else if (editingId && String(editingId).startsWith('ghost')) {
+        const parts = editingId.split('-');
+        if (parts.length >= 2) clientIdToSave = parts[1];
     }
 
-    if (deleteSeries && editingLinkedPattern) {
-        console.log(">> MODE: Delete Entire Series");
-        const s = sToDelete || { client: document.getElementById('inpClient').value };
-        updateClientPattern(s.client, editingLinkedPattern, null);
-        
-        // Удаляем визуал
-        if (sToDelete) sessions = sessions.filter(x => String(x.id) !== String(editingId));
-        showToast("Серия удалена", false);
+    console.log(`Target: ${clientName}, ClientID: ${clientIdToSave}, DeleteSeries: ${deleteSeries}`);
 
-    } else {
-        console.log(">> MODE: Single Session Delete");
+    // === СЦЕНАРИЙ 1: УДАЛЕНИЕ ВСЕЙ СЕРИИ ===
+    if (deleteSeries && editingLinkedPattern) {
+        // 1. Обновляем паттерн в локальной памяти
+        updateClientPattern(clientName, editingLinkedPattern, null);
+        
+        // 2. Ищем объект клиента для сохранения
+        let clientObj = null;
+        if (clientIdToSave) {
+            clientObj = clients.find(c => String(c.id) === String(clientIdToSave));
+        } else {
+            // Фолбэк на поиск по имени
+            clientObj = clients.find(c => c.name === clientName);
+        }
+
+        // 3. ОТПРАВЛЯЕМ НА СЕРВЕР (КРИТИЧЕСКИ ВАЖНО)
+        if (clientObj) {
+            console.log("🚀 Syncing modified client to server...", clientObj);
+            try {
+                // Используем await, чтобы убедиться, что запрос ушел
+                await DataManager.fetchFromServer('save_client', { client: clientObj });
+                console.log("✅ Client synced successfully");
+            } catch (e) {
+                console.error("❌ Client sync failed", e);
+                showToast("Ошибка сохранения настроек клиента", false);
+            }
+        } else {
+            console.error("❌ CRITICAL: Client object not found! Changes will revert on refresh.");
+            showToast("Ошибка: Клиент не найден", false);
+        }
+
+        // 4. Удаляем визуально текущую плашку (если она была реальной)
+        if (sToDelete) {
+            sessions = sessions.filter(x => String(x.id) !== String(editingId));
+        }
+        showToast("Серия удалена", false);
+    } 
+    // === СЦЕНАРИЙ 2: УДАЛЕНИЕ / ОТМЕНА ОДНОЙ ЗАПИСИ ===
+    else {
         let needToCancel = false;
 
-        // ПРОВЕРКА: Должны ли мы отменять (cancel) или удалять (delete)?
+        // Проверяем, совпадает ли запись с шаблоном
         if (!deleteSeries && editingLinkedPattern) {
-            console.log("Reason: editingLinkedPattern is present -> Cancel");
             needToCancel = true;
         } else if (sToDelete) {
-            console.log("Checking client schedule for match...");
             const cli = clients.find(c => c.name === sToDelete.client);
             if (cli && cli.schedule) {
                 const d = new Date(sToDelete.dateStr);
                 let dayIdx = d.getDay() - 1; if (dayIdx === -1) dayIdx = 6;
                 const isPatternMatch = cli.schedule[dayIdx]?.some(slot => slot.s === sToDelete.start);
-                console.log(`Client: ${cli.name}, DayIdx: ${dayIdx}, Time: ${sToDelete.start}, Match Found: ${isPatternMatch}`);
-                
                 if (isPatternMatch) {
                     needToCancel = true;
-                    if (!editingLinkedPattern) {
-                        editingLinkedPattern = { dayIdx, s: sToDelete.start, e: sToDelete.end };
-                        console.log("Reconstructed missing pattern link");
-                    }
+                    if (!editingLinkedPattern) editingLinkedPattern = { dayIdx, s: sToDelete.start, e: sToDelete.end };
                 }
             }
         }
 
         if (needToCancel) {
-            console.log("✅ DECISION: SET STATUS 'CANCELLED'");
             if (sToDelete) {
                 sToDelete.status = 'cancelled';
                 sToDelete.linkedPatternSlot = editingLinkedPattern;
-                console.log("Updated existing session:", sToDelete);
             } else {
-                const clientName = document.getElementById('inpClient').value;
-                const dateStr = document.getElementById('inpDate').value;
+                // Создаем запись об отмене
                 const cancelledS = {
                     id: generateUniqueId(),
                     client: clientName,
-                    dateStr: dateStr,
+                    clientId: clientIdToSave, // Сохраняем ID клиента
+                    dateStr: document.getElementById('inpDate').value,
                     start: editingLinkedPattern.s,
                     end: editingLinkedPattern.e,
                     status: 'cancelled',
@@ -835,26 +862,25 @@ function commitDelete(deleteSeries) {
                     linkedPatternSlot: editingLinkedPattern
                 };
                 sessions.push(cancelledS);
-                console.log("Created new CANCELLED session:", cancelledS);
             }
             showToast("Отменено", false);
         } else if (sToDelete) {
-            console.log("❌ DECISION: HARD DELETE (Splice)");
             sessions = sessions.filter(x => String(x.id) !== String(editingId));
             showToast("Удалено", false);
         }
     }
-
-    // ЛОГ ПОСЛЕ ОПЕРАЦИИ
-    const debugDate = dateToSync;
-    const sessionsOnDate = sessions.filter(s => s.dateStr === debugDate);
-    console.log(`Sessions remaining on ${debugDate}:`, JSON.parse(JSON.stringify(sessionsOnDate)));
-    console.groupEnd();
-
+    
+    // Финальное сохранение всего состояния
     saveAllDataLocally();
     closeAllSheets();
     reRenderBlocks();
+
+    // Синхронизация дня (чтобы убрать плашку, если это был cancel или delete single)
+    let dateToSync = document.getElementById('inpDate').value;
+    if (sToDelete) dateToSync = sToDelete.dateStr;
     syncDayToServer(dateToSync);
+    
+    console.groupEnd();
 }
 
 
