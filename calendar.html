@@ -489,7 +489,7 @@
 
 <script>
   // 1. CONFIG
-  const APP_VERSION = 'v6.0-FINAL-INTEGRATED';
+  const APP_VERSION = 'v6.1-STABLE';
   // 👇 ВСТАВЬ СЮДА СВОЮ ССЫЛКУ ИЗ DEPLOY (exec) 👇
   const API_URL = 'https://script.google.com/macros/s/AKfycbzHWIoZF6xyOJZ_2i3Akko7b3kSsefxOUBxBIGfAHw0Db2qjpBDUhMZ0ruRsCYfm_zDjQ/exec'; 
 
@@ -591,14 +591,23 @@
     }
     if (data.clients) clients = data.clients;
     if (data.calendar) {
+      // Очищаем старые данные только за текущий месяц загрузки
       sessions = sessions.filter(s => !s.dateStr.startsWith(monthStr));
       Object.keys(data.calendar).forEach(dayKey => {
         data.calendar[dayKey].forEach(evt => {
           const clientObj = clients.find(c => String(c.id) === String(evt.c)) || { name: '?', color: '#555' };
           sessions.push({
-            id: evt.i, clientId: evt.c, client: clientObj.name, 
+            id: evt.i, 
+            clientId: evt.c, 
+            client: clientObj.name, 
             dateStr: `${monthStr}-${dayKey.padStart(2, '0')}`,
-            start: evt.s, end: evt.e, status: evt.st, note: evt.n, type: 'client',
+            start: evt.s, 
+            end: evt.e, 
+            status: evt.st, 
+            note: evt.n, 
+            type: 'client',
+            // !!! ВАЖНОЕ: Бэкенд должен возвращать 'l' для серий
+            linkedPatternSlot: evt.l || null 
           });
         });
       });
@@ -606,7 +615,7 @@
     reRenderBlocks();
     updateAllDayStats();
   }
-
+  
   function saveAllDataLocally() {
     DataManager.saveLocally(KEY_PATTERN, availabilityPattern);
     DataManager.saveLocally(KEY_EXCEPTIONS, dateExceptions);
@@ -619,7 +628,7 @@
   /* ==========================================
        4. ACTIONS & SAVING
      ========================================== */
-  async function trySaveSession() {
+ async function trySaveSession() {
     const clientName = document.getElementById('inpClient').value;
     const dateStr = document.getElementById('inpDate').value;
     const start = document.getElementById('inpStart').value;
@@ -634,10 +643,16 @@
     }
 
     const val = validateAppointment(dateStr, start, end, editingId, clientObj.id); 
+    
+    // Если валидация вернула false (например, тот же клиент дважды) - стоп
     if(!val.valid) { 
         showToast(val.msg, false);
         return;
     } 
+    // Если есть предупреждение (пересечение с другим), покажем тост, но продолжим
+    if(val.warning) {
+        showToast(val.warning + " (Сохраняем...)", false);
+    }
 
     const newData = { 
         client: clientName, 
@@ -680,7 +695,7 @@
 
     let finalId = editingId;
     if(editingId && !String(editingId).startsWith('ghost')) {
-        const idx = sessions.findIndex(s => s.id == editingId);
+        const idx = sessions.findIndex(s => String(s.id) === String(editingId));
         if (idx !== -1) { 
            sessions[idx] = { ...sessions[idx], ...data, linkedPatternSlot: updateSeries ? null : sessions[idx].linkedPatternSlot };
         } else { sessions.push({ id: editingId, ...data }); }
@@ -695,7 +710,7 @@
     const sessionToSend = { ...data, id: finalId };
     DataManager.fetchFromServer('save_session', { date: data.dateStr, session: sessionToSend }).then(res => {
         if(res.saved_id) {
-           const s = sessions.find(sess => sess.id == finalId);
+           const s = sessions.find(sess => String(sess.id) === String(finalId));
            if(s) { s.id = res.saved_id; saveAllDataLocally(); }
         }
     });
@@ -708,11 +723,11 @@
 
   function commitDelete(deleteSeries) {
     if (deleteSeries && editingLinkedPattern) {
-         const s = sessions.find(x => x.id == editingId) || { client: document.getElementById('inpClient').value };
+         const s = sessions.find(x => String(x.id) === String(editingId)) || { client: document.getElementById('inpClient').value };
          updateClientPattern(s.client, editingLinkedPattern, null);
          const cSave = clients.find(c => c.name === s.client);
          if(cSave) DataManager.fetchFromServer('save_client', { client: cSave });
-         if(editingId && !String(editingId).startsWith('ghost')) sessions = sessions.filter(x => x.id != editingId);
+         if(editingId && !String(editingId).startsWith('ghost')) sessions = sessions.filter(x => String(x.id) !== String(editingId));
          showToast("Серия удалена", false);
     } else {
         if (!deleteSeries && editingLinkedPattern) {
@@ -722,8 +737,8 @@
              sessions.push(cancelledS);
              DataManager.fetchFromServer('save_session', { date: dateStr, session: cancelledS });
         } else if(editingId && !String(editingId).startsWith('ghost')) {
-            const s = sessions.find(x => x.id == editingId);
-            sessions = sessions.filter(x => x.id != editingId);
+            const s = sessions.find(x => String(x.id) === String(editingId));
+            sessions = sessions.filter(x => String(x.id) !== String(editingId));
             if(s) DataManager.fetchFromServer('save_session', { date: s.dateStr, session: { id: s.id }, is_delete: true });
         }
         showToast("Удалено", false);
@@ -737,7 +752,7 @@
     const name = document.getElementById('ceName').value; 
     if(!name) return alert('Введите имя'); 
     editingClient.name = name;
-    const idx = clients.findIndex(c => c.id === editingClient.id);
+    const idx = clients.findIndex(c => String(c.id) === String(editingClient.id));
     if(idx !== -1) clients[idx] = editingClient; else clients.push(editingClient);
     
     saveAllDataLocally();
@@ -933,7 +948,6 @@
   function renderEventsForColumn(col, dateStr, dayIdx) {
       col.querySelectorAll('.event-card').forEach(e => e.remove());
 
-      // 1. Gather all events (Real + Ghosts)
       let allEvents = [];
 
       sessions.filter(s => s.dateStr === dateStr && s.status !== 'cancelled').forEach(s => {
@@ -969,13 +983,11 @@
           }
       });
 
-      // 2. Sort by Start Time, then Duration
       allEvents.sort((a, b) => {
           if (a.startMin !== b.startMin) return a.startMin - b.startMin;
           return (b.endMin - b.startMin) - (a.endMin - a.startMin);
       });
 
-      // 3. Cluster & Column Packing
       let columns = [];
       allEvents.forEach(ev => {
           let placed = false;
@@ -995,9 +1007,7 @@
           }
       });
 
-      // 4. Render with calculated widths
       allEvents.forEach(ev => {
-          // Find overlapping group to determine width
           const overlappingEvents = allEvents.filter(other => 
               other !== ev && 
               Math.max(ev.startMin, other.startMin) < Math.min(ev.endMin, other.endMin)
@@ -1014,7 +1024,6 @@
 
           const el = createEventEl(ev.data);
           
-          // Apply Layout
           el.style.width = `calc(${widthPercent}% - 4px)`; 
           el.style.left = `calc(${leftPercent}% + 2px)`;
           el.style.zIndex = 5 + ev.colIndex;
@@ -1037,7 +1046,7 @@
       div.className=`event-card ${s.status||''}`; 
       div.style.top=`${top}px`; div.style.height=`${Math.max(height,20)}px`; 
       
-      const cli = clients.find(c => (s.clientId && c.id == s.clientId) || c.name === s.client); 
+      const cli = clients.find(c => (s.clientId && String(c.id) === String(s.clientId)) || c.name === s.client); 
       const color = cli ? cli.color : '#0a84ff'; 
       div.style.borderLeftColor = color; div.style.backgroundColor = hexToRgba(color, 0.85); 
       if(s.status === 'ghost') { div.style.borderWidth = '1px'; div.style.borderLeftWidth = '3px'; } 
@@ -1047,7 +1056,7 @@
       return div; 
   }
   function confirmGhost(ghost) { 
-      const realSession = { id: Date.now(), client: ghost.client, dateStr: ghost.dateStr, start: ghost.start, end: ghost.end, note: '', status: 'planned', type: 'client', linkedPatternSlot: ghost.linkedPatternSlot }; 
+      const realSession = { id: Date.now(), client: ghost.client, dateStr: ghost.dateStr, start: ghost.start, end: ghost.end, note: '', status: 'planned', type: 'client', linkedPatternSlot: ghost.linkedPatternSlot, clientId: ghost.clientId }; 
       openEdit(realSession); 
   }
 
@@ -1056,8 +1065,16 @@
   function handleInfiniteScroll() { const vp=document.getElementById('matrixViewport'); const sl=vp.scrollLeft, sw=vp.scrollWidth, cw=vp.clientWidth; if(sw-(sl+cw)<300) { const old=endOffset; endOffset+=14; renderDayRange(old+1, endOffset); reRenderBlocks(); } if(sl<300) { const old=startOffset; startOffset-=14; prependDays(startOffset, old-1); vp.scrollLeft+=(14*65); reRenderBlocks(); } }
   function prependDays(from, to) { const track=document.getElementById('daysHeaderTrack'), grid=document.getElementById('gridColumns'); const weekDays=['ПН','ВТ','СР','ЧТ','ПТ','СБ','ВС']; const base=new Date(); base.setHours(0,0,0,0); const todayStr = getLocalDateStr(new Date()); const fragH=document.createDocumentFragment(), fragC=document.createDocumentFragment(); for(let i=from; i<=to; i++) { const d=new Date(base); d.setDate(d.getDate()+i); const dateStr=getLocalDateStr(d); let dayIdx=d.getDay()-1; if(dayIdx===-1) dayIdx=6; const isToday = dateStr === todayStr; const h=document.createElement('div'); h.className=`day-col-header ${isToday ? 'today' : ''}`; h.id=`header-${dateStr}`; h.setAttribute('data-date', dateStr); h.innerHTML=`<div class="dch-day">${weekDays[dayIdx]}</div><div class="dch-num">${d.getDate()}</div><div class="dch-stats" id="stat-${dateStr}"><div class="dch-stats-fill"></div></div>`; h.onclick=()=>openDayOptions(dateStr, `${weekDays[dayIdx]} ${d.getDate()}`); fragH.appendChild(h); const c=document.createElement('div'); c.className=`day-column ${isToday ? 'today' : ''}`; c.setAttribute('data-date', dateStr); c.setAttribute('data-day-idx', dayIdx); renderEventsForColumn(c, dateStr, dayIdx); attachLongPressHandler(c, d); fragC.appendChild(c); updateDayStats(dateStr); } track.insertBefore(fragH, track.firstChild); grid.insertBefore(fragC, grid.querySelector('.day-column')); }
   function openAddSession(d) { editingId=null; editingLinkedPattern=null; populateClientSelect(); document.getElementById('sheetTitle').textContent='Новая'; document.getElementById('btnDelete').style.display='none'; document.getElementById('patternInfoBox').style.display='none'; document.getElementById('recurringOptionContainer').style.display = 'flex'; document.getElementById('inpRecurring').checked = false; document.getElementById('inpDate').value=getLocalDateStr(d); updateDateDisplay(); const h=d.getHours(); document.getElementById('inpStart').value=`${String(h).padStart(2,'0')}:00`; document.getElementById('inpEnd').value=`${String(h+1).padStart(2,'0')}:00`; openSheet('sessionSheet'); }
-  function openEdit(s) { editingId=s.id; editingLinkedPattern = s.linkedPatternSlot || null; populateClientSelect(); const isNew = !sessions.some(sess => sess.id === s.id); document.getElementById('sheetTitle').textContent = isNew ? 'Подтвердить' : 'Редактировать'; if (!isNew || editingLinkedPattern) { document.getElementById('btnDelete').style.display = 'block'; } else { document.getElementById('btnDelete').style.display = 'none'; } const pBox = document.getElementById('patternInfoBox'); const rOption = document.getElementById('recurringOptionContainer'); if (editingLinkedPattern) { pBox.style.display = 'flex'; pBox.querySelector('.pib-text').textContent = "Часть регулярного расписания."; rOption.style.display = 'none'; } else { pBox.style.display = 'none'; rOption.style.display = 'flex'; document.getElementById('inpRecurring').checked = false; } document.getElementById('inpClient').value=s.client; document.getElementById('inpDate').value=s.dateStr; document.getElementById('inpStart').value=s.start; document.getElementById('inpEnd').value=s.end; document.getElementById('inpNote').value=s.note||''; updateDateDisplay(); openSheet('sessionSheet'); }
-  function updateDateDisplay() { const val = document.getElementById('inpDate').value; const disp = document.getElementById('dateDisplay'); if (!val) { disp.textContent = ''; return; } const d = new Date(val); const options = { weekday: 'long', month: 'long', day: 'numeric' }; disp.textContent = d.toLocaleDateString('ru-RU', options); }
+  function openEdit(s) { editingId=s.id; editingLinkedPattern = s.linkedPatternSlot || null; populateClientSelect(); const isNew = !sessions.some(sess => String(sess.id) === String(s.id)); document.getElementById('sheetTitle').textContent = isNew ? 'Подтвердить' : 'Редактировать'; if (!isNew || editingLinkedPattern) { document.getElementById('btnDelete').style.display = 'block'; } else { document.getElementById('btnDelete').style.display = 'none'; } const pBox = document.getElementById('patternInfoBox'); const rOption = document.getElementById('recurringOptionContainer'); if (editingLinkedPattern) { pBox.style.display = 'flex'; pBox.querySelector('.pib-text').textContent = "Часть регулярного расписания."; rOption.style.display = 'none'; } else { pBox.style.display = 'none'; rOption.style.display = 'flex'; document.getElementById('inpRecurring').checked = false; } document.getElementById('inpClient').value=s.client; document.getElementById('inpDate').value=s.dateStr; document.getElementById('inpStart').value=s.start; document.getElementById('inpEnd').value=s.end; document.getElementById('inpNote').value=s.note||''; updateDateDisplay(); openSheet('sessionSheet'); }
+  function updateDateDisplay() { 
+      const val = document.getElementById('inpDate').value; 
+      const disp = document.getElementById('dateDisplay'); 
+      if (!val) { disp.textContent = ''; return; } 
+      const [y, m, d] = val.split('-').map(Number); // Safe local parse
+      const dateObj = new Date(y, m - 1, d);
+      const options = { weekday: 'long', month: 'long', day: 'numeric' }; 
+      disp.textContent = dateObj.toLocaleDateString('ru-RU', options); 
+  }
   function openActionSheet(type) { const sheet = document.getElementById('actionSheet'); const overlay = document.getElementById('actionSheetOverlay'); const title = document.getElementById('asTitle'); const btnOne = document.getElementById('asBtnOne'); const btnSeries = document.getElementById('asBtnSeries'); overlay.classList.add('active'); sheet.classList.add('open'); if (type === 'save') { title.textContent = "Изменение повторяющегося события"; btnOne.textContent = "Только эта тренировка"; btnOne.className = "as-button"; btnOne.onclick = () => { closeActionSheet(); commitSave(tempSessionData, false); }; btnSeries.textContent = "Изменить всю серию"; btnSeries.className = "as-button bold"; btnSeries.onclick = () => { closeActionSheet(); commitSave(tempSessionData, true); }; } else if (type === 'delete') { title.textContent = "Удаление события"; btnOne.textContent = "Только эту тренировку"; btnOne.className = "as-button danger"; btnOne.onclick = () => { closeActionSheet(); commitDelete(false); }; btnSeries.textContent = "Удалить из расписания"; btnSeries.className = "as-button danger bold"; btnSeries.onclick = () => { closeActionSheet(); commitDelete(true); }; } }
   function closeActionSheet() { document.getElementById('actionSheet').classList.remove('open'); document.getElementById('actionSheetOverlay').classList.remove('active'); }
 
@@ -1129,18 +1146,22 @@
   function confirmTimeSlot() { const s = document.getElementById('tsStart').value; const e = document.getElementById('tsEnd').value; if(!editingClient.schedule[editingDayIdx]) editingClient.schedule[editingDayIdx] = []; checkScheduleConflict(editingDayIdx, s, e); editingClient.schedule[editingDayIdx].push({s, e}); closeTimeSlotSheet(); renderClientSchedule(); }
   function checkScheduleConflict(dayIdx, start, end) { const blockedHours = availabilityPattern[dayIdx] || []; if(blockedHours.length === 0) return; const [h1, m1] = start.split(':').map(Number); const [h2, m2] = end.split(':').map(Number); const startMins = h1 * 60 + m1; const endMins = h2 * 60 + m2; let hasConflict = false; for(let h of blockedHours) { const bStart = h * 60; const bEnd = (h + 1) * 60; if (Math.max(startMins, bStart) < Math.min(endMins, bEnd)) { hasConflict = true; break; } } if(hasConflict) { showToast("Обратите внимание: обычно вы не работаете в это время"); } }
   
-  // 1. Функция проверки (заменяем полностью)
-  function validateAppointment(dateStr, start, end, excludeSessionId, checkClientId) { 
+function validateAppointment(dateStr, start, end, excludeSessionId, checkClientId) { 
     const [h1, m1] = start.split(':').map(Number); 
     const [h2, m2] = end.split(':').map(Number); 
     const startMins = h1 * 60 + m1; 
     const endMins = h2 * 60 + m2; 
 
-    const targetIdNum = Number(checkClientId);
+    // Безопасное приведение ID к строке для сравнения
+    const targetIdStr = String(checkClientId);
+    let hasConflict = false;
+    let conflictName = '';
 
     for (let s of sessions) { 
         if (s.dateStr !== dateStr) continue; 
         if (s.status === 'cancelled') continue;
+        
+        // Сравниваем ID как строки, чтобы избежать ошибок "123" !== 123
         if (excludeSessionId && String(s.id) === String(excludeSessionId)) continue; 
 
         const [sH1, sM1] = s.start.split(':').map(Number); 
@@ -1149,18 +1170,22 @@
         const sEnd = sH2 * 60 + sM2; 
 
         if (Math.max(startMins, sStart) < Math.min(endMins, sEnd)) {
-            if (s.clientId) {
-                const existingIdNum = Number(s.clientId);
-                if (existingIdNum === targetIdNum) {
-                    return { 
-                        valid: false, 
-                        msg: `Клиент ${s.client} уже записан на это время!` 
-                    }; 
-                }
+            // Если клиент тот же - блокируем
+            if (s.clientId && String(s.clientId) === targetIdStr) {
+                 return { 
+                    valid: false, 
+                    msg: `Этот клиент (${s.client}) уже записан на это время!` 
+                 }; 
             }
+            hasConflict = true;
+            conflictName = s.client;
         }
     } 
     
+    if (hasConflict) {
+        return { valid: true, warning: `Пересечение с ${conflictName}` };
+    }
+
     return { valid: true }; 
 }
   
