@@ -1118,9 +1118,7 @@
   }
   
   function updateAllDayStats() { document.querySelectorAll('.day-col-header').forEach(h => { updateDayStats(h.getAttribute('data-date')); }); }
-  // === ОБНОВЛЕННАЯ ЛОГИКА АНАЛИТИКИ (ТЕРМОМЕТР) ===
-  // === ИСПРАВЛЕННАЯ АНАЛИТИКА (ТЕРМОМЕТР ЗАГРУЗКИ) ===
- // === СТРОГАЯ АНАЛИТИКА (ЧЕСТНЫЙ ПРОЦЕНТ) ===
+// === ФИНАЛЬНАЯ АНАЛИТИКА (ЕМКОСТЬ = 24 - БЛОКИ) ===
   function updateDayStats(dateStr) {
     const track = document.getElementById(`stat-${dateStr}`); 
     if (!track) return;
@@ -1128,17 +1126,19 @@
     const d = new Date(dateStr);
     let dayIdx = d.getDay() - 1; if (dayIdx === -1) dayIdx = 6;
     
-    // 1. Проверяем исключения (выходной)
+    // 1. Если день полностью выключен через исключения - скрываем
     if (dateExceptions[dateStr] === 'off') { 
         track.style.display = 'none'; 
         return; 
     }
 
-    // 2. Считаем РАБОЧУЮ ЕМКОСТЬ (из настроек графика)
-    const workHours = availabilityPattern[dayIdx] || [];
-    const capacityMins = workHours.length * 60;
+    // 2. СЧИТАЕМ РАБОЧУЮ ЕМКОСТЬ
+    // availabilityPattern хранит ЗАБЛОКИРОВАННЫЕ часы (полоски)
+    const blockedHours = availabilityPattern[dayIdx] || [];
+    const availableHoursCount = 24 - blockedHours.length; // 24 минус зачеркнутые
+    const capacityMins = availableHoursCount * 60;
 
-    // 3. Считаем ЗАНЯТОСТЬ (учитывая пересечения)
+    // 3. СЧИТАЕМ ФАКТИЧЕСКУЮ ЗАНЯТОСТЬ
     const daySessions = sessions.filter(s => s.dateStr === dateStr && s.status !== 'cancelled');
     
     if (daySessions.length === 0) {
@@ -1146,7 +1146,7 @@
         return;
     }
 
-    // Слияние интервалов (чтобы 2 клиента в одно время не считались х2)
+    // Склеиваем пересечения (группы считаем за 1 слот времени)
     let intervals = daySessions.map(s => {
         const [h1, m1] = s.start.split(':').map(Number);
         const [h2, m2] = s.end.split(':').map(Number);
@@ -1172,11 +1172,11 @@
     let busyMins = 0;
     merged.forEach(iv => busyMins += (iv[1] - iv[0]));
 
-    // 4. РИСУЕМ
+    // 4. РИСУЕМ ПОЛОСКУ
     track.style.display = 'flex';
     const fill = track.querySelector('.dch-stats-fill');
     
-    // Если график не задан, но работа есть -> Красный
+    // Если доступного времени 0, но работа есть -> Красный (100%)
     if (capacityMins === 0) {
         fill.style.width = '100%';
         fill.style.background = 'var(--acc-red)';
@@ -1185,14 +1185,14 @@
 
     const percent = (busyMins / capacityMins) * 100;
     
-    // ВАЖНО: Выводим в консоль расчеты для проверки
-    console.log(`[${dateStr}] Емкость: ${capacityMins}мин (${capacityMins/60}ч), Занято: ${busyMins}мин, Итог: ${percent.toFixed(1)}%`);
+    console.log(`[${dateStr}] Доступно: ${availableHoursCount}ч, Занято: ${busyMins}мин, Загрузка: ${percent.toFixed(1)}%`);
 
     if (percent > 100) {
+        // Переработка (работал больше, чем доступно часов)
         fill.style.width = '100%';
         fill.style.background = 'var(--acc-red)';
     } else {
-        // Убрали Math.max(15...), теперь ширина строго соответствует проценту
+        // Нормальная загрузка
         fill.style.width = `${percent}%`; 
         fill.style.background = 'var(--acc-current)';
     }
