@@ -1119,27 +1119,27 @@
   
   function updateAllDayStats() { document.querySelectorAll('.day-col-header').forEach(h => { updateDayStats(h.getAttribute('data-date')); }); }
   // === ОБНОВЛЕННАЯ ЛОГИКА АНАЛИТИКИ (ТЕРМОМЕТР) ===
+  // === ИСПРАВЛЕННАЯ АНАЛИТИКА (ТЕРМОМЕТР ЗАГРУЗКИ) ===
   function updateDayStats(dateStr) {
     const track = document.getElementById(`stat-${dateStr}`); 
     if (!track) return;
     
-    // 1. Получаем настройки дня
     const d = new Date(dateStr);
     let dayIdx = d.getDay() - 1; if (dayIdx === -1) dayIdx = 6;
     
-    // Если день помечен как выходной через исключения - скрываем
+    // 1. Если день выключен вручную (Выходной) — скрываем
     if (dateExceptions[dateStr] === 'off') { 
         track.style.display = 'none'; 
         return; 
     }
 
-    // 2. Считаем РАБОЧУЮ ЕМКОСТЬ (в минутах)
-    // Берем количество рабочих часов из графика * 60
+    // 2. Считаем РАБОЧУЮ ЕМКОСТЬ (Часы из Графика * 60)
+    // Если график пустой (не настроен), считаем емкость = 0
     const workHours = availabilityPattern[dayIdx] || [];
     const capacityMins = workHours.length * 60;
 
     // 3. Считаем ФАКТИЧЕСКУЮ ЗАНЯТОСТЬ (в минутах)
-    // Берем все активные тренировки
+    // Берем только активные тренировки (не cancelled)
     const daySessions = sessions.filter(s => s.dateStr === dateStr && s.status !== 'cancelled');
     
     if (daySessions.length === 0) {
@@ -1147,22 +1147,21 @@
         return;
     }
 
-    // Превращаем тренировки в интервалы минут [start, end]
+    // Алгоритм слияния пересечений (чтобы 2 клиента в одно время не считались за 2 часа работы)
     let intervals = daySessions.map(s => {
         const [h1, m1] = s.start.split(':').map(Number);
         const [h2, m2] = s.end.split(':').map(Number);
         return [h1 * 60 + m1, h2 * 60 + m2];
     });
 
-    // МЕРДЖИМ ИНТЕРВАЛЫ (чтобы групповая тренировка не считалась за двойную нагрузку по времени)
     intervals.sort((a, b) => a[0] - b[0]);
+    
     let merged = [];
     if (intervals.length > 0) {
         let curr = intervals[0];
         for (let i = 1; i < intervals.length; i++) {
             if (intervals[i][0] < curr[1]) {
-                // Пересечение - продлеваем текущий конец, если нужно
-                curr[1] = Math.max(curr[1], intervals[i][1]);
+                curr[1] = Math.max(curr[1], intervals[i][1]); // Продлеваем интервал
             } else {
                 merged.push(curr);
                 curr = intervals[i];
@@ -1171,31 +1170,33 @@
         merged.push(curr);
     }
 
-    // Суммируем чистое время работы
+    // Сумма чистых минут работы
     let busyMins = 0;
     merged.forEach(iv => busyMins += (iv[1] - iv[0]));
 
-    // 4. ОТРИСОВКА
+    // 4. ВЫЧИСЛЕНИЕ ПРОЦЕНТА
     track.style.display = 'flex';
     const fill = track.querySelector('.dch-stats-fill');
     
-    // Сценарий А: Рабочее время не задано (0 часов), но тренировка стоит -> Красный (Переработка)
+    // ЛОГИКА:
+    // Если график не задан (0 часов), а тренировка есть -> Это переработка (КРАСНЫЙ)
     if (capacityMins === 0) {
         fill.style.width = '100%';
         fill.style.background = 'var(--acc-red)';
+        console.log(`[${dateStr}] График пуст, но есть ${busyMins} мин работы. Красный.`);
         return;
     }
 
-    // Сценарий Б: Обычный расчет
     const percent = (busyMins / capacityMins) * 100;
-    
-    // Если переработка (>100%) -> Красный
+    console.log(`[${dateStr}] Емкость: ${capacityMins}мин, Занято: ${busyMins}мин, Загрузка: ${percent.toFixed(1)}%`);
+
+    // Если переработка (>100% рабочего времени) -> Красный
     if (percent > 100) {
         fill.style.width = '100%';
         fill.style.background = 'var(--acc-red)';
     } else {
-        // Норма -> Синий (пропорционально)
-        // Math.max(15, ...) чтобы даже короткая тренировка была видна хотя бы точкой
+        // Обычная загрузка -> Синий
+        // Math.max(15, ...) гарантирует, что даже 30-минутная тренировка будет видна точкой
         fill.style.width = `${Math.max(15, percent)}%`; 
         fill.style.background = 'var(--acc-current)';
     }
