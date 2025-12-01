@@ -1375,41 +1375,29 @@ function isAdmin() {
   // --- SAVE LOGIC ---
  // --- SAVE LOGIC ---
   async function trySaveSession() {
-      // 1. Считываем данные из формы
+      // 1. Считываем данные
       const clientName = document.getElementById('inpClient').value;
       const dateStr = document.getElementById('inpDate').value;
       const start = document.getElementById('inpStart').value;
       const end = document.getElementById('inpEnd').value;
       const note = document.getElementById('inpNote').value;
-      
-      // Логика для Серий (чтение чекбокса и количества)
       const createSeries = document.getElementById('inpRecurring').checked; 
-      let seriesCount = 4; // Значение по умолчанию
       
+      let seriesCount = 4; 
       if (createSeries) {
           const val = parseInt(document.getElementById('inpSeriesCount').value);
-          // Валидация количества (защита от зависания)
           if (!val || val < 2) { showToast("Минимум 2 тренировки", false); return; }
           if (val > 100) { showToast("Максимум 100 за раз", false); return; }
           seriesCount = val;
       }
 
-      // 2. Находим объект клиента (нужен ID для проверки групповых)
       const clientObj = clients.find(c => c.name === clientName);
       if (!clientObj) { showToast("Ошибка: Выберите клиента из списка", false); return; }
 
-      // 3. Валидация (передаем ID клиента для разрешения Групповых тренировок)
       const val = validateAppointment(dateStr, start, end, editingId, clientObj.id); 
-      
-      if(!val.valid) { 
-          showToast(val.msg, false); // Ошибка (тот же клиент)
-          return; 
-      }
-      if(val.warning) {
-          showToast(val.warning, false); // Предупреждение (групповая)
-      }
+      if(!val.valid) { showToast(val.msg, false); return; }
+      if(val.warning) { showToast(val.warning, false); }
 
-      // 4. Подготовка данных
       const baseData = {
           client: clientName,
           clientId: clientObj.id,
@@ -1417,25 +1405,60 @@ function isAdmin() {
           status: 'planned'
       };
 
-      // Сценарий A: Редактирование существующей записи
+      // Сценарий A: Серия (Action Sheet) — уведомления тут не трогаем пока
       const currentSession = editingId ? sessions.find(s => s.id === editingId) : null;
       if (currentSession && currentSession.seriesId) {
-          // Если это часть серии — спрашиваем пользователя (Action Sheet)
           tempSessionData = { ...baseData, dateStr, id: editingId, seriesId: currentSession.seriesId };
           openActionSheet('save'); 
           return;
       }
 
-      // Сценарий B: Создание НОВОЙ серии
+      // [NEW] Определяем тип уведомления перед сохранением
+      let notifType = null;
+      if (!editingId) {
+          notifType = 'create';
+      } else if (currentSession) {
+          // Если изменилось время или дата
+          if (currentSession.start !== start || currentSession.dateStr !== dateStr) {
+              notifType = 'update';
+          }
+      }
+
+      // Сценарий B: Новая серия
       if (!editingId && createSeries) {
-          createBatchSeries(baseData, dateStr, seriesCount); // Передаем выбранное количество
+          createBatchSeries(baseData, dateStr, seriesCount);
+          // Уведомляем только о первой тренировке серии
+          NotificationManager.send('create', { ...baseData, dateStr });
           return;
       }
 
-      // Сценарий C: Обычное сохранение (одиночная запись)
-      saveSingleSession({ ...baseData, dateStr, id: editingId || generateId(), seriesId: null });
+      // Сценарий C: Одиночная запись
+      const newSession = { ...baseData, dateStr, id: editingId || generateId(), seriesId: null };
+      saveSingleSession(newSession);
+      
+      // [NEW] Отправляем уведомление
+      if (notifType) {
+          NotificationManager.send(notifType, newSession);
+      }
   }
 
+function toggleSessionStatus() {
+      const s = sessions.find(x => x.id === editingId);
+      if(!s) return;
+
+      const newStatus = (s.status === 'completed') ? 'planned' : 'completed';
+      s.status = newStatus;
+      
+      // Сохраняем
+      saveSingleSession(s); // Используем existing helper
+      
+      // [NEW] Уведомление о завершении
+      if (newStatus === 'completed') {
+          NotificationManager.send('complete', s);
+      }
+      showToast(newStatus === 'completed' ? "Тренировка завершена" : "Статус сброшен", true);
+  }
+  
   // --- VALIDATION (UPDATED FOR GROUP TRAINING) ---
   function validateAppointment(dateStr, start, end, excludeSessionId, checkClientId) { 
       const [h1, m1] = start.split(':').map(Number); 
@@ -1593,6 +1616,9 @@ function isAdmin() {
   }
 
   function commitDelete(mode, sessionObj) {
+      // [NEW] Уведомление об отмене
+      NotificationManager.send('cancel', sessionObj);
+
       const datesToSync = [];
       if(mode === 'single') {
           sessions = sessions.filter(x => x.id !== sessionObj.id);
@@ -1626,6 +1652,69 @@ function isAdmin() {
   // ==============================================
   // 5. VIEW / UI HELPERS
   // ==============================================
+  /* ============================================================
+ * MODULE: TELEGRAM NOTIFICATIONS (11/10 EDITION)
+ * ============================================================ */
+const NotificationManager = {
+  formatDate(dateStr) {
+    const d = new Date(dateStr);
+    const dayOpts = { weekday: 'long', day: 'numeric', month: 'long' };
+    let str = d.toLocaleDateString('ru-RU', dayOpts);
+    return str.charAt(0).toUpperCase() + str.slice(1);
+  },
+
+  getText(type, session) {
+    const datePretty = this.formatDate(session.dateStr);
+    // Для "update" показываем старое время, если оно передано, но сейчас упростим:
+    // просто показываем новое актуальное время.
+    
+    switch (type) {
+      case 'create':
+        return `<b>🆕 Новая тренировка</b>\n\n` +
+               `<b>📅 Дата:</b> ${datePretty}\n` +
+               `<b>⏰ Время:</b> ${session.start} — ${session.end}\n\n` +
+               `Жду вас в зале! 💪`;
+
+      case 'update':
+         return `<b>🔄 Изменение времени</b>\n\n` +
+                `Ваша тренировка перенесена:\n\n` +
+                `<b>✅ ${session.start} — ${session.end}</b>\n\n` +
+                `<b>📅 Дата:</b> ${datePretty}`;
+
+      case 'cancel':
+         return `<b>🚫 Тренировка отменена</b>\n\n` +
+                `Запись на <b>${datePretty} (${session.start})</b> была удалена из расписания.`;
+
+      case 'complete':
+         return `<b>✅ Тренировка завершена</b>\n\n` +
+                `Отличная работа сегодня! Прогресс зафиксирован. 🔥\n\n` +
+                `<i>До встречи на следующей тренировке.</i>`;
+      
+      default: return '';
+    }
+  },
+
+  async send(type, sessionData) {
+    if (!sessionData || !sessionData.clientId) return;
+    const clientId = String(sessionData.clientId);
+    
+    // Проверка на длину ID (чтобы не слать на "101" и тестовые)
+    if (clientId.length < 5) {
+      console.log('[Notify] Skipped: Invalid Chat ID', clientId);
+      return;
+    }
+
+    const text = this.getText(type, sessionData);
+    if (!text) return;
+
+    // Отправляем (fire & forget)
+    DataManager.fetchFromServer('send_notification', {
+      chatId: clientId,
+      text: text
+    }).catch(e => console.error('[Notify] Failed', e));
+  }
+};
+  
   
   function getLocalDateStr(date) { const y = date.getFullYear(); const m = String(date.getMonth() + 1).padStart(2, '0'); const d = String(date.getDate()).padStart(2, '0'); return `${y}-${m}-${d}`; }
   function getDateStr(offset) { const d=new Date(); d.setDate(d.getDate()+offset); return getLocalDateStr(d); }
