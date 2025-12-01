@@ -149,28 +149,76 @@
   .global-time-line { position: absolute; left: 0; width: 100%; height: 1px; background: var(--acc-current); z-index: 10; pointer-events: none; display: none; }
   .global-time-line::before { content: ''; position: absolute; left: -4px; top: -3px; width: 7px; height: 7px; background: var(--acc-current); border-radius: 50%; }
   
-  /* === EVENT CARD (UPDATED FOR OVERLAP) === */
+ /* === EVENT CARD (ОБНОВЛЕНО: СТАТУСЫ) === */
   .event-card { 
     position: absolute; 
-    left: 0; /* Dynamic left in JS */
+    left: 0; 
     border-radius: 6px; 
     padding: 3px 5px; 
     overflow: hidden; 
     border-left: 3px solid; 
     cursor: pointer; 
     z-index: 5; 
-    box-shadow: 0 2px 8px rgba(0,0,0,0.3); 
+    box-shadow: none; 
     border: 1px solid rgba(255,255,255,0.1); 
-    /* Animations for smooth sorting */
-    transition: transform 0.1s, width 0.2s, left 0.2s; 
+    transition: transform 0.1s, width 0.2s, left 0.2s, opacity 0.3s; 
+    
+    /* Делаем запланированные полупрозрачными и блеклыми */
+    opacity: 0.55; 
+    filter: grayscale(0.3); 
   }
-  .event-card:active { transform: scale(0.96); }
-  .event-card.ghost { opacity: 1; }
-  .event-card.client-view-busy { background: repeating-linear-gradient(135deg, rgba(255,255,255,0.05), rgba(255,255,255,0.05) 5px, rgba(255,255,255,0.02) 5px, rgba(255,255,255,0.02) 10px); border: 1px solid rgba(255,255,255,0.05); border-left: none; color: transparent; pointer-events: none; opacity: 0.6; }
   
-  .ev-title { font-size: 11px; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.2; text-shadow: 0 1px 3px rgba(0,0,0,0.7); }
-  .ev-time { font-size: 9px; color: rgba(255,255,255,0.95); margin-top: 1px; font-weight: 600; text-shadow: 0 1px 2px rgba(0,0,0,0.7); }
-  .ev-recurring-icon { position: absolute; right: 4px; bottom: 4px; opacity: 0.8; width: 8px; height: 8px; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.5)); }
+  .event-card:active { transform: scale(0.96); }
+  .event-card.mini { display: flex; align-items: center; justify-content: center; padding: 0; }
+  .event-card.mini .ev-title, .event-card.mini .ev-time { display: none; }
+  .event-card.mini .ev-recurring-icon { position: static; width: 14px; height: 14px; opacity: 0.9; color: rgba(255,255,255,0.8); }
+  
+  /* Стиль ЗАВЕРШЕННОЙ тренировки (Яркая + Галочка) */
+  .event-card.status-completed {
+      opacity: 1 !important;        
+      filter: grayscale(0);         
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5); 
+      z-index: 6; 
+  }
+  .event-card.status-completed::after {
+      content: '✓';
+      position: absolute;
+      right: 4px;
+      top: 2px;
+      font-size: 10px;
+      font-weight: 800;
+      color: #fff;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+  }
+
+  /* === НОВАЯ КНОПКА ЗАВЕРШЕНИЯ В ШТОРКЕ === */
+  .btn-status-toggle {
+    width: 85%;
+    margin: 24px auto 8px auto; 
+    padding: 14px;
+    background: var(--acc-green); /* Зеленый */
+    color: #fff;
+    font-weight: 700;
+    font-size: 16px;
+    border-radius: 12px;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    transition: 0.2s;
+    box-shadow: 0 4px 12px rgba(48, 209, 88, 0.3);
+  }
+  .btn-status-toggle:active { transform: scale(0.98); opacity: 0.9; }
+  
+  /* Режим отмены (если нажали случайно) */
+  .btn-status-toggle.undo-mode {
+      background: rgba(255,255,255,0.1);
+      color: var(--text-muted);
+      box-shadow: none;
+      font-weight: 500;
+  }
 
   /* === OVERLAYS === */
   .sheet-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 100; opacity: 0; pointer-events: none; transition: 0.3s; backdrop-filter: blur(4px); }
@@ -720,6 +768,11 @@
     </div>
   </div>
 
+<button class="btn-status-toggle" id="btnStatusToggle" onclick="toggleSessionStatus()" style="display:none">
+     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+     Завершить тренировку
+  </button>
+  
   <button class="btn-primary" onclick="trySaveSession()">Сохранить</button>
   <button class="btn-primary btn-danger" id="btnDelete" style="display:none" onclick="tryDeleteSession()">Удалить</button>
 </div>
@@ -1078,6 +1131,8 @@ function isAdmin() {
       populateClientSelect(); 
       document.getElementById('sheetTitle').textContent='Новая запись'; 
       document.getElementById('btnDelete').style.display='none'; 
+      // Скрываем кнопку статуса для новой записи
+      document.getElementById('btnStatusToggle').style.display = 'none';
       
       // Сброс серии
       const recContainer = document.getElementById('recurringOptionContainer');
@@ -1106,6 +1161,19 @@ function isAdmin() {
       populateClientSelect(); 
       document.getElementById('sheetTitle').textContent = 'Редактировать'; 
       document.getElementById('btnDelete').style.display = 'block'; 
+    // === ЛОГИКА КНОПКИ ЗАВЕРШИТЬ ===
+      const btnStatus = document.getElementById('btnStatusToggle');
+      btnStatus.style.display = 'flex'; // Показываем
+      
+      if (s.status === 'completed') {
+          // Режим отмены
+          btnStatus.className = 'btn-status-toggle undo-mode';
+          btnStatus.innerHTML = 'Вернуть в запланированные';
+      } else {
+          // Режим завершения
+          btnStatus.className = 'btn-status-toggle';
+          btnStatus.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Завершить тренировку';
+      }
 
       const isSeries = !!s.seriesId;
       document.getElementById('recurringOptionContainer').style.display = 'none'; 
@@ -1650,7 +1718,10 @@ function isAdmin() {
       const height = (hE*60+mE-(h*60+m))/60*GRID_H; 
       
       const div = document.createElement('div'); 
-      div.className = `event-card`; 
+      // === ДОБАВЛЯЕМ КЛАСС, ЕСЛИ ЗАВЕРШЕНО ===
+      const statusClass = (s.status === 'completed') ? ' status-completed' : '';
+      div.className = `event-card${statusClass}`;
+    
       div.style.top = `${top}px`; 
       div.style.height = `${Math.max(height,20)}px`; 
       
@@ -2131,7 +2202,36 @@ function renderPatternEditor() {
       if (m === 0) return `${h}ч`;
       return `${h}ч ${m}м`;
   }
-  
+
+  function toggleSessionStatus() {
+    if (!editingId) return;
+    
+    // 1. Находим тренировку
+    const sessionIndex = sessions.findIndex(s => s.id === editingId);
+    if (sessionIndex === -1) return;
+    
+    const s = sessions[sessionIndex];
+    // 2. Меняем статус на противоположный
+    const newStatus = (s.status === 'completed') ? 'planned' : 'completed';
+    sessions[sessionIndex].status = newStatus;
+    
+    // 3. Сохраняем и обновляем UI
+    DataManager.saveLocally();
+    reRenderBlocks();
+    updateAllDayStats(); // Чтобы обновился прогресс-бар в шапке
+    closeAllSheets();
+    
+    // 4. Уведомление
+    if (newStatus === 'completed') {
+        showToast("Тренировка завершена! 💪", true);
+        if (navigator.vibrate) navigator.vibrate(50);
+    } else {
+        showToast("Статус возвращен");
+    }
+    
+    // 5. Отправляем в облако
+    DataManager.syncBatch([s.dateStr]);
+  }
 </script>
 
 </body>
