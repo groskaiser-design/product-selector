@@ -412,6 +412,13 @@
     border-radius: 12px;
     border: 1px dashed rgba(255,255,255,0.1);
   }
+
+  /* MINI CARD MODE */
+  .event-card.mini {
+      display: flex; align-items: center; justify-content: center; padding: 0;
+  }
+  .event-card.mini .ev-title, .event-card.mini .ev-time { display: none; }
+  .event-card.mini .ev-recurring-icon { position: static; width: 14px; height: 14px; opacity: 0.9; color: rgba(255,255,255,0.8); }
   
 </style>
 </head>
@@ -1322,10 +1329,11 @@
   }
 
   // === УМНАЯ ОТРИСОВКА (С РАЗДЕЛЕНИЕМ КОЛОНОК) ===
+ // === УМНАЯ ОТРИСОВКА + МИНИ-РЕЖИМ (Скрываем текст при наложении) ===
   function renderEventsForColumn(col, dateStr, dayIdx) {
       // 1. Берем события только этого дня
       const dayEvents = sessions.filter(s => s.dateStr === dateStr);
-
+      
       // 2. Превращаем время в минуты для расчетов
       const items = dayEvents.map(s => {
           const [h, m] = s.start.split(':').map(Number);
@@ -1334,26 +1342,23 @@
               data: s,
               start: h * 60 + m,
               end: hE * 60 + mE,
-              colIndex: 0 // По умолчанию нулевая колонка
+              colIndex: 0
           };
       });
 
-      // 3. Сортируем: сначала ранние, если время совпадает — сначала длинные
+      // 3. Сортируем
       items.sort((a, b) => {
           if (a.start !== b.start) return a.start - b.start;
           return (b.end - b.start) - (a.end - a.start);
       });
 
-      // 4. Алгоритм "Укладки" в колонки (Visual Columns)
+      // 4. Алгоритм "Укладки" в колонки
       const columns = [];
       items.forEach(item => {
           let placed = false;
-          // Пытаемся положить в существующую колонку
           for (let i = 0; i < columns.length; i++) {
               const colItems = columns[i];
               const lastInCol = colItems[colItems.length - 1];
-              
-              // Если текущее событие начинается ПОСЛЕ того, как закончилось последнее в этой колонке
               if (item.start >= lastInCol.end) {
                   colItems.push(item);
                   item.colIndex = i;
@@ -1361,41 +1366,35 @@
                   break;
               }
           }
-          // Если не влезло никуда — создаем новую колонку
           if (!placed) {
               columns.push([item]);
               item.colIndex = columns.length - 1;
           }
       });
 
-      // 5. Отрисовка с расчетом ширины
+      // 5. Отрисовка
       items.forEach(item => {
-          // Ищем максимальный индекс колонки среди ВСЕХ соседей, с которыми мы пересекаемся
-          // Это нужно, чтобы если в 10:00 занято 2 человека, они оба стали узкими (50%)
           let maxColIndex = 0;
-          
           items.forEach(other => {
-               // Проверка пересечения времени
                if (Math.max(item.start, other.start) < Math.min(item.end, other.end)) {
                    if (other.colIndex > maxColIndex) maxColIndex = other.colIndex;
                }
           });
           
-          // Количество колонок в этой группе пересечений
           const totalCols = maxColIndex + 1;
-
-          // Вычисляем CSS
           const widthPercent = 100 / totalCols;
           const leftPercent = item.colIndex * widthPercent;
 
           const el = createEventEl(item.data);
-          
-          // Применяем стили разделения
           el.style.width = `calc(${widthPercent}% - 4px)`;
           el.style.left = `calc(${leftPercent}% + 2px)`;
-          
-          // Добавляем Z-index, чтобы колонка справа была чуть выше (для красоты теней)
           el.style.zIndex = 10 + item.colIndex;
+
+          // === ВОТ ГЛАВНОЕ ОТЛИЧИЕ ===
+          // Если ширина меньше 85% (то есть 2 колонки и больше), включаем мини-режим (скрываем текст)
+          if (widthPercent < 85) {
+              el.classList.add('mini');
+          }
 
           col.appendChild(el);
       });
