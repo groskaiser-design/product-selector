@@ -1088,14 +1088,82 @@
     }
   }
 
+  // === УМНАЯ ОТРИСОВКА (С РАЗДЕЛЕНИЕМ КОЛОНОК) ===
   function renderEventsForColumn(col, dateStr, dayIdx) {
+      // 1. Берем события только этого дня
       const dayEvents = sessions.filter(s => s.dateStr === dateStr);
-      dayEvents.sort((a,b) => a.start.localeCompare(b.start));
 
-      dayEvents.forEach(s => {
-          const el = createEventEl(s);
-          el.style.width = 'calc(100% - 4px)';
-          el.style.left = '2px';
+      // 2. Превращаем время в минуты для расчетов
+      const items = dayEvents.map(s => {
+          const [h, m] = s.start.split(':').map(Number);
+          const [hE, mE] = s.end.split(':').map(Number);
+          return {
+              data: s,
+              start: h * 60 + m,
+              end: hE * 60 + mE,
+              colIndex: 0 // По умолчанию нулевая колонка
+          };
+      });
+
+      // 3. Сортируем: сначала ранние, если время совпадает — сначала длинные
+      items.sort((a, b) => {
+          if (a.start !== b.start) return a.start - b.start;
+          return (b.end - b.start) - (a.end - a.start);
+      });
+
+      // 4. Алгоритм "Укладки" в колонки (Visual Columns)
+      const columns = [];
+      items.forEach(item => {
+          let placed = false;
+          // Пытаемся положить в существующую колонку
+          for (let i = 0; i < columns.length; i++) {
+              const colItems = columns[i];
+              const lastInCol = colItems[colItems.length - 1];
+              
+              // Если текущее событие начинается ПОСЛЕ того, как закончилось последнее в этой колонке
+              if (item.start >= lastInCol.end) {
+                  colItems.push(item);
+                  item.colIndex = i;
+                  placed = true;
+                  break;
+              }
+          }
+          // Если не влезло никуда — создаем новую колонку
+          if (!placed) {
+              columns.push([item]);
+              item.colIndex = columns.length - 1;
+          }
+      });
+
+      // 5. Отрисовка с расчетом ширины
+      items.forEach(item => {
+          // Ищем максимальный индекс колонки среди ВСЕХ соседей, с которыми мы пересекаемся
+          // Это нужно, чтобы если в 10:00 занято 2 человека, они оба стали узкими (50%)
+          let maxColIndex = 0;
+          
+          items.forEach(other => {
+               // Проверка пересечения времени
+               if (Math.max(item.start, other.start) < Math.min(item.end, other.end)) {
+                   if (other.colIndex > maxColIndex) maxColIndex = other.colIndex;
+               }
+          });
+          
+          // Количество колонок в этой группе пересечений
+          const totalCols = maxColIndex + 1;
+
+          // Вычисляем CSS
+          const widthPercent = 100 / totalCols;
+          const leftPercent = item.colIndex * widthPercent;
+
+          const el = createEventEl(item.data);
+          
+          // Применяем стили разделения
+          el.style.width = `calc(${widthPercent}% - 4px)`;
+          el.style.left = `calc(${leftPercent}% + 2px)`;
+          
+          // Добавляем Z-index, чтобы колонка справа была чуть выше (для красоты теней)
+          el.style.zIndex = 10 + item.colIndex;
+
           col.appendChild(el);
       });
   }
