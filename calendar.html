@@ -308,7 +308,7 @@
 
   <div class="form-group">
     <div class="form-label">Клиент</div>
-    <input type="text" class="input-box" id="inpClient" list="clientList" placeholder="Введите имя клиента..." autocomplete="off">
+    <input type="text" class="input-box" id="inpClient" list="clientList" placeholder="Поиск клиента или новый гость..." autocomplete="off">
     <datalist id="clientList"></datalist>
   </div>
   <div class="form-group">
@@ -354,8 +354,8 @@
 </div>
 
 <script>
-  // 1. CONFIG (CLEANED)
-  const APP_VERSION = 'v9.0-IDEAL-PRODUCT';
+  // 1. CONFIG (DB FIRST + GUEST MODE)
+  const APP_VERSION = 'v9.1-DB-FIRST';
   const API_URL = 'https://script.google.com/macros/s/AKfycbx9wM-OzH88XXUnEeA80Nh2QCA84D2AvQroJyl8xk6F0weMSmJNXII01oI5j20odNCnAg/exec'; 
 
   const GRID_H = 60;
@@ -530,17 +530,24 @@
     const note = document.getElementById('inpNote').value;
     const isRecurring = document.getElementById('inpRecurring').checked;
 
-    // --- SMART CLIENT CREATION ---
+    // --- LOGIC: DB FIRST vs GUEST ---
+    // 1. Пытаемся найти точное совпадение в базе (case-insensitive)
     let clientObj = clients.find(c => c.name.toLowerCase() === rawClientName.toLowerCase());
-    if (!clientObj) {
-        // Create new client on the fly
+    
+    if (clientObj) {
+        // КЛИЕНТ НАЙДЕН В БАЗЕ
+        console.log("Using existing DB client:", clientObj.name);
+    } else {
+        // КЛИЕНТ НЕ НАЙДЕН -> СОЗДАЕМ ГОСТЯ
         const newColor = colorPalette[clients.length % colorPalette.length];
         clientObj = { id: generateUniqueId(), name: rawClientName, color: newColor, schedule: {} };
-        clients.push(clientObj);
-        DataManager.fetchFromServer('save_client', { client: clientObj }); // Async save
-        console.log("New client created:", clientObj);
+        clients.push(clientObj); // Добавляем в локальный массив, чтобы он "стал своим"
+        DataManager.fetchFromServer('save_client', { client: clientObj }); // Отправляем на сервер, чтобы он попал в базу
+        console.log("Guest created:", clientObj);
+        showToast("Новый клиент (Гость) создан", true);
     }
-    // Update input to match official name
+    
+    // Обновляем input, чтобы там было красивое имя из объекта (например, с большой буквы)
     document.getElementById('inpClient').value = clientObj.name;
 
     const val = validateAppointment(dateStr, start, end, editingId, clientObj.id); 
