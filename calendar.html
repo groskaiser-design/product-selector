@@ -1648,12 +1648,8 @@ function toggleSessionStatus() {
         .catch(e => showToast("Ошибка сохранения в облако", false));
   }
 
-
-  // ==============================================
-  // 5. VIEW / UI HELPERS
-  // ==============================================
-  /* ============================================================
- * MODULE: TELEGRAM NOTIFICATIONS (11/10 EDITION)
+/* ============================================================
+ * MODULE: TELEGRAM NOTIFICATIONS (DEBUG EDITION)
  * ============================================================ */
 const NotificationManager = {
   formatDate(dateStr) {
@@ -1665,8 +1661,6 @@ const NotificationManager = {
 
   getText(type, session) {
     const datePretty = this.formatDate(session.dateStr);
-    // Для "update" показываем старое время, если оно передано, но сейчас упростим:
-    // просто показываем новое актуальное время.
     
     switch (type) {
       case 'create':
@@ -1695,27 +1689,58 @@ const NotificationManager = {
   },
 
   async send(type, sessionData) {
-    if (!sessionData || !sessionData.clientId) return;
+    // 1. ЛОГ: Проверяем, что пришло на вход
+    console.log('[Notify] Attempting to send:', type, sessionData);
+
+    if (!sessionData) {
+        console.error('[Notify] Error: sessionData is null');
+        return;
+    }
+
+    // 2. Достаем ID
     const clientId = String(sessionData.clientId);
+    console.log('[Notify] Detected Client ID:', clientId);
     
-    // Проверка на длину ID (чтобы не слать на "101" и тестовые)
+    // 3. Явная проверка ID
+    if (!sessionData.clientId || clientId === 'undefined' || clientId === 'null') {
+      console.error('[Notify] STOP: Client ID is missing in session data!');
+      // Попробуем найти клиента по имени, если ID потерялся (резервный механизм)
+      if (sessionData.client) {
+          const found = clients.find(c => c.name === sessionData.client);
+          if (found) {
+              console.log('[Notify] RECOVERY: Found ID by name:', found.id);
+              return this.send(type, { ...sessionData, clientId: found.id });
+          }
+      }
+      return;
+    }
+
+    // 4. Проверка на длину (тестовые ID)
     if (clientId.length < 5) {
-      console.log('[Notify] Skipped: Invalid Chat ID', clientId);
+      console.warn('[Notify] Skipped: ID is too short (Test ID)', clientId);
       return;
     }
 
     const text = this.getText(type, sessionData);
-    if (!text) return;
+    if (!text) {
+        console.error('[Notify] Error: Text generation failed');
+        return;
+    }
 
-    // Отправляем (fire & forget)
+    // 5. Отправка
+    console.log(`[Notify] Sending to GAS for ${clientId}...`);
+    
     DataManager.fetchFromServer('send_notification', {
       chatId: clientId,
       text: text
-    }).catch(e => console.error('[Notify] Failed', e));
+    })
+    .then(res => console.log('[Notify] Server Response:', res))
+    .catch(e => console.error('[Notify] Network Failed', e));
   }
 };
-  
-  
+  // ==============================================
+  // 5. VIEW / UI HELPERS
+  // ==============================================  
   function getLocalDateStr(date) { const y = date.getFullYear(); const m = String(date.getMonth() + 1).padStart(2, '0'); const d = String(date.getDate()).padStart(2, '0'); return `${y}-${m}-${d}`; }
   function getDateStr(offset) { const d=new Date(); d.setDate(d.getDate()+offset); return getLocalDateStr(d); }
   function getStartOfWeek(date) { const d=new Date(date); const day=d.getDay(); const diff=d.getDate()-day+(day===0?-6:1); d.setDate(diff); d.setHours(0,0,0,0); return d; }
