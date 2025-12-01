@@ -91,14 +91,23 @@
   .day-col-header.today .dch-day { color: var(--acc-blue); }
   .day-col-header.today .dch-num { color: #fff; font-weight: 700; }
 
-  /* UPDATED STATS BAR */
+/* UPDATED STATS BAR */
   .dch-stats { 
     width: 44px; height: 4px; 
-    background: rgba(255,255,255,0.1); border-radius: 2px; margin-top: 4px; 
-    overflow: hidden; display: flex; 
+    background: rgba(255,255,255,0.15); /* Чуть ярче фон (серый) */
+    border-radius: 2px; margin-top: 5px; 
+    overflow: hidden; display: none; /* Скрыт по умолчанию, JS покажет */
+    justify-content: flex-start; /* Чтобы полоска росла слева */
   }
-  .day-col-header.today .dch-stats { background: rgba(255,255,255,0.2); }
-  .dch-stats-fill { height: 100%; background: var(--acc-current); width: 0%; transition: width 0.3s ease, background 0.3s ease; }
+  .day-col-header.today .dch-stats { background: rgba(255,255,255,0.25); }
+  
+  .dch-stats-fill { 
+      height: 100%; 
+      background: var(--acc-current); 
+      width: 0%; 
+      transition: width 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.3s ease; 
+      border-radius: 2px;
+  }
   .dch-stats.has-data .dch-stats-fill { min-width: 6px; }
   
   .matrix-body { display: flex; width: max-content; position: relative; }
@@ -1109,17 +1118,86 @@
   }
   
   function updateAllDayStats() { document.querySelectorAll('.day-col-header').forEach(h => { updateDayStats(h.getAttribute('data-date')); }); }
+  // === ОБНОВЛЕННАЯ ЛОГИКА АНАЛИТИКИ (ТЕРМОМЕТР) ===
   function updateDayStats(dateStr) {
-    const track = document.getElementById(`stat-${dateStr}`); if (!track) return;
-    const hasEvents = sessions.some(s => s.dateStr === dateStr);
-    const isOff = dateExceptions[dateStr] === 'off';
-
-    if (isOff || !hasEvents) { 
+    const track = document.getElementById(`stat-${dateStr}`); 
+    if (!track) return;
+    
+    // 1. Получаем настройки дня
+    const d = new Date(dateStr);
+    let dayIdx = d.getDay() - 1; if (dayIdx === -1) dayIdx = 6;
+    
+    // Если день помечен как выходной через исключения - скрываем
+    if (dateExceptions[dateStr] === 'off') { 
         track.style.display = 'none'; 
+        return; 
+    }
+
+    // 2. Считаем РАБОЧУЮ ЕМКОСТЬ (в минутах)
+    // Берем количество рабочих часов из графика * 60
+    const workHours = availabilityPattern[dayIdx] || [];
+    const capacityMins = workHours.length * 60;
+
+    // 3. Считаем ФАКТИЧЕСКУЮ ЗАНЯТОСТЬ (в минутах)
+    // Берем все активные тренировки
+    const daySessions = sessions.filter(s => s.dateStr === dateStr && s.status !== 'cancelled');
+    
+    if (daySessions.length === 0) {
+        track.style.display = 'none';
+        return;
+    }
+
+    // Превращаем тренировки в интервалы минут [start, end]
+    let intervals = daySessions.map(s => {
+        const [h1, m1] = s.start.split(':').map(Number);
+        const [h2, m2] = s.end.split(':').map(Number);
+        return [h1 * 60 + m1, h2 * 60 + m2];
+    });
+
+    // МЕРДЖИМ ИНТЕРВАЛЫ (чтобы групповая тренировка не считалась за двойную нагрузку по времени)
+    intervals.sort((a, b) => a[0] - b[0]);
+    let merged = [];
+    if (intervals.length > 0) {
+        let curr = intervals[0];
+        for (let i = 1; i < intervals.length; i++) {
+            if (intervals[i][0] < curr[1]) {
+                // Пересечение - продлеваем текущий конец, если нужно
+                curr[1] = Math.max(curr[1], intervals[i][1]);
+            } else {
+                merged.push(curr);
+                curr = intervals[i];
+            }
+        }
+        merged.push(curr);
+    }
+
+    // Суммируем чистое время работы
+    let busyMins = 0;
+    merged.forEach(iv => busyMins += (iv[1] - iv[0]));
+
+    // 4. ОТРИСОВКА
+    track.style.display = 'flex';
+    const fill = track.querySelector('.dch-stats-fill');
+    
+    // Сценарий А: Рабочее время не задано (0 часов), но тренировка стоит -> Красный (Переработка)
+    if (capacityMins === 0) {
+        fill.style.width = '100%';
+        fill.style.background = 'var(--acc-red)';
+        return;
+    }
+
+    // Сценарий Б: Обычный расчет
+    const percent = (busyMins / capacityMins) * 100;
+    
+    // Если переработка (>100%) -> Красный
+    if (percent > 100) {
+        fill.style.width = '100%';
+        fill.style.background = 'var(--acc-red)';
     } else {
-        track.style.display = 'flex';
-        track.querySelector('.dch-stats-fill').style.width = '100%';
-        track.querySelector('.dch-stats-fill').style.background = 'var(--acc-current)';
+        // Норма -> Синий (пропорционально)
+        // Math.max(15, ...) чтобы даже короткая тренировка была видна хотя бы точкой
+        fill.style.width = `${Math.max(15, percent)}%`; 
+        fill.style.background = 'var(--acc-current)';
     }
   }
 
