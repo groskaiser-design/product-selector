@@ -355,22 +355,14 @@
 </div>
 
 <script>
-  // ==========================================
-  // BLOCK 3: CONFIG & STATE
-  // (Настройки, Переменные, Данные)
-  // ==========================================
-  const APP_VERSION = 'v10.0-MODULAR-VISUALS';
+  // 1. CONFIG & STATE
+  const APP_VERSION = 'v10.1-GHOST-BUSTER';
   const API_URL = 'https://script.google.com/macros/s/AKfycbx9wM-OzH88XXUnEeA80Nh2QCA84D2AvQroJyl8xk6F0weMSmJNXII01oI5j20odNCnAg/exec'; 
 
   const GRID_H = 60;
   let startOffset = -30, endOffset = 60;
-  let currentStart = getStartOfWeek(new Date());
-  currentStart.setDate(currentStart.getDate() + startOffset);
   
-  let updateInterval, selectedDayForOptions = null, longPressTimer = null;
-  let isScrolling = false, activeTouchEl = null;
-
-  // DATA STORAGE
+  // Data Storage
   const KEY_PATTERN = 'uc_pattern', KEY_EXCEPTIONS = 'uc_exceptions', KEY_RANGES = 'uc_ranges', KEY_CLIENTS = 'uc_clients', KEY_SESSIONS = 'uc_sessions';
   let availabilityPattern = {0:[],1:[],2:[],3:[],4:[],5:[],6:[]};
   let dateExceptions = {}; 
@@ -381,14 +373,13 @@
   const colorPalette = ['#B0BEC5', '#90A4AE', '#78909C', '#607D8B', '#455A64', '#BCAAA4', '#8D6E63', '#5D4037', '#FF5252', '#FF1744', '#D50000', '#B71C1C', '#FF4081', '#F50057', '#C51162', '#880E4F', '#E040FB', '#D500F9', '#AA00FF', '#4A148C', '#7C4DFF', '#651FFF', '#6200EA', '#311B92', '#448AFF', '#2979FF', '#2962FF', '#0D47A1', '#40C4FF', '#00B0FF', '#0091EA', '#01579B', '#18FFFF', '#00E5FF', '#00B8D4', '#006064', '#69F0AE', '#00E676', '#00C853', '#1B5E20', '#B2FF59', '#76FF03', '#64DD17', '#FFFF00', '#FFEA00', '#FFD600', '#FFD740', '#FFC400', '#FFAB00', '#FF6D00'];
 
   let editingId = null, editingLinkedPattern = null, editingRangeIndex = null;
-  let tempSessionData = null;
+  let tempSessionData = null, selectedDayForOptions = null, updateInterval = null;
+  let isScrolling = false, activeTouchEl = null, longPressTimer = null;
 
-  // ==========================================
-  // BLOCK 4: DATA MANAGER (SERVER SYNC)
-  // (Обмен данными с Google Script)
-  // ==========================================
+  /* ==========================================
+     BLOCK 1: DATA MANAGER
+     ========================================== */
   const DataManager = {
-    getUserId() { return window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'guest'; },
     saveLocally(key, data) { localStorage.setItem(key, JSON.stringify(data)); },
     loadLocal() {
        try {
@@ -415,35 +406,22 @@
     }
   };
 
-  // ==========================================
-  // BLOCK 5: LOGIC & SYNC HELPERS
-  // (Железная логика, Санитизация, ID)
-  // ==========================================
-  function generateUniqueId() { return Date.now() + Math.floor(Math.random() * 1000000); }
-  
-  function normalizeTime(t) {
-      if (!t) return "00:00";
-      const parts = t.split(':');
-      return `${String(parts[0]).padStart(2,'0')}:${String(parts[1]).padStart(2,'0')}`;
-  }
-
-  async function syncDayToServer(dateStr) {
-      const daySessions = sessions.filter(s => s.dateStr === dateStr);
-      const payload = daySessions.map(s => ({ i: s.id, c: s.clientId, s: s.start, e: s.end, st: s.status, n: s.note, l: s.linkedPatternSlot }));
-      try { await DataManager.fetchFromServer('sync_day', { date: dateStr, day_data: payload }); } catch(e) { console.error("Sync failed", e); }
-  }
-
+  /* ==========================================
+     BLOCK 2: SYNC LOGIC (GHOST BUSTER)
+     ========================================== */
   async function init() {
     const tg = window.Telegram?.WebApp;
     if(tg) { tg.ready(); tg.expand(); try{tg.setHeaderColor('#050505');tg.setBackgroundColor('#050505');}catch(_){} }
 
     DataManager.loadLocal();
-    renderTimeColumn(); renderDayRange(startOffset, endOffset); 
     
-    // FIX: ScrollToToday with 12:00 centering
+    // UI INIT
+    renderTimeColumn(); 
+    renderDayRange(startOffset, endOffset); 
     scrollToToday(); 
+    startClock(); 
+    reRenderBlocks();
     
-    startClock(); reRenderBlocks();
     document.getElementById('matrixViewport').addEventListener('scroll', ()=>{ isScrolling=true; cancelLongPress(); onScroll(); handleInfiniteScroll(); }, {passive: true});
 
     const d = new Date();
@@ -458,32 +436,58 @@
             DataManager.fetchFromServer('init_load', { month_str: m1 }),
             DataManager.fetchFromServer('init_load', { month_str: m2 })
         ]);
-        applyDataToState(d1, m1); applyDataToState(d2, m2);
+        
+        // ВАЖНО: Передаем true (isFullSync), чтобы жестко перезаписать клиентов
+        applyDataToState(d1, m1, true); 
+        applyDataToState(d2, m2, true);
+        
         saveAllDataLocally();
-        showToast("Готово", true);
+        showToast("Синхронизация завершена", true);
     } catch (e) {
-        showToast("Оффлайн", false);
+        console.error(e);
+        showToast("Оффлайн режим", false);
     }
   }
 
-  function applyDataToState(data, monthStr) {
+  // === CORE SYNC FUNCTION ===
+  function applyDataToState(data, monthStr, isFullSync = false) {
     if (!data) return;
+    
+    // 1. SETTINGS
     if (data.settings) {
       if (data.settings.pattern) availabilityPattern = data.settings.pattern;
       if (data.settings.exceptions) dateExceptions = data.settings.exceptions;
       if (data.settings.ranges) specialRanges = data.settings.ranges;
     }
 
-    if (data.clients && Array.isArray(data.clients)) {
-        console.log('[Sync] Clients Overwritten (Server Authority)');
+    // 2. CLIENTS (GHOST BUSTING LOGIC)
+    // Если это полная синхронизация, мы берем то, что дал сервер. 
+    // Если сервер дал "ничего" (undefined), мы ставим пустой массив []. 
+    // Это убивает призраков, которых нет в базе.
+    if (isFullSync) {
+        if (data.clients) {
+            clients = data.clients;
+        } else {
+            // Если ключ clients отсутствует, значит база пуста -> чистим локальную память
+            clients = [];
+        }
+        console.log('[Sync] Clients Reset (Server Authority)');
+    } else if (data.clients && Array.isArray(data.clients)) {
+        // Частичное обновление (если вдруг используем)
         clients = data.clients;
     }
 
+    // 3. CALENDAR EVENTS
     if (data.calendar) {
+      // Удаляем старые записи за этот месяц
       sessions = sessions.filter(s => s.dateStr.substring(0, 7) !== monthStr);
+      
       Object.keys(data.calendar).forEach(dayKey => {
         data.calendar[dayKey].forEach(evt => {
-          const clientObj = clients.find(c => String(c.id) === String(evt.c)) || { name: '?', color: '#555' };
+          // Если клиент был удален (clients=[]), этот find вернет undefined -> 'Unknown'
+          // Но sanitizeData ниже это почистит.
+          const clientObj = clients.find(c => String(c.id) === String(evt.c)) || { name: 'Unknown', color: '#555' };
+          
           sessions.push({
             id: evt.i, clientId: evt.c, client: clientObj.name, 
             dateStr: `${monthStr}-${dayKey.padStart(2, '0')}`,
@@ -493,31 +497,46 @@
         });
       });
     }
+
+    // 4. CLEANUP (Удаление мусора)
     sanitizeData();
+
     reRenderBlocks();
     updateAllDayStats();
   }
 
+  // Чистит сессии, у которых нет живого клиента-родителя
   function sanitizeData() {
-      // 1. Remove Duplicate IDs
+      // A. Удаляем дубликаты ID
       const seen = new Set();
       sessions = sessions.filter(s => { const k = String(s.id); if(seen.has(k)) return false; seen.add(k); return true; });
       
-      // 2. Clean up Client Schedules & Empty Slots
+      // B. Удаляем сессии несуществующих клиентов (Призраков)
+      // Если clientID сессии не найден в массиве clients -> удаляем сессию
+      if (clients.length === 0) {
+          // Если клиентов нет вообще - удаляем все клиентские сессии
+          sessions = sessions.filter(s => s.type !== 'client');
+      } else {
+          const clientIds = new Set(clients.map(c => String(c.id)));
+          sessions = sessions.filter(s => {
+              if (s.type !== 'client') return true;
+              return clientIds.has(String(s.clientId));
+          });
+      }
+
+      // C. Чистка пустых дней в расписании клиентов
       clients.forEach(c => {
           if(c.schedule) {
-              const days = Object.keys(c.schedule);
-              days.forEach(dayKey => {
-                 if (!c.schedule[dayKey] || c.schedule[dayKey].length === 0) {
-                     delete c.schedule[dayKey]; 
-                 } else {
-                     c.schedule[dayKey].forEach(slot => { slot.s = normalizeTime(slot.s); slot.e = normalizeTime(slot.e); });
-                 }
+              Object.keys(c.schedule).forEach(dayKey => {
+                 if (!c.schedule[dayKey] || c.schedule[dayKey].length === 0) delete c.schedule[dayKey]; 
+                 else c.schedule[dayKey].forEach(slot => { slot.s = normalizeTime(slot.s); slot.e = normalizeTime(slot.e); });
               });
           }
       });
   }
-  
+
+  function generateUniqueId() { return Date.now() + Math.floor(Math.random() * 1000000); }
+  function normalizeTime(t) { if (!t) return "00:00"; const parts = t.split(':'); return `${String(parts[0]).padStart(2,'0')}:${String(parts[1]).padStart(2,'0')}`; }
   function saveAllDataLocally() {
     DataManager.saveLocally(KEY_PATTERN, availabilityPattern);
     DataManager.saveLocally(KEY_EXCEPTIONS, dateExceptions);
@@ -527,10 +546,9 @@
     updateAllDayStats();
   }
 
-  // ==========================================
-  // BLOCK 6: ACTIONS (USER INPUT)
-  // (Сохранение, Удаление, Логика конфликтов)
-  // ==========================================
+  /* ==========================================
+     BLOCK 3: ACTIONS & EVENTS
+     ========================================== */
   async function trySaveSession() {
     const rawClientName = document.getElementById('inpClient').value.trim();
     if (!rawClientName) { showToast("Введите имя клиента", false); return; }
@@ -541,20 +559,17 @@
     const note = document.getElementById('inpNote').value;
     const isRecurring = document.getElementById('inpRecurring').checked;
 
-    // LOGIC: DB FIRST vs GUEST
+    // DB FIRST Logic
     let clientObj = clients.find(c => c.name.toLowerCase() === rawClientName.toLowerCase());
     
-    if (clientObj) {
-        console.log("Using existing DB client:", clientObj.name);
-    } else {
+    if (!clientObj) {
+        // Guest Mode: Create new on the fly
         const newColor = colorPalette[clients.length % colorPalette.length];
         clientObj = { id: generateUniqueId(), name: rawClientName, color: newColor, schedule: {} };
         clients.push(clientObj); 
         DataManager.fetchFromServer('save_client', { client: clientObj }); 
-        console.log("Guest created:", clientObj);
-        showToast("Новый клиент (Гость) создан", true);
+        showToast("Новый клиент создан", true);
     }
-    
     document.getElementById('inpClient').value = clientObj.name;
 
     const val = validateAppointment(dateStr, start, end, editingId, clientObj.id); 
@@ -562,7 +577,7 @@
 
     const newData = { client: clientObj.name, clientId: clientObj.id, dateStr, start, end, note, status: 'planned', type: 'client' };
 
-    // EDIT RECURRING
+    // Update Logic
     if (editingLinkedPattern) {
         const newD = new Date(dateStr);
         let newDayIdx = newD.getDay() - 1; if(newDayIdx === -1) newDayIdx = 6;
@@ -576,7 +591,6 @@
         }
     }
 
-    // NEW RECURRING
     if (!editingLinkedPattern && isRecurring) {
         const newD = new Date(dateStr);
         let newDayIdx = newD.getDay() - 1; if(newDayIdx === -1) newDayIdx = 6;
@@ -595,7 +609,6 @@
         updateClientPattern(data.client, editingLinkedPattern, data);
         const cSave = clients.find(c => c.name === data.client);
         if(cSave) DataManager.fetchFromServer('save_client', { client: cSave });
-        showToast("Серия обновлена", true);
     }
 
     let finalId = editingId;
@@ -610,7 +623,10 @@
     }
 
     saveAllDataLocally(); closeAllSheets(); reRenderBlocks(); 
-    syncDayToServer(data.dateStr).then(() => showToast("Сохранено", true));
+    // Sync Day Payload
+    const daySessions = sessions.filter(s => s.dateStr === data.dateStr);
+    const payload = daySessions.map(s => ({ i: s.id, c: s.clientId, s: s.start, e: s.end, st: s.status, n: s.note, l: s.linkedPatternSlot }));
+    DataManager.fetchFromServer('sync_day', { date: data.dateStr, day_data: payload }).then(() => showToast("Сохранено", true));
   }
 
   function tryDeleteSession() {
@@ -635,8 +651,8 @@
          if(editingId && !String(editingId).startsWith('ghost')) sessions = sessions.filter(x => String(x.id) !== String(editingId));
          showToast("Серия удалена", false);
     } else {
+        // Delete Single
         if (!deleteSeries && editingLinkedPattern) {
-             // Cancel one
              const clientName = document.getElementById('inpClient').value;
              if (editingId && !String(editingId).startsWith('ghost')) sessions = sessions.filter(x => String(x.id) !== String(editingId));
              
@@ -653,7 +669,11 @@
         }
     }
     saveAllDataLocally(); closeAllSheets(); reRenderBlocks();
-    syncDayToServer(dateToSync);
+    
+    // Sync Day
+    const daySessions = sessions.filter(s => s.dateStr === dateToSync);
+    const payload = daySessions.map(s => ({ i: s.id, c: s.clientId, s: s.start, e: s.end, st: s.status, n: s.note, l: s.linkedPatternSlot }));
+    DataManager.fetchFromServer('sync_day', { date: dateToSync, day_data: payload });
   }
 
   function updateClientPattern(clientName, oldSlot, newData) { 
@@ -665,7 +685,7 @@
         const idx = arr.findIndex(sl => normalizeTime(sl.s) === normalizeTime(oldSlot.s) && normalizeTime(sl.e) === normalizeTime(oldSlot.e)); 
         if (idx !== -1) {
             arr.splice(idx, 1);
-            if(arr.length === 0) delete client.schedule[oldSlot.dayIdx]; 
+            if(arr.length === 0) delete client.schedule[oldSlot.dayIdx];
         }
     } 
     if (newData) { 
@@ -698,10 +718,9 @@
     return hasConflict ? { valid: true, warning: `Пересечение с ${conflictName}` } : { valid: true }; 
   }
 
-  // ==========================================
-  // BLOCK 7: UI & RENDERING
-  // (Отрисовка, Скролл, События)
-  // ==========================================
+  /* ==========================================
+     BLOCK 4: RENDER & UI
+     ========================================== */
   function getLocalDateStr(date) { const y = date.getFullYear(); const m = String(date.getMonth() + 1).padStart(2, '0'); const d = String(date.getDate()).padStart(2, '0'); return `${y}-${m}-${d}`; }
   function getStartOfWeek(date) { const d=new Date(date); const day=d.getDay(); const diff=d.getDate()-day+(day===0?-6:1); d.setDate(diff); d.setHours(0,0,0,0); return d; }
   function hexToRgba(hex, alpha) { const r = parseInt(hex.slice(1, 3), 16); const g = parseInt(hex.slice(3, 5), 16); const b = parseInt(hex.slice(5, 7), 16); return `rgba(${r}, ${g}, ${b}, ${alpha})`; }
@@ -725,25 +744,25 @@
   }
 
   function reRenderBlocks() {
-  document.querySelectorAll('#gridColumns .day-column').forEach(col => {
-    col.querySelectorAll('.blocked-slot, .day-off-overlay, .blocked-range-part').forEach(e => e.remove());
-    const dateStr = col.getAttribute('data-date'); const dayIdx = parseInt(col.getAttribute('data-day-idx')); const colLeft = Math.round(col.offsetLeft); 
-    (availabilityPattern[dayIdx] || []).forEach(h => { const b=document.createElement('div'); b.className='blocked-slot stripe-bg'; b.style.top=`${h*GRID_H}px`; b.style.backgroundPosition=`-${colLeft}px -${h*GRID_H}px`; col.appendChild(b); });
-    
-    if (dateExceptions[dateStr] === 'off') { const o=document.createElement('div'); o.className='day-off-overlay stripe-bg'; o.style.backgroundPosition=`-${colLeft}px 0px`; col.appendChild(o); } 
-    else {
-      const cS = new Date(dateStr + 'T00:00:00').getTime(); const cE = new Date(dateStr + 'T23:59:59').getTime();
-      specialRanges.forEach(r => {
-        const rS = new Date(r.start).getTime(); const rE = new Date(r.end).getTime(); const oS = Math.max(cS, rS); const oE = Math.min(cE, rE);
-        if (oS < oE) {
-          if (oS <= cS && oE >= cE - 60000) { if (!col.querySelector('.day-off-overlay')) { const o=document.createElement('div'); o.className='day-off-overlay stripe-bg'; o.style.backgroundPosition=`-${colLeft}px 0px`; col.appendChild(o); } } 
-          else { const top=(oS-cS)/3600000*GRID_H; const h=(oE-oS)/3600000*GRID_H; const p=document.createElement('div'); p.className='blocked-range-part stripe-bg'; p.style.top=`${top}px`; p.style.height=`${h}px`; p.style.backgroundPosition=`-${colLeft}px -${top}px`; col.appendChild(p); }
-        }
-      });
-    }
-    renderEventsForColumn(col, dateStr, dayIdx); updateDayStats(dateStr);
-  });
-}
+    document.querySelectorAll('#gridColumns .day-column').forEach(col => {
+      col.querySelectorAll('.blocked-slot, .day-off-overlay, .blocked-range-part').forEach(e => e.remove());
+      const dateStr = col.getAttribute('data-date'); const dayIdx = parseInt(col.getAttribute('data-day-idx')); const colLeft = Math.round(col.offsetLeft); 
+      (availabilityPattern[dayIdx] || []).forEach(h => { const b=document.createElement('div'); b.className='blocked-slot stripe-bg'; b.style.top=`${h*GRID_H}px`; b.style.backgroundPosition=`-${colLeft}px -${h*GRID_H}px`; col.appendChild(b); });
+      
+      if (dateExceptions[dateStr] === 'off') { const o=document.createElement('div'); o.className='day-off-overlay stripe-bg'; o.style.backgroundPosition=`-${colLeft}px 0px`; col.appendChild(o); } 
+      else {
+        const cS = new Date(dateStr + 'T00:00:00').getTime(); const cE = new Date(dateStr + 'T23:59:59').getTime();
+        specialRanges.forEach(r => {
+          const rS = new Date(r.start).getTime(); const rE = new Date(r.end).getTime(); const oS = Math.max(cS, rS); const oE = Math.min(cE, rE);
+          if (oS < oE) {
+            if (oS <= cS && oE >= cE - 60000) { if (!col.querySelector('.day-off-overlay')) { const o=document.createElement('div'); o.className='day-off-overlay stripe-bg'; o.style.backgroundPosition=`-${colLeft}px 0px`; col.appendChild(o); } } 
+            else { const top=(oS-cS)/3600000*GRID_H; const h=(oE-oS)/3600000*GRID_H; const p=document.createElement('div'); p.className='blocked-range-part stripe-bg'; p.style.top=`${top}px`; p.style.height=`${h}px`; p.style.backgroundPosition=`-${colLeft}px -${top}px`; col.appendChild(p); }
+          }
+        });
+      }
+      renderEventsForColumn(col, dateStr, dayIdx); updateDayStats(dateStr);
+    });
+  }
 
   function renderEventsForColumn(col, dateStr, dayIdx) {
       col.querySelectorAll('.event-card').forEach(e => e.remove());
@@ -813,21 +832,16 @@
     const fill = track.querySelector('.dch-stats-fill'); fill.style.width = `${Math.min(100, percent)}%`; fill.style.background = (totalBusyMinutes > totalWorkingMinutes) ? 'var(--acc-red)' : 'var(--acc-current)';
   }
 
-  // FIX: scrollToToday with 12:00 centering
   function scrollToToday() { 
       const today = getLocalDateStr(new Date()); 
       const el = document.getElementById('header-' + today); 
       const vp = document.getElementById('matrixViewport'); 
       if(el && vp) { 
-          // Center Horizontally
           const vpW = vp.clientWidth; 
           const elLeft = el.offsetLeft; 
           const elW = el.offsetWidth; 
           vp.scrollLeft = elLeft - (vpW / 2) + (elW / 2); 
-          
-          // Scroll Vertically to 12:00 (12 * 60px)
-          const targetY = 12 * GRID_H; 
-          vp.scrollTop = targetY - (vp.clientHeight / 2); 
+          vp.scrollTop = 12 * GRID_H - (vp.clientHeight / 2); 
       } 
   }
 
@@ -837,6 +851,8 @@
   function cancelLongPress() { if(longPressTimer) clearTimeout(longPressTimer); if(activeTouchEl) { activeTouchEl.remove(); activeTouchEl = null; } }
   function handleInfiniteScroll() { const vp=document.getElementById('matrixViewport'); const sl=vp.scrollLeft, sw=vp.scrollWidth, cw=vp.clientWidth; if(sw-(sl+cw)<300) { const old=endOffset; endOffset+=14; renderDayRange(old+1, endOffset); reRenderBlocks(); } if(sl<300) { const old=startOffset; startOffset-=14; prependDays(startOffset, old-1); vp.scrollLeft+=(14*65); reRenderBlocks(); } }
   function prependDays(from, to) { const track=document.getElementById('daysHeaderTrack'), grid=document.getElementById('gridColumns'); const weekDays=['ПН','ВТ','СР','ЧТ','ПТ','СБ','ВС']; const base=new Date(); base.setHours(0,0,0,0); const todayStr = getLocalDateStr(new Date()); const fragH=document.createDocumentFragment(), fragC=document.createDocumentFragment(); for(let i=from; i<=to; i++) { const d=new Date(base); d.setDate(d.getDate()+i); const dateStr=getLocalDateStr(d); let dayIdx=d.getDay()-1; if(dayIdx===-1) dayIdx=6; const isToday = dateStr === todayStr; const h=document.createElement('div'); h.className=`day-col-header ${isToday ? 'today' : ''}`; h.id=`header-${dateStr}`; h.setAttribute('data-date', dateStr); h.innerHTML=`<div class="dch-day">${weekDays[dayIdx]}</div><div class="dch-num">${d.getDate()}</div><div class="dch-stats" id="stat-${dateStr}"><div class="dch-stats-fill"></div></div>`; h.onclick=()=>openDayOptions(dateStr, `${weekDays[dayIdx]} ${d.getDate()}`); fragH.appendChild(h); const c=document.createElement('div'); c.className=`day-column ${isToday ? 'today' : ''}`; c.setAttribute('data-date', dateStr); c.setAttribute('data-day-idx', dayIdx); renderEventsForColumn(c, dateStr, dayIdx); attachLongPressHandler(c, d); fragC.appendChild(c); updateDayStats(dateStr); } track.insertBefore(fragH, track.firstChild); grid.insertBefore(fragC, grid.querySelector('.day-column')); }
+  
+  // SHEETS
   function openAddSession(d) { editingId=null; editingLinkedPattern=null; populateClientDatalist(); document.getElementById('sheetTitle').textContent='Новая'; document.getElementById('btnDelete').style.display='none'; document.getElementById('patternInfoBox').style.display='none'; document.getElementById('recurringOptionContainer').style.display = 'flex'; document.getElementById('inpRecurring').checked = false; document.getElementById('inpDate').value=getLocalDateStr(d); document.getElementById('inpClient').value=''; updateDateDisplay(); const h=d.getHours(); document.getElementById('inpStart').value=`${String(h).padStart(2,'0')}:00`; document.getElementById('inpEnd').value=`${String(h+1).padStart(2,'0')}:00`; openSheet('sessionSheet'); }
   function openEdit(s) { editingId=s.id; editingLinkedPattern = s.linkedPatternSlot || null; populateClientDatalist(); const isNew = !sessions.some(sess => String(sess.id) === String(s.id)); document.getElementById('sheetTitle').textContent = isNew ? 'Подтвердить' : 'Редактировать'; if (!isNew || editingLinkedPattern) { document.getElementById('btnDelete').style.display = 'block'; } else { document.getElementById('btnDelete').style.display = 'none'; } const pBox = document.getElementById('patternInfoBox'); const rOption = document.getElementById('recurringOptionContainer'); if (editingLinkedPattern) { pBox.style.display = 'flex'; pBox.querySelector('.pib-text').textContent = "Часть регулярного расписания."; rOption.style.display = 'none'; } else { pBox.style.display = 'none'; rOption.style.display = 'flex'; document.getElementById('inpRecurring').checked = false; } document.getElementById('inpClient').value=s.client; document.getElementById('inpDate').value=s.dateStr; document.getElementById('inpStart').value=s.start; document.getElementById('inpEnd').value=s.end; document.getElementById('inpNote').value=s.note||''; updateDateDisplay(); openSheet('sessionSheet'); }
   function updateDateDisplay() { const val = document.getElementById('inpDate').value; const disp = document.getElementById('dateDisplay'); if (!val) { disp.textContent = ''; return; } const [y, m, d] = val.split('-').map(Number); const dateObj = new Date(y, m - 1, d); const options = { weekday: 'long', month: 'long', day: 'numeric' }; disp.textContent = dateObj.toLocaleDateString('ru-RU', options); }
