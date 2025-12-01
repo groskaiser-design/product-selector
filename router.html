@@ -9,7 +9,7 @@
 <script>
 // 🔔 КРИТИЧНО: фиксируем момент загрузки страницы В САМОМ НАЧАЛЕ
 window.__pageLoadTime = performance.now();
-const APP_HTML_VERSION = 'v2025-0004'; // ↑ меняй при каждом релизе
+const APP_HTML_VERSION = 'v2025-0005'; // ↑ меняй при каждом релизе
 
 (function smartVersionCheck(){
   try{
@@ -537,14 +537,19 @@ window.addEventListener('pageshow', (e)=>{
   };
 
   /* --- SYNC LOGIC --- */
+  /* --- SYNC LOGIC (ROBUST VERSION) --- */
   async function syncData() {
     const loader = document.getElementById('loader');
+    
+    // 1. Сначала загружаем то, что есть в памяти (мгновенный показ)
     const localData = loadCache();
     
-    if (localData && localData.menu) {
+    // Если в кэше есть данные — показываем их сразу, чтобы не было пустого экрана
+    if (localData && localData.widgets && localData.widgets.length > 0) {
       renderAll(localData);
       loader.classList.add('hidden');
     } else {
+      // Только если кэш совсем пуст/битый — показываем "заглушки"
       renderAll(DEFAULT_DATA);
       loader.classList.add('hidden');
     }
@@ -553,20 +558,46 @@ window.addEventListener('pageshow', (e)=>{
 
     try {
       const initData = window.Telegram?.WebApp?.initData || '';
+      
+      // 2. Делаем запрос к серверу
       const response = await fetch(API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify({ action: 'get_data', init_data: initData })
       });
+      
       const json = await response.json();
 
-      if (json.ok) {
-        if (!localData || localData.version != json.version || true) { 
+      // === ЗОНА ГАРАНТИИ ===
+      // Мы проверяем:
+      // A. Сервер сказал "ok: true"
+      // B. Пришел массив widgets
+      // C. В этом массиве ЕСТЬ элементы (длина > 0)
+      const isServerDataValid = json.ok && Array.isArray(json.widgets) && json.widgets.length > 0;
+
+      if (isServerDataValid) {
+        // Дополнительная проверка: обновились ли данные реально?
+        // Мы сравниваем содержимое (строковое представление), чтобы избежать лишних перерисовок,
+        // НО обновляем, если данные отличаются от кэша.
+        const cacheStr = JSON.stringify(localData?.widgets || []);
+        const serverStr = JSON.stringify(json.widgets);
+
+        if (cacheStr !== serverStr) {
+          console.log('🔄 Data updated from server');
           saveCache(json);
-          renderAll(json); 
+          renderAll(json);
+        } else {
+          console.log('✅ Data is up to date');
         }
+      } else {
+        console.warn('⚠️ Server returned empty or invalid widgets. Keeping cache.');
+        // Здесь мы НЕ трогаем кэш. Если сервер глюкнул — пользователь видит старые данные, а не нули.
       }
-    } catch (e) { console.warn('Offline:', e); }
+
+    } catch (e) { 
+      console.warn('Offline or Server Error:', e); 
+      // При ошибке сети тоже ничего не делаем, данные остаются из кэша.
+    }
   }
 
   function renderAll(data) {
