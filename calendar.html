@@ -634,13 +634,16 @@
     border-radius: 12px;
     border-left: 3px solid transparent;
   }
+  /* Обновляем ширину времени в списке дня */
   .de-time {
     font-size: 15px;
     font-weight: 600;
     color: #fff;
-    width: 50px;
+    width: 95px; /* Было 50px, расширили для "12:00 - 13:00" */
     font-variant-numeric: tabular-nums;
+    white-space: nowrap;
   }
+  
   .de-name {
     font-size: 15px;
     color: rgba(255, 255, 255, 0.9);
@@ -2331,12 +2334,23 @@ function renderPatternEditor() {
               const clientObj = clients.find(c => c.name === s.client);
               const color = clientObj ? clientObj.color : '#fff';
               
+              // Проверяем статус для галочки
+              const isDone = s.status === 'completed';
+              const checkIcon = isDone 
+                  ? `<svg style="width:16px; height:16px; color:var(--acc-green); margin-left:8px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>` 
+                  : '';
+              
               const row = document.createElement('div');
               row.className = 'de-item';
               row.style.borderLeftColor = color;
+              
+              // Добавили s.end и галочку
               row.innerHTML = `
-                  <div class="de-time">${s.start}</div>
-                  <div class="de-name">${s.client}</div>
+                  <div class="de-time">${s.start} - ${s.end}</div>
+                  <div class="de-name" style="display:flex; align-items:center;">
+                      ${s.client}
+                      ${checkIcon}
+                  </div>
               `;
               listContainer.appendChild(row);
           });
@@ -2359,69 +2373,6 @@ function renderPatternEditor() {
       }
 
       openSheet('dayOptionsSheet');
-  }
-
-  // Единый обработчик кнопки
-  function handleDayToggle() {
-      if (!selectedDayForOptions) return;
-      
-      const isOff = dateExceptions[selectedDayForOptions] === 'off';
-      
-      if (isOff) {
-          // Включаем обратно (удаляем из исключений)
-          delete dateExceptions[selectedDayForOptions];
-          showToast("День снова рабочий", true);
-      } else {
-          // Выключаем
-          dateExceptions[selectedDayForOptions] = 'off';
-          showToast("Установлен выходной");
-      }
-      
-      // Сохраняем и обновляем
-      DataManager.saveLocally();
-      DataManager.fetchFromServer('save_settings', { settings: { exceptions: dateExceptions } });
-      
-      reRenderBlocks();
-      closeAllSheets();
-  }
-
-  // Хелпер для красивого времени (120 -> 2ч, 150 -> 2ч 30м)
-  function formatMinsToHrs(mins) {
-      if (mins === 0) return "0";
-      const h = Math.floor(mins / 60);
-      const m = mins % 60;
-      if (m === 0) return `${h}ч`;
-      return `${h}ч ${m}м`;
-  }
-
-  function toggleSessionStatus() {
-    if (!editingId) return;
-    
-    // 1. Находим тренировку
-    const sessionIndex = sessions.findIndex(s => s.id === editingId);
-    if (sessionIndex === -1) return;
-    
-    const s = sessions[sessionIndex];
-    // 2. Меняем статус на противоположный
-    const newStatus = (s.status === 'completed') ? 'planned' : 'completed';
-    sessions[sessionIndex].status = newStatus;
-    
-    // 3. Сохраняем и обновляем UI
-    DataManager.saveLocally();
-    reRenderBlocks();
-    updateAllDayStats(); // Чтобы обновился прогресс-бар в шапке
-    closeAllSheets();
-    
-    // 4. Уведомление
-    if (newStatus === 'completed') {
-        showToast("Тренировка завершена! 💪", true);
-        if (navigator.vibrate) navigator.vibrate(50);
-    } else {
-        showToast("Статус возвращен");
-    }
-    
-    // 5. Отправляем в облако
-    DataManager.syncBatch([s.dateStr]);
   }
 
   
