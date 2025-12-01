@@ -461,10 +461,7 @@
       <input type="hidden" id="ceColor">
     </div>
 
-    <div class="form-group">
-      <div class="form-label">Повторять еженедельно</div>
-      <div id="ceScheduleContainer" style="background: rgba(255,255,255,0.03); padding:10px; border-radius:8px;"></div>
-    </div>
+   
   </div>
 
   <div class="sheet-fixed-footer">
@@ -489,8 +486,8 @@
 
 <script>
   // 1. CONFIG
-  const APP_VERSION = 'v8.0-SYNC-DAY';
-  // 👇 ПРОВЕРЬ, ЧТО ТУТ СТОИТ ТВОЯ ССЫЛКУ 👇
+  const APP_VERSION = 'v9.0-UNIFIED';
+  // 👇 ПРОВЕРЬ, ЧТО ТУТ СТОИТ ТВОЯ ССЫЛКА 👇
   const API_URL = 'https://script.google.com/macros/s/AKfycbx9wM-OzH88XXUnEeA80Nh2QCA84D2AvQroJyl8xk6F0weMSmJNXII01oI5j20odNCnAg/exec'; 
 
   const GRID_H = 60;
@@ -559,31 +556,26 @@
        3. INIT & SYNC HELPERS
      ========================================== */
   
-  // === ГЕНЕРАТОР УНИКАЛЬНОГО ID (Защита от дублей) ===
   function generateUniqueId() {
       return Date.now() + Math.floor(Math.random() * 1000000);
   }
 
-  // === НОВАЯ ФУНКЦИЯ: ОТПРАВКА ВСЕГО ДНЯ ===
-  
+  // ОТПРАВКА ОДНОГО ДНЯ (Для commitSave и commitDelete)
   async function syncDayToServer(dateStr) {
-      // 1. Собираем все сессии за этот день (включая статус cancelled)
       const daySessions = sessions.filter(s => s.dateStr === dateStr);
       
-      // 2. Ужимаем данные
       const payload = daySessions.map(s => ({
         i: s.id,
         c: s.clientId,
         s: s.start,
         e: s.end,
         st: s.status,
-        n: s.note,
-        l: s.linkedPatternSlot
+        n: s.note
+        // l: s.linkedPatternSlot - УБРАЛИ, так как больше не используем сложные связи
       }));
 
       console.log(`[Sync] Day ${dateStr}:`, payload);
 
-      // 3. Отправляем полной перезаписью
       try {
         await DataManager.fetchFromServer('sync_day', { date: dateStr, day_data: payload });
       } catch(e) {
@@ -609,15 +601,12 @@
     const nextM = new Date(d);
     nextM.setMonth(d.getMonth() + 1);
     const m2 = `${nextM.getFullYear()}-${String(nextM.getMonth()+1).padStart(2,'0')}`;
-
-    console.log(`[Sync] Загружаем: ${m1} и ${m2}`);
     
     try {
         await Promise.all([
             DataManager.fetchFromServer('init_load', { month_str: m1 }).then(data => applyDataToState(data, m1)),
             DataManager.fetchFromServer('init_load', { month_str: m2 }).then(data => applyDataToState(data, m2))
         ]);
-        
         saveAllDataLocally();
         showToast("Синхронизация завершена", true);
     } catch (e) {
@@ -648,8 +637,7 @@
             end: evt.e, 
             status: evt.st, 
             note: evt.n, 
-            type: 'client',
-            linkedPatternSlot: evt.l || null 
+            type: 'client'
           });
         });
       });
@@ -668,8 +656,10 @@
   }
 
   /* ==========================================
-       4. ACTIONS & SAVING (UPDATED)
+       4. ACTIONS & SAVING
      ========================================== */
+  
+  // === ГЛАВНАЯ ФУНКЦИЯ СОХРАНЕНИЯ ===
   async function trySaveSession() {
     const clientName = document.getElementById('inpClient').value;
     const dateStr = document.getElementById('inpDate').value;
@@ -684,14 +674,7 @@
         return;
     }
 
-    const val = validateAppointment(dateStr, start, end, editingId, clientObj.id); 
-    if(!val.valid) { 
-        showToast(val.msg, false);
-        return;
-    } 
-    if(val.warning) {
-        showToast(val.warning + " (Сохраняем...)", false);
-    }
+    if(start >= end) { showToast("Время начала должно быть раньше конца", false); return; }
 
     const newData = { 
         client: clientName, 
@@ -699,51 +682,74 @@
         dateStr, start, end, note, status: 'planned', type: 'client'
     };
 
-    if (editingLinkedPattern) {
-        const newD = new Date(dateStr);
-        let newDayIdx = newD.getDay() - 1; if(newDayIdx === -1) newDayIdx = 6;
-        const isTimeChanged = (start !== editingLinkedPattern.s || end !== editingLinkedPattern.e);
-        const isDayChanged = (newDayIdx !== editingLinkedPattern.dayIdx);
-        if (isTimeChanged || isDayChanged) {
-            tempSessionData = newData; 
-            openActionSheet('save');
-            return;
-        }
-    }
-
-    if (!editingLinkedPattern && isRecurring) {
-        const newD = new Date(dateStr);
-        let newDayIdx = newD.getDay() - 1; if(newDayIdx === -1) newDayIdx = 6;
-        updateClientPattern(clientName, null, { dateStr, start, end });
-        const cSave = clients.find(c => c.name === clientName);
-        if(cSave) DataManager.fetchFromServer('save_client', { client: cSave });
-        newData.linkedPatternSlot = { dayIdx: newDayIdx, s: start, e: end };
-        showToast("Серия создана", true);
+    // Если "Повторять" -> Генерируем серию
+    if (isRecurring) {
+        saveSeries(newData, 12); // 12 недель
+        return;
     }
     
-    commitSave(newData, false);
+    // Если одиночное -> Обычное сохранение
+    commitSave(newData);
   }
 
-  // === ОБНОВЛЕННАЯ ФУНКЦИЯ СОХРАНЕНИЯ ===
-  function commitSave(data, updateSeries) {
-    if (updateSeries && editingLinkedPattern) {
-        updateClientPattern(data.client, editingLinkedPattern, data);
-        const cSave = clients.find(c => c.name === data.client);
-        if(cSave) DataManager.fetchFromServer('save_client', { client: cSave });
-        showToast("Серия обновлена", true);
-    }
+  // === ГЕНЕРАЦИЯ СЕРИИ (BATCH SYNC) ===
+  function saveSeries(baseData, weeksCount) {
+      const newSessions = []; 
+      const baseDate = new Date(baseData.dateStr);
+      
+      for (let i = 0; i < weeksCount; i++) {
+          const d = new Date(baseDate);
+          d.setDate(baseDate.getDate() + (i * 7));
+          const dStr = getLocalDateStr(d);
+          
+          const sId = generateUniqueId() + i; 
+          const session = {
+              ...baseData,
+              id: sId,
+              dateStr: dStr,
+              linkedPatternSlot: null 
+          };
+          newSessions.push(session);
+      }
 
-    // 1. Обновляем локальный массив (Используем generateUniqueId)
+      sessions = sessions.concat(newSessions);
+      
+      const payloadMap = {};
+      newSessions.forEach(s => {
+          if(!payloadMap[s.dateStr]) payloadMap[s.dateStr] = [];
+          const existingOnDay = sessions.filter(ex => ex.dateStr === s.dateStr);
+          const minified = existingOnDay.map(x => ({
+              i: x.id, c: x.clientId, s: x.start, e: x.end, st: x.status, n: x.note
+          }));
+          payloadMap[s.dateStr] = minified;
+      });
+
+      const batchChanges = Object.keys(payloadMap).map(k => ({ date: k, day_data: payloadMap[k] }));
+
+      saveAllDataLocally();
+      closeAllSheets(); 
+      reRenderBlocks();
+      showToast(`Создана серия (${weeksCount} нед.)`, true);
+
+      DataManager.fetchFromServer('batch_sync', { changes: batchChanges })
+          .then(() => showToast("Синхронизация завершена", true))
+          .catch(() => showToast("Ошибка синхронизации", false));
+  }
+  
+  // === СОХРАНЕНИЕ ОДИНОЧНОЙ ЗАПИСИ (ВОССТАНОВЛЕНО) ===
+  function commitSave(data) {
     let finalId = editingId;
+    
+    // Если создаем новую или если редактировали (не ghost)
     if(editingId && !String(editingId).startsWith('ghost')) {
         const idx = sessions.findIndex(s => String(s.id) === String(editingId));
         if (idx !== -1) { 
-           sessions[idx] = { ...sessions[idx], ...data, linkedPatternSlot: updateSeries ? null : sessions[idx].linkedPatternSlot };
+           sessions[idx] = { ...sessions[idx], ...data };
         } else { 
             sessions.push({ id: finalId, ...data }); 
         }
     } else {
-        finalId = generateUniqueId(); // НОВЫЙ ID
+        finalId = generateUniqueId();
         sessions.push({ id: finalId, ...data });
     }
 
@@ -751,90 +757,57 @@
     closeAllSheets(); 
     reRenderBlocks(); 
 
-    // 2. ОТПРАВЛЯЕМ ВЕСЬ ДЕНЬ
+    // Синхронизируем конкретный день
     syncDayToServer(data.dateStr).then(() => {
-       showToast("Сохранено (Облако)", true);
+       showToast("Сохранено", true);
     });
   }
 
+  // === УДАЛЕНИЕ (ВОССТАНОВЛЕНО) ===
   function tryDeleteSession() {
-    if (editingLinkedPattern) openActionSheet('delete');
-    else commitDelete(false);
+      // Так как серии теперь независимы, удаляем просто текущую запись
+      commitDelete();
   }
 
-  // === ОБНОВЛЕННАЯ ФУНКЦИЯ УДАЛЕНИЯ ===
-  function commitDelete(deleteSeries) {
-    // Получаем дату ДО удаления (важно, если id "ghost")
+  function commitDelete() {
     let dateToSync = document.getElementById('inpDate').value;
+    
     if(editingId && !String(editingId).startsWith('ghost')) {
         const s = sessions.find(x => String(x.id) === String(editingId));
         if(s) dateToSync = s.dateStr;
+        
+        // Фильтруем массив, убирая эту запись
+        sessions = sessions.filter(x => String(x.id) !== String(editingId));
     }
 
-    if (deleteSeries && editingLinkedPattern) {
-         // Удаление серии
-         const s = sessions.find(x => String(x.id) === String(editingId)) || { client: document.getElementById('inpClient').value };
-         updateClientPattern(s.client, editingLinkedPattern, null);
-         const cSave = clients.find(c => c.name === s.client);
-         if(cSave) DataManager.fetchFromServer('save_client', { client: cSave });
-         
-         // Удаляем эту конкретную запись из отображения
-         if(editingId && !String(editingId).startsWith('ghost')) sessions = sessions.filter(x => String(x.id) !== String(editingId));
-         showToast("Серия удалена", false);
-
-    } else {
-        if (!deleteSeries && editingLinkedPattern) {
-             // Исключение из серии (Cancel)
-             const clientName = document.getElementById('inpClient').value;
-             const dateStr = document.getElementById('inpDate').value;
-             
-             // Удаляем активную версию, если она была
-             if (editingId && !String(editingId).startsWith('ghost')) {
-                 sessions = sessions.filter(x => String(x.id) !== String(editingId));
-             }
-
-             // Добавляем запись "Отменено"
-             const cancelledS = { 
-                 id: generateUniqueId(), 
-                 client: clientName, 
-                 dateStr: dateStr, 
-                 start: editingLinkedPattern.s, 
-                 end: editingLinkedPattern.e, 
-                 status: 'cancelled', 
-                 type: 'client',
-                 linkedPatternSlot: editingLinkedPattern 
-             };
-             sessions.push(cancelledS);
-             showToast("Отменено", false);
-
-        } else if(editingId && !String(editingId).startsWith('ghost')) {
-            // Обычное удаление
-            sessions = sessions.filter(x => String(x.id) !== String(editingId));
-            showToast("Удалено", false);
-        }
-    }
-    
     saveAllDataLocally();
     closeAllSheets(); 
     reRenderBlocks();
 
-    // СИНХРОНИЗИРУЕМ ДЕНЬ
+    // Отправляем обновленный день на сервер
     syncDayToServer(dateToSync);
+    showToast("Удалено", false);
   }
 
+  // === СОХРАНЕНИЕ КЛИЕНТА (БЕЗ РАСПИСАНИЯ) ===
   async function saveClient() {
     const name = document.getElementById('ceName').value; 
     if(!name) return alert('Введите имя'); 
+    
     editingClient.name = name;
+    delete editingClient.schedule; // Чистим расписание
+
     const idx = clients.findIndex(c => String(c.id) === String(editingClient.id));
     if(idx !== -1) clients[idx] = editingClient; else clients.push(editingClient);
     
     saveAllDataLocally();
-    closeAllSheets(); reRenderBlocks(); 
+    closeAllSheets(); 
+    reRenderBlocks(); 
+
     try {
         await DataManager.fetchFromServer('save_client', { client: editingClient });
         showToast("Клиент сохранен", true);
-    } catch(e) { showToast("Ошибка", false); }
+    } catch(e) { showToast("Ошибка сохранения", false); }
   }
 
   async function syncSettings() {
@@ -1013,19 +986,16 @@
     
     let busyIntervals = [];
     
-    // 3. РЕАЛЬНЫЕ ЗАПИСИ (Тут все ок, у них есть жесткая дата)
+    // 3. РЕАЛЬНЫЕ ЗАПИСИ
     sessions.filter(s => s.dateStr === dateStr && s.status !== 'cancelled').forEach(s => { const [h1, m1] = s.start.split(':').map(Number); const [h2, m2] = s.end.split(':').map(Number); busyIntervals.push([h1 * 60 + m1, h2 * 60 + m2]); });
     
-    // 4. СЕРИИ (GHOSTS) — ВОТ ТУТ НУЖНА ПРОВЕРКА
+    // 4. СЕРИИ (БОЛЬШЕ НЕ НУЖНЫ, Т.К. ОНИ ТЕПЕРЬ РЕАЛЬНЫЕ ЗАПИСИ)
+    // Но код оставим для обратной совместимости, если вдруг остались старые данные
     clients.forEach(client => { 
         const daySched = client.schedule?.[dayIdx]; 
         if (daySched) { 
             daySched.forEach(slot => { 
-                // === ВАЖНАЯ СТРОКА ===
-                // Если у серии есть дата начала, и этот день (dateStr) был РАНЬШЕ начала — пропускаем.
                 if (slot.startFrom && dateStr < slot.startFrom) return;
-
-                // Проверяем, нет ли уже реальной записи поверх этого слота
                 const existsOrCancelled = sessions.some(s => s.client === client.name && s.dateStr === dateStr && s.start === slot.s); 
                 if (!existsOrCancelled) { 
                     const [h1, m1] = slot.s.split(':').map(Number); 
@@ -1051,7 +1021,6 @@
     fill.style.background = (totalBusyMinutes > totalWorkingMinutes) ? 'var(--acc-red)' : 'var(--acc-current)';
   }
   
-  // === CORE RENDER LOGIC WITH OVERLAP SUPPORT ===
   function renderEventsForColumn(col, dateStr, dayIdx) {
       col.querySelectorAll('.event-card').forEach(e => e.remove());
 
@@ -1061,6 +1030,7 @@
           allEvents.push({ data: s, type: 'real', ...getTimeRange(s.start, s.end) });
       });
 
+      // BACKWARD COMPATIBILITY: Ghosts (для старых клиентов, если такие остались в кэше)
       clients.forEach(client => {
           const daySched = client.schedule?.[dayIdx];
           if (daySched) {
@@ -1182,34 +1152,19 @@
       const options = { weekday: 'long', month: 'long', day: 'numeric' }; 
       disp.textContent = dateObj.toLocaleDateString('ru-RU', options); 
   }
-  function openActionSheet(type) { const sheet = document.getElementById('actionSheet'); const overlay = document.getElementById('actionSheetOverlay'); const title = document.getElementById('asTitle'); const btnOne = document.getElementById('asBtnOne'); const btnSeries = document.getElementById('asBtnSeries'); overlay.classList.add('active'); sheet.classList.add('open'); if (type === 'save') { title.textContent = "Изменение повторяющегося события"; btnOne.textContent = "Только эта тренировка"; btnOne.className = "as-button"; btnOne.onclick = () => { closeActionSheet(); commitSave(tempSessionData, false); }; btnSeries.textContent = "Изменить всю серию"; btnSeries.className = "as-button bold"; btnSeries.onclick = () => { closeActionSheet(); commitSave(tempSessionData, true); }; } else if (type === 'delete') { title.textContent = "Удаление события"; btnOne.textContent = "Только эту тренировку"; btnOne.className = "as-button danger"; btnOne.onclick = () => { closeActionSheet(); commitDelete(false); }; btnSeries.textContent = "Удалить из расписания"; btnSeries.className = "as-button danger bold"; btnSeries.onclick = () => { closeActionSheet(); commitDelete(true); }; } }
+  function openActionSheet(type) { 
+      // В v9.0 "Серии" стали набором одиночных записей, поэтому "редактировать серию" пока отключим визуально,
+      // либо оставим работать только для одиночных удалений, чтобы не усложнять.
+      // Для простоты сейчас используем обычное удаление/сохранение
+      if (type === 'delete') {
+         tryDeleteSession();
+      } else {
+         commitSave(tempSessionData);
+      }
+      // UI ActionSheet больше не нужен, раз мы развязали серии
+  }
   function closeActionSheet() { document.getElementById('actionSheet').classList.remove('open'); document.getElementById('actionSheetOverlay').classList.remove('active'); }
 
-    function updateClientPattern(clientName, oldSlot, newData) { 
-        const client = clients.find(c => c.name === clientName); 
-        if (!client) return; 
-    
-        if (oldSlot && client.schedule && client.schedule[oldSlot.dayIdx]) { 
-            const arr = client.schedule[oldSlot.dayIdx]; 
-            const idx = arr.findIndex(sl => sl.s === oldSlot.s && sl.e === oldSlot.e); 
-            if (idx !== -1) arr.splice(idx, 1); 
-        } 
-    
-        if (newData) { 
-            const newD = new Date(newData.dateStr); 
-            let newDayIdx = newD.getDay() - 1; 
-            if(newDayIdx === -1) newDayIdx = 6; 
-    
-            if (!client.schedule[newDayIdx]) client.schedule[newDayIdx] = []; 
-            
-            client.schedule[newDayIdx].push({ 
-                s: newData.start, 
-                e: newData.end, 
-                startFrom: newData.dateStr 
-            }); 
-        } 
-    }
-  
   function scrollToToday() { const today = getLocalDateStr(new Date()); const el = document.getElementById('header-' + today); const vp = document.getElementById('matrixViewport'); if(el && vp) { const vpW = vp.clientWidth; const elLeft = el.offsetLeft; const elW = el.offsetWidth; vp.scrollLeft = elLeft - (vpW / 2) + (elW / 2); vp.scrollTop = 12 * GRID_H - (vp.clientHeight / 2); } }
   function onScroll() { const vp=document.getElementById('matrixViewport'), headers=document.querySelectorAll('.day-col-header'); for(let h of headers) if(h.offsetLeft>=vp.scrollLeft) { const d=new Date(h.getAttribute('data-date')); document.getElementById('headerMonth').textContent=`${d.toLocaleString('ru',{month:'long'}).toUpperCase()} ${d.getFullYear()}`; break; } }
   function openClientsSheet() { closeAllSheets(); renderClientsList(); openSheet('clientsSheet'); }
@@ -1219,16 +1174,13 @@
     closeAllSheets(); 
     
     const isEditing = !!client;
-
-    editingClient = client ? JSON.parse(JSON.stringify(client)) : { id: Date.now(), name: '', color: colorPalette[0], schedule: {} }; 
+    editingClient = client ? JSON.parse(JSON.stringify(client)) : { id: Date.now(), name: '', color: colorPalette[0] }; 
     
     document.getElementById('ceTitle').textContent = isEditing ? 'Карточка клиента' : 'Новый клиент'; 
     
     const nameInput = document.getElementById('ceName');
     nameInput.value = editingClient.name;
     if (isEditing) {
-        nameInput.setAttribute('readonly', true);
-        nameInput.style.opacity = '0.6';
     } else {
         nameInput.removeAttribute('readonly');
         nameInput.style.opacity = '1';
@@ -1236,65 +1188,15 @@
 
     const colorGroup = document.getElementById('ceColorGroup');
     if (colorGroup) {
-        colorGroup.style.display = isEditing ? 'none' : 'block';
+        colorGroup.style.display = 'block'; 
     }
 
     document.getElementById('ceColor').value = editingClient.color; 
     renderColorGrid(); 
-    renderClientSchedule(); 
     openSheet('clientEditSheet'); 
   }
   
   function renderColorGrid() { const grid = document.getElementById('ceColorGrid'); grid.innerHTML = ''; colorPalette.forEach(c => { const d = document.createElement('div'); d.className = `color-option ${editingClient.color === c ? 'selected' : ''}`; d.style.backgroundColor = c; d.onclick = () => { editingClient.color = c; renderColorGrid(); }; grid.appendChild(d); }); }
-  function renderClientSchedule() { const cont = document.getElementById('ceScheduleContainer'); cont.innerHTML = ''; const days = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']; days.forEach((dName, idx) => { const row = document.createElement('div'); row.className = 'sched-row'; const slots = editingClient.schedule[idx] || []; let slotsHtml = slots.map((s, sIdx) => `<div class="sched-chip" style="background:${editingClient.color}; color:${getContrastYIQ(editingClient.color)}" onclick="removeClientSlot(${idx}, ${sIdx})">${s.s}-${s.e} ×</div>`).join(''); row.innerHTML = `<div class="sched-day">${dName}</div><div class="sched-slots">${slotsHtml}<div class="sched-add" onclick="addClientSlot(${idx})">+</div></div>`; cont.appendChild(row); }); }
-  function addClientSlot(dayIdx) { editingDayIdx = dayIdx; openSheet('timeSlotSheet'); }
-  function removeClientSlot(dayIdx, slotIdx) { editingClient.schedule[dayIdx].splice(slotIdx, 1); renderClientSchedule(); }
-  function closeTimeSlotSheet() { document.getElementById('timeSlotSheet').classList.remove('open'); }
-  function confirmTimeSlot() { const s = document.getElementById('tsStart').value; const e = document.getElementById('tsEnd').value; if(!editingClient.schedule[editingDayIdx]) editingClient.schedule[editingDayIdx] = []; checkScheduleConflict(editingDayIdx, s, e); editingClient.schedule[editingDayIdx].push({s, e}); closeTimeSlotSheet(); renderClientSchedule(); }
-  function checkScheduleConflict(dayIdx, start, end) { const blockedHours = availabilityPattern[dayIdx] || []; if(blockedHours.length === 0) return; const [h1, m1] = start.split(':').map(Number); const [h2, m2] = end.split(':').map(Number); const startMins = h1 * 60 + m1; const endMins = h2 * 60 + m2; let hasConflict = false; for(let h of blockedHours) { const bStart = h * 60; const bEnd = (h + 1) * 60; if (Math.max(startMins, bStart) < Math.min(endMins, bEnd)) { hasConflict = true; break; } } if(hasConflict) { showToast("Обратите внимание: обычно вы не работаете в это время"); } }
-  
-function validateAppointment(dateStr, start, end, excludeSessionId, checkClientId) { 
-    const [h1, m1] = start.split(':').map(Number); 
-    const [h2, m2] = end.split(':').map(Number); 
-    const startMins = h1 * 60 + m1; 
-    const endMins = h2 * 60 + m2; 
-
-    // Безопасное приведение ID к строке для сравнения
-    const targetIdStr = String(checkClientId);
-    let hasConflict = false;
-    let conflictName = '';
-
-    for (let s of sessions) { 
-        if (s.dateStr !== dateStr) continue; 
-        if (s.status === 'cancelled') continue;
-        
-        // Сравниваем ID как строки, чтобы избежать ошибок "123" !== 123
-        if (excludeSessionId && String(s.id) === String(excludeSessionId)) continue; 
-
-        const [sH1, sM1] = s.start.split(':').map(Number); 
-        const [sH2, sM2] = s.end.split(':').map(Number); 
-        const sStart = sH1 * 60 + sM1; 
-        const sEnd = sH2 * 60 + sM2; 
-
-        if (Math.max(startMins, sStart) < Math.min(endMins, sEnd)) {
-            // Если клиент тот же - блокируем
-            if (s.clientId && String(s.clientId) === targetIdStr) {
-                 return { 
-                    valid: false, 
-                    msg: `Этот клиент (${s.client}) уже записан на это время!` 
-                 }; 
-            }
-            hasConflict = true;
-            conflictName = s.client;
-        }
-    } 
-    
-    if (hasConflict) {
-        return { valid: true, warning: `Пересечение с ${conflictName}` };
-    }
-
-    return { valid: true }; 
-}
   
   function showToast(msg, isSuccess = false) { const t = document.getElementById('toast'); t.className = 'toast-notification ' + (isSuccess ? 'success' : ''); document.getElementById('toastTitle').textContent = isSuccess ? "Успешно" : "Обратите внимание"; document.getElementById('toastMessage').textContent = msg; t.classList.add('show'); setTimeout(() => { t.classList.remove('show'); }, 3500); }
   function populateClientSelect() { const sel = document.getElementById('inpClient'); sel.innerHTML = ''; clients.forEach(c => { const opt = document.createElement('option'); opt.value = c.name; opt.textContent = c.name; sel.appendChild(opt); }); }
