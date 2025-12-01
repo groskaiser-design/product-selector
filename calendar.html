@@ -748,30 +748,43 @@
   }
 
   // --- SAVE LOGIC ---
+ // --- SAVE LOGIC ---
   async function trySaveSession() {
+      // 1. Считываем данные из формы
       const clientName = document.getElementById('inpClient').value;
       const dateStr = document.getElementById('inpDate').value;
       const start = document.getElementById('inpStart').value;
       const end = document.getElementById('inpEnd').value;
       const note = document.getElementById('inpNote').value;
       
+      // Логика для Серий (чтение чекбокса и количества)
       const createSeries = document.getElementById('inpRecurring').checked; 
-      let seriesCount = 4;
+      let seriesCount = 4; // Значение по умолчанию
       
       if (createSeries) {
           const val = parseInt(document.getElementById('inpSeriesCount').value);
+          // Валидация количества (защита от зависания)
           if (!val || val < 2) { showToast("Минимум 2 тренировки", false); return; }
           if (val > 100) { showToast("Максимум 100 за раз", false); return; }
           seriesCount = val;
       }
 
+      // 2. Находим объект клиента (нужен ID для проверки групповых)
       const clientObj = clients.find(c => c.name === clientName);
       if (!clientObj) { showToast("Ошибка: Выберите клиента из списка", false); return; }
 
-      const val = validateAppointment(dateStr, start, end, editingId); 
-      if(!val.valid) { showToast(val.msg, false); return; }
-      if(val.warning) showToast(val.warning + "...", false);
+      // 3. Валидация (передаем ID клиента для разрешения Групповых тренировок)
+      const val = validateAppointment(dateStr, start, end, editingId, clientObj.id); 
+      
+      if(!val.valid) { 
+          showToast(val.msg, false); // Ошибка (тот же клиент)
+          return; 
+      }
+      if(val.warning) {
+          showToast(val.warning, false); // Предупреждение (групповая)
+      }
 
+      // 4. Подготовка данных
       const baseData = {
           client: clientName,
           clientId: clientObj.id,
@@ -779,19 +792,72 @@
           status: 'planned'
       };
 
+      // Сценарий A: Редактирование существующей записи
       const currentSession = editingId ? sessions.find(s => s.id === editingId) : null;
       if (currentSession && currentSession.seriesId) {
+          // Если это часть серии — спрашиваем пользователя (Action Sheet)
           tempSessionData = { ...baseData, dateStr, id: editingId, seriesId: currentSession.seriesId };
           openActionSheet('save'); 
           return;
       }
 
+      // Сценарий B: Создание НОВОЙ серии
       if (!editingId && createSeries) {
-          createBatchSeries(baseData, dateStr, seriesCount); 
+          createBatchSeries(baseData, dateStr, seriesCount); // Передаем выбранное количество
           return;
       }
 
+      // Сценарий C: Обычное сохранение (одиночная запись)
       saveSingleSession({ ...baseData, dateStr, id: editingId || generateId(), seriesId: null });
+  }
+
+  // --- VALIDATION (UPDATED FOR GROUP TRAINING) ---
+  function validateAppointment(dateStr, start, end, excludeSessionId, checkClientId) { 
+      const [h1, m1] = start.split(':').map(Number); 
+      const [h2, m2] = end.split(':').map(Number); 
+      const startMins = h1 * 60 + m1; 
+      const endMins = h2 * 60 + m2; 
+
+      // Безопасное приведение ID к строке для сравнения
+      const targetIdStr = String(checkClientId);
+      let hasConflict = false;
+      let conflictName = '';
+
+      for (let s of sessions) { 
+          if (s.dateStr !== dateStr) continue; 
+          if (s.status === 'cancelled') continue;
+          
+          // Пропускаем саму себя при редактировании
+          if (excludeSessionId && String(s.id) === String(excludeSessionId)) continue; 
+
+          const [sH1, sM1] = s.start.split(':').map(Number); 
+          const [sH2, sM2] = s.end.split(':').map(Number); 
+          const sStart = sH1 * 60 + sM1; 
+          const sEnd = sH2 * 60 + sM2; 
+
+          // Проверка пересечения времени
+          if (Math.max(startMins, sStart) < Math.min(endMins, sEnd)) {
+              
+              // Если это ТОТ ЖЕ клиент - запрещаем
+              if (s.clientId && String(s.clientId) === targetIdStr) {
+                   return { 
+                      valid: false, 
+                      msg: `Этот клиент (${s.client}) уже записан на это время!` 
+                   }; 
+              }
+
+              // Если клиент ДРУГОЙ - это групповая. Запоминаем для предупреждения.
+              hasConflict = true;
+              conflictName = s.client;
+          }
+      } 
+      
+      // Разрешаем сохранение, но с предупреждением
+      if (hasConflict) {
+          return { valid: true, warning: `Групповая: также записан ${conflictName}` };
+      }
+
+      return { valid: true }; 
   }
 
   function saveSingleSession(data) {
@@ -1066,25 +1132,54 @@
   function handleInfiniteScroll() { const vp=document.getElementById('matrixViewport'); const sl=vp.scrollLeft, sw=vp.scrollWidth, cw=vp.clientWidth; if(sw-(sl+cw)<300) { const old=endOffset; endOffset+=14; renderDayRange(old+1, endOffset); reRenderBlocks(); } if(sl<300) { const old=startOffset; startOffset-=14; prependDays(startOffset, old-1); vp.scrollLeft+=(14*65); reRenderBlocks(); } }
   function prependDays(from, to) { const track=document.getElementById('daysHeaderTrack'), grid=document.getElementById('gridColumns'); const weekDays=['ПН','ВТ','СР','ЧТ','ПТ','СБ','ВС']; const base=new Date(); base.setHours(0,0,0,0); const todayStr = getLocalDateStr(new Date()); const fragH=document.createDocumentFragment(), fragC=document.createDocumentFragment(); for(let i=from; i<=to; i++) { const d=new Date(base); d.setDate(d.getDate()+i); const dateStr=getLocalDateStr(d); let dayIdx=d.getDay()-1; if(dayIdx===-1) dayIdx=6; const isToday = dateStr === todayStr; const h=document.createElement('div'); h.className=`day-col-header ${isToday ? 'today' : ''}`; h.id=`header-${dateStr}`; h.setAttribute('data-date', dateStr); h.innerHTML=`<div class="dch-day">${weekDays[dayIdx]}</div><div class="dch-num">${d.getDate()}</div><div class="dch-stats" id="stat-${dateStr}"><div class="dch-stats-fill"></div></div>`; h.onclick=()=>openDayOptions(dateStr, `${weekDays[dayIdx]} ${d.getDate()}`); fragH.appendChild(h); const c=document.createElement('div'); c.className=`day-column ${isToday ? 'today' : ''}`; c.setAttribute('data-date', dateStr); c.setAttribute('data-day-idx', dayIdx); renderEventsForColumn(c, dateStr, dayIdx); attachLongPressHandler(c, d); fragC.appendChild(c); updateDayStats(dateStr); } track.insertBefore(fragH, track.firstChild); grid.insertBefore(fragC, grid.querySelector('.day-column')); }
 
-  // --- VALIDATION ---
-  function validateAppointment(dateStr, start, end, excludeId) {
-      const [h1, m1] = start.split(':').map(Number);
-      const [h2, m2] = end.split(':').map(Number);
-      const sMins = h1*60+m1, eMins = h2*60+m2;
+  // --- VALIDATION (UPDATED FOR GROUP TRAINING) ---
+  function validateAppointment(dateStr, start, end, excludeSessionId, checkClientId) { 
+      const [h1, m1] = start.split(':').map(Number); 
+      const [h2, m2] = end.split(':').map(Number); 
+      const startMins = h1 * 60 + m1; 
+      const endMins = h2 * 60 + m2; 
 
-      for(let s of sessions) {
-          if(s.dateStr !== dateStr) continue;
-          if(s.id === excludeId) continue;
+      // Безопасное приведение ID к строке для сравнения
+      const targetIdStr = String(checkClientId);
+      let hasConflict = false;
+      let conflictName = '';
+
+      for (let s of sessions) { 
+          if (s.dateStr !== dateStr) continue; 
+          if (s.status === 'cancelled') continue; // Игнорируем отмененные
           
-          const [sh1, sm1] = s.start.split(':').map(Number);
-          const [sh2, sm2] = s.end.split(':').map(Number);
-          const ssMins = sh1*60+sm1, seMins = sh2*60+sm2;
+          // Пропускаем саму себя при редактировании
+          if (excludeSessionId && String(s.id) === String(excludeSessionId)) continue; 
 
-          if(Math.max(sMins, ssMins) < Math.min(eMins, seMins)) {
-              return { valid: false, msg: `Пересечение с: ${s.client}` };
+          const [sH1, sM1] = s.start.split(':').map(Number); 
+          const [sH2, sM2] = s.end.split(':').map(Number); 
+          const sStart = sH1 * 60 + sM1; 
+          const sEnd = sH2 * 60 + sM2; 
+
+          // Проверка пересечения времени
+          if (Math.max(startMins, sStart) < Math.min(endMins, sEnd)) {
+              
+              // ГЛАВНОЕ ИЗМЕНЕНИЕ:
+              // Если это ТОТ ЖЕ клиент - запрещаем
+              if (s.clientId && String(s.clientId) === targetIdStr) {
+                   return { 
+                      valid: false, 
+                      msg: `Этот клиент (${s.client}) уже записан на это время!` 
+                   }; 
+              }
+
+              // Если клиент ДРУГОЙ - это групповая. Запоминаем для предупреждения.
+              hasConflict = true;
+              conflictName = s.client;
           }
+      } 
+      
+      // Если было пересечение с другим человеком, возвращаем Warning, но valid = true
+      if (hasConflict) {
+          return { valid: true, warning: `Групповая: также записан ${conflictName}` };
       }
-      return { valid: true };
+
+      return { valid: true }; 
   }
 
   // --- SHEETS & UI GLUE ---
