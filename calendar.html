@@ -870,27 +870,61 @@
       afterSaveAction([data.dateStr]);
   }
 
-  function createBatchSeries(baseData, startDateStr, count) {
+// Helper: Create Batch (N weeks forward) with VALIDATION
+  function createBatchSeries(baseData, startDateStr, count) { 
       const seriesId = generateId(); 
       const datesToSync = [];
       const newSessions = [];
+      
+      let skippedCount = 0; // Счетчик пропущенных дублей
 
       let currentDate = new Date(startDateStr);
+      
       for(let i=0; i < count; i++) {
           const dStr = getLocalDateStr(currentDate);
-          const sess = {
-              ...baseData,
-              id: generateId(),
-              dateStr: dStr,
-              seriesId: seriesId
-          };
-          newSessions.push(sess);
-          datesToSync.push(dStr);
+          
+          // === ВНЕДРЯЕМ ПРОВЕРКУ ===
+          // Проверяем, свободен ли слот для ЭТОГО клиента
+          // baseData.start/end - время, baseData.clientId - ID клиента
+          const val = validateAppointment(dStr, baseData.start, baseData.end, null, baseData.clientId);
+          
+          // Если валидация вернула false (значит, ЭТОТ клиент уже записан тут)
+          if (!val.valid) {
+              console.log(`[Series] Skipped ${dStr}: Client already booked`);
+              skippedCount++;
+          } else {
+              // Если всё ок (или это групповая тренировка), создаем запись
+              const sess = {
+                  ...baseData,
+                  id: generateId(),
+                  dateStr: dStr,
+                  seriesId: seriesId
+              };
+              
+              newSessions.push(sess);
+              datesToSync.push(dStr);
+          }
+          
+          // Next week
           currentDate.setDate(currentDate.getDate() + 7);
       }
 
+      if (newSessions.length === 0) {
+          showToast("Все даты заняты этим клиентом!", false);
+          return;
+      }
+
+      // Push to memory
       sessions.push(...newSessions);
-      showToast(`Создана серия (${newSessions.length})`, true);
+      
+      // Формируем красивое сообщение
+      let msg = `Создана серия: ${newSessions.length}`;
+      if (skippedCount > 0) {
+          msg += ` (пропущено: ${skippedCount})`;
+      }
+      
+      showToast(msg, true);
+      
       afterSaveAction(datesToSync);
   }
 
