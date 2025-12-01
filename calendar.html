@@ -489,7 +489,7 @@
 
 <script>
   // 1. CONFIG
-  const APP_VERSION = 'v8.0-SYNC-DAY';
+  const APP_VERSION = 'v8.1-IRON-LOGIC';
   // 👇 ПРОВЕРЬ, ЧТО ТУТ СТОИТ ТВОЯ ССЫЛКУ 👇
   const API_URL = 'https://script.google.com/macros/s/AKfycbx9wM-OzH88XXUnEeA80Nh2QCA84D2AvQroJyl8xk6F0weMSmJNXII01oI5j20odNCnAg/exec'; 
 
@@ -563,9 +563,18 @@
   function generateUniqueId() {
       return Date.now() + Math.floor(Math.random() * 1000000);
   }
+  
+  // === HELPER: TIME NORMALIZER (NEW) ===
+  // Превращает любое время "H:M", "H:M:S" в формат "HH:MM" для сравнения
+  function normalizeTime(t) {
+      if (!t) return "00:00";
+      const parts = t.split(':');
+      const h = String(parts[0]).padStart(2, '0');
+      const m = String(parts[1]).padStart(2, '0');
+      return `${h}:${m}`;
+  }
 
   // === НОВАЯ ФУНКЦИЯ: ОТПРАВКА ВСЕГО ДНЯ ===
-  
   async function syncDayToServer(dateStr) {
       // 1. Собираем все сессии за этот день (включая статус cancelled)
       const daySessions = sessions.filter(s => s.dateStr === dateStr);
@@ -612,40 +621,60 @@
 
     console.log(`[Sync] Загружаем: ${m1} и ${m2}`);
     
+    // UPDATED INIT LOGIC WITH ROBUST SYNC
     try {
-        await Promise.all([
-            DataManager.fetchFromServer('init_load', { month_str: m1 }).then(data => applyDataToState(data, m1)),
-            DataManager.fetchFromServer('init_load', { month_str: m2 }).then(data => applyDataToState(data, m2))
+        const [d1, d2] = await Promise.all([
+            DataManager.fetchFromServer('init_load', { month_str: m1 }),
+            DataManager.fetchFromServer('init_load', { month_str: m2 })
         ]);
         
+        // Применяем данные (теперь с жесткой зачисткой)
+        applyDataToState(d1, m1);
+        applyDataToState(d2, m2);
+        
+        // Железно сохраняем
         saveAllDataLocally();
+        
         showToast("Синхронизация завершена", true);
     } catch (e) {
-        console.error(e);
+        console.error("Sync error", e);
         showToast("Работа в оффлайн режиме", false);
     }
   }
 
+  // === UPDATED APPLY FUNCTION (IRON LOGIC) ===
   function applyDataToState(data, monthStr) {
     if (!data) return;
+    
     if (data.settings) {
       if (data.settings.pattern) availabilityPattern = data.settings.pattern;
       if (data.settings.exceptions) dateExceptions = data.settings.exceptions;
       if (data.settings.ranges) specialRanges = data.settings.ranges;
     }
-    if (data.clients) clients = data.clients;
+
+    // 1. КЛИЕНТЫ: АБСОЛЮТНАЯ ВЛАСТЬ СЕРВЕРА
+    if (data.clients && Array.isArray(data.clients)) {
+        console.log('[Sync] Server Authority: Clients overwritten');
+        clients = data.clients;
+    }
+
+    // 2. КАЛЕНДАРЬ: ЗАЧИСТКА ТЕРРИТОРИИ
     if (data.calendar) {
-      sessions = sessions.filter(s => !s.dateStr.startsWith(monthStr));
+      // Удаляем ВСЕ локальные записи за этот месяц перед записью новых.
+      sessions = sessions.filter(s => s.dateStr.substring(0, 7) !== monthStr);
+
       Object.keys(data.calendar).forEach(dayKey => {
         data.calendar[dayKey].forEach(evt => {
+          // Защита от "сирот": ищем клиента по ID, если нет — ставим заглушку
           const clientObj = clients.find(c => String(c.id) === String(evt.c)) || { name: '?', color: '#555' };
+          
           sessions.push({
             id: evt.i, 
             clientId: evt.c, 
             client: clientObj.name, 
             dateStr: `${monthStr}-${dayKey.padStart(2, '0')}`,
-            start: evt.s, 
-            end: evt.e, 
+            start: normalizeTime(evt.s), 
+            end: normalizeTime(evt.e),   
             status: evt.st, 
             note: evt.n, 
             type: 'client',
@@ -654,8 +683,36 @@
         });
       });
     }
+
+    // 3. СБОРЩИК МУСОРА
+    sanitizeData();
+
     reRenderBlocks();
     updateAllDayStats();
+  }
+
+  // === NEW SANITIZATION FUNCTION ===
+  function sanitizeData() {
+      // 1. Уникальность ID событий
+      const seen = new Set();
+      sessions = sessions.filter(s => {
+          const k = String(s.id);
+          if(seen.has(k)) return false; 
+          seen.add(k);
+          return true;
+      });
+
+      // 2. Чистка расписаний клиентов (убираем секунды из шаблонов)
+      clients.forEach(c => {
+          if(c.schedule) {
+              Object.keys(c.schedule).forEach(dayKey => {
+                  c.schedule[dayKey].forEach(slot => {
+                      slot.s = normalizeTime(slot.s);
+                      slot.e = normalizeTime(slot.e);
+                  });
+              });
+          }
+      });
   }
   
   function saveAllDataLocally() {
@@ -1185,14 +1242,23 @@
   function openActionSheet(type) { const sheet = document.getElementById('actionSheet'); const overlay = document.getElementById('actionSheetOverlay'); const title = document.getElementById('asTitle'); const btnOne = document.getElementById('asBtnOne'); const btnSeries = document.getElementById('asBtnSeries'); overlay.classList.add('active'); sheet.classList.add('open'); if (type === 'save') { title.textContent = "Изменение повторяющегося события"; btnOne.textContent = "Только эта тренировка"; btnOne.className = "as-button"; btnOne.onclick = () => { closeActionSheet(); commitSave(tempSessionData, false); }; btnSeries.textContent = "Изменить всю серию"; btnSeries.className = "as-button bold"; btnSeries.onclick = () => { closeActionSheet(); commitSave(tempSessionData, true); }; } else if (type === 'delete') { title.textContent = "Удаление события"; btnOne.textContent = "Только эту тренировку"; btnOne.className = "as-button danger"; btnOne.onclick = () => { closeActionSheet(); commitDelete(false); }; btnSeries.textContent = "Удалить из расписания"; btnSeries.className = "as-button danger bold"; btnSeries.onclick = () => { closeActionSheet(); commitDelete(true); }; } }
   function closeActionSheet() { document.getElementById('actionSheet').classList.remove('open'); document.getElementById('actionSheetOverlay').classList.remove('active'); }
 
+    // === UPDATED PATTERN UPDATE FUNCTION ===
     function updateClientPattern(clientName, oldSlot, newData) { 
         const client = clients.find(c => c.name === clientName); 
         if (!client) return; 
     
         if (oldSlot && client.schedule && client.schedule[oldSlot.dayIdx]) { 
             const arr = client.schedule[oldSlot.dayIdx]; 
-            const idx = arr.findIndex(sl => sl.s === oldSlot.s && sl.e === oldSlot.e); 
-            if (idx !== -1) arr.splice(idx, 1); 
+            // FIX: Uses normalization to find the exact slot
+            const idx = arr.findIndex(sl => 
+                normalizeTime(sl.s) === normalizeTime(oldSlot.s) && 
+                normalizeTime(sl.e) === normalizeTime(oldSlot.e)
+            ); 
+            if (idx !== -1) {
+                arr.splice(idx, 1);
+                // Clean up empty days
+                if(arr.length === 0) delete client.schedule[oldSlot.dayIdx];
+            }
         } 
     
         if (newData) { 
@@ -1203,8 +1269,8 @@
             if (!client.schedule[newDayIdx]) client.schedule[newDayIdx] = []; 
             
             client.schedule[newDayIdx].push({ 
-                s: newData.start, 
-                e: newData.end, 
+                s: normalizeTime(newData.start), 
+                e: normalizeTime(newData.end), 
                 startFrom: newData.dateStr 
             }); 
         } 
