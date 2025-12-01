@@ -335,6 +335,84 @@
     position: relative;
     z-index: 2;
   }
+
+  /* DAY DASHBOARD STYLES */
+  .day-stats-container {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 24px;
+  }
+  .stat-card {
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    padding: 12px 8px;
+    text-align: center;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+  }
+  .stat-value {
+    font-size: 18px;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 2px;
+    font-variant-numeric: tabular-nums;
+  }
+  .stat-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  
+  .day-events-header {
+    font-size: 13px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    margin-bottom: 10px;
+    padding-left: 4px;
+    font-weight: 600;
+  }
+  
+  .day-events-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-bottom: 20px;
+  }
+  
+  .de-item {
+    display: flex;
+    align-items: center;
+    background: rgba(255, 255, 255, 0.03);
+    padding: 12px 14px;
+    border-radius: 12px;
+    border-left: 3px solid transparent;
+  }
+  .de-time {
+    font-size: 15px;
+    font-weight: 600;
+    color: #fff;
+    width: 50px;
+    font-variant-numeric: tabular-nums;
+  }
+  .de-name {
+    font-size: 15px;
+    color: rgba(255, 255, 255, 0.9);
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .de-empty {
+    text-align: center;
+    color: var(--text-muted);
+    padding: 20px;
+    font-size: 14px;
+    background: rgba(255,255,255,0.02);
+    border-radius: 12px;
+    border: 1px dashed rgba(255,255,255,0.1);
+  }
+  
 </style>
 </head>
 <body oncontextmenu="return false;">
@@ -460,10 +538,39 @@
   <div id="clientsListContainer" style="margin-top:20px;"></div>
 </div>
 
-<div class="sheet" id="dayOptionsSheet">
-  <div class="sheet-header"><div class="sh-title" id="dayOptionsTitle">Настройки дня</div><div class="sh-close" onclick="closeAllSheets()">Закрыть</div></div>
-  <button class="btn-primary btn-danger" onclick="toggleDayOff()">Сделать выходным</button>
-  <button class="btn-primary btn-secondary" onclick="clearDayOff()" style="margin-top:12px;">Сбросить</button>
+<div class="sheet fixed-layout" id="dayOptionsSheet" style="height: 70vh;">
+  <div class="sheet-header">
+    <div class="sh-title" id="doDateHeader">Дата</div>
+    <div class="sh-close" onclick="closeAllSheets()">Закрыть</div>
+  </div>
+  
+  <div class="sheet-scroll-area" style="padding-top: 0;">
+    
+    <div class="day-stats-container">
+      <div class="stat-card">
+        <div class="stat-value" id="doWorkHours">0ч</div>
+        <div class="stat-label">Рабочий план</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="doBusyHours">0ч</div>
+        <div class="stat-label">Занято</div>
+      </div>
+      <div class="stat-card" id="statLoadCard">
+        <div class="stat-value" id="doLoadPercent">0%</div>
+        <div class="stat-label">Загрузка</div>
+      </div>
+    </div>
+
+    <div class="day-events-header">Расписание</div>
+    <div id="doEventsList" class="day-events-list">
+      </div>
+  </div>
+
+  <div class="sheet-fixed-footer">
+    <button id="btnDayToggle" class="btn-primary" onclick="handleDayToggle()">
+      Сделать выходным
+    </button>
+  </div>
 </div>
 
 <script>
@@ -1525,6 +1632,139 @@
   function updateClock(){const n=new Date(),l=document.getElementById('globalTimeLine'),b=document.getElementById('timeLineBadge'),px=(n.getHours()*60+n.getMinutes())/60*GRID_H;l.style.top=`${px}px`;l.style.display='block';b.textContent=`${String(n.getHours()).padStart(2,'0')}:${String(n.getMinutes()).padStart(2,'0')}`;b.style.display='block';b.style.top=`${px}px`;}
 
   document.addEventListener('DOMContentLoaded', init);
+
+// === DAY DASHBOARD LOGIC ===
+  
+  function openDayOptions(dateStr) {
+      selectedDayForOptions = dateStr;
+      
+      // 1. Заголовок даты
+      const d = new Date(dateStr);
+      const options = { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' };
+      // Делаем первую букву заглавной (понедельник -> Понедельник)
+      const dateText = d.toLocaleDateString('ru-RU', options);
+      document.getElementById('doDateHeader').textContent = dateText.charAt(0).toUpperCase() + dateText.slice(1);
+
+      // 2. Расчет Статистики
+      let dayIdx = d.getDay() - 1; if (dayIdx === -1) dayIdx = 6;
+      
+      // Считаем часы по графику (Pattern)
+      const workHours = availabilityPattern[dayIdx] || [];
+      const availableHoursCount = 24 - workHours.length; // 24 минус зачеркнутые
+      const capacityMins = availableHoursCount * 60;
+      
+      // Считаем занятость (Sessions)
+      const daySessions = sessions.filter(s => s.dateStr === dateStr && s.status !== 'cancelled');
+      
+      // (Копируем логику слияния интервалов для точности)
+      let intervals = daySessions.map(s => {
+          const [h1, m1] = s.start.split(':').map(Number);
+          const [h2, m2] = s.end.split(':').map(Number);
+          return [h1 * 60 + m1, h2 * 60 + m2];
+      });
+      intervals.sort((a, b) => a[0] - b[0]);
+      let merged = [];
+      if (intervals.length > 0) {
+          let curr = intervals[0];
+          for (let i = 1; i < intervals.length; i++) {
+              if (intervals[i][0] < curr[1]) { curr[1] = Math.max(curr[1], intervals[i][1]); } 
+              else { merged.push(curr); curr = intervals[i]; }
+          }
+          merged.push(curr);
+      }
+      let busyMins = 0;
+      merged.forEach(iv => busyMins += (iv[1] - iv[0]));
+
+      // Заполняем UI цифрами
+      document.getElementById('doWorkHours').textContent = formatMinsToHrs(capacityMins);
+      document.getElementById('doBusyHours').textContent = formatMinsToHrs(busyMins);
+      
+      const percent = capacityMins > 0 ? Math.round((busyMins / capacityMins) * 100) : 0;
+      const pEl = document.getElementById('doLoadPercent');
+      pEl.textContent = percent + '%';
+      
+      // Красим проценты
+      const card = document.getElementById('statLoadCard');
+      if(percent > 100) { pEl.style.color = 'var(--acc-red)'; card.style.borderColor = 'rgba(255, 69, 58, 0.3)'; }
+      else if(percent > 80) { pEl.style.color = 'var(--acc-orange)'; card.style.borderColor = 'rgba(255, 159, 10, 0.3)'; }
+      else { pEl.style.color = 'var(--acc-green)'; card.style.borderColor = 'rgba(255,255,255,0.05)'; }
+
+      // 3. Список событий
+      const listContainer = document.getElementById('doEventsList');
+      listContainer.innerHTML = '';
+      
+      if (daySessions.length === 0) {
+          listContainer.innerHTML = `<div class="de-empty">Нет тренировок</div>`;
+      } else {
+          // Сортируем визуально
+          daySessions.sort((a, b) => a.start.localeCompare(b.start));
+          daySessions.forEach(s => {
+              const clientObj = clients.find(c => c.name === s.client);
+              const color = clientObj ? clientObj.color : '#fff';
+              
+              const row = document.createElement('div');
+              row.className = 'de-item';
+              row.style.borderLeftColor = color;
+              row.innerHTML = `
+                  <div class="de-time">${s.start}</div>
+                  <div class="de-name">${s.client}</div>
+              `;
+              listContainer.appendChild(row);
+          });
+      }
+
+      // 4. Кнопка (Состояние)
+      const btn = document.getElementById('btnDayToggle');
+      const isOff = dateExceptions[dateStr] === 'off';
+      
+      if (isOff) {
+          btn.textContent = 'Сделать рабочим днем';
+          btn.className = 'btn-primary btn-secondary'; // Зеленый/Серый стиль
+          btn.style.color = 'var(--acc-green)';
+          btn.style.background = 'rgba(48, 209, 88, 0.15)';
+      } else {
+          btn.textContent = 'Сделать выходным';
+          btn.className = 'btn-primary btn-danger';
+          btn.style.color = 'var(--acc-red)';
+          btn.style.background = 'rgba(255, 69, 58, 0.15)';
+      }
+
+      openSheet('dayOptionsSheet');
+  }
+
+  // Единый обработчик кнопки
+  function handleDayToggle() {
+      if (!selectedDayForOptions) return;
+      
+      const isOff = dateExceptions[selectedDayForOptions] === 'off';
+      
+      if (isOff) {
+          // Включаем обратно (удаляем из исключений)
+          delete dateExceptions[selectedDayForOptions];
+          showToast("День снова рабочий", true);
+      } else {
+          // Выключаем
+          dateExceptions[selectedDayForOptions] = 'off';
+          showToast("Установлен выходной");
+      }
+      
+      // Сохраняем и обновляем
+      DataManager.saveLocally();
+      DataManager.fetchFromServer('save_settings', { settings: { exceptions: dateExceptions } });
+      
+      reRenderBlocks();
+      closeAllSheets();
+  }
+
+  // Хелпер для красивого времени (120 -> 2ч, 150 -> 2ч 30м)
+  function formatMinsToHrs(mins) {
+      if (mins === 0) return "0";
+      const h = Math.floor(mins / 60);
+      const m = mins % 60;
+      if (m === 0) return `${h}ч`;
+      return `${h}ч ${m}м`;
+  }
+  
 </script>
 
 </body>
