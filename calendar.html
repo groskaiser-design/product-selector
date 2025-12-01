@@ -1120,6 +1120,7 @@
   function updateAllDayStats() { document.querySelectorAll('.day-col-header').forEach(h => { updateDayStats(h.getAttribute('data-date')); }); }
   // === ОБНОВЛЕННАЯ ЛОГИКА АНАЛИТИКИ (ТЕРМОМЕТР) ===
   // === ИСПРАВЛЕННАЯ АНАЛИТИКА (ТЕРМОМЕТР ЗАГРУЗКИ) ===
+ // === СТРОГАЯ АНАЛИТИКА (ЧЕСТНЫЙ ПРОЦЕНТ) ===
   function updateDayStats(dateStr) {
     const track = document.getElementById(`stat-${dateStr}`); 
     if (!track) return;
@@ -1127,19 +1128,17 @@
     const d = new Date(dateStr);
     let dayIdx = d.getDay() - 1; if (dayIdx === -1) dayIdx = 6;
     
-    // 1. Если день выключен вручную (Выходной) — скрываем
+    // 1. Проверяем исключения (выходной)
     if (dateExceptions[dateStr] === 'off') { 
         track.style.display = 'none'; 
         return; 
     }
 
-    // 2. Считаем РАБОЧУЮ ЕМКОСТЬ (Часы из Графика * 60)
-    // Если график пустой (не настроен), считаем емкость = 0
+    // 2. Считаем РАБОЧУЮ ЕМКОСТЬ (из настроек графика)
     const workHours = availabilityPattern[dayIdx] || [];
     const capacityMins = workHours.length * 60;
 
-    // 3. Считаем ФАКТИЧЕСКУЮ ЗАНЯТОСТЬ (в минутах)
-    // Берем только активные тренировки (не cancelled)
+    // 3. Считаем ЗАНЯТОСТЬ (учитывая пересечения)
     const daySessions = sessions.filter(s => s.dateStr === dateStr && s.status !== 'cancelled');
     
     if (daySessions.length === 0) {
@@ -1147,7 +1146,7 @@
         return;
     }
 
-    // Алгоритм слияния пересечений (чтобы 2 клиента в одно время не считались за 2 часа работы)
+    // Слияние интервалов (чтобы 2 клиента в одно время не считались х2)
     let intervals = daySessions.map(s => {
         const [h1, m1] = s.start.split(':').map(Number);
         const [h2, m2] = s.end.split(':').map(Number);
@@ -1161,7 +1160,7 @@
         let curr = intervals[0];
         for (let i = 1; i < intervals.length; i++) {
             if (intervals[i][0] < curr[1]) {
-                curr[1] = Math.max(curr[1], intervals[i][1]); // Продлеваем интервал
+                curr[1] = Math.max(curr[1], intervals[i][1]); 
             } else {
                 merged.push(curr);
                 curr = intervals[i];
@@ -1170,34 +1169,31 @@
         merged.push(curr);
     }
 
-    // Сумма чистых минут работы
     let busyMins = 0;
     merged.forEach(iv => busyMins += (iv[1] - iv[0]));
 
-    // 4. ВЫЧИСЛЕНИЕ ПРОЦЕНТА
+    // 4. РИСУЕМ
     track.style.display = 'flex';
     const fill = track.querySelector('.dch-stats-fill');
     
-    // ЛОГИКА:
-    // Если график не задан (0 часов), а тренировка есть -> Это переработка (КРАСНЫЙ)
+    // Если график не задан, но работа есть -> Красный
     if (capacityMins === 0) {
         fill.style.width = '100%';
         fill.style.background = 'var(--acc-red)';
-        console.log(`[${dateStr}] График пуст, но есть ${busyMins} мин работы. Красный.`);
         return;
     }
 
     const percent = (busyMins / capacityMins) * 100;
-    console.log(`[${dateStr}] Емкость: ${capacityMins}мин, Занято: ${busyMins}мин, Загрузка: ${percent.toFixed(1)}%`);
+    
+    // ВАЖНО: Выводим в консоль расчеты для проверки
+    console.log(`[${dateStr}] Емкость: ${capacityMins}мин (${capacityMins/60}ч), Занято: ${busyMins}мин, Итог: ${percent.toFixed(1)}%`);
 
-    // Если переработка (>100% рабочего времени) -> Красный
     if (percent > 100) {
         fill.style.width = '100%';
         fill.style.background = 'var(--acc-red)';
     } else {
-        // Обычная загрузка -> Синий
-        // Math.max(15, ...) гарантирует, что даже 30-минутная тренировка будет видна точкой
-        fill.style.width = `${Math.max(15, percent)}%`; 
+        // Убрали Math.max(15...), теперь ширина строго соответствует проценту
+        fill.style.width = `${percent}%`; 
         fill.style.background = 'var(--acc-current)';
     }
   }
