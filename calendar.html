@@ -1926,29 +1926,32 @@ const NotificationManager = {
   
   function updateAllDayStats() { document.querySelectorAll('.day-col-header').forEach(h => { updateDayStats(h.getAttribute('data-date')); }); }
 // === ФИНАЛЬНАЯ АНАЛИТИКА (ЕМКОСТЬ = 24 - БЛОКИ) ===
-  function updateDayStats(dateStr) {
-    // === ДОБАВИТЬ ЭТУ СТРОКУ ===
-    if (currentUserRole === 'client') return; 
-    // ===========================
+ function updateDayStats(dateStr) {
     const track = document.getElementById(`stat-${dateStr}`); 
     if (!track) return;
     
+    // === ЖЕСТКОЕ СКРЫТИЕ ДЛЯ КЛИЕНТА ===
+    if (currentUserRole === 'client') {
+        track.style.display = 'none'; // Гарантирует, что полоски не будет
+        return; 
+    }
+    // ===================================
+
     const d = new Date(dateStr);
     let dayIdx = d.getDay() - 1; if (dayIdx === -1) dayIdx = 6;
     
-    // 1. Если день полностью выключен через исключения - скрываем
+    // 1. Если день выключен (выходной)
     if (dateExceptions[dateStr] === 'off') { 
         track.style.display = 'none'; 
         return; 
     }
 
     // 2. СЧИТАЕМ РАБОЧУЮ ЕМКОСТЬ
-    // availabilityPattern хранит ЗАБЛОКИРОВАННЫЕ часы (полоски)
     const blockedHours = availabilityPattern[dayIdx] || [];
-    const availableHoursCount = 24 - blockedHours.length; // 24 минус зачеркнутые
+    const availableHoursCount = 24 - blockedHours.length; 
     const capacityMins = availableHoursCount * 60;
 
-    // 3. СЧИТАЕМ ФАКТИЧЕСКУЮ ЗАНЯТОСТЬ
+    // 3. СЧИТАЕМ ЗАНЯТОСТЬ
     const daySessions = sessions.filter(s => s.dateStr === dateStr && s.status !== 'cancelled');
     
     if (daySessions.length === 0) {
@@ -1956,7 +1959,7 @@ const NotificationManager = {
         return;
     }
 
-    // Склеиваем пересечения (группы считаем за 1 слот времени)
+    // Склеиваем интервалы (чтобы наложения не считались дважды)
     let intervals = daySessions.map(s => {
         const [h1, m1] = s.start.split(':').map(Number);
         const [h2, m2] = s.end.split(':').map(Number);
@@ -1986,7 +1989,6 @@ const NotificationManager = {
     track.style.display = 'flex';
     const fill = track.querySelector('.dch-stats-fill');
     
-    // Если доступного времени 0, но работа есть -> Красный (100%)
     if (capacityMins === 0) {
         fill.style.width = '100%';
         fill.style.background = 'var(--acc-red)';
@@ -1995,14 +1997,10 @@ const NotificationManager = {
 
     const percent = (busyMins / capacityMins) * 100;
     
-    console.log(`[${dateStr}] Доступно: ${availableHoursCount}ч, Занято: ${busyMins}мин, Загрузка: ${percent.toFixed(1)}%`);
-
     if (percent > 100) {
-        // Переработка (работал больше, чем доступно часов)
         fill.style.width = '100%';
         fill.style.background = 'var(--acc-red)';
     } else {
-        // Нормальная загрузка
         fill.style.width = `${percent}%`; 
         fill.style.background = 'var(--acc-current)';
     }
