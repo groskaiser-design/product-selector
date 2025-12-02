@@ -1384,7 +1384,7 @@ function isAdmin() {
 
   // --- SAVE LOGIC ---
  // --- SAVE LOGIC ---
-  async function trySaveSession() {
+async function trySaveSession() {
       // 1. Считываем данные
       const clientName = document.getElementById('inpClient').value;
       const dateStr = document.getElementById('inpDate').value;
@@ -1423,13 +1423,29 @@ function isAdmin() {
           return;
       }
 
-      // [NEW] Определяем тип уведомления перед сохранением
+      // [NEW LOGIC] Умное определение уведомлений
       let notifType = null;
+
       if (!editingId) {
+          // 1. Это абсолютно новая запись
           notifType = 'create';
-      } else if (currentSession) {
-          // Если изменилось время или дата
-          if (currentSession.start !== start || currentSession.dateStr !== dateStr) {
+      } 
+      else if (currentSession) {
+          // Это редактирование. Проверяем, что изменилось.
+          
+          // А. СМЕНИЛСЯ КЛИЕНТ (Самый важный кейс)
+          // Приводим к строке для точного сравнения
+          if (String(currentSession.clientId) !== String(clientObj.id)) {
+              console.log('[Notify] Client SWAP detected');
+              
+              // 1. Старому клиенту шлем ОТМЕНУ (используем старые данные currentSession)
+              NotificationManager.send('cancel', currentSession);
+              
+              // 2. Для нового клиента это будет СОЗДАНИЕ (notifType пойдет в конец функции)
+              notifType = 'create'; 
+          }
+          // Б. КЛИЕНТ ТОТ ЖЕ, НО ИЗМЕНИЛОСЬ ВРЕМЯ
+          else if (currentSession.start !== start || currentSession.dateStr !== dateStr) {
               notifType = 'update';
           }
       }
@@ -1446,7 +1462,7 @@ function isAdmin() {
       const newSession = { ...baseData, dateStr, id: editingId || generateId(), seriesId: null };
       saveSingleSession(newSession);
       
-      // [NEW] Отправляем уведомление
+      // [NEW] Отправляем уведомление (новому или текущему клиенту)
       if (notifType) {
           NotificationManager.send(notifType, newSession);
       }
