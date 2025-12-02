@@ -255,6 +255,40 @@
       transition: 0.2s;
     }
     .btn-cancel:active { transform: scale(0.98); opacity: 0.8; }
+  /* === CUSTOM CONFIRM POPUP === */
+  .confirm-overlay {
+    position: fixed; inset: 0; z-index: 9999;
+    background: rgba(0,0,0,0.4); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; pointer-events: none; transition: opacity 0.2s ease;
+  }
+  .confirm-overlay.visible { opacity: 1; pointer-events: auto; }
+  
+  .confirm-box {
+    width: 270px; background: rgba(30, 30, 32, 0.85);
+    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+    border-radius: 14px; overflow: hidden; text-align: center;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+    transform: scale(1.1); transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  .confirm-overlay.visible .confirm-box { transform: scale(1); }
+
+  .cb-title { padding: 18px 16px 4px 16px; color: #fff; font-size: 17px; font-weight: 600; }
+  .cb-text { padding: 4px 16px 18px 16px; color: var(--text-muted); font-size: 13px; line-height: 1.4; }
+  
+  .cb-buttons { display: flex; border-top: 1px solid rgba(255,255,255,0.12); }
+  .cb-btn {
+    flex: 1; padding: 12px; background: transparent; border: none;
+    font-size: 17px; cursor: pointer; height: 44px;
+    border-right: 1px solid rgba(255,255,255,0.12);
+    color: #0a84ff; /* Синий по умолчанию */
+  }
+  .cb-btn:last-child { border-right: none; }
+  .cb-btn:active { background: rgba(255,255,255,0.1); }
+  
+  /* Кнопка "Да" будет красной, так как это удаление */
+  .cb-btn.destructive { color: #ff453a; font-weight: 600; }
+  .cb-btn.cancel { font-weight: 400; color: #0a84ff; }
   
 </style>
 </head>
@@ -263,6 +297,17 @@
 <div class="fx-layer"><div class="orb orb-1"></div><div class="orb orb-2"></div><div class="noise"></div></div>
 
 <div class="toast-notification" id="toast">Обновлено</div>
+  <div class="confirm-overlay" id="customConfirm">
+  <div class="confirm-box">
+    <div class="cb-title">Отмена записи</div>
+    <div class="cb-text">Вы действительно хотите отменить эту тренировку?</div>
+    <div class="cb-buttons">
+      <button class="cb-btn cancel" onclick="resolveCustomConfirm(false)">Отмена</button>
+      <button class="cb-btn destructive" onclick="resolveCustomConfirm(true)">Да</button>
+    </div>
+  </div>
+</div>
+  
 
 <div class="app-container">
   <div class="top-area">
@@ -852,19 +897,33 @@ function openDetails(s) {
   }
 
   // === CANCEL FUNCTION (MOVED INSIDE SCRIPT) ===
+  // === CUSTOM CONFIRM LOGIC ===
+  let confirmResolver = null;
+
+  function showCustomConfirm() {
+    return new Promise((resolve) => {
+      confirmResolver = resolve;
+      document.getElementById('customConfirm').classList.add('visible');
+    });
+  }
+
+  function resolveCustomConfirm(result) {
+    document.getElementById('customConfirm').classList.remove('visible');
+    if (confirmResolver) confirmResolver(result);
+  }
+
+  // === UPDATED CANCEL FUNCTION ===
   async function tryCancelCurrentSession() {
       if (!currentSession) return;
 
-      // Визуальное подтверждение
-      if(!confirm("Вы действительно хотите отменить тренировку?")) return;
+      // 1. Используем наше красивое окно вместо confirm()
+      const isConfirmed = await showCustomConfirm();
+      if (!isConfirmed) return; // Если нажали "Отмена"
 
       const s = currentSession;
-      closeAllSheets(); // <--- ИСПРАВЛЕНО: Правильное название функции
+      closeAllSheets(); 
 
-      // Оптимистичное обновление (удаляем из UI сразу)
-      // ... остальной код без изменений
-
-      // Оптимистичное обновление (удаляем из UI сразу)
+      // Оптимистичное удаление
       sessions = sessions.filter(x => x.id !== s.id);
       reRenderBlocks();
       showToast("Отменено");
@@ -873,7 +932,6 @@ function openDetails(s) {
           const tg = window.Telegram?.WebApp;
           const initData = tg?.initData || '';
 
-          // Шлем на сервер
           const resp = await fetch(API_URL, {
               method: 'POST',
               body: JSON.stringify({
@@ -888,8 +946,8 @@ function openDetails(s) {
 
           if (!json.ok) {
               showToast("Ошибка отмены");
+              // Если ошибка - можно вернуть сессию назад (опционально)
           } else {
-              // Если успешно - сохраняем новое состояние в кэш
               DataManager.saveLocally();
           }
       } catch (e) {
