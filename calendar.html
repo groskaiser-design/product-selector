@@ -1132,6 +1132,8 @@ function isAdmin() {
   let updateInterval;
   let isScrolling = false;
   let selectedDayForOptions = null;
+  // === [TURBO] ЗАЩИТА ОТ ГОНКИ ДАННЫХ ===
+  let lastUserActionTime = 0;
 
   // ==============================================
   // 2. DATA LAYER (Sync Logic)
@@ -1191,25 +1193,41 @@ function isAdmin() {
 
     // --- SYNC OPERATIONS ---
     
-    // 1. Full Load (Init)
+// 1. Full Load (Init) - TURBO VERSION
     async syncLoad() {
         const d = new Date();
         const m1 = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-        // Load Current + Next Month
         const nextM = new Date(d); nextM.setMonth(d.getMonth() + 1);
         const m2 = `${nextM.getFullYear()}-${String(nextM.getMonth()+1).padStart(2,'0')}`;
 
+        // [TURBO] Запоминаем время старта запроса
+        const requestStartTime = Date.now();
         console.log(`[Sync] Loading ${m1}, ${m2}...`);
 
-        const [data1, data2] = await Promise.all([
-            this.fetchFromServer('init_load', { month_str: m1 }),
-            this.fetchFromServer('init_load', { month_str: m2 })
-        ]);
+        try {
+            const [data1, data2] = await Promise.all([
+                this.fetchFromServer('init_load', { month_str: m1 }),
+                this.fetchFromServer('init_load', { month_str: m2 })
+            ]);
 
-        this.mergeServerData(data1, m1);
-        this.mergeServerData(data2, m2);
-        this.saveLocally();
-        return true;
+            // [TURBO] ПРОВЕРКА: Если юзер что-то менял пока мы грузили — игнорируем старое
+            if (lastUserActionTime > requestStartTime) {
+                console.warn("[Sync] Ignored: User action is newer than server response");
+                return false; 
+            }
+
+            this.mergeServerData(data1, m1);
+            this.mergeServerData(data2, m2);
+            this.saveLocally();
+            
+            // Если все ок — обновляем интерфейс
+            reRenderBlocks(); 
+            updateAllDayStats();
+            return true;
+        } catch (e) {
+            console.error(e);
+            throw e;
+        }
     },
 
    mergeServerData(data, monthStr) {
@@ -1320,16 +1338,14 @@ function isAdmin() {
         handleInfiniteScroll(); 
     }, {passive: true});
 
-    // 2. Background Sync
-    try {
-        await DataManager.syncLoad();
-        reRenderBlocks(); // Re-render with fresh data
-        updateAllDayStats();
-        showToast("Синхронизировано", true);
-    } catch (e) {
-        showToast("Оффлайн режим", false);
-    }
-  }
+// 2. Background Sync (TURBO: No Await)
+    DataManager.syncLoad()
+        .then(() => {
+            showToast("Синхронизировано", true);
+        })
+        .catch(e => {
+            showToast("Оффлайн режим", false);
+        });
 
   // ==============================================
   // 4. BUSINESS LOGIC (CRUD)
@@ -1496,6 +1512,8 @@ async function trySaveSession() {
           return;
       }
 
+      // [TURBO] Фиксируем время действия
+      lastUserActionTime = Date.now();
       // Сценарий C: Одиночная запись
       const newSession = { ...baseData, dateStr, id: editingId || generateId(), seriesId: null };
       saveSingleSession(newSession);
@@ -1507,6 +1525,9 @@ async function trySaveSession() {
   }
 
 function toggleSessionStatus() {
+  // [TURBO]
+      lastUserActionTime = Date.now();
+
       const s = sessions.find(x => x.id === editingId);
       if(!s) return;
 
@@ -1628,7 +1649,9 @@ function toggleSessionStatus() {
 
       // Push to memory
       sessions.push(...newSessions);
-      
+      // [TURBO]
+      lastUserActionTime = Date.now();
+    
       // Формируем красивое сообщение
       let msg = `Создана серия: ${newSessions.length}`;
       if (skippedCount > 0) {
@@ -1680,7 +1703,9 @@ function toggleSessionStatus() {
   }
 
   function commitDelete(mode, sessionObj) {
-      // [NEW] Уведомление об отмене
+    // [TURBO]
+      lastUserActionTime = Date.now();  
+    // [NEW] Уведомление об отмене
       NotificationManager.send('cancel', sessionObj);
 
       const datesToSync = [];
