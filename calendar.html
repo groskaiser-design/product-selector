@@ -1118,7 +1118,7 @@
   let isScrolling = false;
   let selectedDayForOptions = null;
 
- // ==============================================
+// ==============================================
   // 2. DATA LAYER
   // ==============================================
   const DataManager = {
@@ -1130,8 +1130,7 @@
         localStorage.setItem(KEY_CLIENTS, JSON.stringify(clients));
         localStorage.setItem(KEY_SESSIONS, JSON.stringify(sessions));
         localStorage.setItem(KEY_SETTINGS, JSON.stringify({ pattern: availabilityPattern, exceptions: dateExceptions, ranges: specialRanges }));
-        // [NEW] Сохраняем роль, чтобы не ждать сервер при следующем запуске
-        localStorage.setItem(KEY_ROLE, currentUserRole); 
+        localStorage.setItem(KEY_ROLE, currentUserRole); // Сохраняем роль
       } catch(e) { console.error("Local Save Error", e); }
     },
 
@@ -1150,7 +1149,7 @@
             for(let i=0; i<7; i++) availabilityPattern[i] = Array.from({length:12}, (_,k)=>k+9); 
         }
         
-        // [NEW] Восстанавливаем роль из памяти
+        // Восстанавливаем роль
         const savedRole = localStorage.getItem(KEY_ROLE);
         if(savedRole) currentUserRole = savedRole;
 
@@ -1184,7 +1183,6 @@
     async syncLoad() {
         const d = new Date();
         const m1 = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-        // Load Current + Next Month
         const nextM = new Date(d); nextM.setMonth(d.getMonth() + 1);
         const m2 = `${nextM.getFullYear()}-${String(nextM.getMonth()+1).padStart(2,'0')}`;
 
@@ -1203,27 +1201,35 @@
    mergeServerData(data, monthStr) {
         if(!data) return;
         
-        // [NEW] Прием роли от сервера
+        // 1. Role
         if (data.role) {
             currentUserRole = data.role;
-            localStorage.setItem(KEY_ROLE, currentUserRole); // Сразу в кэш
+            localStorage.setItem(KEY_ROLE, currentUserRole);
             if (data.my_coaches) myCoachesList = data.my_coaches;
-            applyRoleBasedUI(); // Мгновенно перестраиваем UI
+            applyRoleBasedUI(); 
         }
         
-        // 1. Clients
+        // 2. Clients
         if(data.clients && Array.isArray(data.clients)) {
             clients = data.clients;
         }
 
-        // 2. Settings
+        // 3. Settings
         if(data.settings) {
             if(data.settings.pattern) availabilityPattern = data.settings.pattern;
             if(data.settings.exceptions) dateExceptions = data.settings.exceptions;
             if(data.settings.ranges) specialRanges = data.settings.ranges;
+            
+            // === ВОТ СЮДА МЫ ВСТАВИЛИ ЛОГИКУ CANCEL WINDOW ===
+            if(data.settings.cancel_window) {
+                localStorage.setItem('uc_settings_cancel_window', data.settings.cancel_window);
+                const el = document.getElementById('settingCancelWindow');
+                if(el) el.value = data.settings.cancel_window;
+            }
+            // ================================================
         }
 
-        // 3. Calendar
+        // 4. Calendar
         if(data.calendar) {
             sessions = sessions.filter(s => !s.dateStr.startsWith(monthStr));
             Object.keys(data.calendar).forEach(dayKey => {
@@ -1251,13 +1257,7 @@
         const changes = uniqueDates.map(dateStr => {
             const daySessions = sessions.filter(s => s.dateStr === dateStr && s.status !== 'deleted');
             const dayData = daySessions.map(s => ({
-                i: s.id,
-                c: s.clientId,
-                s: s.start,
-                e: s.end,
-                st: s.status,
-                n: s.note,
-                sid: s.seriesId
+                i: s.id, c: s.clientId, s: s.start, e: s.end, st: s.status, n: s.note, sid: s.seriesId
             }));
             return { date: dateStr, day_data: dayData };
         });
