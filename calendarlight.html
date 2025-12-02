@@ -19,6 +19,7 @@
     
     /* ЦВЕТА СТАТУСОВ */
     --acc-blue: #0a84ff; /* Запланировано */
+    --acc-red: #ff453a; /* Отмена */
     --acc-green: #30d158; /* Завершено */
     --acc-current: #3c9cfd;
     
@@ -246,6 +247,7 @@
     pointer-events: none; opacity: 0;
   }
   .toast-notification.show { transform: translateY(0); opacity: 1; }
+  
   .btn-cancel {
       width: 100%; padding: 14px; 
       background: rgba(255, 69, 58, 0.15); /* Красный фон полупрозрачный */
@@ -255,6 +257,17 @@
       transition: 0.2s;
     }
     .btn-cancel:active { transform: scale(0.98); opacity: 0.8; }
+
+  /* Кнопка переноса в деталях (синяя) */
+  .btn-reschedule {
+    width: 100%; padding: 14px; 
+    background: var(--acc-blue); color: #fff; 
+    border-radius: 12px; border: none; 
+    font-size: 16px; font-weight: 600; cursor: pointer;
+    margin-bottom: 8px; /* Отступ от кнопки отмены */
+  }
+  .btn-reschedule:active { transform: scale(0.98); opacity: 0.9; }
+
   /* === CUSTOM CONFIRM POPUP === */
   .confirm-overlay {
     position: fixed; inset: 0; z-index: 9999;
@@ -289,6 +302,49 @@
   /* Кнопка "Да" будет красной, так как это удаление */
   .cb-btn.destructive { color: #ff453a; font-weight: 600; }
   .cb-btn.cancel { font-weight: 400; color: #0a84ff; }
+  
+  /* === RESCHEDULE UI === */
+  .rs-dates-scroller {
+    display: flex; gap: 8px; overflow-x: auto; padding: 4px 0 16px 0;
+    margin-bottom: 10px; scroll-behavior: smooth;
+    -ms-overflow-style: none; scrollbar-width: none;
+  }
+  .rs-dates-scroller::-webkit-scrollbar { display: none; }
+
+  .rs-date-chip {
+    flex-shrink: 0; width: 60px; height: 64px;
+    background: rgba(118, 118, 128, 0.24); border-radius: 10px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    color: var(--text-muted); cursor: pointer; transition: 0.2s;
+    border: 1px solid transparent;
+  }
+  .rs-date-chip.active {
+    background: #fff; color: #000; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  }
+  .rs-date-chip.disabled { opacity: 0.3; pointer-events: none; }
+  
+  .rs-day-name { font-size: 11px; font-weight: 600; text-transform: uppercase; margin-bottom: 2px; }
+  .rs-day-num { font-size: 20px; font-weight: 600; line-height: 1; }
+
+  .rs-slots-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
+    max-height: 250px; overflow-y: auto; padding-bottom: 20px;
+    min-height: 100px;
+  }
+  
+  .rs-time-btn {
+    background: rgba(10, 132, 255, 0.15); color: var(--acc-blue);
+    border: 1px solid rgba(10, 132, 255, 0.3);
+    border-radius: 8px; padding: 12px 0; font-size: 15px; font-weight: 600;
+    cursor: pointer; transition: 0.2s;
+  }
+  .rs-time-btn:active { transform: scale(0.96); opacity: 0.8; }
+  
+  .rs-loader {
+    grid-column: 1 / -1; display: flex; align-items: center; justify-content: center;
+    height: 100px; color: var(--text-muted); font-size: 14px;
+  }
+  .rs-empty { grid-column: 1 / -1; text-align: center; color: var(--text-muted); padding: 20px; }
   
 </style>
 </head>
@@ -353,6 +409,10 @@
     <div class="ir-val" id="detStatus"></div>
   </div>
   <div id="cancelContainer" style="margin-top: 24px; display: none;">
+      <button class="btn-reschedule" onclick="startRescheduleFlow()">
+          Перенести запись
+      </button>
+
       <button class="btn-cancel" onclick="tryCancelCurrentSession()">
           Отменить запись
       </button>
@@ -397,6 +457,20 @@
 
   <div class="stats-list-header">Детализация по тренерам</div>
   <div id="analyticsList" style="padding-bottom: 20px;"></div>
+</div>
+
+<div class="sheet" id="rescheduleSheet">
+  <div class="sheet-header">
+    <div class="sh-title">Выберите время</div>
+    <div class="sh-close" onclick="closeAllSheets()">Закрыть</div>
+  </div>
+  <div class="sh-sub" style="margin-bottom: 12px;">Ближайшие 14 дней</div>
+  
+  <div class="rs-dates-scroller" id="rsDatesTrack"></div>
+  
+  <div class="rs-slots-grid" id="rsSlotsGrid">
+    <div class="rs-loader">Загрузка слотов...</div>
+  </div>
 </div>
 
 <script>
@@ -851,7 +925,8 @@ function openDetails(s) {
 
   const statEl = document.getElementById('detStatus');
   const cancelContainer = document.getElementById('cancelContainer');
-  const cancelBtn = cancelContainer.querySelector('button');
+  const cancelBtn = cancelContainer.querySelector('.btn-cancel');
+  const reschedBtn = cancelContainer.querySelector('.btn-reschedule'); // NEW
   const cancelHint = document.getElementById('cancelHint');
 
   // 1. Статус и цвет
@@ -873,18 +948,19 @@ function openDetails(s) {
                           : 24; 
 
       if (trainerRule === 0 || diffHours >= trainerRule) {
-          // МОЖНО ОТМЕНИТЬ
+          // МОЖНО ОТМЕНИТЬ / ПЕРЕНЕСТИ
           cancelBtn.style.display = 'block';
-          cancelBtn.textContent = 'Отменить запись';
+          reschedBtn.style.display = 'block';
           cancelHint.style.display = 'none';
       } else {
           // НЕЛЬЗЯ ОТМЕНИТЬ
           cancelBtn.style.display = 'none';
+          reschedBtn.style.display = 'none';
           cancelHint.style.display = 'block';
 
           // Красивый текст ошибки
           let ruleText = (trainerRule === 0) ? 'в любое время' : `за ${trainerRule} ч.`;
-          cancelHint.textContent = `Отмена возможна только ${ruleText} до начала`;
+          cancelHint.textContent = `Изменения возможны только ${ruleText} до начала`;
       }
   }
 
@@ -960,18 +1036,14 @@ function openDetails(s) {
     if (confirmResolver) confirmResolver(result);
   }
 
-  // === UPDATED CANCEL FUNCTION ===
   async function tryCancelCurrentSession() {
       if (!currentSession) return;
-
-      // 1. Используем наше красивое окно вместо confirm()
       const isConfirmed = await showCustomConfirm();
-      if (!isConfirmed) return; // Если нажали "Отмена"
+      if (!isConfirmed) return;
 
       const s = currentSession;
       closeAllSheets(); 
 
-      // Оптимистичное удаление
       sessions = sessions.filter(x => x.id !== s.id);
       reRenderBlocks();
       showToast("Отменено");
@@ -994,7 +1066,6 @@ function openDetails(s) {
 
           if (!json.ok) {
               showToast("Ошибка отмены");
-              // Если ошибка - можно вернуть сессию назад (опционально)
           } else {
               DataManager.saveLocally();
           }
@@ -1002,6 +1073,158 @@ function openDetails(s) {
           console.error(e);
           showToast("Ошибка сети");
       }
+  }
+
+  // === RESCHEDULE LOGIC (v9.5) ===
+  let availableSlotsCache = {}; 
+  let selectedRsDate = null;
+
+  async function startRescheduleFlow() {
+    if (!currentSession) return;
+    
+    document.getElementById('detailsSheet').classList.remove('open'); 
+    document.getElementById('rescheduleSheet').classList.add('open');
+    
+    const track = document.getElementById('rsDatesTrack');
+    const grid = document.getElementById('rsSlotsGrid');
+    track.innerHTML = '';
+    grid.innerHTML = '<div class="rs-loader">Поиск свободных окошек...</div>';
+    
+    const [hS, mS] = currentSession.start.split(':').map(Number);
+    const [hE, mE] = currentSession.end.split(':').map(Number);
+    const durationMinutes = (hE * 60 + mE) - (hS * 60 + mS);
+
+    try {
+      const tg = window.Telegram?.WebApp;
+      const resp = await fetch(API_URL, {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'get_slots',
+          coachId: currentSession.coachId,
+          duration: durationMinutes,
+          init_data: tg?.initData || ''
+        })
+      });
+      
+      const json = await resp.json();
+      if (json.ok && json.data) {
+        availableSlotsCache = json.data; 
+        renderRescheduleDates();
+      } else {
+        grid.innerHTML = '<div class="rs-empty">Нет мест</div>';
+      }
+    } catch (e) {
+      grid.innerHTML = '<div class="rs-empty">Ошибка сети</div>';
+    }
+  }
+
+  function renderRescheduleDates() {
+    const track = document.getElementById('rsDatesTrack');
+    track.innerHTML = '';
+    
+    const dates = Object.keys(availableSlotsCache).sort();
+    const weekDays = ['ВС','ПН','ВТ','СР','ЧТ','ПТ','СБ']; 
+    
+    if (dates.length === 0) {
+       document.getElementById('rsSlotsGrid').innerHTML = '<div class="rs-empty">Нет свободного времени на ближайшие 14 дней</div>';
+       return;
+    }
+
+    dates.forEach((dateStr, index) => {
+       const d = new Date(dateStr);
+       const dayName = weekDays[d.getDay()];
+       const dayNum = d.getDate();
+       
+       const chip = document.createElement('div');
+       chip.className = 'rs-date-chip';
+       if (index === 0) chip.classList.add('active'); 
+       
+       chip.innerHTML = `<div class="rs-day-name">${dayName}</div><div class="rs-day-num">${dayNum}</div>`;
+       chip.onclick = () => selectRsDate(dateStr, chip);
+       
+       track.appendChild(chip);
+    });
+
+    selectRsDate(dates[0], track.firstChild);
+  }
+
+  function selectRsDate(dateStr, chipEl) {
+    selectedRsDate = dateStr;
+    
+    document.querySelectorAll('.rs-date-chip').forEach(c => c.classList.remove('active'));
+    if(chipEl) chipEl.classList.add('active');
+    
+    const grid = document.getElementById('rsSlotsGrid');
+    grid.innerHTML = '';
+    
+    const slots = availableSlotsCache[dateStr] || [];
+    if (slots.length === 0) {
+      grid.innerHTML = '<div class="rs-empty">Нет мест</div>';
+      return;
+    }
+
+    slots.forEach(time => {
+      const btn = document.createElement('button');
+      btn.className = 'rs-time-btn';
+      btn.textContent = time;
+      btn.onclick = () => confirmReschedule(time);
+      grid.appendChild(btn);
+    });
+  }
+
+  async function confirmReschedule(newTime) {
+     if(!confirm(`Перенести тренировку на ${selectedRsDate} в ${newTime}?`)) return;
+     
+     closeAllSheets();
+     showToast("Переносим...");
+     
+     const oldDate = currentSession.dateStr;
+     const sId = currentSession.id;
+     
+     const [hS, mS] = currentSession.start.split(':').map(Number);
+     const [hE, mE] = currentSession.end.split(':').map(Number);
+     const duration = (hE * 60 + mE) - (hS * 60 + mS);
+     
+     const [nH, nM] = newTime.split(':').map(Number);
+     const newEndMin = nH * 60 + nM + duration;
+     const newH = Math.floor(newEndMin / 60);
+     const newM = newEndMin % 60;
+     const newEndTime = `${String(newH).padStart(2,'0')}:${String(newM).padStart(2,'0')}`;
+
+     const sIdx = sessions.findIndex(s => s.id === sId);
+     if (sIdx !== -1) {
+         sessions[sIdx].dateStr = selectedRsDate;
+         sessions[sIdx].start = newTime;
+         sessions[sIdx].end = newEndTime;
+         reRenderBlocks(); 
+     }
+
+     try {
+       const tg = window.Telegram?.WebApp;
+       const resp = await fetch(API_URL, {
+         method: 'POST',
+         body: JSON.stringify({
+           action: 'reschedule',
+           init_data: tg?.initData || '',
+           oldSessionId: sId,
+           oldDate: oldDate,
+           newDate: selectedRsDate,
+           newTime: newTime,
+           coachId: currentSession.coachId
+         })
+       });
+       
+       const json = await resp.json();
+       if (!json.ok) {
+         showToast("Ошибка переноса!");
+         DataManager.syncLoad(); 
+       } else {
+         showToast("Успешно перенесено");
+         DataManager.saveLocally();
+       }
+     } catch (e) {
+       showToast("Ошибка сети");
+     }
   }
 
   document.addEventListener('DOMContentLoaded', init);
