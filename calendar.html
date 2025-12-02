@@ -785,31 +785,7 @@
   }
   
   .empty-state { text-align: center; color: var(--text-muted); padding: 30px; font-size: 14px; }
-
-  /* === СТИЛЬ ДЛЯ ЧУЖИХ СЛОТОВ (КЛИЕНТ ВИДИТ КАК ЗАНЯТО) === */
-  .event-card.busy-slot {
-    /* Серый полосатый фон */
-    background: repeating-linear-gradient(
-      45deg,
-      rgba(255, 255, 255, 0.05),
-      rgba(255, 255, 255, 0.05) 10px,
-      rgba(255, 255, 255, 0.02) 10px,
-      rgba(255, 255, 255, 0.02) 20px
-    ) !important;
-    
-    border-left: 1px solid rgba(255,255,255,0.1) !important; /* Убираем цветной бордер */
-    box-shadow: none !important;
-    opacity: 0.6;
-    z-index: 1 !important; /* Они всегда ниже моих */
-    pointer-events: auto; /* Чтобы работал клик с уведомлением */
-  }
-
-  /* Скрываем текст внутри занятых слотов */
-  .event-card.busy-slot .ev-title, 
-  .event-card.busy-slot .ev-time,
-  .event-card.busy-slot .card-icon {
-      display: none !important;
-  }
+  
   
 </style>
 </head>
@@ -949,44 +925,10 @@
 </div>
 
 <div class="sheet" id="settingsSheet">
-  <div class="sheet-header">
-    <div class="sh-title">Настройки</div>
-    <div class="sh-close" onclick="closeAllSheets()">Готово</div>
-  </div>
-
-  <div class="form-group">
-    <div class="form-label" style="margin-left: 0;">График работы</div>
-    <button class="btn-primary" onclick="openPatternEditor()">Задать шаблон на 7 дней / 24 часа</button>
-  </div>
-
-  <div class="form-group" style="margin-top: 24px;">
-    <div class="form-label" style="margin-left: 0;">Добавить отсутствие</div>
-    <button class="btn-primary btn-secondary" onclick="openRangesSheet()">Например отпуск</button>
-  </div>
-
-  <div class="form-group" style="margin-top: 24px;">
-    <div class="form-label" style="margin-left: 0;">Ограничение изменений</div>
-    
-    <select class="input-box" id="settingCancelWindow" onchange="saveCoachSettings()" style="width: 85%; margin: 0 auto; display: block;">
-      <option value="0">В любое время</option>
-      <option value="1">За 1 час</option>
-      <option value="2">За 2 часа</option>
-      <option value="6">За 6 часов</option>
-      <option value="12">За 12 часов</option>
-      <option value="24" selected>За 24 часа (Стандарт)</option>
-      <option value="48">За 48 часов</option>
-    </select>
-    
-    <div style="font-size: 12px; color: #8E8E93; margin-top: 8px; line-height: 1.35;">
-      Клиент не сможет перенести запись, если до начала осталось меньше времени.
-    </div>
-  </div>
-</div>
-
-  <div class="form-group" style="margin-top: 24px;">
-    <div class="form-label">Добавить отсутствие</div>
-    <button class="btn-primary btn-secondary" onclick="openRangesSheet()">Например отпуск</button>
-  </div>
+  <div class="sheet-header"><div class="sh-title">Настройки</div><div class="sh-close" onclick="closeAllSheets()">Готово</div></div>
+  <div class="form-group"><div class="form-label">График работы</div><button class="btn-primary" onclick="openPatternEditor()">Задать шаблон на 7 дней / 24 часа</button></div>
+  <div class="form-group"><div class="form-label">Добавить отсутствие</div><button class="btn-primary btn-secondary" onclick="openRangesSheet()">Например отпуск</button></div>
+  
 </div>
 
   <div class="sheet" id="analyticsSheet">
@@ -1072,73 +1014,72 @@
 </div>
 
 <script>
-// ==============================================
-  // 0. GLOBAL STATE & ROUTER
-  // ==============================================
-  let CURRENT_ROLE = 'coach'; // 'coach' | 'client'
-  let TARGET_COACH_ID = null; // ID тренера, к которому пришел клиент
-  let MY_TG_ID = null;        // ID текущего пользователя (кто открыл апп)
+  /* ============================================================
+ * BLOCK 0: TMA boot (FIXED & SAFE)
+ * ============================================================ */
+(function initTMA() {
+  try {
+    const tg = window.Telegram?.WebApp;
+    if (!tg) return; // Если это не Телеграм, просто выходим, не ломая сайт
 
-  // Инициализация TMA и Роутинг
-  (function initTMA() {
+    tg.ready();
+    tg.expand();
+
+    // 1. Красим заголовок (обернуто в защиту, чтобы не ломало загрузку)
     try {
-      const tg = window.Telegram?.WebApp;
-      if (!tg) return;
-
-      tg.ready();
-      tg.expand();
-      
-      // 1. Получаем ID пользователя
-      MY_TG_ID = tg.initDataUnsafe?.user?.id;
-      
-      // 2. Читаем start_param (например: startapp=coach_196047220)
-      const startParam = tg.initDataUnsafe?.start_param;
-      
-      if (startParam && startParam.startsWith('coach_')) {
-          // РЕЖИМ КЛИЕНТА
-          TARGET_COACH_ID = startParam.replace('coach_', '');
-          
-          // Если я открыл свою же ссылку -> я все равно Тренер
-          if (String(TARGET_COACH_ID) === String(MY_TG_ID)) {
-              CURRENT_ROLE = 'coach';
-          } else {
-              CURRENT_ROLE = 'client';
-          }
-      } else {
-          // Прямой вход -> Тренер (или Админ)
-          CURRENT_ROLE = 'coach'; 
-          // Для теста можно раскомментировать, чтобы проверить вид клиента без ссылки:
-          // if (!isAdmin()) CURRENT_ROLE = 'client'; 
+      tg.setHeaderColor('#050505'); // Черный цвет
+      if (tg.setBackgroundColor) {
+        tg.setBackgroundColor('#050505');
       }
-
-      console.log(`[App] Role: ${CURRENT_ROLE}, Coach: ${TARGET_COACH_ID || 'Me'}`);
-
-      // Настройка UI
-      try {
-        tg.setHeaderColor('#050505');
-        if (tg.setBackgroundColor) tg.setBackgroundColor('#050505');
-        if (tg.BackButton) {
-           // Для клиента кнопка Назад закрывает апп (или ведет в меню)
-           if (CURRENT_ROLE === 'client') tg.BackButton.hide(); 
-           else {
-               tg.BackButton.show();
-               tg.BackButton.onClick(() => { window.location.href = 'router.html'; });
-           }
-        }
-        if (tg.disableVerticalSwipes) tg.disableVerticalSwipes();
-      } catch (e) {}
-
-    } catch (globalErr) {
-      console.error('Critical TMA Error:', globalErr);
+    } catch (e) {
+      console.log('Error setting color:', e);
     }
-  })();
+
+    // 2. Настраиваем кнопку "Назад"
+    try {
+      if (tg.BackButton) {
+        tg.BackButton.show();
+        // Сначала удаляем старые обработчики, чтобы кнопка не тупила
+        tg.BackButton.offClick(); 
+        // Добавляем переход
+        tg.BackButton.onClick(function() {
+          window.location.href = 'router.html';
+        });
+      }
+    } catch (e) {
+      console.log('Error setting back button:', e);
+    }
+
+    // 3. Отключаем свайпы (если поддерживается)
+    try {
+      if (tg.disableVerticalSwipes) tg.disableVerticalSwipes();
+    } catch (e) {}
+
+  } catch (globalErr) {
+    // Если вообще все упало в TMA, выводим ошибку, но НЕ останавливаем скрипт
+    console.error('Critical TMA Error:', globalErr);
+  }
+})();
+  
+/**
+ * Проверка, является ли текущий пользователь админом
+ * @returns {boolean} true, если Telegram user.id совпадает с ID администратора
+ */
+function isAdmin() {
+  try {
+    const userId = Number(window.Telegram?.WebApp?.initDataUnsafe?.user?.id);
+    return userId === 196047220;
+  } catch (_) {
+    return false;
+  }
+}
 
   
   // ==============================================
   // 1. CONFIG & STATE
   // ==============================================
   const APP_VERSION = 'v9.0-BATCH-CALENDAR';
-  const API_URL = 'https://script.google.com/macros/s/AKfycbwwR7P_GiWRACWw_Vg8t4OVgcPgWBiCeVjNk6AP5bZ-iQqouNuZJh9-EOOSiD9JsNT2Hg/exec'; 
+  const API_URL = 'https://script.google.com/macros/s/AKfycbzzRiJM13-OAThVpmkllqdIYVLoa13zOh9ymY8t6WGVM5Hb_DFO4vZ_Om3heRs_ubXRRA/exec'; 
 
   const GRID_H = 60;
   
@@ -1225,87 +1166,26 @@
     // --- SYNC OPERATIONS ---
     
     // 1. Full Load (Init)
-// 1. Full Load (Smart: Coach vs Client)
     async syncLoad() {
         const d = new Date();
         const m1 = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-        // Next Month
+        // Load Current + Next Month
         const nextM = new Date(d); nextM.setMonth(d.getMonth() + 1);
         const m2 = `${nextM.getFullYear()}-${String(nextM.getMonth()+1).padStart(2,'0')}`;
 
-        console.log(`[Sync] Loading (${CURRENT_ROLE}) ${m1}, ${m2}...`);
+        console.log(`[Sync] Loading ${m1}, ${m2}...`);
 
-        // А. ЛОГИКА ТРЕНЕРА (Как было)
-        if (CURRENT_ROLE === 'coach') {
-            const [data1, data2] = await Promise.all([
-                this.fetchFromServer('init_load', { month_str: m1 }),
-                this.fetchFromServer('init_load', { month_str: m2 })
-            ]);
-            this.mergeServerData(data1, m1);
-            this.mergeServerData(data2, m2);
-        } 
-        // Б. ЛОГИКА КЛИЕНТА (Новая)
-        else {
-            if (!TARGET_COACH_ID) { console.error("No Coach ID!"); return false; }
-            
-            const [data1, data2] = await Promise.all([
-                this.fetchFromServer('get_client_view', { coach_id: TARGET_COACH_ID, month_str: m1 }),
-                this.fetchFromServer('get_client_view', { coach_id: TARGET_COACH_ID, month_str: m2 })
-            ]);
-            
-            // Клиент получает другую структуру данных, нужен свой мерджер
-            this.mergeClientData(data1, m1);
-            this.mergeClientData(data2, m2);
-        }
+        const [data1, data2] = await Promise.all([
+            this.fetchFromServer('init_load', { month_str: m1 }),
+            this.fetchFromServer('init_load', { month_str: m2 })
+        ]);
 
+        this.mergeServerData(data1, m1);
+        this.mergeServerData(data2, m2);
         this.saveLocally();
         return true;
     },
 
-    // [NEW] Обработчик данных для Клиента
-    mergeClientData(data, monthStr) {
-        if (!data) return;
-
-        // 1. Настройки (График работы тренера)
-        if (data.settings) {
-            if (data.settings.pattern) availabilityPattern = data.settings.pattern;
-            if (data.settings.ranges) specialRanges = data.settings.ranges;
-            // Важно: сохраняем правило отмены, чтобы фронт знал ограничения
-            if (data.settings.cancellation_window) {
-                localStorage.setItem('uc_settings_cancel_window', data.settings.cancellation_window);
-            }
-        }
-
-        // 2. Календарь (Обезличенный)
-        if (data.calendar) {
-            // Очищаем память за этот месяц
-            sessions = sessions.filter(s => !s.dateStr.startsWith(monthStr));
-
-            Object.keys(data.calendar).forEach(dayKey => {
-                const dayEvents = data.calendar[dayKey];
-                dayEvents.forEach(evt => {
-                    // Распаковываем
-                    // Если это 'busy', то имя скрыто. Если моя — имя есть.
-                    
-                    const isMine = (String(evt.c) === String(MY_TG_ID));
-                    
-                    sessions.push({
-                        id: evt.i || generateId(), // У busy может не быть ID, генерим временный
-                        clientId: evt.c || 'busy_slot',
-                        client: isMine ? (evt.n || 'Вы') : 'Занято', // Имя
-                        dateStr: `${monthStr}-${dayKey.padStart(2, '0')}`,
-                        start: evt.s,
-                        end: evt.e,
-                        status: evt.st || 'busy', // 'planned' или 'busy'
-                        note: isMine ? (evt.note || '') : '', // Заметку видим только свою
-                        is_mine: isMine // Флаг для интерфейса
-                    });
-                });
-            });
-        }
-    },
-
-    
    mergeServerData(data, monthStr) {
         if(!data) return;
         
@@ -1379,24 +1259,14 @@
     }
   };
 
- // ==============================================
+  // ==============================================
   // 3. INITIALIZATION
   // ==============================================
   async function init() {
-    
+   
+
     // 1. Immediate Local Render
     DataManager.loadLocal();
-    loadCoachSettings(); 
-
-    // [NEW] Адаптация интерфейса для Клиента
-    if (CURRENT_ROLE === 'client') {
-        // Скрываем кнопки, которые клиенту не нужны
-        const analyticsBtn = document.getElementById('analyticsBtn');
-        const settingsBtn = document.getElementById('settingsBtn');
-        
-        if (analyticsBtn) analyticsBtn.style.display = 'none';
-        if (settingsBtn) settingsBtn.style.display = 'none';
-    }
     
     // Setup UI
     renderTimeColumn(); 
@@ -1420,7 +1290,6 @@
         updateAllDayStats();
         showToast("Синхронизировано", true);
     } catch (e) {
-        console.error(e);
         showToast("Оффлайн режим", false);
     }
   }
@@ -1474,80 +1343,42 @@
   function openEdit(s) { 
       editingId = s.id; 
       populateClientSelect(); 
-      
-      // === UX НАСТРОЙКА ЗАГОЛОВКА ===
-      const isClient = (CURRENT_ROLE === 'client');
-      document.getElementById('sheetTitle').textContent = isClient ? 'Моя тренировка' : 'Редактировать'; 
-      
-      // === УПРАВЛЕНИЕ КНОПКОЙ ОТМЕНЫ/УДАЛЕНИЯ ===
-      const btnDel = document.getElementById('btnDelete');
-      btnDel.style.display = 'flex'; // Показываем кнопку
-      
-      if (isClient) {
-          // Для клиента кнопка красная и называется "Отменить"
-          btnDel.innerHTML = 'Отменить запись';
-          btnDel.className = 'btn-primary btn-danger';
-          // Скрываем кнопку "Сохранить" (клиент пока только отменяет)
-          document.querySelector('button[onclick="trySaveSession()"]').style.display = 'none';
-      } else {
-          // Для тренера стандартно
-          btnDel.innerHTML = 'Удалить';
-          document.querySelector('button[onclick="trySaveSession()"]').style.display = 'flex';
-      }
-
-      // === ЛОГИКА КНОПКИ СТАТУСА (ЗАВЕРШИТЬ) ===
+      document.getElementById('sheetTitle').textContent = 'Редактировать'; 
+      document.getElementById('btnDelete').style.display = 'block'; 
+    // === ЛОГИКА КНОПКИ ЗАВЕРШИТЬ ===
       const btnStatus = document.getElementById('btnStatusToggle');
+      btnStatus.style.display = 'flex'; // Показываем
       
-      // Клиент НЕ может менять статус (завершать тренировку)
-      if (isClient) {
-          btnStatus.style.display = 'none';
+      if (s.status === 'completed') {
+          // Режим отмены
+          btnStatus.className = 'btn-status-toggle undo-mode';
+          btnStatus.innerHTML = 'Вернуть в запланированные';
       } else {
-          btnStatus.style.display = 'flex'; 
-          if (s.status === 'completed') {
-              btnStatus.className = 'btn-status-toggle undo-mode';
-              btnStatus.innerHTML = 'Вернуть в запланированные';
-          } else {
-              btnStatus.className = 'btn-status-toggle';
-              btnStatus.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Завершить тренировку';
-          }
+          // Режим завершения
+          btnStatus.className = 'btn-status-toggle';
+          btnStatus.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Завершить тренировку';
       }
 
-      // Скрываем настройки повторов при редактировании
+      const isSeries = !!s.seriesId;
       document.getElementById('recurringOptionContainer').style.display = 'none'; 
       document.getElementById('seriesCountContainer').style.display = 'none';
       
-      // Показываем инфо, если серия
-      if(s.seriesId) {
+      if(isSeries) {
          document.getElementById('patternInfoBox').style.display = 'flex';
          document.getElementById('patternInfoBox').querySelector('.pib-text').textContent = "Это часть серии тренировок";
       } else {
          document.getElementById('patternInfoBox').style.display = 'none';
       }
 
-      // Заполняем поля
       document.getElementById('inpClient').value = s.client; 
       document.getElementById('inpDate').value = s.dateStr; 
       document.getElementById('inpStart').value = s.start; 
       document.getElementById('inpEnd').value = s.end; 
       document.getElementById('inpNote').value = s.note||''; 
       
-      // Если Клиент - блокируем поля (Read Only)
-      if (isClient) {
-          document.getElementById('inpClient').disabled = true;
-          document.getElementById('inpDate').disabled = true;
-          document.getElementById('inpStart').disabled = true;
-          document.getElementById('inpEnd').disabled = true;
-          document.getElementById('inpNote').disabled = true;
-      } else {
-          // Разблокируем для тренера
-           document.getElementById('inpClient').disabled = false;
-           document.getElementById('inpDate').disabled = false;
-           document.getElementById('inpStart').disabled = false;
-           document.getElementById('inpEnd').disabled = false;
-           document.getElementById('inpNote').disabled = false;
-      }
-      
+      // ВАЖНО: Обновляем красивый заголовок даты
       updateDateDisplay(); 
+      
       openSheet('sessionSheet'); 
   }
 
@@ -1801,39 +1632,15 @@ function toggleSessionStatus() {
       afterSaveAction(datesToSync);
   }
 
-function tryDeleteSession() {
+  function tryDeleteSession() {
       const s = sessions.find(x => x.id === editingId);
       if(!s) return;
-
-      // === GUARDRAIL: ПРОВЕРКА ДЛЯ КЛИЕНТА ===
-      if (CURRENT_ROLE === 'client') {
-          const check = checkTimeConstraint(s.dateStr, s.start);
-          
-          if (!check.allowed) {
-              if (navigator.vibrate) navigator.vibrate([50, 50, 50]);
-              
-              if (check.error === 'already_started') {
-                  showToast("Тренировка уже началась или прошла", false);
-              } else {
-                  showToast(`Отмена невозможна: осталось менее ${check.limit}ч`, false);
-              }
-              return; // БЛОКИРУЕМ ДЕЙСТВИЕ
-          }
-      }
-
-      // Если проверка пройдена или это Тренер — удаляем
       if(s.seriesId) {
           openActionSheet('delete'); 
       } else {
-          // Для клиента добавляем подтверждение (UX 11/10)
-          if (CURRENT_ROLE === 'client') {
-             // Используем нативное подтверждение для скорости, или потом сделаем красивое
-             if(!confirm("Точно отменить тренировку?")) return;
-          }
           commitDelete('single', s);
       }
   }
-  
 
   function commitDelete(mode, sessionObj) {
       // [NEW] Уведомление об отмене
@@ -2226,58 +2033,34 @@ const NotificationManager = {
       const height = (hE*60+mE-(h*60+m))/60*GRID_H; 
       
       const div = document.createElement('div'); 
-      
-      // === ВАЖНО: ОПРЕДЕЛЯЕМ, ЧУЖАЯ ЛИ ЭТО ЗАПИСЬ ===
-      let isBusyForMe = false;
-      
-      // Если я клиент и у записи нет флага is_mine (или это просто занятый слот)
-      if (CURRENT_ROLE === 'client' && !s.is_mine) {
-         isBusyForMe = true;
-      }
-
       const statusClass = (s.status === 'completed') ? ' status-completed' : '';
-      const busyClass = isBusyForMe ? ' busy-slot' : ''; // Добавляем класс, если чужое
-      
-      div.className = `event-card${statusClass}${busyClass}`; 
+      div.className = `event-card${statusClass}`; 
       
       div.style.top = `${top}px`; 
       div.style.height = `${Math.max(height,20)}px`; 
       
-      // Цвет применяем, только если это МОЯ запись (или я тренер)
-      if (!isBusyForMe) {
-          const cli = clients.find(c => (s.clientId && String(c.id) === String(s.clientId)) || c.name === s.client); 
-          const color = cli ? cli.color : '#0a84ff'; 
-          div.style.borderLeftColor = color; 
-          div.style.backgroundColor = hexToRgba(color, 0.85); 
-      }
+      const cli = clients.find(c => (s.clientId && String(c.id) === String(s.clientId)) || c.name === s.client); 
+      const color = cli ? cli.color : '#0a84ff'; 
       
-      // === ФОРМИРУЕМ HTML ===
+      div.style.borderLeftColor = color; 
+      div.style.backgroundColor = hexToRgba(color, 0.85); 
+      
+      // === ФОРМИРУЕМ HTML С ИКОНКАМИ ===
       let html = `<div class="ev-title">${s.client}</div><div class="ev-time">${s.start} - ${s.end}</div>`;
       
+      // 1. Иконка повтора (SVG) - добавил класс card-icon
       if(s.seriesId) {
           html += `<svg class="ev-recurring-icon card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3"/></svg>`;
       }
 
+      // 2. Иконка галочки (SVG) - вставляем, только если завершено
       if(s.status === 'completed') {
+          // stroke-width="3" делает её жирненькой, но аккуратной
           html += `<svg class="ev-status-icon card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
       }
       
       div.innerHTML = html;
-
-      // === ОБРАБОТКА КЛИКА ===
-      div.onclick = (e) => { 
-          e.stopPropagation(); 
-          
-          if (isBusyForMe) {
-             // Если занято — вибрируем и показываем тост
-             if (navigator.vibrate) navigator.vibrate(50);
-             showToast("Это время занято другим клиентом");
-          } else {
-             // Если моё — открываем редактор
-             openEdit(s); 
-          }
-      }; 
-
+      div.onclick = (e)=>{ e.stopPropagation(); openEdit(s); }; 
       return div; 
   }
 
@@ -2404,25 +2187,8 @@ const NotificationManager = {
       } 
   }
   function closeActionSheet() { document.getElementById('actionSheet').classList.remove('open'); document.getElementById('actionSheetOverlay').classList.remove('active'); }
-  function openSettings(){openSheet('settingsSheet');}
 
-  // Сохранение настроек тренера (Правила отмены)
-    function saveCoachSettings() {
-        const windowVal = document.getElementById('settingCancelWindow').value;
-        // Пока сохраняем только локально, позже добавим отправку на сервер
-        localStorage.setItem('uc_settings_cancel_window', windowVal);
-        console.log('Cancel window set to:', windowVal);
-        
-        // Здесь позже будет вызов DataManager.fetchFromServer('save_settings', ...)
-    }
-    
-    // При загрузке восстанавливаем значение (добавь вызов loadCoachSettings() в init())
-    function loadCoachSettings() {
-        const val = localStorage.getItem('uc_settings_cancel_window');
-        if (val) {
-            document.getElementById('settingCancelWindow').value = val;
-        }
-    }
+  function openSettings(){openSheet('settingsSheet');}
   
   function openRangesSheet(){ 
       closeAllSheets(); 
@@ -2871,33 +2637,6 @@ function renderPatternEditor() {
       if (m === 0) return `${h}ч`;
       return `${h}ч ${m}м`;
   }
-
-
-  // === LOGIC: ЕДИНАЯ ПРОВЕРКА ОГРАНИЧЕНИЙ ===
-function checkTimeConstraint(dateStr, timeStr) {
-    // 1. Получаем настройку тренера (по умолчанию 24 часа)
-    const savedLimit = localStorage.getItem('uc_settings_cancel_window');
-    const limit = savedLimit ? parseInt(savedLimit) : 24;
-
-    // 2. Считаем время
-    // dateStr="2025-11-15", timeStr="14:00" -> ISO
-    const sessionDate = new Date(`${dateStr}T${timeStr}:00`);
-    const now = new Date();
-    
-    // Разница в часах
-    const diffHours = (sessionDate - now) / 36e5; 
-
-    // 3. Анализ ситуаций
-    if (diffHours < 0) {
-        return { allowed: false, error: 'already_started', limit: limit };
-    }
-    
-    if (diffHours < limit) {
-        return { allowed: false, error: 'too_late', limit: limit };
-    }
-
-    return { allowed: true };
-}
   
 </script>
 
