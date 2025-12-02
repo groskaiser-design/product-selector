@@ -6,17 +6,22 @@
 <title>Ultima Client</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
-  /* === CORE STYLES (Clean Version) === */
+  /* === CORE STYLES === */
   :root {
     --bg-core: #050505; 
     --bg-panel: #1C1C1E; 
     --text-main: #ffffff;
     --text-muted: #8E8E93;
+    
     --line-color: rgba(255, 255, 255, 0.08);
     --time-col-width: 55px;
     --day-col-width: 65px; 
-    --acc-current: #3c9cfd; /* Основной акцент */
-    --acc-blue: #0a84ff;
+    
+    /* ЦВЕТА СТАТУСОВ */
+    --acc-blue: #0a84ff; /* Запланировано */
+    --acc-green: #30d158; /* Завершено */
+    --acc-current: #3c9cfd;
+    
     --grid-h: 60px;
     --safe-top: env(safe-area-inset-top);
     --safe-bottom: env(safe-area-inset-bottom);
@@ -37,95 +42,152 @@
   .fx-layer { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
   .orb { position: absolute; border-radius: 50%; filter: blur(90px); opacity: 0.4; }
   .orb-1 { width: 300px; height: 300px; background: #5e60ce; top: -50px; left: -100px; }
-  .orb-2 { width: 250px; height: 250px; background: #0a84ff; bottom: -50px; right: -50px; }
+  .orb-2 { width: 250px; height: 250px; background: var(--acc-blue); bottom: -50px; right: -50px; }
   .noise { position: fixed; inset: 0; opacity: 0.04; background: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
 
   /* === LAYOUT === */
   .app-container { display: flex; flex-direction: column; height: 100%; width: 100%; position: relative; z-index: 1; }
 
-  /* === HEADER (SIMPLIFIED) === */
+  /* === TOP HEADER === */
   .top-area {
     position: relative;
     background: rgba(0, 0, 0, 0.3); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
     border-bottom: 1px solid var(--line-color); padding-top: calc(10px + var(--safe-top)); padding-bottom: 10px;
-    z-index: 60; flex-shrink: 0; display: flex; justify-content: center;
+    z-index: 60; flex-shrink: 0;
+    display: flex; justify-content: center; align-items: center;
   }
-  .month-label { font-size: 16px; font-weight: 700; color: #fff; text-transform: uppercase; letter-spacing: 1px; }
+  .month-label { font-family: 'SF Pro Display', sans-serif; font-size: 16px; font-weight: 700; color: #fff; text-transform: uppercase; letter-spacing: 1px; }
 
   /* === MATRIX === */
-  .matrix-viewport { flex: 1; overflow: auto; position: relative; display: flex; flex-direction: column; z-index: 10; }
-  .matrix-header-row { display: flex; position: sticky; top: 0; z-index: 40; width: max-content; background: rgba(0,0,0,0.4); backdrop-filter: blur(15px); border-bottom: 1px solid var(--line-color); }
+  .matrix-viewport {
+    flex: 1; overflow: auto; position: relative; -webkit-overflow-scrolling: touch; overscroll-behavior: none;
+    display: flex; flex-direction: column; z-index: 10;
+  }
+  .matrix-header-row {
+    display: flex; position: sticky; top: 0; z-index: 40; width: max-content; background: rgba(0, 0, 0, 0.25);
+    backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); border-bottom: 1px solid var(--line-color);
+  }
   .corner-cell { width: var(--time-col-width); flex-shrink: 0; position: sticky; left: 0; z-index: 50; background: inherit; border-right: 1px solid var(--line-color); }
   .days-header-track { display: flex; flex: 1; }
   
   .day-col-header {
     width: var(--day-col-width); flex-shrink: 0; text-align: center; height: 50px; 
-    padding-top: 8px; font-size: 11px; color: var(--text-muted); border-right: 1px solid var(--line-color);
+    padding-top: 8px;
+    font-size: 11px; color: var(--text-muted); border-right: 1px solid var(--line-color);
+    display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
+    gap: 2px;
   }
-  .dch-day { font-weight: 600; text-transform: uppercase; margin-bottom: 2px; }
-  .dch-num { font-size: 16px; font-weight: 500; color: #fff; }
+  .dch-day { font-weight: 600; text-transform: uppercase; line-height: 1; }
+  .dch-num { font-size: 16px; font-weight: 500; color: #fff; line-height: 1; }
+  
+  .day-col-header.today { background: rgba(10, 132, 255, 0.15); border-bottom: 2px solid var(--acc-blue); }
   .day-col-header.today .dch-day { color: var(--acc-blue); }
   .day-col-header.today .dch-num { color: #fff; font-weight: 700; }
-  .day-col-header.today { border-bottom: 2px solid var(--acc-blue); background: rgba(10,132,255,0.1); }
 
   .matrix-body { display: flex; width: max-content; position: relative; }
-  .time-column { width: var(--time-col-width); flex-shrink: 0; position: sticky; left: 0; z-index: 30; background: rgba(0,0,0,0.4); backdrop-filter: blur(15px); border-right: 1px solid var(--line-color); }
-  .time-label { height: var(--grid-h); position: relative; }
-  .time-label span { position: absolute; top: -7px; right: 6px; font-size: 11px; color: var(--text-muted); }
-
+  
+  .time-column {
+    width: var(--time-col-width); flex-shrink: 0; position: sticky; left: 0; z-index: 30;
+    background: rgba(0, 0, 0, 0.25); backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px);
+    border-right: 1px solid var(--line-color); padding-bottom: 20px;
+  }
+  .time-label { height: var(--grid-h); position: relative; } 
+  .time-label span { position: absolute; top: -7px; right: 6px; font-size: 11px; font-weight: 500; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  
   .grid-columns-container { display: flex; flex: 1; position: relative; }
+  
   .day-column {
     width: var(--day-col-width); flex-shrink: 0; border-right: 1px solid var(--line-color); position: relative;
     background-image: linear-gradient(to bottom, var(--line-color) 1px, transparent 1px); background-size: 100% var(--grid-h);
+    padding-bottom: 20px;
   }
   .day-column.today { background-color: rgba(10, 132, 255, 0.02); }
-
-  /* === BLOCKS & EVENTS === */
-  /* Серые зоны (нерабочее время) */
+  
+  /* Блокировка и серые зоны (график тренера) */
   .blocked-slot { position: absolute; left: 0; right: 0; height: var(--grid-h); background: repeating-linear-gradient(45deg, rgba(255,255,255,0.03), rgba(255,255,255,0.03) 10px, rgba(255,255,255,0.06) 10px, rgba(255,255,255,0.06) 20px); pointer-events: none; z-index: 1; }
-  /* Отпуска/Выходные */
-  .day-off-overlay, .blocked-range-part { position: absolute; left: 0; right: 0; background: repeating-linear-gradient(45deg, rgba(255,255,255,0.05), rgba(255,255,255,0.05) 10px, rgba(255,255,255,0.08) 10px, rgba(255,255,255,0.08) 20px); z-index: 2; pointer-events: none; }
-
-  /* Карточка тренировки (Синяя для клиента) */
+  .blocked-range-part { position: absolute; left: 0; right: 0; background-color: var(--bg-core); background-image: repeating-linear-gradient(45deg, rgba(60, 156, 253, 0.1), rgba(60, 156, 253, 0.1) 10px, rgba(60, 156, 253, 0.2) 10px, rgba(60, 156, 253, 0.2) 20px); border-top: 1px solid rgba(60, 156, 253, 0.4); border-bottom: 1px solid rgba(60, 156, 253, 0.4); z-index: 2; pointer-events: none; }
+  .day-off-overlay { position: absolute; inset: 0; background-color: var(--bg-core); background-image: repeating-linear-gradient(45deg, rgba(60, 156, 253, 0.1), rgba(60, 156, 253, 0.1) 10px, rgba(60, 156, 253, 0.2) 10px, rgba(60, 156, 253, 0.2) 20px); z-index: 8; pointer-events: none; }
+  
+  /* Текущее время */
+  .global-time-line { position: absolute; left: 0; width: 100%; height: 1px; background: var(--acc-current); z-index: 10; pointer-events: none; display: none; }
+  .global-time-line::before { content: ''; position: absolute; left: -4px; top: -3px; width: 7px; height: 7px; background: var(--acc-current); border-radius: 50%; }
+  
+  /* === EVENT CARD (2 ЦВЕТА) === */
   .event-card { 
-    position: absolute; left: 2px; right: 2px; border-radius: 6px; 
-    background: var(--acc-blue); 
-    border: 1px solid rgba(255,255,255,0.2);
-    padding: 4px; overflow: hidden; z-index: 10; cursor: pointer;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    position: absolute; left: 2px; right: 2px; 
+    border-radius: 6px; padding: 2px 4px; overflow: hidden; 
+    border-left: 3px solid; cursor: pointer; z-index: 15; 
+    
+    /* ЦВЕТ 1: ЗАПЛАНИРОВАНО (СИНИЙ) */
+    background-color: rgba(10, 132, 255, 0.85); 
+    border-left-color: #fff;
+    border: 1px solid rgba(255,255,255,0.1);
+    transition: transform 0.1s;
   }
-  .ev-title { font-size: 11px; font-weight: 700; color: #fff; margin-bottom: 2px; }
-  .ev-time { font-size: 10px; color: rgba(255,255,255,0.9); }
-  .event-card.status-completed { background: var(--acc-green); } /* Если завершена - зеленая */
+  .event-card:active { transform: scale(0.96); }
+  
+  .ev-title { font-size: 10px; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.1; text-shadow: 0 1px 2px rgba(0,0,0,0.8); }
+  .ev-time { font-size: 8.5px; color: rgba(255,255,255,0.85); margin-top: 1px; font-weight: 500; text-shadow: 0 1px 2px rgba(0,0,0,0.8); }
 
-  /* === SHEET (VIEW ONLY) === */
+  /* ЦВЕТ 2: ЗАВЕРШЕНО (ЗЕЛЕНЫЙ) */
+  .event-card.status-completed {
+      background-color: rgba(48, 209, 88, 0.9) !important;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.4); 
+      z-index: 16;
+  }
+  
+  /* Иконки */
+  .card-icon { position: absolute; bottom: 2px; width: 11px; height: 11px; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.6)); }
+  .ev-recurring-icon { right: 16px; opacity: 0.8; }
+  .ev-status-icon { right: 3px; color: #fff; opacity: 1; }
+
+  /* Мини-режим */
+  .event-card.mini { display: flex; align-items: center; justify-content: center; padding: 0; }
+  .event-card.mini .ev-title, .event-card.mini .ev-time, .event-card.mini .ev-recurring-icon { display: none; }
+  .event-card.mini .ev-status-icon { position: static; width: 14px; height: 14px; }
+
+  /* === OVERLAYS & SHEETS === */
   .sheet-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 100; opacity: 0; pointer-events: none; transition: 0.3s; backdrop-filter: blur(4px); }
   .sheet-overlay.active { opacity: 1; pointer-events: auto; }
   
+  /* READ ONLY SHEET */
   .sheet { 
     position: fixed; bottom: 0; left: 0; right: 0; 
-    background: #1C1C1E; border-radius: 20px 20px 0 0; 
+    background: rgba(28, 28, 30, 0.95); 
+    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.08); border-bottom: none;
+    border-radius: 24px 24px 0 0; 
+    box-shadow: 0 -4px 24px -1px rgba(0, 0, 0, 0.2);
     padding: 24px 16px calc(24px + var(--safe-bottom)) 16px; 
     transform: translateY(110%); transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1); 
-    z-index: 101; border-top: 1px solid rgba(255,255,255,0.1);
+    z-index: 101; 
   }
   .sheet.open { transform: translateY(0); }
-  
-  .sh-title { font-size: 20px; font-weight: 700; color: #fff; margin-bottom: 4px; }
-  .sh-sub { font-size: 14px; color: var(--acc-blue); margin-bottom: 20px; }
+
+  .sh-title { font-size: 18px; font-weight: 700; color: #fff; margin-bottom: 4px; }
+  .sh-sub { font-size: 14px; color: var(--acc-blue); margin-bottom: 20px; font-weight: 500; }
   
   .info-row { display: flex; justify-content: space-between; margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid rgba(255,255,255,0.1); }
-  .ir-label { color: #8E8E93; font-size: 13px; }
-  .ir-val { color: #fff; font-size: 15px; font-weight: 500; }
+  .ir-label { color: #8E8E93; font-size: 13px; text-transform: uppercase; }
+  .ir-val { color: #fff; font-size: 16px; font-weight: 500; }
 
   .btn-close {
     width: 100%; padding: 14px; background: rgba(255,255,255,0.1); 
     color: #fff; border-radius: 12px; border: none; font-size: 16px; font-weight: 600; cursor: pointer;
+    margin-top: 10px;
   }
 
-  /* Toast */
-  .toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%) translateY(-100px); background: #333; color: #fff; padding: 10px 20px; border-radius: 20px; font-size: 13px; z-index: 200; transition: 0.3s; opacity: 0; }
-  .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+  /* TOAST */
+  .toast-notification {
+    position: fixed; top: calc(20px + var(--safe-top)); left: 16px; right: 16px;
+    background: rgba(28, 28, 30, 0.8); backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 24px;
+    color: #fff; padding: 16px; z-index: 9999; 
+    font-size: 14px; font-weight: 500; text-align: center;
+    transform: translateY(-150%); transition: transform 0.4s;
+    pointer-events: none; opacity: 0;
+  }
+  .toast-notification.show { transform: translateY(0); opacity: 1; }
 
 </style>
 </head>
@@ -133,11 +195,11 @@
 
 <div class="fx-layer"><div class="orb orb-1"></div><div class="orb orb-2"></div><div class="noise"></div></div>
 
-<div class="toast" id="toast">Обновлено</div>
+<div class="toast-notification" id="toast">Обновлено</div>
 
 <div class="app-container">
   <div class="top-area">
-    <div class="month-label" id="headerMonth">ЗАГРУЗКА...</div>
+      <div class="month-label" id="headerMonth">ЗАГРУЗКА...</div>
   </div>
 
   <div class="matrix-viewport" id="matrixViewport">
@@ -147,7 +209,7 @@
     </div>
     <div class="matrix-body">
       <div class="time-column" id="timeColumn"></div>
-      <div class="grid-columns-container" id="gridColumns"></div>
+      <div class="grid-columns-container" id="gridColumns"><div class="global-time-line" id="globalTimeLine"></div></div>
     </div>
   </div>
 </div>
@@ -156,21 +218,21 @@
 
 <div class="sheet" id="detailsSheet">
   <div class="sh-title">Детали тренировки</div>
-  <div class="sh-sub" id="detDate">Понедельник, 12 Октября</div>
+  <div class="sh-sub" id="detDate"></div>
   
   <div class="info-row">
     <div class="ir-label">Время</div>
-    <div class="ir-val" id="detTime">10:00 - 11:00</div>
+    <div class="ir-val" id="detTime"></div>
   </div>
   
   <div class="info-row">
-    <div class="ir-label">Тип / Заметка</div>
-    <div class="ir-val" id="detNote">Персональная</div>
+    <div class="ir-label">Заметка</div>
+    <div class="ir-val" id="detNote"></div>
   </div>
 
   <div class="info-row" style="border:none">
     <div class="ir-label">Статус</div>
-    <div class="ir-val" id="detStatus">Запланировано</div>
+    <div class="ir-val" id="detStatus"></div>
   </div>
 
   <button class="btn-close" onclick="closeSheet()">Закрыть</button>
@@ -178,214 +240,319 @@
 
 <script>
   // === CONFIG ===
+  const APP_VERSION = 'v9.3-CLIENT-IDEAL';
   const API_URL = 'https://script.google.com/macros/s/AKfycbxXxlp8PCCZ6dBlc4fyKafLKNDPIv8FQJV663YHp3vp5lcbtvH9CmRsrs9hccEC1weJRQ/exec'; 
   const GRID_H = 60;
   
-  let startOffset = -7, endOffset = 30; // Показываем неделю назад и месяц вперед
+  // Storage Keys
+  const KEY_SESSIONS = 'uc_client_sessions';
+  const KEY_SETTINGS = 'uc_client_settings';
+
+  // State
+  let startOffset = -14, endOffset = 45; // Start with ~2 months range
   let sessions = [];
   let availabilityPattern = {0:[],1:[],2:[],3:[],4:[],5:[],6:[]}; 
   let specialRanges = []; 
   let dateExceptions = {};
+  let updateInterval;
+  let isScrolling = false;
 
-  // === TMA INIT ===
+  // === TMA BOOT (ROBUST) ===
   (function initTMA() {
     try {
       const tg = window.Telegram?.WebApp;
-      if (tg) {
-        tg.ready(); 
-        tg.expand();
-        tg.setHeaderColor('#050505'); 
-        tg.setBackgroundColor('#050505');
-        // Кнопка "Назад" не нужна, так как это главная страница клиента
-      }
-    } catch (e) {}
+      if (!tg) return;
+
+      tg.ready(); 
+      tg.expand();
+
+      try { tg.setHeaderColor('#050505'); tg.setBackgroundColor('#050505'); } catch (e) {}
+      try { if (tg.disableVerticalSwipes) tg.disableVerticalSwipes(); } catch (e) {}
+      try { if (tg.BackButton) tg.BackButton.hide(); } catch (e) {}
+
+    } catch (globalErr) { console.error(globalErr); }
   })();
 
   // === DATA LAYER ===
   const DataManager = {
-    // ВАЖНО: Вызываем client_load, который вернет ТОЛЬКО мои тренировки
+    // 1. SAVE TO MEMORY
+    saveLocally() {
+      try {
+        localStorage.setItem(KEY_SESSIONS, JSON.stringify(sessions));
+        localStorage.setItem(KEY_SETTINGS, JSON.stringify({ pattern: availabilityPattern, ranges: specialRanges, exceptions: dateExceptions }));
+      } catch(e) {}
+    },
+
+    // 2. LOAD FROM MEMORY (Instant render)
+    loadLocal() {
+      try {
+        const s = localStorage.getItem(KEY_SESSIONS); if(s) sessions = JSON.parse(s);
+        const set = localStorage.getItem(KEY_SETTINGS);
+        if(set) {
+            const parsed = JSON.parse(set);
+            if(parsed.pattern) availabilityPattern = parsed.pattern;
+            if(parsed.ranges) specialRanges = parsed.ranges;
+            if(parsed.exceptions) dateExceptions = parsed.exceptions;
+        } else {
+            // Default: All visible if no data
+            for(let i=0; i<7; i++) availabilityPattern[i] = []; 
+        }
+      } catch(e) {}
+    },
+
+    // 3. FETCH FROM SERVER
     async syncLoad() {
       const d = new Date();
       const m1 = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
       const nextM = new Date(d); nextM.setMonth(d.getMonth() + 1);
       const m2 = `${nextM.getFullYear()}-${String(nextM.getMonth()+1).padStart(2,'0')}`;
 
+      console.log(`[Client] Syncing ${m1}, ${m2}`);
+
       try {
         const tg = window.Telegram?.WebApp;
         const initData = tg?.initData || '';
 
-        // Запрашиваем данные клиента
-        const resp = await fetch(API_URL, {
-          method: 'POST',
-          body: JSON.stringify({ action: 'client_load', init_data: initData, month_str: m1 })
-        });
-        const json = await resp.json();
-        
-        if (json.ok && json.data) {
-           this.applyData(json.data, m1);
-        }
-        
-        // Второй месяц (фоном)
-        fetch(API_URL, {
-           method: 'POST',
-           body: JSON.stringify({ action: 'client_load', init_data: initData, month_str: m2 })
-        }).then(r=>r.json()).then(j=>{ if(j.ok) this.applyData(j.data, m2); });
+        // Parallel Fetch
+        const [r1, r2] = await Promise.all([
+            fetch(API_URL, { method: 'POST', body: JSON.stringify({ action: 'client_load', init_data: initData, month_str: m1 }) }).then(r=>r.json()),
+            fetch(API_URL, { method: 'POST', body: JSON.stringify({ action: 'client_load', init_data: initData, month_str: m2 }) }).then(r=>r.json())
+        ]);
 
-        showToast("Обновлено");
+        if(r1.ok) this.applyData(r1.data, m1);
+        if(r2.ok) this.applyData(r2.data, m2);
+        
+        this.saveLocally();
+        showToast("Синхронизировано");
       } catch (e) {
-        console.error(e);
-        showToast("Ошибка соединения");
+        showToast("Оффлайн режим");
       }
     },
 
     applyData(data, monthStr) {
-      // 1. Settings (График тренера)
+      if(!data) return;
+      
+      // Update Settings
       if (data.settings) {
         if(data.settings.pattern) availabilityPattern = data.settings.pattern;
         if(data.settings.ranges) specialRanges = data.settings.ranges;
+        if(data.settings.exceptions) dateExceptions = data.settings.exceptions;
       }
       
-      // 2. Calendar (Только мои сессии)
+      // Update Calendar
       if (data.calendar) {
-        // Очищаем старые за этот месяц, чтобы не двоилось
+        // Clear old sessions for this month
         sessions = sessions.filter(s => !s.dateStr.startsWith(monthStr));
         
         Object.keys(data.calendar).forEach(dayKey => {
-            const evts = data.calendar[dayKey]; // Это уже отфильтрованный массив с бэка
+            const evts = data.calendar[dayKey];
             evts.forEach(evt => {
                 sessions.push({
                     id: evt.i,
                     dateStr: `${monthStr}-${dayKey.padStart(2, '0')}`,
                     start: evt.s,
                     end: evt.e,
-                    note: evt.n || 'Тренировка',
-                    status: evt.st || 'planned'
+                    note: evt.n || '',
+                    status: evt.st || 'planned',
+                    seriesId: evt.sid
                 });
             });
         });
-        reRenderBlocks();
       }
+      reRenderBlocks();
     }
   };
 
-  // === RENDER LOGIC ===
+  // === INITIALIZATION ===
   function init() {
+    DataManager.loadLocal(); // Load Cache
+    
     renderTimeColumn();
     renderDayRange(startOffset, endOffset);
     scrollToToday();
+    startClock();
+    reRenderBlocks();
     
-    // Scroll Monitor
-    document.getElementById('matrixViewport').addEventListener('scroll', onScroll, {passive: true});
+    // Infinite Scroll
+    document.getElementById('matrixViewport').addEventListener('scroll', ()=>{ 
+        isScrolling=true; 
+        onScroll(); 
+        handleInfiniteScroll(); 
+    }, {passive: true});
     
-    // Load Data
-    DataManager.syncLoad();
+    DataManager.syncLoad(); // Load Network
   }
 
-  function renderTimeColumn() {
-    const col = document.getElementById('timeColumn');
-    col.innerHTML = '';
-    for(let i=0; i<24; i++) {
-      const el = document.createElement('div');
-      el.className = 'time-label';
-      if(i>0) el.innerHTML = `<span>${String(i).padStart(2,'0')}:00</span>`;
-      col.appendChild(el);
-    }
-  }
-
+  // === RENDER ENGINE ===
+  function renderTimeColumn() { const col=document.getElementById('timeColumn'); col.innerHTML=''; for(let i=0; i<24; i++) { const el=document.createElement('div'); el.className='time-label'; if (i > 0) el.innerHTML=`<span>${String(i).padStart(2,'0')}:00</span>`; col.appendChild(el); } }
+  
   function renderDayRange(from, to) {
-    const track = document.getElementById('daysHeaderTrack');
-    const grid = document.getElementById('gridColumns');
-    const weekDays = ['ПН','ВТ','СР','ЧТ','ПТ','СБ','ВС'];
-    const base = new Date(); base.setHours(0,0,0,0);
+    const track=document.getElementById('daysHeaderTrack'), grid=document.getElementById('gridColumns');
+    const weekDays=['ПН','ВТ','СР','ЧТ','ПТ','СБ','ВС']; const base=new Date(); base.setHours(0,0,0,0);
     const todayStr = getLocalDateStr(new Date());
-
+    
     for(let i=from; i<=to; i++) {
-      const d = new Date(base); d.setDate(d.getDate()+i);
-      const dateStr = getLocalDateStr(d);
-      let dayIdx = d.getDay()-1; if(dayIdx===-1) dayIdx=6;
+      const d=new Date(base); d.setDate(d.getDate()+i); const dateStr=getLocalDateStr(d);
+      let dayIdx=d.getDay()-1; if(dayIdx===-1) dayIdx=6;
       const isToday = dateStr === todayStr;
-
-      // Header
-      const h = document.createElement('div');
-      h.className = `day-col-header ${isToday ? 'today' : ''}`;
-      h.setAttribute('data-date', dateStr);
-      h.innerHTML = `<div class="dch-day">${weekDays[dayIdx]}</div><div class="dch-num">${d.getDate()}</div>`;
+      
+      const h=document.createElement('div'); h.className=`day-col-header ${isToday ? 'today' : ''}`; h.setAttribute('data-date', dateStr);
+      h.innerHTML=`<div class="dch-day">${weekDays[dayIdx]}</div><div class="dch-num">${d.getDate()}</div>`;
       track.appendChild(h);
-
-      // Column
-      const c = document.createElement('div');
-      c.className = `day-column ${isToday ? 'today' : ''}`;
-      c.setAttribute('data-date', dateStr);
-      c.setAttribute('data-day-idx', dayIdx);
+      
+      const c=document.createElement('div'); c.className=`day-column ${isToday ? 'today' : ''}`; c.setAttribute('data-date', dateStr); c.setAttribute('data-day-idx', dayIdx);
       grid.appendChild(c);
     }
   }
 
   function reRenderBlocks() {
-    document.querySelectorAll('.day-column').forEach(col => {
-      col.innerHTML = ''; // Clear
-      const dateStr = col.getAttribute('data-date');
-      const dayIdx = parseInt(col.getAttribute('data-day-idx'));
-      
-      // 1. Рисуем серые зоны (график тренера)
-      const blocked = availabilityPattern[dayIdx] || [];
-      blocked.forEach(h => {
-         const b = document.createElement('div');
-         b.className = 'blocked-slot';
-         b.style.top = `${h * GRID_H}px`;
-         col.appendChild(b);
-      });
+      document.querySelectorAll('.day-column').forEach(col => {
+        col.innerHTML = ''; // Clean slate
+        const dateStr = col.getAttribute('data-date');
+        const dayIdx = parseInt(col.getAttribute('data-day-idx'));
+        
+        // 1. Gray Zones (Trainer Pattern)
+        (availabilityPattern[dayIdx] || []).forEach(h => {
+          const b = document.createElement('div');
+          b.className = 'blocked-slot';
+          b.style.top = `${h * GRID_H}px`;
+          col.appendChild(b);
+        });
+        
+        // 2. Vacation Ranges
+        if (specialRanges && specialRanges.length > 0) {
+            const cS = new Date(dateStr + 'T00:00:00').getTime();
+            const cE = new Date(dateStr + 'T23:59:59').getTime();
+            specialRanges.forEach(r => {
+                const rS = new Date(r.start).getTime();
+                const rE = new Date(r.end).getTime();
+                const oS = Math.max(cS, rS);
+                const oE = Math.min(cE, rE);
+                if (oS < oE) {
+                    const top = (oS - cS) / 3600000 * GRID_H;
+                    const h = (oE - oS) / 3600000 * GRID_H;
+                    const p = document.createElement('div');
+                    if (h >= 23.5 * GRID_H) p.className = 'day-off-overlay';
+                    else {
+                        p.className = 'blocked-range-part';
+                        p.style.top = `${top}px`;
+                        p.style.height = `${h}px`;
+                    }
+                    col.appendChild(p);
+                }
+            });
+        }
 
-      // 2. Рисуем отпуска
-      if (specialRanges && specialRanges.length > 0) {
-          const cS = new Date(dateStr + 'T00:00:00').getTime();
-          const cE = new Date(dateStr + 'T23:59:59').getTime();
-          specialRanges.forEach(r => {
-              const rS = new Date(r.start).getTime();
-              const rE = new Date(r.end).getTime();
-              const oS = Math.max(cS, rS);
-              const oE = Math.min(cE, rE);
-              if (oS < oE) {
-                  const top = (oS - cS) / 3600000 * GRID_H;
-                  const h = (oE - oS) / 3600000 * GRID_H;
-                  const p = document.createElement('div');
-                  p.className = 'blocked-range-part';
-                  p.style.top = `${top}px`;
-                  p.style.height = `${h}px`;
-                  col.appendChild(p);
-              }
-          });
-      }
-
-      // 3. Рисуем тренировки клиента
-      const daySessions = sessions.filter(s => s.dateStr === dateStr);
-      daySessions.forEach(s => {
-         const [h, m] = s.start.split(':').map(Number);
-         const [hE, mE] = s.end.split(':').map(Number);
-         const top = (h*60+m)/60 * GRID_H;
-         const height = (hE*60+mE - (h*60+m))/60 * GRID_H;
-         
-         const el = document.createElement('div');
-         el.className = 'event-card' + (s.status==='completed'?' status-completed':'');
-         el.style.top = `${top}px`;
-         el.style.height = `${Math.max(height, 24)}px`;
-         el.innerHTML = `<div class="ev-title">Тренировка</div><div class="ev-time">${s.start} - ${s.end}</div>`;
-         el.onclick = () => openDetails(s);
-         col.appendChild(el);
+        // 3. Draw Sessions
+        renderEventsForColumn(col, dateStr);
       });
-    });
   }
 
-  // === UI HELPERS ===
+  function renderEventsForColumn(col, dateStr) {
+      const dayEvents = sessions.filter(s => s.dateStr === dateStr);
+      
+      // Calculate minutes
+      const items = dayEvents.map(s => {
+          const [h, m] = s.start.split(':').map(Number);
+          const [hE, mE] = s.end.split(':').map(Number);
+          return { data: s, start: h * 60 + m, end: hE * 60 + mE, colIndex: 0 };
+      });
+
+      // Sort & Stack
+      items.sort((a, b) => (a.start - b.start) || ((b.end - b.start) - (a.end - a.start)));
+      const columns = [];
+      items.forEach(item => {
+          let placed = false;
+          for (let i = 0; i < columns.length; i++) {
+              const colItems = columns[i];
+              if (item.start >= colItems[colItems.length - 1].end) {
+                  colItems.push(item); item.colIndex = i; placed = true; break;
+              }
+          }
+          if (!placed) { columns.push([item]); item.colIndex = columns.length - 1; }
+      });
+
+      // Render
+      items.forEach(item => {
+          let maxCol = 0;
+          items.forEach(other => {
+               if (Math.max(item.start, other.start) < Math.min(item.end, other.end)) {
+                   if (other.colIndex > maxCol) maxCol = other.colIndex;
+               }
+          });
+          
+          const totalCols = maxCol + 1;
+          const widthPercent = 100 / totalCols;
+          const leftPercent = item.colIndex * widthPercent;
+
+          const el = document.createElement('div');
+          const s = item.data;
+          
+          // Color Logic: Blue (Default) or Green (Completed) via CSS class
+          const statusClass = (s.status === 'completed') ? ' status-completed' : '';
+          el.className = `event-card${statusClass}`;
+          
+          const top = item.start / 60 * GRID_H;
+          const height = (item.end - item.start) / 60 * GRID_H;
+          
+          el.style.top = `${top}px`;
+          el.style.height = `${Math.max(height, 20)}px`;
+          el.style.width = `calc(${widthPercent}% - 4px)`;
+          el.style.left = `calc(${leftPercent}% + 2px)`;
+          el.style.zIndex = 10 + item.colIndex;
+
+          if (widthPercent < 85) el.classList.add('mini');
+
+          let icons = '';
+          if(s.seriesId) icons += `<svg class="card-icon ev-recurring-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3"/></svg>`;
+          if(s.status === 'completed') icons += `<svg class="card-icon ev-status-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>`;
+
+          el.innerHTML = `
+             <div class="ev-title">Тренировка</div>
+             <div class="ev-time">${s.start} - ${s.end}</div>
+             ${icons}
+          `;
+          
+          el.onclick = (e) => { e.stopPropagation(); openDetails(s); };
+          col.appendChild(el);
+      });
+  }
+
+  // === INFINITE SCROLL ===
+  function handleInfiniteScroll() { 
+      const vp=document.getElementById('matrixViewport'); 
+      const sl=vp.scrollLeft, sw=vp.scrollWidth, cw=vp.clientWidth; 
+      if(sw-(sl+cw)<300) { const old=endOffset; endOffset+=14; renderDayRange(old+1, endOffset); reRenderBlocks(); } 
+      if(sl<300) { const old=startOffset; startOffset-=14; prependDays(startOffset, old-1); vp.scrollLeft+=(14*65); reRenderBlocks(); } 
+  }
+  function prependDays(from, to) { 
+      const track=document.getElementById('daysHeaderTrack'), grid=document.getElementById('gridColumns'); 
+      const weekDays=['ПН','ВТ','СР','ЧТ','ПТ','СБ','ВС']; const base=new Date(); base.setHours(0,0,0,0); const todayStr = getLocalDateStr(new Date()); 
+      const fragH=document.createDocumentFragment(), fragC=document.createDocumentFragment(); 
+      for(let i=from; i<=to; i++) { 
+          const d=new Date(base); d.setDate(d.getDate()+i); const dateStr=getLocalDateStr(d); let dayIdx=d.getDay()-1; if(dayIdx===-1) dayIdx=6; const isToday = dateStr === todayStr; 
+          const h=document.createElement('div'); h.className=`day-col-header ${isToday ? 'today' : ''}`; h.setAttribute('data-date', dateStr); 
+          h.innerHTML=`<div class="dch-day">${weekDays[dayIdx]}</div><div class="dch-num">${d.getDate()}</div>`; fragH.appendChild(h); 
+          const c=document.createElement('div'); c.className=`day-column ${isToday ? 'today' : ''}`; c.setAttribute('data-date', dateStr); c.setAttribute('data-day-idx', dayIdx); fragC.appendChild(c); 
+      } 
+      track.insertBefore(fragH, track.firstChild); grid.insertBefore(fragC, grid.querySelector('.day-column')); 
+  }
+
+  // === HELPERS ===
   function openDetails(s) {
     const d = new Date(s.dateStr);
-    const opts = { weekday: 'long', day: 'numeric', month: 'long' };
-    const datePretty = d.toLocaleDateString('ru-RU', opts);
+    const datePretty = d.toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' });
     
     document.getElementById('detDate').textContent = datePretty.charAt(0).toUpperCase() + datePretty.slice(1);
     document.getElementById('detTime').textContent = `${s.start} - ${s.end}`;
     document.getElementById('detNote').textContent = s.note || 'Без заметок';
-    document.getElementById('detStatus').textContent = (s.status === 'completed') ? '✅ Завершена' : '📅 Запланирована';
+    
+    const statEl = document.getElementById('detStatus');
+    if (s.status === 'completed') {
+        statEl.textContent = '✅ Завершена'; statEl.style.color = 'var(--acc-green)';
+    } else {
+        statEl.textContent = '📅 Запланирована'; statEl.style.color = 'var(--acc-blue)';
+    }
     
     document.getElementById('overlay').classList.add('active');
     document.getElementById('detailsSheet').classList.add('open');
@@ -396,42 +563,27 @@
     document.getElementById('detailsSheet').classList.remove('open');
   }
 
-  function getLocalDateStr(date) { 
-    const y = date.getFullYear(); 
-    const m = String(date.getMonth() + 1).padStart(2, '0'); 
-    const d = String(date.getDate()).padStart(2, '0'); 
-    return `${y}-${m}-${d}`; 
+  function getLocalDateStr(date) { const y = date.getFullYear(); const m = String(date.getMonth() + 1).padStart(2, '0'); const d = String(date.getDate()).padStart(2, '0'); return `${y}-${m}-${d}`; }
+  function getStartOfWeek(date) { const d=new Date(date); const day=d.getDay(); const diff=d.getDate()-day+(day===0?-6:1); d.setDate(diff); d.setHours(0,0,0,0); return d; }
+  
+  function scrollToToday() { 
+      const today = getLocalDateStr(new Date()); 
+      // Небольшая задержка, чтобы DOM успел обновиться при старте
+      setTimeout(() => {
+          const el = document.querySelector(`.day-col-header[data-date="${today}"]`); 
+          if(el) { 
+              const vp = document.getElementById('matrixViewport'); 
+              const offset = el.offsetLeft - (vp.clientWidth/2) + (el.offsetWidth/2);
+              vp.scrollTo({ left: offset, behavior: 'auto' }); 
+              vp.scrollTop = 9 * GRID_H; 
+          }
+      }, 50);
   }
-
-  function scrollToToday() {
-    const today = getLocalDateStr(new Date());
-    const el = document.querySelector(`.day-col-header[data-date="${today}"]`);
-    if(el) {
-       const vp = document.getElementById('matrixViewport');
-       vp.scrollLeft = el.offsetLeft - (vp.clientWidth/2) + (el.offsetWidth/2);
-       vp.scrollTop = 9 * GRID_H; // Scroll to 09:00
-    }
-  }
-
-  function onScroll() {
-    const vp = document.getElementById('matrixViewport');
-    const headers = document.querySelectorAll('.day-col-header');
-    for(let h of headers) {
-        if(h.offsetLeft >= vp.scrollLeft) {
-            const d = new Date(h.getAttribute('data-date'));
-            const m = d.toLocaleString('ru',{month:'long'}).toUpperCase();
-            document.getElementById('headerMonth').textContent = `${m} ${d.getFullYear()}`;
-            break;
-        }
-    }
-  }
-
-  function showToast(msg) {
-    const t = document.getElementById('toast');
-    t.textContent = msg;
-    t.classList.add('show');
-    setTimeout(()=>t.classList.remove('show'), 2000);
-  }
+  
+  function startClock(){updateClock();if(updateInterval)clearInterval(updateInterval);updateInterval=setInterval(updateClock,60000);}
+  function updateClock(){const n=new Date(),l=document.getElementById('globalTimeLine'),px=(n.getHours()*60+n.getMinutes())/60*GRID_H;l.style.top=`${px}px`;l.style.display='block';}
+  function onScroll() { const vp=document.getElementById('matrixViewport'), headers=document.querySelectorAll('.day-col-header'); for(let h of headers) if(h.offsetLeft>=vp.scrollLeft) { const d=new Date(h.getAttribute('data-date')); document.getElementById('headerMonth').textContent=`${d.toLocaleString('ru',{month:'long'}).toUpperCase()} ${d.getFullYear()}`; break; } }
+  function showToast(msg) { const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'), 2000); }
 
   document.addEventListener('DOMContentLoaded', init);
 </script>
