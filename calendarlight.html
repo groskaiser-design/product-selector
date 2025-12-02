@@ -353,13 +353,13 @@
 <div class="fx-layer"><div class="orb orb-1"></div><div class="orb orb-2"></div><div class="noise"></div></div>
 
 <div class="toast-notification" id="toast">Обновлено</div>
-  <div class="confirm-overlay" id="customConfirm">
+<div class="confirm-overlay" id="customConfirm">
   <div class="confirm-box">
-    <div class="cb-title">Отмена записи</div>
-    <div class="cb-text">Вы действительно хотите отменить эту тренировку?</div>
+    <div class="cb-title" id="ccTitle">Подтверждение</div>
+    <div class="cb-text" id="ccText">Вы уверены?</div>
     <div class="cb-buttons">
       <button class="cb-btn cancel" onclick="resolveCustomConfirm(false)">Отмена</button>
-      <button class="cb-btn destructive" onclick="resolveCustomConfirm(true)">Да</button>
+      <button class="cb-btn destructive" id="ccYesBtn" onclick="resolveCustomConfirm(true)">Да</button>
     </div>
   </div>
 </div>
@@ -1020,11 +1020,25 @@ function openDetails(s) {
       return 'rgba(10, 132, 255, ' + alpha + ')';
   }
 
-  // === CANCEL FUNCTION (MOVED INSIDE SCRIPT) ===
-  // === CUSTOM CONFIRM LOGIC ===
+// === CUSTOM CONFIRM LOGIC ===
   let confirmResolver = null;
 
-  function showCustomConfirm() {
+  function showCustomConfirm(title, text, isDestructive = true) {
+    // 1. Настраиваем тексты
+    document.getElementById('ccTitle').textContent = title;
+    document.getElementById('ccText').textContent = text;
+    
+    // 2. Настраиваем цвет кнопки (Красный для отмены, Синий для переноса)
+    const btn = document.getElementById('ccYesBtn');
+    if (isDestructive) {
+        btn.style.color = '#ff453a'; // Red
+        btn.style.fontWeight = '600';
+    } else {
+        btn.style.color = '#0a84ff'; // Blue
+        btn.style.fontWeight = '600';
+    }
+
+    // 3. Показываем
     return new Promise((resolve) => {
       confirmResolver = resolve;
       document.getElementById('customConfirm').classList.add('visible');
@@ -1036,41 +1050,41 @@ function openDetails(s) {
     if (confirmResolver) confirmResolver(result);
   }
 
+  // === UPDATED CANCEL FUNCTION ===
   async function tryCancelCurrentSession() {
       if (!currentSession) return;
-      const isConfirmed = await showCustomConfirm();
+
+      // Вызываем попап с КРАСНОЙ кнопкой (true)
+      const isConfirmed = await showCustomConfirm(
+          'Отмена записи', 
+          'Вы действительно хотите отменить эту тренировку?', 
+          true
+      );
+      
       if (!isConfirmed) return;
 
       const s = currentSession;
       closeAllSheets(); 
 
+      // Оптимистичное удаление
       sessions = sessions.filter(x => x.id !== s.id);
       reRenderBlocks();
       showToast("Отменено");
 
       try {
           const tg = window.Telegram?.WebApp;
-          const initData = tg?.initData || '';
-
           const resp = await fetch(API_URL, {
               method: 'POST',
               body: JSON.stringify({
                   action: 'client_cancel',
-                  init_data: initData,
+                  init_data: tg?.initData || '',
                   coachId: s.coachId,
                   dateStr: s.dateStr,
                   sessionId: s.id
               })
           });
-          const json = await resp.json();
-
-          if (!json.ok) {
-              showToast("Ошибка отмены");
-          } else {
-              DataManager.saveLocally();
-          }
+          if (resp.ok) DataManager.saveLocally();
       } catch (e) {
-          console.error(e);
           showToast("Ошибка сети");
       }
   }
@@ -1079,7 +1093,7 @@ function openDetails(s) {
   let availableSlotsCache = {}; 
   let selectedRsDate = null;
 
-async function startRescheduleFlow() {
+  async function startRescheduleFlow() {
     if (!currentSession) return;
     
     document.getElementById('detailsSheet').classList.remove('open'); 
@@ -1103,8 +1117,7 @@ async function startRescheduleFlow() {
           coachId: currentSession.coachId,
           duration: durationMinutes,
           init_data: tg?.initData || '',
-          // !!! ВАЖНО: Передаем ID сессии, чтобы исключить её из проверки занятости
-          excludeSessionId: currentSession.id 
+          excludeSessionId: currentSession.id
         })
       });
       
@@ -1175,11 +1188,22 @@ async function startRescheduleFlow() {
   }
 
   async function confirmReschedule(newTime) {
-     if(!confirm(`Перенести тренировку на ${selectedRsDate} в ${newTime}?`)) return;
+     // === ИСПОЛЬЗУЕМ КРАСИВЫЙ ПОПАП (СИНЯЯ КНОПКА) ===
+     const d = new Date(selectedRsDate);
+     const datePretty = d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+
+     const isConfirmed = await showCustomConfirm(
+        'Перенос записи', 
+        `Перенести тренировку на ${datePretty} в ${newTime}?`, 
+        false // false = НЕ деструктивное действие (кнопка будет синей)
+     );
+
+     if(!isConfirmed) return;
      
      closeAllSheets();
      showToast("Переносим...");
      
+     // 1. Optimistic Update
      const oldDate = currentSession.dateStr;
      const sId = currentSession.id;
      
