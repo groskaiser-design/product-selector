@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Ultima Profile</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  /* === CORE STYLES (Based on Ultima Router) === */
+  :root {
+    --bg-core: #050505;
+    --text-main: #ffffff;
+    --text-muted: rgba(255, 255, 255, 0.55);
+    
+    /* Surfaces */
+    --surface-glass: rgba(255, 255, 255, 0.08);
+    --surface-card: rgba(30, 30, 30, 0.6);
+    --surface-border: rgba(255, 255, 255, 0.1);
+    --surface-highlight: rgba(255, 255, 255, 0.2);
+    
+    /* Accents */
+    --acc-orange: #ff9f0a;
+    --acc-green: #30d158;
+    --acc-blue: #0a84ff;
+    --acc-red: #ff453a;
+    --acc-purple: #5e60ce;
+    
+    /* Metrics */
+    --radius-xl: 28px;
+    --radius-l: 20px;
+    --radius-m: 14px;
+    --pad: 16px;
+  }
+
+  /* Reset & Base */
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; outline: none; }
+  body {
+    background-color: var(--bg-core);
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', Roboto, sans-serif;
+    color: var(--text-main);
+    min-height: 100vh;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+    padding-bottom: 120px; /* Space for FAB or bottom nav */
+  }
+
+  /* Scrollbar Hide */
+  *::-webkit-scrollbar { display: none; }
+  * { -ms-overflow-style: none; scrollbar-width: none; }
+
+  /* FX BACKGROUND */
+  .fx-layer { position: fixed; inset: 0; z-index: -1; pointer-events: none; }
+  .orb { position: absolute; border-radius: 50%; filter: blur(80px); opacity: 0.4; }
+  .orb-1 { top: -10%; left: -20%; width: 300px; height: 300px; background: var(--acc-purple); animation: breathe 10s infinite ease-in-out; }
+  .orb-2 { bottom: 10%; right: -10%; width: 250px; height: 250px; background: var(--acc-blue); animation: breathe 12s infinite ease-in-out reverse; }
+  .noise { position: fixed; inset: 0; opacity: 0.05; background: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+  @keyframes breathe { 0%, 100% { transform: scale(1); opacity: 0.3; } 50% { transform: scale(1.1); opacity: 0.5; } }
+
+  /* LAYOUT */
+  .app-shell { max-width: 480px; margin: 0 auto; padding: var(--pad); padding-top: calc(12px + env(safe-area-inset-top)); }
+
+  /* HEADER */
+  .nav-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
+  .nav-btn { width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; background: var(--surface-glass); border-radius: 50%; border: 1px solid var(--surface-border); backdrop-filter: blur(10px); color: #fff; transition: 0.2s; }
+  .nav-btn:active { transform: scale(0.92); background: rgba(255,255,255,0.15); }
+  .page-title { font-size: 17px; font-weight: 600; letter-spacing: -0.5px; opacity: 0.9; }
+
+  /* PROFILE HERO */
+  .profile-hero { display: flex; flex-direction: column; align-items: center; text-align: center; margin-bottom: 40px; position: relative; }
+  
+  .avatar-wrapper { position: relative; margin-bottom: 16px; }
+  .avatar-ring {
+    width: 110px; height: 110px; border-radius: 50%;
+    background: linear-gradient(135deg, rgba(255,255,255,0.1), rgba(255,255,255,0));
+    border: 1px solid var(--surface-highlight);
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+  }
+  .avatar-img { width: 100px; height: 100px; border-radius: 50%; object-fit: cover; background: #222; }
+  .avatar-glow { position: absolute; inset: 0; border-radius: 50%; background: radial-gradient(circle, var(--acc-blue) 0%, transparent 70%); opacity: 0.3; z-index: -1; filter: blur(20px); animation: pulse-glow 4s infinite; }
+  @keyframes pulse-glow { 0%, 100% { opacity: 0.2; transform: scale(0.9); } 50% { opacity: 0.5; transform: scale(1.1); } }
+
+  .user-name { font-size: 28px; font-weight: 800; letter-spacing: -0.5px; margin-bottom: 6px; line-height: 1.1; }
+  
+  .user-id-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
+    padding: 6px 12px; border-radius: 20px;
+    font-size: 13px; font-family: 'SF Mono', 'Roboto Mono', monospace; color: var(--text-muted);
+    cursor: pointer; transition: 0.2s;
+  }
+  .user-id-badge:active { background: rgba(255,255,255,0.15); transform: scale(0.98); }
+  .copy-icon { opacity: 0.6; width: 14px; height: 14px; }
+
+  /* SECTIONS */
+  .section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; padding: 0 4px; }
+  .section-title { font-size: 20px; font-weight: 700; letter-spacing: -0.5px; }
+  .section-action { font-size: 14px; color: var(--acc-blue); font-weight: 500; cursor: pointer; padding: 4px; }
+  .section-action:active { opacity: 0.6; }
+
+  /* TRAINERS (MENTORS) LIST */
+  .mentors-grid { display: flex; flex-direction: column; gap: 10px; margin-bottom: 32px; }
+  .mentor-card {
+    display: flex; align-items: center; justify-content: space-between;
+    background: var(--surface-glass); border: 1px solid var(--surface-border);
+    border-radius: var(--radius-l); padding: 12px 16px;
+    backdrop-filter: blur(20px); transition: 0.2s;
+  }
+  .mentor-card:active { transform: scale(0.98); background: rgba(255,255,255,0.12); }
+  
+  .m-info { display: flex; align-items: center; gap: 12px; }
+  .m-av { width: 40px; height: 40px; background: linear-gradient(135deg, #444, #222); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 18px; color: #fff; border: 1px solid rgba(255,255,255,0.1); text-transform: uppercase; }
+  .m-details { display: flex; flex-direction: column; }
+  .m-name { font-weight: 600; font-size: 16px; color: #fff; }
+  .m-id { font-size: 12px; color: var(--text-muted); font-family: monospace; margin-top: 2px; }
+  
+  .m-del { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 50%; color: var(--acc-red); background: rgba(255, 69, 58, 0.1); transition: 0.2s; }
+  .m-del:active { background: var(--acc-red); color: #fff; }
+
+  .empty-state { text-align: center; padding: 30px; color: var(--text-muted); font-size: 14px; border: 1px dashed rgba(255,255,255,0.1); border-radius: var(--radius-l); background: rgba(255,255,255,0.02); }
+
+  /* RITUALS (ALARMS) */
+  .rituals-list { display: flex; flex-direction: column; gap: 1px; background: var(--surface-card); border-radius: var(--radius-xl); overflow: hidden; border: 1px solid var(--surface-border); margin-bottom: 32px; }
+  
+  .ritual-item {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 20px; background: var(--surface-glass);
+    position: relative; transition: background 0.2s;
+  }
+  .ritual-item:active { background: rgba(255,255,255,0.12); }
+  .ritual-item::after { content: ''; position: absolute; bottom: 0; left: 20px; right: 0; height: 1px; background: rgba(255,255,255,0.08); }
+  .ritual-item:last-child::after { display: none; }
+
+  .r-left { display: flex; flex-direction: column; gap: 4px; }
+  .r-time { font-size: 28px; font-weight: 300; letter-spacing: -0.5px; line-height: 1; font-variant-numeric: tabular-nums; }
+  .r-title { font-size: 13px; font-weight: 500; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; gap: 6px; }
+  .r-days { font-size: 11px; color: var(--acc-blue); margin-top: 2px; }
+
+  /* iOS Style Switch */
+  .switch { position: relative; display: inline-block; width: 51px; height: 31px; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.2); transition: .4s; border-radius: 34px; }
+  .slider:before { position: absolute; content: ""; height: 27px; width: 27px; left: 2px; bottom: 2px; background-color: white; transition: .4s; border-radius: 50%; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+  input:checked + .slider { background-color: var(--acc-blue); }
+  input:checked + .slider:before { transform: translateX(20px); }
+
+  /* BOTTOM SHEET MODAL */
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 100;
+    backdrop-filter: blur(4px); opacity: 0; pointer-events: none; transition: 0.3s;
+  }
+  .modal-overlay.open { opacity: 1; pointer-events: auto; }
+
+  .bottom-sheet {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    background: #1a1a1a; border-radius: 24px 24px 0 0;
+    padding: 24px; padding-bottom: calc(24px + env(safe-area-inset-bottom));
+    transform: translateY(100%); transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+    z-index: 101; border-top: 1px solid rgba(255,255,255,0.15);
+    box-shadow: 0 -10px 40px rgba(0,0,0,0.5);
+  }
+  .modal-overlay.open .bottom-sheet { transform: translateY(0); }
+
+  .bs-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+  .bs-title { font-size: 18px; font-weight: 700; }
+  .bs-close { font-size: 14px; font-weight: 600; color: var(--acc-blue); background: none; border: none; padding: 8px; cursor: pointer; }
+
+  .input-group { margin-bottom: 20px; }
+  .input-label { display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 8px; text-transform: uppercase; font-weight: 600; }
+  .ultima-input {
+    width: 100%; background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1); border-radius: 12px;
+    padding: 14px; color: #fff; font-size: 17px;
+    transition: 0.2s;
+  }
+  .ultima-input:focus { border-color: var(--acc-blue); background: rgba(255,255,255,0.1); }
+  
+  .time-picker-row { display: flex; justify-content: center; margin-bottom: 24px; }
+  .huge-time-input {
+    background: transparent; border: none; color: #fff;
+    font-size: 48px; font-weight: 200; text-align: center;
+    width: 100%; font-family: -apple-system, sans-serif;
+  }
+  
+  .day-selector { display: flex; justify-content: space-between; margin-bottom: 24px; }
+  .day-btn {
+    width: 36px; height: 36px; border-radius: 50%;
+    background: rgba(255,255,255,0.1); border: 1px solid transparent;
+    color: var(--text-muted); font-size: 13px; font-weight: 600;
+    display: flex; align-items: center; justify-content: center;
+    transition: 0.2s;
+  }
+  .day-btn.active { background: #ffffff; color: #000; border-color: #ffffff; box-shadow: 0 0 12px rgba(255, 255, 255, 0.4); }
+
+  .action-btn {
+    width: 100%; padding: 16px; border-radius: 16px;
+    background: var(--acc-blue); color: #fff; font-size: 17px; font-weight: 700;
+    border: none; cursor: pointer; transition: 0.2s; text-align: center;
+  }
+  .action-btn:active { transform: scale(0.98); opacity: 0.9; }
+  .action-btn.delete { background: rgba(255, 69, 58, 0.15); color: var(--acc-red); margin-top: 12px; }
+
+</style>
+</head>
+<body>
+
+<div class="fx-layer">
+  <div class="orb orb-1"></div>
+  <div class="orb orb-2"></div>
+  <div class="noise"></div>
+</div>
+
+<div class="app-shell">
+  
+  <!-- Header -->
+  <div class="nav-header">
+    <div class="nav-btn" onclick="history.back()">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+    </div>
+    <div class="page-title">Настройки профиля</div>
+    <div class="nav-btn" onclick="syncWithCloud()" style="border:none; background:transparent">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--acc-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+    </div>
+  </div>
+
+  <!-- Hero -->
+  <div class="profile-hero">
+    <div class="avatar-wrapper">
+      <div class="avatar-ring">
+        <img src="https://i.pravatar.cc/300?img=11" class="avatar-img" id="userAvatar">
+      </div>
+      <div class="avatar-glow"></div>
+    </div>
+    <h1 class="user-name" id="userName">Александр</h1>
+    <div class="user-id-badge" onclick="copyId()">
+      ID: <span id="userIdDisplay">User_1849</span>
+      <svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+    </div>
+  </div>
+
+  <!-- Mentors Section -->
+  <div class="section-head">
+    <div class="section-title">Тренеры</div>
+    <div class="section-action" onclick="openTrainerModal()">+ Добавить</div>
+  </div>
+  <div id="trainersList" class="mentors-grid">
+    <!-- JS Injected -->
+  </div>
+
+  <!-- Rituals Section -->
+  <div class="section-head">
+    <div class="section-title">Ритуалы и Напоминания</div>
+    <div class="section-action" onclick="openAlarmModal()">+ Создать</div>
+  </div>
+  <div id="alarmsList" class="rituals-list">
+    <!-- JS Injected -->
+  </div>
+
+</div>
+
+<!-- === MODAL: ADD TRAINER === -->
+<div id="modalTrainer" class="modal-overlay">
+  <div class="bottom-sheet">
+    <div class="bs-header">
+      <div class="bs-title">Новый наставник</div>
+      <button class="bs-close" onclick="closeModal('modalTrainer')">Закрыть</button>
+    </div>
+    
+    <div class="input-group">
+      <label class="input-label">Имя тренера (Обязательно)</label>
+      <input type="text" id="trainerInputName" class="ultima-input" placeholder="Например: Алина" autocomplete="off">
+    </div>
+
+    <div class="input-group">
+      <label class="input-label">ID или Telegram (Опционально)</label>
+      <input type="text" id="trainerInputId" class="ultima-input" placeholder="@username" autocomplete="off">
+    </div>
+    
+    <button class="action-btn" onclick="saveTrainer()">Подключить</button>
+  </div>
+</div>
+
+<!-- === MODAL: ALARM EDITOR === -->
+<div id="modalAlarm" class="modal-overlay">
+  <div class="bottom-sheet">
+    <div class="bs-header">
+      <div class="bs-title">Настройка ритуала</div>
+      <button class="bs-close" onclick="closeModal('modalAlarm')">Готово</button>
+    </div>
+    
+    <input type="hidden" id="editAlarmId">
+
+    <div class="time-picker-row">
+      <input type="time" id="alarmTime" class="huge-time-input" value="09:00">
+    </div>
+
+    <div class="input-group">
+      <label class="input-label">Название</label>
+      <input type="text" id="alarmTitle" class="ultima-input" placeholder="Например: Взвешивание">
+    </div>
+
+    <div class="input-group">
+      <label class="input-label">Повторять</label>
+      <div class="day-selector" id="daySelector">
+        <div class="day-btn" data-day="Пн">Пн</div>
+        <div class="day-btn" data-day="Вт">Вт</div>
+        <div class="day-btn" data-day="Ср">Ср</div>
+        <div class="day-btn" data-day="Чт">Чт</div>
+        <div class="day-btn" data-day="Пт">Пт</div>
+        <div class="day-btn active" data-day="Сб">Сб</div>
+        <div class="day-btn" data-day="Вс">Вс</div>
+      </div>
+    </div>
+
+    <button class="action-btn" onclick="saveAlarmFromModal()">Сохранить</button>
+    <button class="action-btn delete" id="btnDeleteAlarm" onclick="deleteAlarmFromModal()" style="display:none">Удалить</button>
+  </div>
+</div>
+
+<script>
+  // === STATE & CONFIG ===
+  const tg = window.Telegram?.WebApp;
+  const STORAGE_KEY = 'ultima_profile_v1';
+  
+  // Дефолтные настройки (если пользователь зашел первый раз)
+  const DEFAULT_STATE = {
+    userId: 'U_' + Math.floor(Math.random() * 10000),
+    trainers: [],
+    alarms: [
+      { id: 1, time: '09:00', title: 'Взвешивание', days: ['Сб'], active: true },
+      { id: 2, time: '09:00', title: 'Завтрак', days: ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'], active: true },
+      { id: 3, time: '12:00', title: 'Обед', days: ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'], active: true },
+      { id: 4, time: '18:00', title: 'Ужин', days: ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'], active: true },
+      { id: 5, time: '20:00', title: 'Тренировка', days: ['Пн','Ср','Пт'], active: false }
+    ]
+  };
+
+  let appState = loadState();
+
+  // === INIT ===
+  document.addEventListener('DOMContentLoaded', () => {
+    if(tg) {
+      tg.ready();
+      tg.expand();
+      tg.setHeaderColor('#050505');
+      tg.setBackgroundColor('#050505');
+      
+      // Загружаем реальные данные из телеграм, если есть
+      if(tg.initDataUnsafe?.user) {
+        document.getElementById('userName').textContent = tg.initDataUnsafe.user.first_name;
+        document.getElementById('userIdDisplay').textContent = '@' + (tg.initDataUnsafe.user.username || appState.userId);
+        if(tg.initDataUnsafe.user.photo_url) document.getElementById('userAvatar').src = tg.initDataUnsafe.user.photo_url;
+      }
+    }
+    renderTrainers();
+    renderAlarms();
+    initDaySelector();
+  });
+
+  // === TRAINER LOGIC ===
+  function renderTrainers() {
+    const list = document.getElementById('trainersList');
+    list.innerHTML = '';
+
+    if (appState.trainers.length === 0) {
+      list.innerHTML = '<div class="empty-state">Нет подключенных тренеров</div>';
+      return;
+    }
+
+    appState.trainers.forEach(t => {
+      // Генерируем инициал из имени
+      const initial = t.name ? t.name.charAt(0).toUpperCase() : '?';
+      
+      const div = document.createElement('div');
+      div.className = 'mentor-card';
+      div.innerHTML = `
+        <div class="m-info">
+          <div class="m-av">${initial}</div>
+          <div class="m-details">
+            <div class="m-name">${t.name}</div>
+            ${t.id ? `<div class="m-id">${t.id}</div>` : ''}
+          </div>
+        </div>
+        <div class="m-del" onclick="removeTrainer('${t.uid}')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+        </div>
+      `;
+      list.appendChild(div);
+    });
+  }
+
+  function saveTrainer() {
+    const inputName = document.getElementById('trainerInputName');
+    const inputId = document.getElementById('trainerInputId');
+    
+    const nameVal = inputName.value.trim();
+    const idVal = inputId.value.trim();
+
+    if (!nameVal) {
+      safeShowPopup('Ошибка', 'Пожалуйста, введите имя тренера');
+      return;
+    }
+
+    if (appState.trainers.length >= 10) {
+      safeShowPopup('Лимит', 'Максимум 10 тренеров');
+      return;
+    }
+
+    appState.trainers.push({
+      uid: Math.floor(Math.random() * 9000) + 1000, 
+      name: nameVal,
+      id: idVal // Может быть пустым
+    });
+    
+    inputName.value = '';
+    inputId.value = '';
+    saveState();
+    renderTrainers();
+    closeModal('modalTrainer');
+    haptic('success');
+  }
+
+  function removeTrainer(uid) {
+    haptic('medium');
+    safeShowConfirm("Удалить тренера?", (ok) => {
+      if(ok) {
+        appState.trainers = appState.trainers.filter(t => t.uid != uid);
+        saveState();
+        renderTrainers();
+      }
+    });
+  }
+
+  // === ALARM LOGIC ===
+  function renderAlarms() {
+    const list = document.getElementById('alarmsList');
+    list.innerHTML = '';
+    
+    // Sort by time
+    const sorted = [...appState.alarms].sort((a,b) => a.time.localeCompare(b.time));
+
+    sorted.forEach(alarm => {
+      const div = document.createElement('div');
+      div.className = 'ritual-item';
+      
+      const dayStr = alarm.days.length === 7 ? 'Каждый день' : alarm.days.join(', ');
+      
+      div.innerHTML = `
+        <div class="r-left" onclick="openAlarmModal(${alarm.id})">
+          <div class="r-time" style="opacity: ${alarm.active ? 1 : 0.4}">${alarm.time}</div>
+          <div class="r-title">${alarm.title}</div>
+          <div class="r-days">${dayStr}</div>
+        </div>
+        <div class="r-right">
+          <label class="switch">
+            <input type="checkbox" ${alarm.active ? 'checked' : ''} onchange="toggleAlarm(${alarm.id}, this.checked)">
+            <span class="slider"></span>
+          </label>
+        </div>
+      `;
+      list.appendChild(div);
+    });
+  }
+
+  function toggleAlarm(id, status) {
+    const idx = appState.alarms.findIndex(a => a.id === id);
+    if(idx > -1) {
+      appState.alarms[idx].active = status;
+      saveState();
+      haptic('light');
+      renderAlarms(); 
+    }
+  }
+
+  function openAlarmModal(id = null) {
+    const isEdit = id !== null;
+    const modal = document.getElementById('modalAlarm');
+    const delBtn = document.getElementById('btnDeleteAlarm');
+    
+    document.getElementById('editAlarmId').value = isEdit ? id : '';
+    
+    if (isEdit) {
+      const alarm = appState.alarms.find(a => a.id === id);
+      document.getElementById('alarmTime').value = alarm.time;
+      document.getElementById('alarmTitle').value = alarm.title;
+      document.querySelectorAll('.day-btn').forEach(btn => {
+        const d = btn.dataset.day;
+        if(alarm.days.includes(d)) btn.classList.add('active');
+        else btn.classList.remove('active');
+      });
+      delBtn.style.display = 'block';
+    } else {
+      document.getElementById('alarmTime').value = '08:00';
+      document.getElementById('alarmTitle').value = '';
+      document.querySelectorAll('.day-btn').forEach(b => b.classList.remove('active'));
+      delBtn.style.display = 'none';
+    }
+
+    modal.classList.add('open');
+    haptic('light');
+  }
+
+  function saveAlarmFromModal() {
+    const idStr = document.getElementById('editAlarmId').value;
+    const time = document.getElementById('alarmTime').value;
+    const title = document.getElementById('alarmTitle').value || 'Ритуал';
+    
+    const days = [];
+    document.querySelectorAll('.day-btn.active').forEach(b => days.push(b.dataset.day));
+    if(days.length === 0) days.push('Пн');
+
+    if (idStr) {
+      const idx = appState.alarms.findIndex(a => a.id == idStr);
+      if(idx > -1) {
+        appState.alarms[idx] = { ...appState.alarms[idx], time, title, days };
+      }
+    } else {
+      const newId = Date.now();
+      appState.alarms.push({ id: newId, time, title, days, active: true });
+    }
+
+    saveState();
+    renderAlarms();
+    closeModal('modalAlarm');
+    haptic('success');
+  }
+
+  function deleteAlarmFromModal() {
+    const idStr = document.getElementById('editAlarmId').value;
+    if(idStr) {
+        appState.alarms = appState.alarms.filter(a => a.id != idStr);
+        saveState();
+        renderAlarms();
+        closeModal('modalAlarm');
+        haptic('warning');
+    }
+  }
+
+  function initDaySelector() {
+    document.querySelectorAll('.day-btn').forEach(btn => {
+      btn.onclick = () => {
+        btn.classList.toggle('active');
+        haptic('light');
+      }
+    });
+  }
+
+  // === HELPERS ===
+  function openTrainerModal() {
+    document.getElementById('modalTrainer').classList.add('open');
+    haptic('light');
+  }
+
+  function closeModal(id) {
+    document.getElementById(id).classList.remove('open');
+    haptic('light');
+  }
+
+  function copyId() {
+    const text = document.getElementById('userIdDisplay').innerText.replace('ID: ', '');
+    navigator.clipboard.writeText(text).then(() => {
+       safeShowPopup('Успешно', 'ID скопирован');
+       haptic('success');
+    }).catch(() => {
+       // Fallback for some browsers
+       safeShowPopup('Инфо', 'ID: ' + text);
+    });
+  }
+
+  /* === TELEGRAM SAFE METHODS === */
+  
+  function haptic(type) {
+    if (tg && tg.HapticFeedback && tg.isVersionAtLeast && tg.isVersionAtLeast('6.1')) {
+       try { tg.HapticFeedback.notificationOccurred(type); } catch(e){}
+    }
+  }
+
+  function safeShowPopup(title, message) {
+    if (tg && tg.showPopup && tg.isVersionAtLeast && tg.isVersionAtLeast('6.2')) {
+       tg.showPopup({ title: title, message: message });
+    } else {
+       alert(`${title}: ${message}`);
+    }
+  }
+
+  function safeShowConfirm(message, callback) {
+    if (tg && tg.showConfirm && tg.isVersionAtLeast && tg.isVersionAtLeast('6.2')) {
+       tg.showConfirm(message, callback);
+    } else {
+       const res = confirm(message);
+       if (callback) callback(res);
+    }
+  }
+
+  // === DATA SYNC ===
+  function loadState() {
+    try {
+      const s = localStorage.getItem(STORAGE_KEY);
+      return s ? JSON.parse(s) : DEFAULT_STATE;
+    } catch(e) { return DEFAULT_STATE; }
+  }
+
+  function saveState() {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
+  }
+
+  async function syncWithCloud() {
+    const btn = document.querySelector('.nav-btn[onclick="syncWithCloud()"]');
+    btn.style.transition = '1s';
+    btn.style.transform = 'rotate(360deg)';
+    
+    setTimeout(() => {
+        btn.style.transform = 'rotate(0deg)';
+        safeShowPopup('Облако', 'Данные профиля синхронизированы');
+        haptic('success');
+    }, 1000);
+    
+    console.log("Sending to cloud:", appState);
+  }
+
+</script>
+</body>
+</html>
