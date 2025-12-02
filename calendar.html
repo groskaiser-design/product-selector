@@ -1113,8 +1113,10 @@ function isAdmin() {
   // 1. CONFIG & STATE
   // ==============================================
   const APP_VERSION = 'v9.0-BATCH-CALENDAR';
-  const API_URL = 'https://script.google.com/macros/s/AKfycbzzRiJM13-OAThVpmkllqdIYVLoa13zOh9ymY8t6WGVM5Hb_DFO4vZ_Om3heRs_ubXRRA/exec'; 
-
+  const API_URL = 'https://script.google.com/macros/s/AKfycbxXxlp8PCCZ6dBlc4fyKafLKNDPIv8FQJV663YHp3vp5lcbtvH9CmRsrs9hccEC1weJRQ/exec'; 
+  let currentUserRole = 'guest'; // <--- ДОБАВИТЬ: Храним роль ('coach' | 'client' | 'guest')
+  let myCoachesList = [];        // <--- ДОБАВИТЬ: Список тренеров (для будущего)
+  
   const GRID_H = 60;
   
   // Viewport Settings
@@ -1222,6 +1224,12 @@ function isAdmin() {
 
    mergeServerData(data, monthStr) {
         if(!data) return;
+         // --- ДОБАВИТЬ ЭТОТ БЛОК В НАЧАЛО ФУНКЦИИ ---
+        if (data.role) {
+            currentUserRole = data.role;
+            if (data.my_coaches) myCoachesList = data.my_coaches;
+            applyRoleBasedUI(); // <--- Вызываем функцию скрытия кнопок
+        }
         
         // 1. Clients (Read Only source)
         if(data.clients && Array.isArray(data.clients)) {
@@ -1906,6 +1914,9 @@ const NotificationManager = {
         renderEventsForColumn(col, dateStr, dayIdx);
         updateDayStats(dateStr);
       });
+      // --- ДОБАВИТЬ В КОНЕЦ ФУНКЦИИ ---
+      checkEmptyStateForClient();
+      // --------------------------------
   }
   
   function updateAllDayStats() { document.querySelectorAll('.day-col-header').forEach(h => { updateDayStats(h.getAttribute('data-date')); }); }
@@ -2451,6 +2462,9 @@ function renderPatternEditor() {
 // === DAY DASHBOARD LOGIC ===
   
   function openDayOptions(dateStr) {
+      // --- ДОБАВИТЬ ПРОВЕРКУ ---
+      if (currentUserRole === 'client') return; 
+      // -------------------------
       selectedDayForOptions = dateStr;
       
       // 1. Заголовок даты
@@ -2689,7 +2703,66 @@ function renderPatternEditor() {
       if (m === 0) return `${h}ч`;
       return `${h}ч ${m}м`;
   }
-  
+
+  // ==============================================
+  // 6. CLIENT ROLE LOGIC (NEW)
+  // ==============================================
+
+  function applyRoleBasedUI() {
+    const isClient = (currentUserRole === 'client');
+    
+    // 1. Скрываем/Показываем кнопки в шапке
+    const settingsBtn = document.getElementById('settingsBtn');
+    const analyticsBtn = document.getElementById('analyticsBtn');
+    
+    if (isClient) {
+      if(settingsBtn) settingsBtn.style.display = 'none';
+      if(analyticsBtn) analyticsBtn.style.display = 'none';
+    } else {
+      if(settingsBtn) settingsBtn.style.display = 'flex';
+      if(analyticsBtn) analyticsBtn.style.display = 'flex';
+    }
+  }
+
+  function checkEmptyStateForClient() {
+    // Если это не клиент, выходим и удаляем сообщение если оно было
+    if (currentUserRole !== 'client') {
+        const old = document.getElementById('client-empty-msg');
+        if (old) old.remove();
+        return;
+    }
+
+    const vp = document.getElementById('matrixViewport');
+    const oldMsg = document.getElementById('client-empty-msg');
+    
+    // Проверяем, есть ли сессии (игнорируя удаленные)
+    const hasEvents = sessions && sessions.some(s => s.status !== 'deleted');
+
+    if (!hasEvents) {
+      if (!oldMsg) {
+        const msg = document.createElement('div');
+        msg.id = 'client-empty-msg';
+        // Стилизация по центру
+        Object.assign(msg.style, {
+            position: 'absolute', top: '50%', left: '50%', 
+            transform: 'translate(-50%, -50%)', textAlign: 'center', width: '80%', 
+            zIndex: '100', pointerEvents: 'none'
+        });
+        
+        msg.innerHTML = `
+          <div style="font-size: 48px; margin-bottom: 16px; opacity: 0.5;">📅</div>
+          <div style="font-size: 17px; font-weight: 600; color: #fff; margin-bottom: 8px;">Расписание пусто</div>
+          <div style="font-size: 14px; line-height: 1.4; color: var(--text-muted);">
+            Тренировки появятся здесь,<br>когда ваш тренер их назначит.
+          </div>
+        `;
+        vp.appendChild(msg);
+      }
+    } else {
+      // Если события появились, удаляем сообщение
+      if (oldMsg) oldMsg.remove();
+    }
+  }
 </script>
 
 </body>
