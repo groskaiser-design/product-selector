@@ -1221,48 +1221,58 @@ function isAdmin() {
     },
 
    mergeServerData(data, monthStr) {
-        if(!data) return;
+    if(!data) return;
+    
+    // 1. Clients
+    if(data.clients && Array.isArray(data.clients)) {
+        clients = data.clients;
+    }
+
+    // 2. Settings (ОБНОВЛЕНО)
+    if(data.settings) {
+        // График работы
+        if(data.settings.pattern) availabilityPattern = data.settings.pattern;
         
-        // 1. Clients (Read Only source)
-        if(data.clients && Array.isArray(data.clients)) {
-            clients = data.clients;
-        }
+        // Исключения (дни)
+        if(data.settings.exceptions) dateExceptions = data.settings.exceptions;
+        
+        // Отпуска (диапазоны)
+        if(data.settings.ranges) specialRanges = data.settings.ranges;
 
-        // 2. Settings (ИСПРАВЛЕНО: теперь принимаем всё)
-        if(data.settings) {
-            if(data.settings.pattern) availabilityPattern = data.settings.pattern;
-            if(data.settings.exceptions) dateExceptions = data.settings.exceptions; // <--- Добавлено
-            if(data.settings.ranges) specialRanges = data.settings.ranges;         // <--- Добавлено
-        }
-
-        // 3. Calendar
-        // Strategy: Clear sessions for this month from memory, replace with server data
-        if(data.calendar) {
-            // Remove old local sessions for this month to avoid duplicates
-            sessions = sessions.filter(s => !s.dateStr.startsWith(monthStr));
+        // === НОВОЕ: Ограничение изменений ===
+        if(data.settings.cancel_window) {
+            // Сохраняем в память
+            localStorage.setItem('uc_settings_cancel_window', data.settings.cancel_window);
             
-            // Parse server format: { "1": [...], "5": [...] }
-            Object.keys(data.calendar).forEach(dayKey => {
-                const dayEvents = data.calendar[dayKey];
-                dayEvents.forEach(evt => {
-                    // Try to find client name from ID
-                    const clientObj = clients.find(c => String(c.id) === String(evt.c));
-                    
-                    sessions.push({
-                        id: evt.i,
-                        clientId: evt.c,
-                        client: clientObj ? clientObj.name : 'Unknown', // Fallback
-                        dateStr: `${monthStr}-${dayKey.padStart(2, '0')}`,
-                        start: evt.s,
-                        end: evt.e,
-                        status: evt.st || 'planned',
-                        note: evt.n || '',
-                        seriesId: evt.sid || null // Series ID if exists
-                    });
+            // Если элемент управления уже отрисован, обновляем его визуально
+            const sel = document.getElementById('settingCancelWindow');
+            if(sel) sel.value = data.settings.cancel_window;
+        }
+        // ====================================
+    }
+
+    // 3. Calendar (остальная часть функции без изменений)
+    if(data.calendar) {
+        sessions = sessions.filter(s => !s.dateStr.startsWith(monthStr));
+        Object.keys(data.calendar).forEach(dayKey => {
+            const dayEvents = data.calendar[dayKey];
+            dayEvents.forEach(evt => {
+                const clientObj = clients.find(c => String(c.id) === String(evt.c));
+                sessions.push({
+                    id: evt.i,
+                    clientId: evt.c,
+                    client: clientObj ? clientObj.name : 'Unknown',
+                    dateStr: `${monthStr}-${dayKey.padStart(2, '0')}`,
+                    start: evt.s,
+                    end: evt.e,
+                    status: evt.st || 'planned',
+                    note: evt.n || '',
+                    seriesId: evt.sid || null
                 });
             });
-        }
-    },
+        });
+    }
+},
 
     // 2. Batch Save (The main writer)
     async syncBatch(datesTouched) {
@@ -2225,14 +2235,24 @@ const NotificationManager = {
   function openSettings(){openSheet('settingsSheet');}
 
   // Сохранение настроек тренера (Правила отмены)
-    function saveCoachSettings() {
-        const windowVal = document.getElementById('settingCancelWindow').value;
-        // Пока сохраняем только локально, позже добавим отправку на сервер
-        localStorage.setItem('uc_settings_cancel_window', windowVal);
-        console.log('Cancel window set to:', windowVal);
-        
-        // Здесь позже будет вызов DataManager.fetchFromServer('save_settings', ...)
-    }
+   // Было: только localStorage
+  // Стало: localStorage + Отправка на сервер
+  function saveCoachSettings() {
+      const windowVal = document.getElementById('settingCancelWindow').value;
+    
+    // 1. Сохраняем локально (для мгновенного доступа)
+    localStorage.setItem('uc_settings_cancel_window', windowVal);
+    console.log('[Settings] Cancel window set to:', windowVal);
+    
+    // 2. Отправляем на сервер (вместе с ranges и pattern, это один JSON объект)
+    // Бэкенд просто добавит ключ "cancel_window" в JSON настроек
+    DataManager.fetchFromServer('save_settings', { 
+        settings: { cancel_window: windowVal } 
+    }).catch(e => {
+        console.error("Save settings error:", e);
+        showToast("Ошибка сохранения настроек", false);
+    });
+}
     
     // При загрузке восстанавливаем значение (добавь вызов loadCoachSettings() в init())
     function loadCoachSettings() {
