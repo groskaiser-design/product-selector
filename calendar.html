@@ -1118,18 +1118,20 @@
   let isScrolling = false;
   let selectedDayForOptions = null;
 
-  // ==============================================
+ // ==============================================
   // 2. DATA LAYER
   // ==============================================
   const DataManager = {
     getUserId() { return window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'guest'; },
 
+    // --- LOCAL STORAGE ---
     saveLocally() {
       try {
         localStorage.setItem(KEY_CLIENTS, JSON.stringify(clients));
         localStorage.setItem(KEY_SESSIONS, JSON.stringify(sessions));
         localStorage.setItem(KEY_SETTINGS, JSON.stringify({ pattern: availabilityPattern, exceptions: dateExceptions, ranges: specialRanges }));
-        localStorage.setItem(KEY_ROLE, currentUserRole); // Сохраняем роль
+        // [NEW] Сохраняем роль, чтобы не ждать сервер при следующем запуске
+        localStorage.setItem(KEY_ROLE, currentUserRole); 
       } catch(e) { console.error("Local Save Error", e); }
     },
 
@@ -1144,19 +1146,25 @@
             if(parsed.exceptions) dateExceptions = parsed.exceptions;
             if(parsed.ranges) specialRanges = parsed.ranges;
         } else {
+            // Default working hours: 09:00 - 21:00
             for(let i=0; i<7; i++) availabilityPattern[i] = Array.from({length:12}, (_,k)=>k+9); 
         }
         
-        // Восстанавливаем роль из памяти (если есть)
+        // [NEW] Восстанавливаем роль из памяти
         const savedRole = localStorage.getItem(KEY_ROLE);
         if(savedRole) currentUserRole = savedRole;
 
       } catch(e) { console.error("Local Load Error", e); }
     },
 
+    // --- NETWORK ---
     async fetchFromServer(action, payload = {}) {
       const tg = window.Telegram?.WebApp;
-      const bodyData = { action: action, init_data: tg?.initData || '', ...payload };
+      const bodyData = { 
+          action: action, 
+          init_data: tg?.initData || '', 
+          ...payload 
+      };
       try {
         const resp = await fetch(API_URL, {
           method: 'POST',
@@ -1166,12 +1174,17 @@
         const json = await resp.json();
         if (!json.ok) throw new Error(json.error || 'Server Error');
         return json.data;
-      } catch (e) { console.error(`[API ${action}] Failed:`, e); throw e; }
+      } catch (e) {
+        console.error(`[API ${action}] Failed:`, e);
+        throw e;
+      }
     },
 
+    // --- SYNC OPERATIONS ---
     async syncLoad() {
         const d = new Date();
         const m1 = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+        // Load Current + Next Month
         const nextM = new Date(d); nextM.setMonth(d.getMonth() + 1);
         const m2 = `${nextM.getFullYear()}-${String(nextM.getMonth()+1).padStart(2,'0')}`;
 
@@ -1180,6 +1193,7 @@
             this.fetchFromServer('init_load', { month_str: m1 }),
             this.fetchFromServer('init_load', { month_str: m2 })
         ]);
+
         this.mergeServerData(data1, m1);
         this.mergeServerData(data2, m2);
         this.saveLocally();
@@ -1188,22 +1202,28 @@
 
    mergeServerData(data, monthStr) {
         if(!data) return;
-        // Обновляем роль и сразу сохраняем
+        
+        // [NEW] Прием роли от сервера
         if (data.role) {
             currentUserRole = data.role;
-            localStorage.setItem(KEY_ROLE, currentUserRole);
+            localStorage.setItem(KEY_ROLE, currentUserRole); // Сразу в кэш
             if (data.my_coaches) myCoachesList = data.my_coaches;
-            applyRoleBasedUI(); 
+            applyRoleBasedUI(); // Мгновенно перестраиваем UI
         }
         
-        if(data.clients && Array.isArray(data.clients)) clients = data.clients;
+        // 1. Clients
+        if(data.clients && Array.isArray(data.clients)) {
+            clients = data.clients;
+        }
 
+        // 2. Settings
         if(data.settings) {
             if(data.settings.pattern) availabilityPattern = data.settings.pattern;
             if(data.settings.exceptions) dateExceptions = data.settings.exceptions;
             if(data.settings.ranges) specialRanges = data.settings.ranges;
         }
 
+        // 3. Calendar
         if(data.calendar) {
             sessions = sessions.filter(s => !s.dateStr.startsWith(monthStr));
             Object.keys(data.calendar).forEach(dayKey => {
@@ -1215,8 +1235,11 @@
                         clientId: evt.c,
                         client: clientObj ? clientObj.name : 'Unknown', 
                         dateStr: `${monthStr}-${dayKey.padStart(2, '0')}`,
-                        start: evt.s, end: evt.e, status: evt.st || 'planned',
-                        note: evt.n || '', seriesId: evt.sid || null
+                        start: evt.s,
+                        end: evt.e,
+                        status: evt.st || 'planned',
+                        note: evt.n || '',
+                        seriesId: evt.sid || null
                     });
                 });
             });
@@ -1228,10 +1251,17 @@
         const changes = uniqueDates.map(dateStr => {
             const daySessions = sessions.filter(s => s.dateStr === dateStr && s.status !== 'deleted');
             const dayData = daySessions.map(s => ({
-                i: s.id, c: s.clientId, s: s.start, e: s.end, st: s.status, n: s.note, sid: s.seriesId
+                i: s.id,
+                c: s.clientId,
+                s: s.start,
+                e: s.end,
+                st: s.status,
+                n: s.note,
+                sid: s.seriesId
             }));
             return { date: dateStr, day_data: dayData };
         });
+
         if(changes.length === 0) return;
         await this.fetchFromServer('batch_sync', { changes });
     }
@@ -1861,10 +1891,22 @@ const NotificationManager = {
   function closeActionSheet() { document.getElementById('actionSheet').classList.remove('open'); document.getElementById('actionSheetOverlay').classList.remove('active'); }
   function openSettings(){openSheet('settingsSheet');}
 
-  function saveCoachSettings() {
-        const windowVal = document.getElementById('settingCancelWindow').value;
-        localStorage.setItem('uc_settings_cancel_window', windowVal);
+function saveCoachSettings() {
+      const windowVal = document.getElementById('settingCancelWindow').value;
+      
+      // 1. Сохраняем локально (для скорости)
+      localStorage.setItem('uc_settings_cancel_window', windowVal);
+      
+      // 2. Отправляем на сервер в лист Settings
+      // Мы отправляем только то поле, которое изменилось. Бэкенд сам объединит его с остальными.
+      DataManager.fetchFromServer('save_settings', { 
+          settings: { cancel_window: windowVal } 
+      }).catch(err => {
+          console.error('Ошибка сохранения настроек:', err);
+          showToast('Не удалось сохранить настройки в облако', false);
+      });
   }
+  
   function loadCoachSettings() {
         const val = localStorage.getItem('uc_settings_cancel_window');
         if (val) document.getElementById('settingCancelWindow').value = val;
