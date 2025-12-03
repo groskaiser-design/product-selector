@@ -54,9 +54,8 @@
   .app-shell { max-width: 480px; margin: 0 auto; padding: var(--pad); padding-top: calc(12px + env(safe-area-inset-top)); }
 
   /* HEADER */
-  .nav-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
-  .nav-btn { width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; background: rgba(255,255,255,0.08); border-radius: 50%; border: 1px solid rgba(255,255,255,0.1); backdrop-filter: blur(10px); color: #fff; transition: 0.2s; }
-  .nav-btn:active { transform: scale(0.92); background: rgba(255,255,255,0.15); }
+  /* Изменил на center, так как кнопки удалены */
+  .nav-header { display: flex; align-items: center; justify-content: center; margin-bottom: 24px; position: relative; min-height: 40px; }
   .page-title { font-size: 17px; font-weight: 600; letter-spacing: -0.5px; opacity: 0.9; }
 
   /* PROFILE HERO */
@@ -265,13 +264,7 @@
   
   <!-- Header -->
   <div class="nav-header">
-    <div class="nav-btn" onclick="haptic('light'); history.back()">
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
-    </div>
     <div class="page-title">Настройки профиля</div>
-    <div class="nav-btn" onclick="syncWithCloud()" style="border:none; background:transparent">
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--acc-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-    </div>
   </div>
 
   <!-- Hero -->
@@ -369,6 +362,66 @@
 </div>
 
 <script>
+/* ============================================================
+ * BLOCK 0: TMA boot (FIXED & SAFE)
+ * ============================================================ */
+(function initTMA() {
+  try {
+    const tg = window.Telegram?.WebApp;
+    if (!tg) return; // Если это не Телеграм, просто выходим, не ломая сайт
+
+    tg.ready();
+    tg.expand();
+
+    // 1. Красим заголовок (обернуто в защиту, чтобы не ломало загрузку)
+    try {
+      tg.setHeaderColor('#050505'); // Черный цвет
+      if (tg.setBackgroundColor) {
+        tg.setBackgroundColor('#050505');
+      }
+    } catch (e) {
+      console.log('Error setting color:', e);
+    }
+
+    // 2. Настраиваем кнопку "Назад"
+    try {
+      if (tg.BackButton) {
+        tg.BackButton.show();
+        // Сначала удаляем старые обработчики, чтобы кнопка не тупила
+        tg.BackButton.offClick(); 
+        // Добавляем переход
+        tg.BackButton.onClick(function() {
+          window.location.href = 'router.html';
+        });
+      }
+    } catch (e) {
+      console.log('Error setting back button:', e);
+    }
+
+    // 3. Отключаем свайпы (если поддерживается)
+    try {
+      if (tg.disableVerticalSwipes) tg.disableVerticalSwipes();
+    } catch (e) {}
+
+  } catch (globalErr) {
+    // Если вообще все упало в TMA, выводим ошибку, но НЕ останавливаем скрипт
+    console.error('Critical TMA Error:', globalErr);
+  }
+})();
+  
+/**
+ * Проверка, является ли текущий пользователь админом
+ * @returns {boolean} true, если Telegram user.id совпадает с ID администратора
+ */
+function isAdmin() {
+  try {
+    const userId = Number(window.Telegram?.WebApp?.initDataUnsafe?.user?.id);
+    return userId === 196047220;
+  } catch (_) {
+    return false;
+  }
+}
+
   // === STATE & CONFIG ===
   const tg = window.Telegram?.WebApp;
   const STORAGE_KEY = 'ultima_profile_v1';
@@ -390,17 +443,11 @@
 
   // === INIT ===
   document.addEventListener('DOMContentLoaded', () => {
-    if(tg) {
-      tg.ready();
-      tg.expand();
-      tg.setHeaderColor('#050505');
-      tg.setBackgroundColor('#050505');
-      
-      if(tg.initDataUnsafe?.user) {
+    // Данные инициализируются в initTMA(), здесь только логика профиля
+    if(tg && tg.initDataUnsafe?.user) {
         document.getElementById('userName').textContent = tg.initDataUnsafe.user.first_name;
         document.getElementById('userIdDisplay').textContent = '@' + (tg.initDataUnsafe.user.username || appState.userId);
         if(tg.initDataUnsafe.user.photo_url) document.getElementById('userAvatar').src = tg.initDataUnsafe.user.photo_url;
-      }
     }
     renderTrainers();
     renderAlarms();
@@ -670,7 +717,8 @@
 
   async function syncWithCloud() {
     const btn = document.querySelector('.nav-btn[onclick="syncWithCloud()"]');
-    haptic('light'); // Запуск
+    if (!btn) return; // Кнопка удалена, но функция осталась на всякий случай
+    haptic('light'); 
     btn.style.transition = '1s';
     btn.style.transform = 'rotate(360deg)';
     
