@@ -395,6 +395,62 @@
   margin-bottom: 2px;
   opacity: 0.9;
 }
+
+/* 1. Добавь в :root */
+:root {
+    /* ... твои старые переменные ... */
+    --current-color: #0a84ff; /* Дефолтный цвет */
+}
+
+/* 2. Стили для карточки вызова (вставь где-то в раздел CARDS) */
+.color-trigger-card {
+    display: flex; align-items: center; justify-content: space-between;
+    
+    /* Стеклянный стиль, как у тренеров */
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-top: 1px solid rgba(255, 255, 255, 0.2);
+    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+    
+    border-radius: 20px;
+    padding: 14px 18px;
+    margin-bottom: 32px; 
+    cursor: pointer;
+    transition: transform 0.2s, background 0.2s;
+}
+.color-trigger-card:active { transform: scale(0.98); background: rgba(255, 255, 255, 0.05); }
+
+.ct-left { display: flex; align-items: center; gap: 12px; }
+
+.color-preview-dot {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: var(--current-color);
+    box-shadow: 0 0 12px var(--current-color);
+    border: 2px solid rgba(255,255,255,0.2);
+    transition: background 0.3s, box-shadow 0.3s;
+}
+
+.ct-text { font-size: 16px; font-weight: 600; color: #fff; }
+.ct-arrow { color: var(--text-muted); opacity: 0.5; }
+
+/* 3. Обновленные стили для сетки цветов (вставь в конец CSS) */
+.color-grid {
+    display: grid; 
+    grid-template-columns: repeat(auto-fill, minmax(45px, 1fr));
+    gap: 12px; 
+    padding: 10px 10px; /* Отступы, чтобы круги не обрезались */
+    max-height: 400px; 
+    overflow-y: auto;
+}
+.color-option {
+    width: 45px; height: 45px; border-radius: 50%; cursor: pointer;
+    border: 2px solid transparent; transition: transform 0.2s; position: relative;
+}
+.color-option:active { transform: scale(0.9); }
+.color-option.active { border-color: #fff; transform: scale(1.1); box-shadow: 0 0 15px rgba(255,255,255,0.3); z-index: 2; }
+  
   
 </style>
 </head>
@@ -425,6 +481,19 @@
     </div>
   </div>
 
+<!-- COLOR AREA -->
+<div class="color-trigger-card" onclick="openColorModal()">
+  <div class="ct-left">
+    <div class="color-preview-dot" id="colorPreviewDot"></div>
+    <div class="ct-text">Цвет темы</div>
+  </div>
+  <div class="ct-arrow">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </div>
+</div>
+  
   <!-- Mentors Section -->
   <div class="section-head">
     <div class="section-title">Тренеры</div>
@@ -512,6 +581,18 @@
   </div>
 </div>
 
+  <!-- === MODAL: COLOR PICKER === -->
+<div id="modalColor" class="modal-overlay">
+  <div class="bottom-sheet">
+    <div class="bs-header">
+      <div class="bs-title">Цвет профиля</div>
+      <button class="bs-close" onclick="closeModal('modalColor')">Готово</button>
+    </div>
+    <div class="input-label" style="margin-bottom: 12px;">Выберите оттенок</div>
+    <div id="colorContainer" class="color-grid"></div>
+  </div>
+</div>
+  
 <script>
 /* ============================================================
  * BLOCK 0: TMA boot (FIXED & SAFE)
@@ -585,9 +666,10 @@ const PHOTO_CACHE_KEY = 'ultima_photos_v1'; // Ключ для хранения 
 const PHOTO_TTL = 24 * 60 * 60 * 1000; // Время жизни кэша фото (24 часа)
 
 const DEFAULT_STATE = {
-  userId: '1849', 
+  userId: '1235813', 
   rowIndex: null, 
   timezoneOffset: null, 
+  profileColor: '#0a84ff', // Default Blue
   trainers: [],
   alarms: [
     { id: 1, time: '09:00', title: 'Взвешивание', days: ['Сб'], active: true },
@@ -629,7 +711,7 @@ document.addEventListener('DOMContentLoaded', () => {
  * ============================================================ */
 
 async function syncLoad() {
-  if (!GAS_URL.includes('/exec')) { console.warn('GAS_URL not set'); return; }
+  if (!GAS_URL.includes('/exec')) return;
   console.log('🔄 Sync: Checking cloud...');
   
   try {
@@ -649,6 +731,12 @@ async function syncLoad() {
     if (data.ok) {
       if (data.rowIndex) appState.rowIndex = data.rowIndex;
 
+      // === 1. ЗАГРУЗКА ЦВЕТА ===
+      if (data.profileColor) {
+          appState.profileColor = data.profileColor;
+          updateProfileColor(data.profileColor, false); 
+      }
+
       const serverIsEmpty = (!data.trainers || data.trainers.length === 0) &&
                             (!data.alarms || data.alarms.length === 0);
       const localHasData = (appState.trainers.length > 0 || appState.alarms.length > 0);
@@ -659,13 +747,23 @@ async function syncLoad() {
         return; 
       }
 
-      const localStr = JSON.stringify({t: appState.trainers, a: appState.alarms});
-      const serverStr = JSON.stringify({t: data.trainers, a: data.alarms});
+      // === 2. ПРОВЕРКА ИЗМЕНЕНИЙ (включая цвет 'c') ===
+      const localStr = JSON.stringify({
+          t: appState.trainers, 
+          a: appState.alarms, 
+          c: appState.profileColor 
+      });
+      const serverStr = JSON.stringify({
+          t: data.trainers, 
+          a: data.alarms, 
+          c: data.profileColor 
+      });
 
       if (localStr !== serverStr) {
         console.log('☁️ Updating UI from cloud...');
         appState.trainers = data.trainers || [];
         appState.alarms = data.alarms || [];
+        // Цвет уже обновлен выше
         
         saveState();    
         renderTrainers(); 
@@ -691,8 +789,14 @@ async function syncSave() {
         type: 'save',
         userId: appState.userId,
         rowIndex: appState.rowIndex,
+        
+        // Данные
         trainers: appState.trainers,
         alarms: appState.alarms,
+        
+        // === 3. ОТПРАВКА ЦВЕТА ===
+        profileColor: appState.profileColor, 
+        
         timezoneOffset: appState.timezoneOffset
       })
     }).then(r => r.json()).then(data => {
@@ -1073,6 +1177,73 @@ function loadState() {
 function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
 }
+
+  /* ============================================================
+ * BLOCK: COLOR PICKER LOGIC
+ * ============================================================ */
+function openColorModal() {
+  renderColorGrid();
+  document.getElementById('modalColor').classList.add('open');
+  document.body.classList.add('lock-scroll');
+  haptic('light');
+}
+
+function renderColorGrid() {
+  const container = document.getElementById('colorContainer');
+  container.innerHTML = '';
+  // Берем цвет из стейта
+  const current = appState.profileColor || '#0a84ff';
+
+  // 1. Серые оттенки
+  const grays = ['#ffffff', '#e5e5e5', '#c0c0c0', '#a0a0a0', '#808080', '#606060'];
+  grays.forEach(c => createColorNode(container, c, current));
+
+  // 2. Радуга (42 цвета)
+  const totalColors = 42; 
+  for (let i = 0; i < totalColors; i++) {
+    const hue = Math.floor((360 / totalColors) * i);
+    const color = `hsl(${hue}, 85%, 60%)`;
+    createColorNode(container, color, current);
+  }
+}
+
+function createColorNode(container, color, current) {
+    const div = document.createElement('div');
+    div.className = 'color-option';
+    div.style.backgroundColor = color;
+    if (color === current) div.classList.add('active');
+    div.onclick = () => {
+      document.querySelectorAll('.color-option').forEach(el => el.classList.remove('active'));
+      div.classList.add('active');
+      
+      // Update with 'true' to trigger sync save
+      updateProfileColor(color, true); 
+      
+      haptic('selection');
+    };
+    container.appendChild(div);
+}
+
+function updateProfileColor(color, shouldSave = false) {
+  // Обновляем CSS переменную
+  document.documentElement.style.setProperty('--current-color', color);
+  
+  // Обновляем индикатор
+  const indicator = document.getElementById('colorPreviewDot');
+  if(indicator) { 
+    indicator.style.backgroundColor = color; 
+    indicator.style.boxShadow = `0 0 12px ${color}`; 
+  }
+
+  // Обновляем стейт
+  appState.profileColor = color;
+  
+  // Сохраняем, если нужно
+  if (shouldSave) {
+      syncSave();
+  }
+}
+
 </script>
   
 </body>
