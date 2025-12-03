@@ -486,7 +486,6 @@
 
     tg.ready();
     tg.expand();
-
     try {
       tg.setHeaderColor('#050505');
       if (tg.setBackgroundColor) tg.setBackgroundColor('#050505');
@@ -495,38 +494,33 @@
     try {
       if (tg.BackButton) {
         tg.BackButton.show();
-        tg.BackButton.offClick(); 
         tg.BackButton.onClick(function() {
           haptic('light');
-          window.location.href = 'router.html';
+          // Если есть router.html, переходим. Если нет - закрываем или назад в историю
+          if(document.referrer) history.back();
+          else window.location.href = 'router.html'; 
         });
       }
     } catch (e) {}
 
-    try {
-      if (tg.disableVerticalSwipes) tg.disableVerticalSwipes();
-    } catch (e) {}
+    try { if (tg.disableVerticalSwipes) tg.disableVerticalSwipes(); } catch (e) {}
 
-  } catch (globalErr) {
-    console.error('Critical TMA Error:', globalErr);
-  }
+  } catch (globalErr) { console.error('Critical TMA Error:', globalErr); }
 })();
-
-function isAdmin() {
-  try {
-    const userId = Number(window.Telegram?.WebApp?.initDataUnsafe?.user?.id);
-    return userId === 196047220;
-  } catch (_) { return false; }
-}
 
 /* ============================================================
  * BLOCK 1: STATE & CONFIG
  * ============================================================ */
+// ⚠️ ВСТАВЬТЕ СЮДА ВАШ URL (ЗАКАНЧИВАЕТСЯ НА /exec)
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbzQbW4Bqmwq_51k9Op_CLJa5IX9v_MYkgXde2y3fAqqHX5wsvbSN7Uw9OpXFPP6raU/exec'; 
+
 const tg = window.Telegram?.WebApp;
 const STORAGE_KEY = 'ultima_profile_v1';
 
+// Добавляем rowIndex для ускорения поиска на бэке
 const DEFAULT_STATE = {
-  userId: '1849', // Fallback ID только из цифр
+  userId: '1849', 
+  rowIndex: null, 
   trainers: [],
   alarms: [
     { id: 1, time: '09:00', title: 'Взвешивание', days: ['Сб'], active: true },
@@ -540,24 +534,128 @@ const DEFAULT_STATE = {
 let appState = loadState();
 
 document.addEventListener('DOMContentLoaded', () => {
+  // 1. Инициализация пользователя
   if(tg && tg.initDataUnsafe?.user) {
       const u = tg.initDataUnsafe.user;
       if (u.first_name) document.getElementById('userName').textContent = escapeHtml(u.first_name);
       
-      // ИСПОЛЬЗУЕМ СТРОГО ID (ЦИФРЫ)
-      const numericId = u.id || appState.userId;
-      document.getElementById('userIdDisplay').textContent = numericId;
+      // Берем ID из телеграма, если есть. Иначе дефолт
+      appState.userId = String(u.id); 
+      document.getElementById('userIdDisplay').textContent = appState.userId;
       
       if(u.photo_url) document.getElementById('userAvatar').src = u.photo_url;
   }
   
+  // 2. Рендер того, что есть в памяти (мгновенно)
   renderTrainers();
   renderAlarms();
   initDaySelector();
+  
+  // 3. Фоновая синхронизация с облаком
+  syncLoad(); 
 });
 
 /* ============================================================
- * BLOCK 2: RENDER LOGIC
+ * BLOCK 2: SYNC LOGIC (Cloud + Local)
+ * ============================================================ */
+
+// Загрузка из облака (Приоритет базы данных)
+async function syncLoad() {
+  if (!GAS_URL.includes('/exec')) { console.warn('GAS_URL not set'); return; }
+  console.log('🔄 Sync: Checking cloud...');
+  
+  try {
+    const response = await fetch(GAS_URL, {
+      method: 'POST',
+      body: JSON.stringify({
+        action: 'sync_profile',
+        type: 'load',
+        userId: appState.userId,
+        rowIndex: appState.rowIndex 
+      })
+    });
+    
+    const data = await response.json();
+    
+    if (data.ok) {
+      // 1. Запоминаем строку для скорости
+      if (data.rowIndex) appState.rowIndex = data.rowIndex;
+
+      // 2. Сравниваем данные
+      const localStr = JSON.stringify({t: appState.trainers, a: appState.alarms});
+      const serverStr = JSON.stringify({t: data.trainers, a: data.alarms});
+
+      // 3. Если база отличается — обновляем интерфейс
+      if (localStr !== serverStr) {
+        console.log('☁️ Cloud data is different. Updating UI...');
+        
+        appState.trainers = data.trainers || [];
+        appState.alarms = data.alarms || [];
+        
+        saveState();    // Сохраняем новую правду в телефон
+        renderTrainers(); 
+        renderAlarms();   
+        haptic('success'); // Легкая вибрация при обновлении
+      } else {
+        console.log('✅ Data is up to date');
+        saveState(); // Просто сохраняем rowIndex
+      }
+    }
+  } catch (e) {
+    console.error('Sync Load Error:', e);
+  }
+}
+
+// Сохранение в облако (Optimistic UI)
+async function syncSave() {
+  // 1. Сначала сохраняем локально (чтобы пользователь не ждал)
+  saveState();
+
+  if (!GAS_URL.includes('/exec')) return;
+  console.log('💾 Saving to cloud...');
+
+  try {
+    // 2. Отправляем в фоне
+    fetch(GAS_URL, {
+      method: 'POST',
+      body: JSON.stringify({
+        action: 'sync_profile',
+        type: 'save',
+        userId: appState.userId,
+        rowIndex: appState.rowIndex,
+        trainers: appState.trainers,
+        alarms: appState.alarms
+      })
+    }).then(r => r.json()).then(data => {
+      if (data.ok && data.rowIndex) {
+        appState.rowIndex = data.rowIndex; // Обновляем индекс, если изменился
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
+      }
+    });
+  } catch (e) {
+    console.warn('Save failed (offline?)', e);
+  }
+}
+
+// Функция для получения фото тренера
+async function fetchTrainerPhoto(trainerId, imgElementId) {
+  if (!GAS_URL.includes('/exec')) return;
+  try {
+    const res = await fetch(GAS_URL, {
+      method: 'POST',
+      body: JSON.stringify({ action: 'get_trainer_photo', trainer_id: trainerId })
+    });
+    const data = await res.json();
+    if (data.ok && data.photo) {
+      const img = document.getElementById(imgElementId);
+      if(img) img.style.backgroundImage = `url('${data.photo}')`; // Ставим как фон или src
+      if(img) img.innerHTML = ''; // Убираем букву
+    }
+  } catch(e) { console.error(e); }
+}
+
+/* ============================================================
+ * BLOCK 3: RENDER LOGIC
  * ============================================================ */
 
 function renderTrainers() {
@@ -569,18 +667,20 @@ function renderTrainers() {
     return;
   }
 
-  appState.trainers.forEach(t => {
+  appState.trainers.forEach((t, index) => {
     const safeName = escapeHtml(t.name);
     const safeId = escapeHtml(t.id);
     const initial = safeName ? safeName.charAt(0).toUpperCase() : '?';
+    const uniqueImgId = `trainer_img_${index}`; // ID для асинхронной загрузки фото
     
     const div = document.createElement('div');
     div.className = 'mentor-card';
     div.onclick = () => openTrainerModal(t.uid); 
     
+    // Вставляем блок
     div.innerHTML = `
       <div class="m-info">
-        <div class="m-av">${initial}</div>
+        <div class="m-av" id="${uniqueImgId}" style="background-size: cover; background-position: center;">${initial}</div>
         <div class="m-details">
           <div class="m-name">${safeName}</div>
           ${safeId ? `<div class="m-id">${safeId}</div>` : ''}
@@ -594,6 +694,11 @@ function renderTrainers() {
       </div>
     `;
     list.appendChild(div);
+
+    // Если есть ID тренера, пытаемся подгрузить фото в фоне
+    if (t.id) {
+       fetchTrainerPhoto(t.id, uniqueImgId);
+    }
   });
 }
 
@@ -630,7 +735,7 @@ function renderAlarms() {
 }
 
 /* ============================================================
- * BLOCK 3: ACTIONS & HANDLERS
+ * BLOCK 4: ACTIONS & HANDLERS
  * ============================================================ */
 
 /* --- Trainers --- */
@@ -663,17 +768,14 @@ function saveTrainer() {
       safeShowPopup('Лимит', 'Максимум 10 тренеров');
       return;
     }
-    appState.trainers.push({
-      uid: Date.now(), 
-      name: nameVal,   
-      id: idVal        
-    });
+    appState.trainers.push({ uid: Date.now(), name: nameVal, id: idVal });
   }
   
   inputName.value = '';
   inputId.value = '';
   document.getElementById('editTrainerUid').value = '';
-  saveState();
+  
+  syncSave(); // <--- ВАЖНО: сохраняем и синхронизируем
   renderTrainers();
   closeModal('modalTrainer');
   haptic('success');
@@ -684,7 +786,7 @@ function removeTrainer(uid, onSuccess) {
   safeShowConfirm("Удалить тренера?", (ok) => {
     if(ok) {
       appState.trainers = appState.trainers.filter(t => Number(t.uid) !== Number(uid));
-      saveState();
+      syncSave(); // <--- ВАЖНО
       renderTrainers();
       haptic('success');
       if (onSuccess) onSuccess();
@@ -705,7 +807,7 @@ function toggleAlarm(id, status) {
   const idx = appState.alarms.findIndex(a => a.id === id);
   if(idx > -1) {
     appState.alarms[idx].active = status;
-    saveState();
+    syncSave(); // <--- ВАЖНО
     renderAlarms(); 
   }
 }
@@ -731,7 +833,7 @@ function saveAlarmFromModal() {
     appState.alarms.push({ id: Date.now(), time, title, days, active: true });
   }
 
-  saveState();
+  syncSave(); // <--- ВАЖНО
   renderAlarms();
   closeModal('modalAlarm');
   haptic('success');
@@ -742,14 +844,17 @@ function deleteAlarmFromModal() {
   const idStr = document.getElementById('editAlarmId').value;
   if(idStr) {
       appState.alarms = appState.alarms.filter(a => a.id != idStr);
-      saveState();
+      syncSave(); // <--- ВАЖНО
       renderAlarms();
       closeModal('modalAlarm');
       haptic('success');
   }
 }
 
-/* --- Modals Control --- */
+/* ============================================================
+ * BLOCK 5: UI HELPERS (Modals, etc)
+ * ============================================================ */
+
 function openAlarmModal(id = null) {
   haptic('light');
   const isEdit = id !== null;
@@ -828,7 +933,7 @@ function initDaySelector() {
 }
 
 /* ============================================================
- * BLOCK 4: HELPERS & UTILS
+ * BLOCK 6: SYSTEM UTILS
  * ============================================================ */
 
 function escapeHtml(text) {
@@ -892,15 +997,6 @@ function loadState() {
 function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
 }
-
-async function syncWithCloud() {
-  haptic('light'); 
-  console.log("Sending to cloud:", appState);
-  setTimeout(() => {
-      haptic('success');
-  }, 1000);
-}
-
 </script>
 </body>
 </html>
