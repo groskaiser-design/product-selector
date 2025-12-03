@@ -365,8 +365,14 @@
     </div>
 
     <div class="input-group">
-      <label class="input-label">ID или Telegram (Опционально)</label>
-      <input type="text" id="trainerInputId" class="ultima-input" placeholder="@username" autocomplete="off">
+      <label class="input-label">ID тренера (Только цифры)</label>
+      <!-- Защита: type="tel" для цифровой клавиатуры, oninput для удаления нецифр -->
+      <input type="tel" id="trainerInputId" class="ultima-input" 
+             placeholder="Например: 123456789" 
+             inputmode="numeric" 
+             pattern="[0-9]*" 
+             oninput="this.value = this.value.replace(/[^0-9]/g, '')"
+             autocomplete="off">
     </div>
     
     <button class="action-btn" onclick="saveTrainer()">Подключить</button>
@@ -486,10 +492,10 @@ document.addEventListener('DOMContentLoaded', () => {
   // Подтягиваем данные из Telegram (если есть)
   if(tg && tg.initDataUnsafe?.user) {
       const u = tg.initDataUnsafe.user;
-      if (u.first_name) document.getElementById('userName').textContent = u.first_name;
+      if (u.first_name) document.getElementById('userName').textContent = escapeHtml(u.first_name); // Защита имени
       const displayId = u.username || appState.userId;
-      document.getElementById('userIdDisplay').textContent = '@' + displayId;
-      if(u.photo_url) document.getElementById('userAvatar').src = u.photo_url;
+      document.getElementById('userIdDisplay').textContent = '@' + escapeHtml(displayId); // Защита username
+      if(u.photo_url) document.getElementById('userAvatar').src = u.photo_url; // URL обычно безопасен, если от Telegram
   }
   
   // Рендер интерфейса
@@ -513,7 +519,10 @@ function renderTrainers() {
   }
 
   appState.trainers.forEach(t => {
-    const initial = t.name ? t.name.charAt(0).toUpperCase() : '?';
+    // Sanitization перед выводом
+    const safeName = escapeHtml(t.name);
+    const safeId = escapeHtml(t.id);
+    const initial = safeName ? safeName.charAt(0).toUpperCase() : '?';
     
     const div = document.createElement('div');
     div.className = 'mentor-card';
@@ -524,8 +533,8 @@ function renderTrainers() {
       <div class="m-info">
         <div class="m-av">${initial}</div>
         <div class="m-details">
-          <div class="m-name">${t.name}</div>
-          ${t.id ? `<div class="m-id">${t.id}</div>` : ''}
+          <div class="m-name">${safeName}</div>
+          ${safeId ? `<div class="m-id">${safeId}</div>` : ''}
         </div>
       </div>
       <div class="m-del" onclick="event.stopPropagation(); removeTrainer('${t.uid}')">
@@ -547,6 +556,9 @@ function renderAlarms() {
   const sorted = [...appState.alarms].sort((a,b) => a.time.localeCompare(b.time));
 
   sorted.forEach(alarm => {
+    const safeTitle = escapeHtml(alarm.title); // Sanitization
+    const safeTime = escapeHtml(alarm.time);   // Sanitization
+
     const div = document.createElement('div');
     div.className = 'ritual-item';
     
@@ -554,8 +566,8 @@ function renderAlarms() {
     
     div.innerHTML = `
       <div class="r-left" onclick="openAlarmModal(${alarm.id})">
-        <div class="r-time" style="opacity: ${alarm.active ? 1 : 0.4}">${alarm.time}</div>
-        <div class="r-title">${alarm.title}</div>
+        <div class="r-time" style="opacity: ${alarm.active ? 1 : 0.4}">${safeTime}</div>
+        <div class="r-title">${safeTitle}</div>
         <div class="r-days">${dayStr}</div>
       </div>
       <div class="r-right">
@@ -583,8 +595,15 @@ function saveTrainer() {
   const nameVal = inputName.value.trim();
   const idVal = inputId.value.trim();
 
+  // Валидация
   if (!nameVal) {
     safeShowPopup('Ошибка', 'Пожалуйста, введите имя тренера');
+    return;
+  }
+
+  // Дополнительная защита ID: проверяем, что только цифры
+  if (idVal && !/^\d+$/.test(idVal)) {
+    safeShowPopup('Ошибка', 'ID должен содержать только цифры');
     return;
   }
 
@@ -594,9 +613,9 @@ function saveTrainer() {
   }
 
   appState.trainers.push({
-    uid: Date.now(), // Уникальный ID
-    name: nameVal,
-    id: idVal
+    uid: Date.now(), // Уникальный ключ
+    name: nameVal,   // XSS защита будет при выводе (escapeHtml)
+    id: idVal        // Только цифры
   });
   
   inputName.value = '';
@@ -634,7 +653,10 @@ function saveAlarmFromModal() {
   haptic('light');
   const idStr = document.getElementById('editAlarmId').value;
   const time = document.getElementById('alarmTime').value;
-  const title = document.getElementById('alarmTitle').value || 'Ритуал';
+  const rawTitle = document.getElementById('alarmTitle').value;
+  
+  // Дефолтное название или введенное (XSS защита будет при выводе)
+  const title = rawTitle.trim() || 'Ритуал';
   
   const days = [];
   document.querySelectorAll('.day-btn.active').forEach(b => days.push(b.dataset.day));
@@ -721,8 +743,19 @@ function initDaySelector() {
 
 /* ============================================================
  * BLOCK 4: HELPERS & UTILS
- * Вспомогательные функции, хаптика, копирование
+ * Вспомогательные функции, хаптика, копирование, защита
  * ============================================================ */
+
+/* --- XSS Protection Helper --- */
+function escapeHtml(text) {
+  if (!text) return text;
+  return text.toString()
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
 
 function copyId() {
   haptic('light');
