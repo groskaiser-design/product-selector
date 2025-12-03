@@ -559,7 +559,7 @@ document.addEventListener('DOMContentLoaded', () => {
  * BLOCK 2: SYNC LOGIC (Cloud + Local)
  * ============================================================ */
 
-// Загрузка из облака (Приоритет базы данных)
+// Загрузка из облака (Приоритет базы данных + Инициализация новичка)
 async function syncLoad() {
   if (!GAS_URL.includes('/exec')) { console.warn('GAS_URL not set'); return; }
   console.log('🔄 Sync: Checking cloud...');
@@ -578,24 +578,41 @@ async function syncLoad() {
     const data = await response.json();
     
     if (data.ok) {
-      // 1. Запоминаем строку для скорости
+      // 1. Запоминаем строку таблицы для скорости
       if (data.rowIndex) appState.rowIndex = data.rowIndex;
 
-      // 2. Сравниваем данные
+      // === 🔥 НОВАЯ ЛОГИКА: ОПРЕДЕЛЕНИЕ ПЕРВОГО ЗАПУСКА ===
+      // Проверяем: если на сервере ПУСТО (массивы пустые или null)
+      const serverIsEmpty = (!data.trainers || data.trainers.length === 0) &&
+                            (!data.alarms || data.alarms.length === 0);
+
+      // Проверяем: если у нас ЕСТЬ данные (значит это дефолтный стейт)
+      const localHasData = (appState.trainers.length > 0 || appState.alarms.length > 0);
+
+      if (serverIsEmpty && localHasData) {
+        console.log('✨ First Run Detected: Initializing cloud with defaults...');
+        // Мы НЕ принимаем пустоту от сервера.
+        // Мы отправляем ему наши дефолтные настройки.
+        syncSave(); 
+        return; // Выходим, чтобы не перерисовывать экран
+      }
+      // ====================================================
+
+      // 2. Стандартная логика: Сравниваем данные
       const localStr = JSON.stringify({t: appState.trainers, a: appState.alarms});
       const serverStr = JSON.stringify({t: data.trainers, a: data.alarms});
 
-      // 3. Если база отличается — обновляем интерфейс
+      // 3. Если база отличается (и там не пусто) — обновляем интерфейс
       if (localStr !== serverStr) {
         console.log('☁️ Cloud data is different. Updating UI...');
         
         appState.trainers = data.trainers || [];
         appState.alarms = data.alarms || [];
         
-        saveState();    // Сохраняем новую правду в телефон
+        saveState();    // Сохраняем "правду" сервера в телефон
         renderTrainers(); 
         renderAlarms();   
-        haptic('success'); // Легкая вибрация при обновлении
+        haptic('success');
       } else {
         console.log('✅ Data is up to date');
         saveState(); // Просто сохраняем rowIndex
