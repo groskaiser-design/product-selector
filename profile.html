@@ -492,26 +492,16 @@
       if (tg.setBackgroundColor) tg.setBackgroundColor('#050505');
     } catch (e) {}
 
-    // --- ИСПРАВЛЕНИЕ КНОПКИ НАЗАД ---
+    // --- КНОПКА НАЗАД ---
     try {
       if (tg.BackButton) {
-        // 1. Сбрасываем старые обработчики (на всякий случай)
         tg.BackButton.offClick();
-        
-        // 2. Показываем кнопку
         tg.BackButton.show();
-        
-        // 3. Навешиваем логику
         tg.BackButton.onClick(function goBack() {
           haptic('light');
-          
-          // ВАЖНО: Скрываем кнопку ПЕРЕД уходом со страницы
           tg.BackButton.hide();
-          
-          // Удаляем этот же слушатель, чтобы не дублировался
           tg.BackButton.offClick(goBack);
 
-          // Логика перехода
           if(document.referrer && document.referrer.includes(window.location.host)) {
              history.back();
           } else {
@@ -519,9 +509,7 @@
           }
         });
       }
-    } catch (e) {
-      console.error('BackButton Error:', e);
-    }
+    } catch (e) { console.error('BackButton Error:', e); }
 
     try { if (tg.disableVerticalSwipes) tg.disableVerticalSwipes(); } catch (e) {}
 
@@ -531,16 +519,18 @@
 /* ============================================================
  * BLOCK 1: STATE & CONFIG
  * ============================================================ */
-// ⚠️ ВСТАВЬТЕ СЮДА ВАШ URL (ЗАКАНЧИВАЕТСЯ НА /exec)
+// ⚠️ ВАШ URL
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbzQbW4Bqmwq_51k9Op_CLJa5IX9v_MYkgXde2y3fAqqHX5wsvbSN7Uw9OpXFPP6raU/exec'; 
 
 const tg = window.Telegram?.WebApp;
 const STORAGE_KEY = 'ultima_profile_v1';
+const PHOTO_CACHE_KEY = 'ultima_photos_v1'; // Ключ для хранения фото
+const PHOTO_TTL = 24 * 60 * 60 * 1000; // Время жизни кэша фото (24 часа)
 
-// Добавляем rowIndex для ускорения поиска на бэке
 const DEFAULT_STATE = {
   userId: '1849', 
   rowIndex: null, 
+  timezoneOffset: null, 
   trainers: [],
   alarms: [
     { id: 1, time: '09:00', title: 'Взвешивание', days: ['Сб'], active: true },
@@ -559,19 +549,21 @@ document.addEventListener('DOMContentLoaded', () => {
       const u = tg.initDataUnsafe.user;
       if (u.first_name) document.getElementById('userName').textContent = escapeHtml(u.first_name);
       
-      // Берем ID из телеграма, если есть. Иначе дефолт
       appState.userId = String(u.id); 
       document.getElementById('userIdDisplay').textContent = appState.userId;
       
       if(u.photo_url) document.getElementById('userAvatar').src = u.photo_url;
   }
   
-  // 2. Рендер того, что есть в памяти (мгновенно)
+  // Часовой пояс
+  appState.timezoneOffset = new Date().getTimezoneOffset();
+
+  // 2. Рендер
   renderTrainers();
   renderAlarms();
   initDaySelector();
   
-  // 3. Фоновая синхронизация с облаком
+  // 3. Синхронизация
   syncLoad(); 
 });
 
@@ -579,7 +571,6 @@ document.addEventListener('DOMContentLoaded', () => {
  * BLOCK 2: SYNC LOGIC (Cloud + Local)
  * ============================================================ */
 
-// Загрузка из облака (Приоритет базы данных + Инициализация новичка)
 async function syncLoad() {
   if (!GAS_URL.includes('/exec')) { console.warn('GAS_URL not set'); return; }
   console.log('🔄 Sync: Checking cloud...');
@@ -591,68 +582,51 @@ async function syncLoad() {
         action: 'sync_profile',
         type: 'load',
         userId: appState.userId,
-        rowIndex: appState.rowIndex 
+        rowIndex: appState.rowIndex,
+        timezoneOffset: appState.timezoneOffset
       })
     });
     
     const data = await response.json();
     
     if (data.ok) {
-      // 1. Запоминаем строку таблицы для скорости
       if (data.rowIndex) appState.rowIndex = data.rowIndex;
 
-      // === 🔥 НОВАЯ ЛОГИКА: ОПРЕДЕЛЕНИЕ ПЕРВОГО ЗАПУСКА ===
-      // Проверяем: если на сервере ПУСТО (массивы пустые или null)
       const serverIsEmpty = (!data.trainers || data.trainers.length === 0) &&
                             (!data.alarms || data.alarms.length === 0);
-
-      // Проверяем: если у нас ЕСТЬ данные (значит это дефолтный стейт)
       const localHasData = (appState.trainers.length > 0 || appState.alarms.length > 0);
 
       if (serverIsEmpty && localHasData) {
-        console.log('✨ First Run Detected: Initializing cloud with defaults...');
-        // Мы НЕ принимаем пустоту от сервера.
-        // Мы отправляем ему наши дефолтные настройки.
+        console.log('✨ First Run: Sending defaults...');
         syncSave(); 
-        return; // Выходим, чтобы не перерисовывать экран
+        return; 
       }
-      // ====================================================
 
-      // 2. Стандартная логика: Сравниваем данные
       const localStr = JSON.stringify({t: appState.trainers, a: appState.alarms});
       const serverStr = JSON.stringify({t: data.trainers, a: data.alarms});
 
-      // 3. Если база отличается (и там не пусто) — обновляем интерфейс
       if (localStr !== serverStr) {
-        console.log('☁️ Cloud data is different. Updating UI...');
-        
+        console.log('☁️ Updating UI from cloud...');
         appState.trainers = data.trainers || [];
         appState.alarms = data.alarms || [];
         
-        saveState();    // Сохраняем "правду" сервера в телефон
+        saveState();    
         renderTrainers(); 
         renderAlarms();   
         haptic('success');
       } else {
-        console.log('✅ Data is up to date');
-        saveState(); // Просто сохраняем rowIndex
+        saveState(); 
       }
     }
-  } catch (e) {
-    console.error('Sync Load Error:', e);
-  }
+  } catch (e) { console.error('Sync Load Error:', e); }
 }
 
-// Сохранение в облако (Optimistic UI)
 async function syncSave() {
-  // 1. Сначала сохраняем локально (чтобы пользователь не ждал)
-  saveState();
-
+  saveState(); 
   if (!GAS_URL.includes('/exec')) return;
   console.log('💾 Saving to cloud...');
 
   try {
-    // 2. Отправляем в фоне
     fetch(GAS_URL, {
       method: 'POST',
       body: JSON.stringify({
@@ -661,34 +635,73 @@ async function syncSave() {
         userId: appState.userId,
         rowIndex: appState.rowIndex,
         trainers: appState.trainers,
-        alarms: appState.alarms
+        alarms: appState.alarms,
+        timezoneOffset: appState.timezoneOffset
       })
     }).then(r => r.json()).then(data => {
       if (data.ok && data.rowIndex) {
-        appState.rowIndex = data.rowIndex; // Обновляем индекс, если изменился
+        appState.rowIndex = data.rowIndex;
         localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
       }
     });
-  } catch (e) {
-    console.warn('Save failed (offline?)', e);
-  }
+  } catch (e) { console.warn('Save failed', e); }
 }
 
-// Функция для получения фото тренера
+// 🔥 ОБНОВЛЕННАЯ ФУНКЦИЯ ФОТО С КЭШЕМ
 async function fetchTrainerPhoto(trainerId, imgElementId) {
-  if (!GAS_URL.includes('/exec')) return;
+  if (!trainerId) return;
+
+  // 1. Пробуем достать из кэша
+  const cacheKey = `photo_${trainerId}`;
+  let cached = null;
   try {
-    const res = await fetch(GAS_URL, {
-      method: 'POST',
-      body: JSON.stringify({ action: 'get_trainer_photo', trainer_id: trainerId })
-    });
-    const data = await res.json();
-    if (data.ok && data.photo) {
-      const img = document.getElementById(imgElementId);
-      if(img) img.style.backgroundImage = `url('${data.photo}')`; // Ставим как фон или src
-      if(img) img.innerHTML = ''; // Убираем букву
+    const raw = localStorage.getItem(PHOTO_CACHE_KEY);
+    const allPhotos = raw ? JSON.parse(raw) : {};
+    cached = allPhotos[cacheKey];
+  } catch (e) {}
+
+  const img = document.getElementById(imgElementId);
+  const now = Date.now();
+  let needsUpdate = true;
+
+  // 2. Если есть в кэше — сразу показываем
+  if (cached && cached.data) {
+    if (img) {
+       img.style.backgroundImage = `url('${cached.data}')`;
+       img.innerHTML = '';
     }
-  } catch(e) { console.error(e); }
+    // Если кэш свежий (меньше 24ч) — обновлять не нужно
+    if (cached.time && (now - cached.time < PHOTO_TTL)) {
+      needsUpdate = false;
+    }
+  }
+
+  // 3. Если нужно обновление (нет в кэше или он протух) — идем в сеть
+  if (needsUpdate && GAS_URL.includes('/exec')) {
+    try {
+      const res = await fetch(GAS_URL, {
+        method: 'POST',
+        body: JSON.stringify({ action: 'get_trainer_photo', trainer_id: trainerId })
+      });
+      const data = await res.json();
+      
+      if (data.ok && data.photo) {
+        // Обновляем картинку на экране (даже если уже показали старую)
+        if (img) {
+            img.style.backgroundImage = `url('${data.photo}')`;
+            img.innerHTML = '';
+        }
+        
+        // Сохраняем в кэш
+        try {
+          const raw = localStorage.getItem(PHOTO_CACHE_KEY);
+          const allPhotos = raw ? JSON.parse(raw) : {};
+          allPhotos[cacheKey] = { data: data.photo, time: now };
+          localStorage.setItem(PHOTO_CACHE_KEY, JSON.stringify(allPhotos));
+        } catch(e) { console.warn('Cache full?', e); }
+      }
+    } catch(e) { console.error('Photo fetch error', e); }
+  }
 }
 
 /* ============================================================
@@ -708,13 +721,12 @@ function renderTrainers() {
     const safeName = escapeHtml(t.name);
     const safeId = escapeHtml(t.id);
     const initial = safeName ? safeName.charAt(0).toUpperCase() : '?';
-    const uniqueImgId = `trainer_img_${index}`; // ID для асинхронной загрузки фото
+    const uniqueImgId = `trainer_img_${index}`; 
     
     const div = document.createElement('div');
     div.className = 'mentor-card';
     div.onclick = () => openTrainerModal(t.uid); 
     
-    // Вставляем блок
     div.innerHTML = `
       <div class="m-info">
         <div class="m-av" id="${uniqueImgId}" style="background-size: cover; background-position: center;">${initial}</div>
@@ -732,10 +744,7 @@ function renderTrainers() {
     `;
     list.appendChild(div);
 
-    // Если есть ID тренера, пытаемся подгрузить фото в фоне
-    if (t.id) {
-       fetchTrainerPhoto(t.id, uniqueImgId);
-    }
+    if (t.id) fetchTrainerPhoto(t.id, uniqueImgId);
   });
 }
 
@@ -748,12 +757,10 @@ function renderAlarms() {
   sorted.forEach(alarm => {
     const safeTitle = escapeHtml(alarm.title);
     const safeTime = escapeHtml(alarm.time);
-
-    const div = document.createElement('div');
-    div.className = 'ritual-item';
-    
     const dayStr = alarm.days.length === 7 ? 'Каждый день' : alarm.days.join(', ');
     
+    const div = document.createElement('div');
+    div.className = 'ritual-item';
     div.innerHTML = `
       <div class="r-left" onclick="openAlarmModal(${alarm.id})">
         <div class="r-time" style="opacity: ${alarm.active ? 1 : 0.4}">${safeTime}</div>
@@ -785,47 +792,40 @@ function saveTrainer() {
   const nameVal = inputName.value.trim();
   const idVal = inputId.value.trim();
 
-  if (!nameVal) {
-    safeShowPopup('Ошибка', 'Пожалуйста, введите имя тренера');
-    return;
-  }
-
-  if (idVal && !/^\d+$/.test(idVal)) {
-    safeShowPopup('Ошибка', 'ID должен содержать только цифры');
-    return;
-  }
+  if (!nameVal) { safeShowPopup('Ошибка', 'Пожалуйста, введите имя тренера'); return; }
+  if (idVal && !/^\d+$/.test(idVal)) { safeShowPopup('Ошибка', 'ID должен содержать только цифры'); return; }
 
   if (editUid) {
     const idx = appState.trainers.findIndex(t => Number(t.uid) === Number(editUid));
-    if (idx !== -1) {
-        appState.trainers[idx] = { ...appState.trainers[idx], name: nameVal, id: idVal };
-    }
+    if (idx !== -1) appState.trainers[idx] = { ...appState.trainers[idx], name: nameVal, id: idVal };
   } else {
-    if (appState.trainers.length >= 10) {
-      safeShowPopup('Лимит', 'Максимум 10 тренеров');
-      return;
-    }
+    if (appState.trainers.length >= 10) { safeShowPopup('Лимит', 'Максимум 10 тренеров'); return; }
     appState.trainers.push({ uid: Date.now(), name: nameVal, id: idVal });
   }
   
-  inputName.value = '';
-  inputId.value = '';
-  document.getElementById('editTrainerUid').value = '';
-  
-  syncSave(); // <--- ВАЖНО: сохраняем и синхронизируем
-  renderTrainers();
-  closeModal('modalTrainer');
-  haptic('success');
+  inputName.value = ''; inputId.value = ''; document.getElementById('editTrainerUid').value = '';
+  syncSave(); renderTrainers(); closeModal('modalTrainer'); haptic('success');
 }
 
 function removeTrainer(uid, onSuccess) {
   haptic('light');
   safeShowConfirm("Удалить тренера?", (ok) => {
     if(ok) {
+      // Чистим кэш фото при удалении (Опционально, но полезно)
+      const trainer = appState.trainers.find(t => Number(t.uid) === Number(uid));
+      if (trainer && trainer.id) {
+         try {
+           const raw = localStorage.getItem(PHOTO_CACHE_KEY);
+           if (raw) {
+             const all = JSON.parse(raw);
+             delete all[`photo_${trainer.id}`];
+             localStorage.setItem(PHOTO_CACHE_KEY, JSON.stringify(all));
+           }
+         } catch(e) {}
+      }
+
       appState.trainers = appState.trainers.filter(t => Number(t.uid) !== Number(uid));
-      syncSave(); // <--- ВАЖНО
-      renderTrainers();
-      haptic('success');
+      syncSave(); renderTrainers(); haptic('success');
       if (onSuccess) onSuccess();
     }
   });
@@ -833,20 +833,14 @@ function removeTrainer(uid, onSuccess) {
 
 function deleteTrainerFromModal() {
     const uid = document.getElementById('editTrainerUid').value;
-    if (uid) {
-        removeTrainer(uid, () => closeModal('modalTrainer'));
-    }
+    if (uid) removeTrainer(uid, () => closeModal('modalTrainer'));
 }
 
 /* --- Alarms --- */
 function toggleAlarm(id, status) {
   haptic('light');
   const idx = appState.alarms.findIndex(a => a.id === id);
-  if(idx > -1) {
-    appState.alarms[idx].active = status;
-    syncSave(); // <--- ВАЖНО
-    renderAlarms(); 
-  }
+  if(idx > -1) { appState.alarms[idx].active = status; syncSave(); renderAlarms(); }
 }
 
 function saveAlarmFromModal() {
@@ -854,7 +848,6 @@ function saveAlarmFromModal() {
   const idStr = document.getElementById('editAlarmId').value;
   const time = document.getElementById('alarmTime').value;
   const rawTitle = document.getElementById('alarmTitle').value;
-  
   const title = rawTitle.trim() || 'Ритуал';
   
   const days = [];
@@ -863,17 +856,12 @@ function saveAlarmFromModal() {
 
   if (idStr) {
     const idx = appState.alarms.findIndex(a => a.id == idStr);
-    if(idx > -1) {
-      appState.alarms[idx] = { ...appState.alarms[idx], time, title, days };
-    }
+    if(idx > -1) appState.alarms[idx] = { ...appState.alarms[idx], time, title, days };
   } else {
     appState.alarms.push({ id: Date.now(), time, title, days, active: true });
   }
 
-  syncSave(); // <--- ВАЖНО
-  renderAlarms();
-  closeModal('modalAlarm');
-  haptic('success');
+  syncSave(); renderAlarms(); closeModal('modalAlarm'); haptic('success');
 }
 
 function deleteAlarmFromModal() {
@@ -881,15 +869,12 @@ function deleteAlarmFromModal() {
   const idStr = document.getElementById('editAlarmId').value;
   if(idStr) {
       appState.alarms = appState.alarms.filter(a => a.id != idStr);
-      syncSave(); // <--- ВАЖНО
-      renderAlarms();
-      closeModal('modalAlarm');
-      haptic('success');
+      syncSave(); renderAlarms(); closeModal('modalAlarm'); haptic('success');
   }
 }
 
 /* ============================================================
- * BLOCK 5: UI HELPERS (Modals, etc)
+ * BLOCK 5: UI HELPERS
  * ============================================================ */
 
 function openAlarmModal(id = null) {
@@ -975,12 +960,7 @@ function initDaySelector() {
 
 function escapeHtml(text) {
   if (!text) return text;
-  return text.toString()
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
+  return text.toString().replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
 }
 
 function copyId() {
@@ -1035,5 +1015,6 @@ function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
 }
 </script>
+  
 </body>
 </html>
