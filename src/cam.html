@@ -1,0 +1,757 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<script src="version-control.js?t=1"></script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Ultima FoodCam</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --bg-core: #000000;
+    --surface-glass: rgba(28, 28, 30, 0.65);
+    --acc-green: #30d158;
+    --acc-red: #ff453a;
+    --acc-orange: #ff9f0a;
+    --acc-blue: #0a84ff;
+    --text-main: #ffffff;
+    --font-stack: -apple-system, BlinkMacSystemFont, 'SF Pro Text', Roboto, sans-serif;
+  }
+
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0; padding: 0;
+    background: var(--bg-core);
+    color: var(--text-main);
+    font-family: var(--font-stack);
+    height: 100vh; overflow: hidden;
+    display: flex; flex-direction: column;
+    overscroll-behavior-y: none;
+  }
+
+  /* === ICONS (SVG) === */
+  .icon-svg {
+    width: 24px; height: 24px;
+    fill: currentColor;
+    display: block;
+  }
+
+  /* === VIEWPORT === */
+  .cam-viewport {
+    position: relative;
+    flex: 1;
+    width: 100%;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #000;
+  }
+
+  video {
+    position: absolute;
+    width: 100%; height: 100%;
+    object-fit: cover; 
+    z-index: 1;
+  }
+
+  /* === PRELOADER (SPINNER) - ДОБАВЛЕНО === */
+  .cam-loader {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+  }
+  .spinner {
+    width: 40px; height: 40px;
+    border: 4px solid rgba(255,255,255,0.3);
+    border-top: 4px solid #fff;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+  }
+  @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+  #uiCanvas {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    z-index: 10; pointer-events: none;
+  }
+
+  .ui-layer {
+    position: absolute; inset: 0; z-index: 20;
+    display: flex; flex-direction: column;
+    justify-content: space-between;
+    padding: calc(16px + env(safe-area-inset-top)) 16px calc(32px + env(safe-area-inset-bottom)) 16px;
+    pointer-events: none;
+  }
+
+  /* === TOP BAR === */
+  .top-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center; 
+    pointer-events: auto;
+    height: 48px;
+  }
+
+  .btn-close {
+    width: 40px; height: 40px;
+    border-radius: 50%;
+    background: rgba(0,0,0,0.4);
+    backdrop-filter: blur(10px);
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; cursor: pointer;
+    border: 1px solid rgba(255,255,255,0.1);
+  }
+
+  .status-chip {
+    background: rgba(0,0,0,0.4);
+    border: 1px solid rgba(255,255,255,0.1);
+    backdrop-filter: blur(10px);
+    padding: 8px 16px;
+    border-radius: 20px;
+    display: flex; align-items: center; gap: 8px;
+    font-size: 13px; font-weight: 600;
+  }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--acc-orange); box-shadow: 0 0 8px var(--acc-orange); transition: 0.3s; }
+  .status-dot.ok { background: var(--acc-green); box-shadow: 0 0 8px var(--acc-green); }
+
+  .spacer { width: 40px; }
+
+  /* === BOTTOM GRID CONTROLS === */
+  .controls-grid {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    pointer-events: auto;
+    width: 100%;
+    margin-bottom: 10px;
+  }
+
+  .grid-cell-left { display: flex; justify-content: flex-start; }
+  .grid-cell-center { display: flex; justify-content: center; }
+  .grid-cell-right { display: flex; justify-content: flex-end; }
+
+  .action-btn {
+    width: 56px; height: 56px;
+    border-radius: 50%;
+    background: rgba(30,30,30,0.6);
+    backdrop-filter: blur(12px);
+    display: flex; align-items: center; justify-content: center;
+    color: #fff;
+    border: 1px solid rgba(255,255,255,0.15);
+    cursor: pointer;
+    transition: transform 0.15s, background 0.2s;
+  }
+  .action-btn:active { transform: scale(0.92); background: rgba(60,60,60,0.8); }
+  .action-btn.hidden { opacity: 0; pointer-events: none; }
+  .action-btn.disabled { opacity: 0.5; pointer-events: none; } /* Стиль для блокировки */
+
+  .shutter-outer {
+    width: 80px; height: 80px;
+    border-radius: 50%;
+    border: 4px solid rgba(255,255,255,0.8);
+    display:flex; align-items:center; justify-content:center;
+    transition: 0.3s;
+    background: transparent;
+  }
+  .shutter-inner {
+    width: 62px; height: 62px;
+    border-radius: 50%;
+    background: #fff;
+    transition: 0.3s;
+    cursor: pointer;
+  }
+  .shutter-outer.disabled { border-color: rgba(255, 69, 58, 0.5); }
+  .shutter-outer.disabled .shutter-inner { background: var(--acc-red); transform: scale(0.4); opacity: 0.8; }
+  .shutter-outer.active { border-color: var(--acc-green); transform: scale(1.05); }
+  .shutter-outer:active:not(.disabled) .shutter-inner { transform: scale(0.9); }
+
+  /* === TOAST === */
+  .cam-toast {
+    position: absolute;
+    top: 100px; left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0,0,0,0.7);
+    color: #fff;
+    padding: 8px 16px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 500;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s;
+    z-index: 50;
+    backdrop-filter: blur(4px);
+  }
+  .cam-toast.visible { opacity: 1; }
+
+  /* === PERMISSION & PREVIEW === */
+  .perm-overlay {
+    position: absolute; inset: 0; z-index: 100;
+    background: rgba(0,0,0,0.9);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; padding: 32px; gap: 24px;
+  }
+  .perm-btn {
+    background: var(--acc-blue); color: #fff;
+    border: none; padding: 14px 28px;
+    border-radius: 14px; font-size: 16px; font-weight: 600; cursor: pointer;
+  }
+
+  /* FIXED PREVIEW STYLES */
+  .preview-overlay {
+    position: absolute; inset: 0; z-index: 200;
+    background: #000; 
+    display: none; 
+    flex-direction: column;
+    height: 100%; 
+    overflow: hidden; 
+  }
+  .preview-img { 
+    flex: 1; 
+    width: 100%; 
+    object-fit: contain; 
+    background: #111; 
+    margin-bottom: 12px;
+    min-height: 0; 
+  }
+  .comment-wrap { 
+    flex-shrink: 0;
+    padding: 0 24px 16px 24px; 
+    width: 100%; 
+  }
+  .comment-label { 
+    display: block; 
+    color: rgba(255,255,255,0.6); 
+    font-size: 13px; 
+    margin-bottom: 8px; 
+    margin-left: 4px; 
+  }
+  .comment-input {
+    width: 100%; height: 80px;
+    background: rgba(255,255,255,0.12);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 16px; padding: 12px 16px;
+    color: #fff; font-size: 16px; font-family: var(--font-stack);
+    resize: none; outline: none; transition: 0.2s;
+  }
+  .comment-input:focus { background: rgba(255,255,255,0.18); border-color: var(--acc-blue); }
+  .preview-controls { 
+    flex-shrink: 0;
+    padding: 0 24px 34px 24px; 
+    display: flex; 
+    gap: 16px; 
+    background: #000; 
+  }
+  .btn {
+    flex: 1; padding: 14px; border-radius: 14px;
+    font-weight: 600; font-size: 16px;
+    border: 1px solid rgba(255,255,255,0.1);
+    background: rgba(255,255,255,0.1);
+    color: #fff; cursor: pointer; text-align: center;
+  }
+  .btn.primary { background: var(--acc-blue); border-color: transparent; }
+  .hidden { display: none !important; }
+
+</style>
+</head>
+<body>
+
+  <div class="cam-viewport">
+    <video id="video" autoplay playsinline muted></video>
+    
+    <div id="loader" class="cam-loader hidden">
+      <div class="spinner"></div>
+    </div>
+    
+    <canvas id="uiCanvas"></canvas>
+    <div id="camToast" class="cam-toast">Camera Name</div>
+
+    <div class="ui-layer">
+      <div class="top-bar">
+        <div class="btn-close" id="btnClose">
+          <svg class="icon-svg" viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </div>
+
+        <div class="status-chip" id="lvlChip">
+          <div class="status-dot" id="lvlDot"></div>
+          <span id="lvlText">Уровень</span>
+        </div>
+
+        <div class="spacer"></div>
+      </div>
+
+      <div class="controls-grid">
+        <div class="grid-cell-left">
+          <div class="action-btn" id="btnTorch">
+            <svg class="icon-svg" viewBox="0 0 24 24"><path d="M7 2v11h3v9l7-12h-4l4-8z"/></svg>
+          </div>
+        </div>
+
+        <div class="grid-cell-center">
+          <div class="shutter-outer disabled" id="shutterBtn">
+            <div class="shutter-inner"></div>
+          </div>
+        </div>
+
+        <div class="grid-cell-right">
+          <div class="action-btn hidden" id="btnSwitch">
+            <svg class="icon-svg" viewBox="0 0 24 24"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="permReq" class="perm-overlay hidden">
+    <div style="font-size:48px; margin-bottom:10px">📐</div>
+    <h2 style="margin:0">Настройка</h2>
+    <p style="color:var(--text-muted)">Разрешите доступ к датчикам для работы уровня.</p>
+    <button class="perm-btn" onclick="requestSensors()">Разрешить</button>
+  </div>
+
+  <div id="previewScreen" class="preview-overlay">
+    <img id="finalPhoto" class="preview-img">
+    <div class="comment-wrap">
+      <label class="comment-label">Комментарий (необязательно)</label>
+      <textarea id="commentInput" class="comment-input" placeholder="Можете указать продукты, это повысит точность модели. Например: рис 200, треска 150"></textarea>
+    </div>
+    <div class="preview-controls">
+      <button class="btn" onclick="retake()">Переснять</button>
+      <button class="btn primary" id="btnSend" onclick="sendPhoto()">Готово</button>
+    </div>
+  </div>
+
+<script>
+  const tg = window.Telegram?.WebApp;
+  if(tg) {
+    tg.ready(); tg.expand();
+    tg.setHeaderColor('#000000');
+    if(tg.disableVerticalSwipes) tg.disableVerticalSwipes();
+  }
+
+  const state = {
+    stream: null,
+    track: null,
+    levelOK: false,
+    angleX: 0, angleY: 0,
+    photoBlob: null,
+    isCapturing: false,
+    isSwitching: false, // Флаг переключения
+    devices: [],      
+    currentDevIdx: 0, 
+    torchOn: false,
+    sensorActive: false
+  };
+
+  const DOM = {
+    video: document.getElementById('video'),
+    canvas: document.getElementById('uiCanvas'),
+    ctx: document.getElementById('uiCanvas').getContext('2d'),
+    shutter: document.getElementById('shutterBtn'),
+    lvlDot: document.getElementById('lvlDot'),
+    lvlText: document.getElementById('lvlText'),
+    permReq: document.getElementById('permReq'),
+    preview: document.getElementById('previewScreen'),
+    finalImg: document.getElementById('finalPhoto'),
+    btnSend: document.getElementById('btnSend'),
+    commentInput: document.getElementById('commentInput'),
+    btnTorch: document.getElementById('btnTorch'),
+    btnSwitch: document.getElementById('btnSwitch'),
+    toast: document.getElementById('camToast'),
+    loader: document.getElementById('loader') // Добавлен лоадер
+  };
+
+  let toastTimer;
+  function showToast(msg) {
+    DOM.toast.textContent = msg;
+    DOM.toast.classList.add('visible');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      DOM.toast.classList.remove('visible');
+    }, 2000);
+  }
+
+  // 1. Функция остановки
+  function stopStream() {
+    if (state.stream) {
+      state.stream.getTracks().forEach(t => t.stop());
+      state.stream = null;
+    }
+    state.track = null;
+    state.torchOn = false; 
+    updateTorchUI();
+    DOM.video.srcObject = null;
+  }
+
+  // 2. Функция запуска (Safe Res)
+  async function startStream(deviceId) {
+    if (state.stream) stopStream();
+
+    const constraints = {
+      audio: false,
+      video: {
+        deviceId: deviceId ? { exact: deviceId } : undefined,
+        facingMode: deviceId ? undefined : 'environment',
+        // Full HD для стабильности
+        width: { ideal: 1920 }, 
+        height: { ideal: 2560 }
+      }
+    };
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      state.stream = stream;
+      state.track = stream.getVideoTracks()[0];
+      DOM.video.srcObject = stream;
+
+      const settings = state.track.getSettings();
+      if (settings.deviceId) localStorage.setItem('ultima_cam_id', settings.deviceId);
+
+      let label = state.track.label || "Камера";
+      label = label.replace(/\(.*\)/, '').replace(/camera2/i, '').replace(/facing/i, '').trim();
+      if(label.length < 2) label = "Камера " + (state.currentDevIdx + 1);
+      
+      if(state.devices.length > 1) showToast(label);
+
+      const caps = state.track.getCapabilities();
+      if (caps.focusMode?.includes('continuous')) {
+        try { await state.track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch(e){}
+      }
+
+    } catch (e) {
+      if (deviceId) {
+        localStorage.removeItem('ultima_cam_id');
+        await startStream(null);
+      } else {
+        alert("Ошибка камеры: " + e.message);
+      }
+    }
+  }
+
+  // 3. Кнопка с Лоадером
+  DOM.btnSwitch.onclick = async () => {
+    if (state.devices.length < 2 || state.isSwitching) return;
+    state.isSwitching = true;
+    haptic('medium');
+    
+    // Показываем лоадер, блокируем кнопки
+    DOM.loader.classList.remove('hidden');
+    DOM.btnSwitch.classList.add('disabled');
+    DOM.btnTorch.classList.add('disabled');
+    DOM.shutter.classList.add('disabled');
+    
+    const svg = DOM.btnSwitch.querySelector('svg');
+    svg.style.transition = 'transform 0.4s';
+    svg.style.transform = 'rotate(180deg)';
+
+    stopStream();
+
+    // Пауза от бага
+    await new Promise(r => setTimeout(r, 500));
+
+    let nextIdx = state.currentDevIdx + 1;
+    if (nextIdx >= state.devices.length) nextIdx = 0;
+    state.currentDevIdx = nextIdx;
+
+    await startStream(state.devices[nextIdx].deviceId);
+    
+    // Скрываем лоадер, разблокируем
+    DOM.loader.classList.add('hidden');
+    DOM.btnSwitch.classList.remove('disabled');
+    DOM.btnTorch.classList.remove('disabled');
+    DOM.shutter.classList.remove('disabled');
+    
+    state.isSwitching = false;
+    setTimeout(() => svg.style.transform = '', 400);
+  };
+
+  DOM.btnTorch.onclick = async () => {
+    if(!state.track) return;
+    const caps = state.track.getCapabilities();
+    if (!caps.torch) { showToast("Вспышка недоступна"); haptic('error'); return; }
+    
+    const newState = !state.torchOn;
+    try {
+      await state.track.applyConstraints({ advanced: [{ torch: newState }] });
+      state.torchOn = newState; 
+      updateTorchUI(); 
+      haptic('light');
+    } catch(e) { showToast("Ошибка вспышки"); }
+  };
+
+  function updateTorchUI() {
+    if (state.torchOn) {
+      DOM.btnTorch.style.backgroundColor = 'var(--acc-orange)';
+      DOM.btnTorch.style.color = '#000';
+    } else {
+      DOM.btnTorch.style.backgroundColor = '';
+      DOM.btnTorch.style.color = '#fff';
+    }
+  }
+
+  // === SENSORS ===
+  function checkSensorPerms() {
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+      DOM.permReq.classList.remove('hidden'); 
+    } else {
+      window.addEventListener('deviceorientation', handleOrientation);
+    }
+  }
+
+  async function requestSensors() {
+    try {
+      const resp = await DeviceOrientationEvent.requestPermission();
+      if (resp === 'granted') {
+        window.addEventListener('deviceorientation', handleOrientation);
+      } else {
+        console.warn("Permission denied");
+      }
+    } catch (e) { 
+      console.warn(e); 
+    } finally {
+      DOM.permReq.classList.add('hidden');
+    }
+  }
+
+  function handleOrientation(e) {
+    let x = e.beta; let y = e.gamma; 
+    if (x === null || y === null) return;
+    
+    state.sensorActive = true; 
+    state.angleX = x; state.angleY = y;
+  }
+
+  function updateUI() {
+    if (state.isCapturing || state.isSwitching) return;
+    
+    if (!state.sensorActive) {
+         DOM.lvlDot.classList.remove('ok'); DOM.lvlText.textContent = "Камера";
+         DOM.shutter.classList.remove('disabled'); DOM.shutter.classList.add('active');
+         return;
+    }
+
+    if (state.levelOK) {
+      DOM.lvlDot.classList.add('ok'); DOM.lvlText.textContent = "Ровно";
+      DOM.shutter.classList.remove('disabled'); DOM.shutter.classList.add('active');
+    } else {
+      DOM.lvlDot.classList.remove('ok'); DOM.lvlText.textContent = "Выровняйте";
+      DOM.shutter.classList.add('disabled'); DOM.shutter.classList.remove('active');
+    }
+  }
+  function resizeCanvas() {
+    const w = window.innerWidth; const h = window.innerHeight;
+    if (DOM.canvas.width !== w || DOM.canvas.height !== h) { DOM.canvas.width = w; DOM.canvas.height = h; }
+  }
+
+  // === CAMERA LOGIC ===
+  async function initCamera() {
+    try {
+      const savedId = localStorage.getItem('ultima_cam_id');
+      await startStream(savedId);
+      await updateDeviceList();
+      resizeCanvas();
+      window.addEventListener('resize', resizeCanvas);
+      requestAnimationFrame(drawLoop);
+      checkSensorPerms();
+    } catch (e) {
+      console.warn("Init Error:", e);
+    }
+  }
+
+  async function updateDeviceList() {
+    try {
+      const allDevices = await navigator.mediaDevices.enumerateDevices();
+      state.devices = allDevices.filter(d => d.kind === 'videoinput');
+      
+      if (state.devices.length > 1) {
+        DOM.btnSwitch.classList.remove('hidden');
+      } else {
+        DOM.btnSwitch.classList.add('hidden');
+      }
+
+      if (state.track) {
+        const currentId = state.track.getSettings().deviceId;
+        state.currentDevIdx = state.devices.findIndex(d => d.deviceId === currentId);
+        if(state.currentDevIdx === -1) state.currentDevIdx = 0;
+      }
+    } catch(e) {}
+  }
+
+  // === DRAW LOOP ===
+  function drawLoop() {
+    const ctx = DOM.ctx; const w = DOM.canvas.width; const h = DOM.canvas.height;
+    ctx.clearRect(0, 0, w, h);
+    
+    const cx = w / 2; const cy = h / 2;
+
+    const cardRatio = 1.586; 
+    const cardW = w * 0.22; 
+    const cardH = cardW * cardRatio;
+    const cardX = cx + 80; 
+    const cardY = cy - cardH / 2; 
+    const r = 8; 
+
+    ctx.beginPath();
+    ctx.moveTo(cardX + r, cardY);
+    ctx.lineTo(cardX + cardW - r, cardY);
+    ctx.quadraticCurveTo(cardX + cardW, cardY, cardX + cardW, cardY + r);
+    ctx.lineTo(cardX + cardW, cardY + cardH - r);
+    ctx.quadraticCurveTo(cardX + cardW, cardY + cardH, cardX + cardW - r, cardY + cardH);
+    ctx.lineTo(cardX + r, cardY + cardH);
+    ctx.quadraticCurveTo(cardX, cardY + cardH, cardX, cardY + cardH - r);
+    ctx.lineTo(cardX, cardY + r);
+    ctx.quadraticCurveTo(cardX, cardY, cardX + r, cardY);
+    
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)'; 
+    ctx.fill(); 
+
+    // Текст
+    ctx.save();
+    ctx.translate(cardX + cardW / 2, cardY + cardH / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.fillText("CREDIT CARD", 0, -10);
+    ctx.font = '10px sans-serif'; 
+    ctx.fillText("(необязательно)", 0, 10); 
+    ctx.restore(); 
+
+    if (state.sensorActive) {
+        const rBubble = 14; const rTarget = 18; const maxOffset = 60; 
+        
+        const rawX = (isNaN(state.angleY) || state.angleY === null) ? 0 : state.angleY;
+        const rawY = (isNaN(state.angleX) || state.angleX === null) ? 0 : state.angleX;
+        const clamp = (val) => Math.max(-20, Math.min(20, val));
+        const dx = (clamp(rawX) / 20) * maxOffset; 
+        const dy = (clamp(rawY) / 20) * maxOffset;
+
+        const dist = Math.hypot(dx, dy);
+        const isInside = (dist + rBubble) <= rTarget;
+
+        if (state.levelOK !== isInside && !state.isCapturing && !state.isSwitching) {
+          state.levelOK = isInside; updateUI();
+          if(isInside) haptic('medium');
+        }
+
+        ctx.shadowBlur = 4; ctx.shadowColor = 'rgba(0,0,0,0.5)';
+        ctx.beginPath(); ctx.arc(cx, cy, rTarget, 0, Math.PI * 2); 
+        const color = (state.levelOK || state.isCapturing) ? '#30d158' : 'rgba(255,255,255,0.85)';
+        ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.stroke();
+
+        ctx.beginPath(); ctx.arc(cx + dx, cy + dy, rBubble, 0, Math.PI * 2); 
+        ctx.fillStyle = color; ctx.fill(); ctx.shadowBlur = 0;
+    } else {
+        ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(cx-10, cy); ctx.lineTo(cx+10, cy); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(cx, cy-10); ctx.lineTo(cx, cy+10); ctx.stroke();
+    }
+    
+    requestAnimationFrame(drawLoop);
+  }
+
+  DOM.shutter.addEventListener('click', async () => {
+    if (state.isCapturing || state.isSwitching) return; 
+    
+    if (state.sensorActive && !state.levelOK) { 
+        haptic('error'); showToast("Выровняйте телефон"); return; 
+    }
+
+    try {
+        state.isCapturing = true; 
+        haptic('heavy');
+        
+        DOM.shutter.style.transform = 'scale(0.8)'; 
+        DOM.shutter.style.opacity = '0.5';
+        
+        await new Promise(r => setTimeout(r, 50));
+
+        const vid = DOM.video;
+        if (vid.readyState < 2 || vid.videoWidth === 0) throw new Error("Камера не готова");
+
+        const c = document.createElement('canvas');
+        c.width = vid.videoWidth; c.height = vid.videoHeight;
+        c.getContext('2d').drawImage(vid, 0, 0);
+
+        const blob = await new Promise(resolve => c.toBlob(resolve, 'image/jpeg', 0.95));
+        if (!blob) throw new Error("Пустой кадр");
+
+        showPreview(blob);
+
+    } catch(err) {
+        console.error(err);
+        haptic('error'); 
+        showToast("Ошибка: " + err.message);
+        state.isCapturing = false;
+        updateUI();
+    } finally {
+        DOM.shutter.style.transform = ''; DOM.shutter.style.opacity = '';
+        state.isCapturing = false;
+    }
+  });
+
+  function showPreview(blob) {
+    if(!blob) return;
+    state.photoBlob = blob;
+    DOM.finalImg.src = URL.createObjectURL(blob);
+    DOM.preview.style.display = 'flex';
+  }
+  function retake() {
+    DOM.preview.style.display = 'none';
+    if(DOM.finalImg.src) URL.revokeObjectURL(DOM.finalImg.src);
+    DOM.finalImg.src = ''; state.photoBlob = null; DOM.commentInput.value = ''; 
+  }
+
+  async function sendPhoto() {
+    const btn = DOM.btnSend;
+    if (btn.disabled) return; 
+    
+    btn.disabled = true;
+    btn.textContent = 'Обработка...';
+    btn.style.opacity = '0.8'; 
+    haptic('light');
+
+    try {
+        // === ИМИТАЦИЯ ОТПРАВКИ ===
+        await new Promise(r => setTimeout(r, 1500));
+
+        btn.textContent = 'Отправлено!';
+        btn.style.backgroundColor = 'var(--acc-green)'; 
+        btn.style.borderColor = 'var(--acc-green)';
+        haptic('success');
+
+        setTimeout(() => {
+            retake(); 
+            btn.textContent = 'Готово';
+            btn.disabled = false;
+            btn.style.backgroundColor = ''; 
+            btn.style.borderColor = '';
+            btn.style.opacity = '1';
+        }, 1000);
+
+    } catch (e) {
+        btn.textContent = 'Ошибка';
+        btn.style.backgroundColor = 'var(--acc-red)';
+        haptic('error');
+        setTimeout(() => {
+            btn.textContent = 'Готово';
+            btn.disabled = false;
+            btn.style.backgroundColor = '';
+        }, 2000);
+    }
+  }
+
+  function haptic(style) { if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred(style); }
+  document.getElementById('btnClose').onclick = () => window.history.back();
+
+  initCamera();
+</script>
+</body>
+</html>

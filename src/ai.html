@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <script src="version-control.js?t=1"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
+  <title>AI Чат</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+  <style>
+    /* === СБРОС === */
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+    :root {
+      /* === ЦВЕТА (Фиолетово-голубые) === */
+      --grad-main: linear-gradient(135deg, #0a84ff 0%, #5e60ce 100%);
+      --acc-blue: #0a84ff;
+      
+      --aiBubble: rgba(255,255,255,.18);
+      --aiBorder: rgba(255,255,255,.28);
+      --maxw: 560px;
+    }
+
+    /* ФОН ЧЕРНЫЙ */
+    html, body {
+      background-color: #050505;
+      margin: 0; padding: 0; width: 100%; height: 100vh;
+      overflow: hidden; 
+      color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+      position: fixed; top: 0; left: 0;
+    }
+
+    /* === СЛОЙ 0: ШАРЫ И ШУМ === */
+    .fx-layer { 
+      position: fixed; inset: 0; 
+      z-index: 0; 
+      pointer-events: none; 
+    }
+    .orb { position: absolute; border-radius: 50%; animation: float 30s infinite linear; filter: blur(50px); }
+    
+    .orb-1 { 
+      width: 90vw; height: 90vw; opacity: 0.5; 
+      background: radial-gradient(circle, rgba(94, 96, 206, 0.8) 0%, transparent 70%); 
+      top: -20%; right: -20%; 
+    }
+    .orb-2 { 
+      width: 350px; height: 350px; opacity: 0.4; 
+      background: radial-gradient(circle, rgba(10, 132, 255, 0.8) 0%, transparent 70%); 
+      bottom: -50px; left: -50px; 
+      animation-duration: 40s; 
+    }
+    .noise { 
+      position: fixed; inset: 0; z-index: 0; opacity: 0.05; 
+      background: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); 
+      pointer-events: none; 
+    }
+    @keyframes float { 0% {transform:rotate(0deg)} 100% {transform:rotate(360deg)} }
+
+    /* === СЛОЙ 1: КОНТЕНТ === */
+    .container {
+      position: relative; z-index: 1; 
+      top: 0; left: 0; right: 0;
+      height: 100%; 
+      max-width: var(--maxw); margin: 0 auto;
+      display: flex; flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* === ШАПКА (СКРЫТА, НО КОД ОСТАВЛЕН) === */
+    .header {
+      position: absolute; top: 0; left: 0; right: 0;
+      height: 56px;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(5,5,5,0.7); 
+      backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px);
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+      z-index: 20;
+    }
+    .header h4 { font-size: 18px; font-weight: 900; letter-spacing: .3px; text-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+    
+    .clear-btn {
+      position: absolute; right: 16px; padding: 6px 12px; border: 0; border-radius: 10px;
+      background: rgba(239,68,68,.25); border: 1px solid rgba(239,68,68,.4);
+      color: #fff; font-weight: 700; font-size: 13px; cursor: pointer;
+    }
+
+    /* === ЧАТ === */
+    .chat-area {
+      flex-grow: 1;
+      height: 100%;
+      overflow-y: auto; overflow-x: hidden;
+      padding: 16px 14px;
+      
+      /* ОТСТУП СВЕРХУ: Был 70px, теперь 20px (так как шапка скрыта) */
+      padding-top: calc(20px + env(safe-area-inset-top)); 
+      
+      /* ОТСТУП СНИЗУ: Большой, чтобы не перекрывалось инпутом */
+      padding-bottom: 120px; 
+      display: flex; flex-direction: column; gap: 12px;
+      -webkit-overflow-scrolling: touch;
+    }
+    .chat-area::-webkit-scrollbar { width: 0px; display: none; }
+
+    .message { display: flex; flex-direction: column; max-width: 85%; animation: slideIn .3s ease; position: relative; }
+    @keyframes slideIn { from{opacity:0; transform:translateY(10px);} to{opacity:1; transform:translateY(0);} }
+    .message.user { align-self: flex-end; align-items: flex-end; }
+    .message.ai { align-self: flex-start; align-items: flex-start; }
+
+    .message-bubble {
+      padding: 12px 16px; border-radius: 18px; 
+      backdrop-filter: blur(12px); box-shadow: 0 4px 15px rgba(0,0,0,.1);
+      font-size: 16px; line-height: 1.5; word-wrap: break-word;
+    }
+    
+    .message.user .message-bubble {
+      background: var(--grad-main); 
+      border: 1px solid rgba(255,255,255,0.1); 
+      border-bottom-right-radius: 4px;
+      color: #fff;
+    }
+    .message.ai .message-bubble {
+      background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.25); border-bottom-left-radius: 4px;
+    }
+    .message-time { font-size: 11px; opacity: .7; margin-top: 4px; padding: 0 4px; }
+
+    /* === ИНПУТ === */
+    .input-area {
+      position: absolute; bottom: 0; left: 0; right: 0; 
+      background: rgba(5,5,5,0.7);
+      backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px);
+      border-top: 1px solid rgba(255,255,255,0.1);
+      padding: 12px 14px; 
+      padding-bottom: max(12px, env(safe-area-inset-bottom)); 
+      z-index: 30;
+      display: flex; gap: 10px; align-items: flex-end;
+      transition: transform 0.1s;
+    }
+
+    .input-field {
+      flex: 1; min-height: 44px; max-height: 120px; padding: 11px 16px;
+      border: 1px solid rgba(255,255,255,.2); border-radius: 22px;
+      background: rgba(255,255,255,.1); 
+      color: #fff; font-size: 16px; font-family: inherit; resize: none; outline: none;
+    }
+    .input-field::placeholder { color: rgba(255,255,255,0.5); }
+    .input-field:focus { border-color: var(--acc-blue); background: rgba(255,255,255,.15); }
+    
+    .send-btn {
+      width: 44px; height: 44px; border: 0; border-radius: 50%; flex-shrink: 0;
+      background: var(--grad-main); 
+      color: #fff; display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 4px 12px rgba(0,0,0,.2);
+    }
+    .send-btn:disabled { opacity: .5; box-shadow: none; }
+
+    .empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; opacity: 1; text-align: center; margin-top: 10%; padding: 0 20px; }
+    
+    /* Модалка */
+    .delete-btn { position: absolute; top: 50%; transform: translateY(-50%); width: 32px; height: 32px; border-radius: 50%; background: #ef4444; color: #fff; display: none; align-items: center; justify-content: center; z-index: 10; box-shadow:0 4px 10px rgba(0,0,0,.3); }
+    .message.user .delete-btn { left: -45px; } .message.ai .delete-btn { right: -45px; }
+    .message.show-delete .delete-btn { display: flex; }
+    
+    .modal { position: fixed; inset: 0; background: rgba(0,0,0,.7); display: none; align-items: center; justify-content: center; z-index: 1000; padding: 20px; backdrop-filter: blur(5px); }
+    .modal.show { display: flex; }
+    .modal-content { background: rgba(30,30,30,0.9); border: 1px solid rgba(255,255,255,.2); border-radius: 20px; padding: 24px; width: 100%; max-width: 320px; text-align: center; box-shadow:0 20px 50px rgba(0,0,0,.5); }
+    .modal-buttons { display: flex; gap: 10px; margin-top: 20px; }
+    .modal-btn { flex: 1; padding: 12px; border-radius: 12px; border: 0; font-weight: 700; cursor: pointer; }
+    .modal-btn.cancel { background: rgba(255,255,255,.15); color: #fff; }
+    .modal-btn.confirm { background: var(--grad-main); color: #fff; }
+    
+    .typing-indicator { display: flex; gap: 4px; padding: 12px 16px; }
+    .typing-dot { width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,.7); animation: typing 1.4s infinite; }
+    .typing-dot:nth-child(2){ animation-delay:.2s; } .typing-dot:nth-child(3){ animation-delay:.4s; }
+    @keyframes typing{ 0%,60%,100%{transform:translateY(0);opacity:.7} 30%{transform:translateY(-10px);opacity:1} }
+  </style>
+</head>
+<body>
+
+  <div class="fx-layer">
+    <div class="orb orb-1"></div>
+    <div class="orb orb-2"></div>
+    <div class="noise"></div>
+  </div>
+
+  <div class="container">
+    <div class="header" style="display:none">
+      <h4>Ai-Консультант</h4>
+      <button class="clear-btn" id="clearBtn" style="display:none">Очистить</button>
+    </div>
+
+    <div class="chat-area" id="chatArea">
+      <div class="empty-state" id="emptyState">
+        <h2 style="font-size: 22px; margin-bottom: 12px; font-weight: 800;">Спросите о главном</h2>
+        <p style="max-width: 300px; line-height: 1.5; font-size: 15px; color: rgba(255,255,255,0.7);">
+          Задайте любой вопрос в области питания, спорта и восстановления.<br><br>
+          При активном использовании приложения, если вы заполняете анкеты и ведете дневники, я буду отвечать с максимальной индивидуализацией. Чем больше я знаю про вас, тем точнее ответы.
+        </p>
+      </div>
+    </div>
+
+    <div class="input-area" id="inputArea">
+      <div class="input-wrapper" style="display:flex; width:100%; gap:10px; align-items:flex-end;">
+        <textarea class="input-field" id="messageInput" placeholder="Задайте вопрос..." rows="1"></textarea>
+        <button class="send-btn" id="sendBtn" disabled>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+            <line x1="22" y1="2" x2="11" y2="13"></line>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="confirmModal">
+    <div class="modal-content">
+      <h3 id="modalTitle">Подтверждение</h3>
+      <p id="modalText">Вы уверены?</p>
+      <div class="modal-buttons">
+        <button class="modal-btn cancel" id="modalCancel">Отмена</button>
+        <button class="modal-btn confirm" id="modalConfirm">Удалить</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Глобальные переменные
+    const tg = window.Telegram?.WebApp;
+    const HOME_URL = './router.html';
+
+    /* ==================================================================
+       1. TELEGRAM SETUP (КНОПКА НАЗАД - ОТДЕЛЬНО)
+       ================================================================== */
+    function setupTelegramBackButton() {
+      if (!tg) return;
+      try {
+        tg.ready();
+        tg.expand();
+        tg.setHeaderColor?.('#050505'); 
+        if (tg.isVersionAtLeast?.('6.1')) tg.disableVerticalSwipes?.();
+        
+        const back = tg.BackButton;
+        if (back) {
+           back.show();
+           // Безопасный сброс старых обработчиков
+           if (typeof back.offClick === 'function') {
+              try { back.offClick(); } catch(e){}
+           }
+           // Установка нового обработчика
+           back.onClick(() => { 
+              // Вибрация для отклика
+              if(tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+              location.href = HOME_URL; 
+           });
+        }
+      } catch (e) {
+        console.warn('TG setup error:', e);
+      }
+    }
+
+    /* ==================================================================
+       2. LAYOUT
+       ================================================================== */
+    (function initStableLayout() {
+      const app = document.querySelector('.container');
+      const inputArea = document.getElementById('inputArea');
+      const chatArea = document.getElementById('chatArea');
+      const input = document.getElementById('messageInput');
+
+      function setHeight() {
+        if(!app) return;
+        const h = (tg && tg.viewportHeight) ? tg.viewportHeight : window.innerHeight;
+        app.style.height = `${h}px`;
+        
+        if(inputArea) {
+           const inputH = inputArea.offsetHeight;
+           // Динамический отступ, чтобы поле ввода не перекрывало текст
+           chatArea.style.paddingBottom = `${inputH + 40}px`;
+        }
+      }
+
+      if (tg) {
+        tg.onEvent('viewportChanged', ({ isStateStable }) => {
+          setHeight();
+          if (isStateStable) requestAnimationFrame(() => { chatArea.scrollTop = chatArea.scrollHeight; });
+        });
+      } else {
+        window.addEventListener('resize', setHeight);
+      }
+      setHeight();
+
+      if (input) {
+        input.addEventListener('input', () => { requestAnimationFrame(setHeight); });
+        input.addEventListener('focus', () => { setTimeout(() => { chatArea.scrollTop = chatArea.scrollHeight; }, 300); });
+      }
+    })();
+
+    // ЗАПУСК НАСТРОЙКИ ТЕЛЕГРАМ
+    setupTelegramBackButton();
+
+    /* ==================================================================
+       3. CHAT LOGIC
+       ================================================================== */
+    const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbzvlDKUH6qsON-A6iSHYvMU_6XWtReZc5oXnnZOMTgETfvZqMMh2zUbdQJF-iOanMBc/exec';
+    const REQUEST_TIMEOUT_MS = 45000;
+
+    let messages = [];
+    let isTyping = false;
+
+    const chatArea = document.getElementById('chatArea');
+    const emptyState = document.getElementById('emptyState');
+    const messageInput = document.getElementById('messageInput');
+    const sendBtn = document.getElementById('sendBtn');
+    const clearBtn = document.getElementById('clearBtn'); // Может быть скрыт
+    
+    const modal = document.getElementById('confirmModal');
+    const mTitle = document.getElementById('modalTitle');
+    const mText = document.getElementById('modalText');
+    let modalCallback = null;
+
+    async function callBackend(action, payload) {
+      const u = tg?.initDataUnsafe?.user || {};
+      const uid = u.id || localStorage.getItem('debug_uid') || 'd-'+Math.floor(Math.random()*1e9);
+      if(!u.id) localStorage.setItem('debug_uid', uid);
+
+      const body = {
+        action, user_id: uid,
+        user_data: { first_name: u.first_name, username: u.username },
+        init_data: tg?.initData || '',
+        ...payload
+      };
+
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+      try {
+        const res = await fetch(BACKEND_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain' },
+          body: JSON.stringify(body),
+          signal: controller.signal
+        });
+        clearTimeout(id);
+        return await res.json();
+      } catch (e) {
+        return { success:false, error: String(e) };
+      }
+    }
+
+    function formatTime(ts) {
+      const d = new Date(ts);
+      return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
+    }
+
+    function createMessageElement(m, idx) {
+      const div = document.createElement('div');
+      div.className = `message ${m.role}`;
+      
+      const bubble = document.createElement('div');
+      bubble.className = 'message-bubble';
+      bubble.innerHTML = m.content.replace(/\n/g, '<br>');
+      
+      const delBtn = document.createElement('div');
+      delBtn.className = 'delete-btn';
+      delBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2M10 11v6M14 11v6"/></svg>';
+      delBtn.onclick = (e) => { e.stopPropagation(); confirmDelete(idx); };
+
+      let timer;
+      bubble.addEventListener('touchstart', () => timer = setTimeout(() => {
+         div.classList.add('show-delete');
+         if(tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
+      }, 500));
+      bubble.addEventListener('touchend', () => clearTimeout(timer));
+
+      const time = document.createElement('div');
+      time.className = 'message-time';
+      time.textContent = formatTime(m.timestamp);
+
+      div.appendChild(delBtn);
+      div.appendChild(bubble);
+      div.appendChild(time);
+      return div;
+    }
+
+    function createTypingIndicator() {
+      const div = document.createElement('div');
+      div.className = 'message ai'; div.id = 'typingIndicator';
+      div.innerHTML = `<div class="message-bubble"><div class="typing-indicator"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div></div>`;
+      return div;
+    }
+
+    function renderMessages() {
+      Array.from(chatArea.children).forEach(c => { if(c.id!=='emptyState') c.remove(); });
+      if(messages.length > 0) {
+        emptyState.style.display = 'none';
+        messages.forEach((m,i) => chatArea.appendChild(createMessageElement(m,i)));
+      } else {
+        emptyState.style.display = 'flex';
+      }
+      requestAnimationFrame(() => chatArea.scrollTop = chatArea.scrollHeight);
+    }
+
+    function autoResizeTextarea(){
+        messageInput.style.height='auto';
+        messageInput.style.height = Math.min(messageInput.scrollHeight,120)+'px';
+    }
+
+    function updateSendButton(){ const t=messageInput.value.trim(); sendBtn.disabled = !t || isTyping; }
+
+    async function sendMessage() {
+      const text = messageInput.value.trim();
+      if(!text || isTyping) return;
+      if(tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+
+      messages.push({ role:'user', content:text, timestamp:Date.now() });
+      localStorage.setItem('ai_chat_messages', JSON.stringify(messages));
+      renderMessages();
+
+      messageInput.value = ''; autoResizeTextarea(); updateSendButton();
+      isTyping = true;
+
+      chatArea.appendChild(createTypingIndicator());
+      chatArea.scrollTop = chatArea.scrollHeight;
+
+      const res = await callBackend('send_message', { message: text });
+      isTyping = false;
+      const typ = document.getElementById('typingIndicator');
+      if(typ) typ.remove();
+
+      let aiContent = 'Ошибка сети';
+      if(res.success) {
+         aiContent = res.text || 'Пустой ответ';
+         if(tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+      } else {
+         aiContent = res.error || 'Ошибка сервера';
+         if(tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('error');
+      }
+
+      messages.push({ role:'ai', content:aiContent, timestamp:Date.now() });
+      localStorage.setItem('ai_chat_messages', JSON.stringify(messages));
+      renderMessages();
+    }
+
+    function confirmDelete(i) {
+      if(mTitle) mTitle.textContent = 'Удалить?';
+      if(mText) mText.textContent = 'Действие необратимо.';
+      modalCallback = () => {
+         messages.splice(i,1);
+         localStorage.setItem('ai_chat_messages', JSON.stringify(messages));
+         renderMessages();
+      };
+      modal.classList.add('show');
+    }
+
+    // Если кнопка очистки скрыта, но существует в DOM, логику вешаем (на всякий случай)
+    if(clearBtn) clearBtn.onclick = () => {
+      if(!messages.length) return;
+      if(mTitle) mTitle.textContent = 'Очистить историю?';
+      if(mText) mText.textContent = 'Начнется новый диалог.';
+      modalCallback = async () => {
+         messages = [];
+         localStorage.removeItem('ai_chat_messages');
+         renderMessages();
+         callBackend('clear_history', {});
+      };
+      modal.classList.add('show');
+    };
+
+    document.getElementById('modalCancel').onclick = () => modal.classList.remove('show');
+    document.getElementById('modalConfirm').onclick = () => { if(modalCallback) modalCallback(); modal.classList.remove('show'); };
+    
+    messageInput.addEventListener('input', ()=>{ updateSendButton(); autoResizeTextarea(); });
+    messageInput.addEventListener('keydown', (e) => { if(e.key==='Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
+    sendBtn.onclick = sendMessage;
+
+    document.addEventListener('click', (e) => {
+       document.querySelectorAll('.message.show-delete').forEach(el => { if(!el.contains(e.target)) el.classList.remove('show-delete'); });
+    });
+
+    const saved = localStorage.getItem('ai_chat_messages');
+    if(saved) { try { messages = JSON.parse(saved); renderMessages(); } catch(e){} }
+    updateSendButton();
+  </script>
+</body>
+</html>

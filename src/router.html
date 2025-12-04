@@ -1,0 +1,931 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<script src="version-control.js?t=1"></script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Ultima Dashboard</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+/* === УНИВЕРСАЛЬНОЕ СКРЫТИЕ СКРОЛЛБАРА === */
+
+/* Для Chrome, Safari, Edge, Opera и iOS */
+*::-webkit-scrollbar {
+  width: 0 !important;
+  height: 0 !important;
+  display: none !important;
+  background: transparent !important;
+}
+
+/* Для Firefox и IE */
+* {
+  -ms-overflow-style: none !important;  /* IE и старый Edge */
+  scrollbar-width: none !important;  /* Firefox */
+}
+  
+  :root {
+    /* --- PALETTE --- */
+    --bg-core: #050505;
+    --text-main: #ffffff;
+    --text-muted: rgba(255, 255, 255, 0.55);
+    
+    /* --- GLASS SURFACES --- */
+    --surface-glass: rgba(255, 255, 255, 0.07);
+    --surface-list: rgba(255, 255, 255, 0.04);
+    --surface-border: rgba(255, 255, 255, 0.1);
+    --surface-highlight: rgba(255, 255, 255, 0.25);
+    
+    /* --- ACCENTS --- */
+    --acc-orange: #ff9f0a;
+    --acc-green: #30d158;
+    --acc-blue: #0a84ff;
+    --acc-red: #ff453a;
+    --acc-purple: #5e60ce;
+    --acc-breath: #81ecec;
+
+    /* --- METRICS --- */
+    --radius-xl: 28px;
+    --radius-l: 22px;
+    --radius-m: 16px;
+    --pad: 16px;
+    --gap: 12px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+   
+  body {
+    background-color: var(--bg-core);
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', Roboto, sans-serif;
+    color: var(--text-main);
+    min-height: 100vh;
+    overflow-x: hidden;
+    overscroll-behavior-y: none;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* FX LAYER */
+  .fx-layer { position: fixed; inset: 0; z-index: -1; pointer-events: none; transform: translate3d(0,0,0); }
+  .orb { position: absolute; border-radius: 50%; will-change: transform; animation: float 30s infinite linear; }
+  .orb-1 { width: 90vw; height: 90vw; opacity: 0.4; background: radial-gradient(circle, rgba(108, 92, 231, 0.8) 0%, transparent 70%); top: -20%; left: -20%; }
+  .orb-2 { width: 400px; height: 400px; opacity: 0.5; background: radial-gradient(circle, rgba(108, 92, 231, 0.8) 0%, transparent 70%); bottom: -150px; right: -100px; animation: breathe 6s infinite ease-in-out; }
+  @keyframes float { 0% {transform:rotate(0deg)} 100% {transform:rotate(360deg)} }
+  @keyframes breathe { 0%, 100% { transform: scale(1); opacity: 0.4; } 50% { transform: scale(1.1); opacity: 0.6; } }
+  .noise { position: fixed; inset: 0; z-index: -1; opacity: 0.04; background: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); pointer-events: none; }
+
+  /* LAYOUT */
+  .app-shell {
+    max-width: 480px; margin: 0 auto;
+    padding: var(--pad);
+    padding-top: calc(12px + env(safe-area-inset-top));
+    padding-bottom: calc(90px + env(safe-area-inset-bottom));
+    display: flex; flex-direction: column; gap: 32px;
+  }
+
+  /* HEADER */
+  .header { display: flex; justify-content: space-between; align-items: center; }
+  .profile-lockup { display: flex; align-items: center; gap: 14px; }
+  .avatar-box { width: 48px; height: 48px; border-radius: 50%; box-shadow: 0 0 0 2px rgba(255,255,255,0.08); background: #222; overflow: hidden; position: relative; }
+  .avatar-img { width: 100%; height: 100%; object-fit: cover; }
+  .user-text h1 { font-size: 22px; font-weight: 800; margin: 0; line-height: 1.1; }
+  .user-text p { font-size: 13px; color: var(--text-muted); margin: 0; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
+  .icon-btn { width: 44px; height: 44px; border-radius: 50%; background: var(--surface-glass); border: 1px solid var(--surface-border); display: flex; align-items: center; justify-content: center; backdrop-filter: blur(10px); transition: transform 0.1s; }
+  .icon-btn:active { transform: scale(0.92); background: rgba(255,255,255,0.15); }
+
+  /* WIDGETS SYSTEM */
+  .widgets-wrapper { margin-top: -8px; }
+  .widgets-container { margin: 0 calc(var(--pad) * -1); }
+  .carousel { display: flex; gap: 14px; overflow-x: auto; scroll-snap-type: x mandatory; padding: 20px var(--pad) 30px var(--pad); scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .carousel::-webkit-scrollbar { display: none; }
+   
+  /* Base Widget Style */
+  .widget {
+    flex: 0 0 calc(100% - 30px); scroll-snap-align: center; height: 160px;
+    border-radius: var(--radius-xl);
+    background: linear-gradient(165deg, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.03) 100%);
+    border: 1px solid var(--surface-border); 
+    border-top: 1px solid var(--surface-highlight);
+    backdrop-filter: blur(30px); -webkit-backdrop-filter: blur(30px);
+    box-shadow: 0 12px 32px rgba(0,0,0,0.3);
+    position: relative; overflow: hidden; 
+    display: grid; grid-template-columns: 1fr auto; align-items: center;
+    padding: 0 24px;
+    transition: transform 0.2s;
+  }
+  .widget:active { transform: scale(0.98); }
+
+  /* Content */
+  .w-left { display: flex; flex-direction: column; justify-content: center; height: 100%; gap: 6px; z-index: 2; min-width: 0; }
+  .w-right { width: 100px; height: 100px; display: flex; align-items: center; justify-content: center; position: relative; z-index: 2; margin-left: 16px; }
+
+  .w-lbl { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
+  .w-tag { background: var(--acc-blue); color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 10px; }
+   
+  .w-val { font-size: 34px; font-weight: 800; line-height: 1.05; letter-spacing: -0.5px; color: var(--text-main); white-space: nowrap; }
+  .w-val span { font-size: 18px; font-weight: 500; color: var(--text-muted); margin-left: 2px; }
+   
+  .w-txt { font-size: 18px; font-weight: 600; line-height: 1.3; color: #fff; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .w-sub { font-size: 13px; color: var(--text-muted); font-weight: 500; margin-top: 2px; }
+   
+  .w-btn { font-size: 13px; font-weight: 600; background: rgba(255,255,255,0.1); padding: 8px 14px; border-radius: 20px; align-self: flex-start; margin-top: 4px; }
+
+  /* Visuals */
+  .donut-svg { width: 90px; height: 90px; transform: rotate(-90deg); }
+  .d-bg { fill: none; stroke: rgba(255,255,255,0.1); stroke-width: 8; }
+  .d-val { fill: none; stroke: url(#grad-fire); stroke-width: 8; stroke-linecap: round; stroke-dasharray: 251; stroke-dashoffset: 251; transition: stroke-dashoffset 1s cubic-bezier(0.25, 0.46, 0.45, 0.94); }
+  .d-icon { position: absolute; font-size: 28px; }
+   
+  .icon-glow { font-size: 50px; filter: drop-shadow(0 0 15px rgba(255,255,255,0.2)); }
+  .icon-alert { width: 54px; height: 54px; border-radius: 50%; background: rgba(255, 69, 58, 0.2); color: var(--acc-red); display: flex; align-items: center; justify-content: center; }
+
+  /* Tech Graph */
+  .tech-graph-box { width: 120px; height: 70px; position: relative; overflow: hidden; margin-right: -10px; -webkit-mask-image: linear-gradient(to right, transparent 0%, black 10%, black 90%, transparent 100%); mask-image: linear-gradient(to right, transparent 0%, black 10%, black 90%, transparent 100%); }
+  .tech-graph-track { display: flex; width: 200%; height: 100%; position: absolute; top: 0; left: 0; will-change: transform; animation: techFlow 12s linear infinite; }
+  .tech-graph-svg { width: 50%; height: 100%; display: block; }
+  @keyframes techFlow { 0% { transform: translate3d(0, 0, 0); } 100% { transform: translate3d(-50%, 0, 0); } }
+  .tg-fill { fill: url(#grad-green-tech); opacity: 0.4; }
+  .tg-line { fill: none; stroke: var(--acc-green); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; filter: drop-shadow(0 0 4px rgba(48, 209, 88, 0.6)); }
+
+  /* Water Wave */
+  .wave-box { width: 80px; height: 80px; border-radius: 50%; background: rgba(255,255,255,0.1); overflow: hidden; position: relative; border: 2px solid rgba(255,255,255,0.2); }
+  .wave { position: absolute; bottom: 0; left: 0; width: 200%; height: 200%; background: var(--acc-blue); opacity: 0.8; border-radius: 40%; animation: wave 6s infinite linear; margin-left: -50%; margin-bottom: -130%; }
+  @keyframes wave { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+  /* === BLOG ANIMATION (FALLING LETTERS) === */
+  .blog-anim-box { width: 100px; height: 100px; position: relative; overflow: hidden; display: flex; justify-content: center; gap: 6px; }
+  .blog-col {
+    width: 18px;
+    background: linear-gradient(180deg, rgba(94,96,206,0) 0%, rgba(94,96,206,0.8) 50%, rgba(94,96,206,0) 100%);
+    border-radius: 4px;
+    animation: blogFall 2s linear infinite;
+    opacity: 0.7;
+  }
+  /* Разные задержки для эффекта дождя */
+  .blog-col:nth-child(1) { height: 60px; animation-duration: 2.2s; animation-delay: 0s; }
+  .blog-col:nth-child(2) { height: 90px; animation-duration: 1.8s; animation-delay: 0.5s; background: linear-gradient(180deg, rgba(162,155,254,0) 0%, rgba(162,155,254,0.9) 50%, rgba(162,155,254,0) 100%); }
+  .blog-col:nth-child(3) { height: 50px; animation-duration: 2.5s; animation-delay: 1s; }
+
+  @keyframes blogFall {
+    0% { transform: translateY(-110%); opacity: 0; }
+    20% { opacity: 0.8; }
+    80% { opacity: 0.8; }
+    100% { transform: translateY(150%); opacity: 0; }
+  }
+
+  /* === INSIGHT ANIMATION (VARIANT 2: TECH OUTLINE) === */
+  .bulb-box { width: 90px; height: 90px; display: flex; align-items: center; justify-content: center; position: relative; }
+  .v2-bulb { width: 70px; height: 80px; overflow: visible; }
+  .v2-path { 
+    fill: none; stroke: var(--acc-orange); stroke-width: 4; stroke-linecap: round; 
+    filter: drop-shadow(0 0 10px rgba(255,159,10,0.6));
+    animation: v2-pulse 4s infinite;
+  }
+  @keyframes v2-pulse { 0%,100%{ stroke-opacity: 0.4; stroke-width:3; } 50%{ stroke-opacity: 1; stroke-width:4; filter: drop-shadow(0 0 15px rgba(255,159,10,0.9)); } }
+
+  /* === ALERT ANIMATION (BELL + WAVES) === */
+  .bell-box { 
+    width: 60px; height: 60px; 
+    position: relative; 
+    display: flex; align-items: center; justify-content: center; 
+  }
+  
+  .bell-svg { 
+    width: 36px; height: 36px; 
+    overflow: visible; 
+    z-index: 2; 
+  }
+
+  .bell-group {
+    transform-origin: 50% 0%; /* Точка вращения сверху */
+    animation: bellShake 4s cubic-bezier(0.36, 0.07, 0.19, 0.97) infinite;
+  }
+
+  .bell-path {
+    fill: none;
+    stroke: var(--acc-red);
+    stroke-width: 2.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .bell-clapper {
+    fill: var(--acc-red);
+    animation: clapperMove 4s ease-in-out infinite;
+    transform-origin: 50% 0%; 
+  }
+
+  /* Волны (Shockwaves) */
+  .bell-wave {
+    position: absolute;
+    width: 100%; height: 100%;
+    border: 2px solid var(--acc-red);
+    border-radius: 50%;
+    opacity: 0;
+    z-index: 1;
+    box-sizing: border-box;
+  }
+  .bell-wave.w1 { animation: wavePulse 4s infinite; animation-delay: 3.2s; } 
+  .bell-wave.w2 { animation: wavePulse 4s infinite; animation-delay: 3.4s; }
+
+  @keyframes bellShake {
+    0%, 80% { transform: rotate(0deg); }
+    82% { transform: rotate(15deg); }
+    84% { transform: rotate(-12deg); }
+    86% { transform: rotate(10deg); }
+    88% { transform: rotate(-10deg); }
+    90% { transform: rotate(6deg); }
+    92% { transform: rotate(-4deg); }
+    94% { transform: rotate(2deg); }
+    96% { transform: rotate(-1deg); }
+    100% { transform: rotate(0deg); }
+  }
+
+  @keyframes clapperMove {
+    0%, 80% { transform: translateX(0); }
+    82% { transform: translateX(-3px); }
+    86% { transform: translateX(3px); }
+    90% { transform: translateX(-2px); }
+    94% { transform: translateX(1px); }
+    100% { transform: translateX(0); }
+  }
+
+  @keyframes wavePulse {
+    0% { transform: scale(0.5); opacity: 0.8; border-width: 3px; }
+    50% { opacity: 0.4; }
+    100% { transform: scale(2.0); opacity: 0; border-width: 0px; }
+  }
+
+  /* Dots */
+  .dots { display: flex; justify-content: center; gap: 6px; margin-top: -14px; margin-bottom: 8px; pointer-events: none; }
+  .dot { width: 6px; height: 6px; border-radius: 10px; background: rgba(255,255,255,0.2); transition: 0.3s cubic-bezier(0.25, 0.1, 0.25, 1); }
+  .dot.active { width: 24px; background: #fff; }
+
+  /* GRID MENU */
+  .section-wrapper { display: flex; flex-direction: column; gap: 16px; margin-bottom: 12px; }
+  .section-title { font-size: 19px; font-weight: 800; margin-left: 4px; opacity: 0.9; display: flex; align-items: center; gap: 8px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; grid-auto-flow: dense; }
+
+  .tile { background: var(--surface-glass); border: 1px solid var(--surface-border); border-radius: var(--radius-l); padding: 18px; position: relative; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between; cursor: pointer; transition: transform 0.1s, background 0.2s; min-height: 110px; }
+  .tile:active { transform: scale(0.96); background: rgba(255,255,255,0.12); }
+  .tile.wide { grid-column: span 2; flex-direction: row; align-items: center; justify-content: flex-start; gap: 18px; height: 90px; }
+  .tile.tall { grid-row: span 2; background: linear-gradient(145deg, #48bfe3 0%, #5e60ce 100%); border: none; }
+  .tile.std  { aspect-ratio: 1; }
+
+  .t-icon-box { width: 40px; height: 40px; border-radius: 12px; background: rgba(255,255,255,0.1); display: flex; align-items: center; justify-content: center; margin-bottom: auto; }
+  .wide .t-icon-box { margin-bottom: 0; } 
+  .t-icon-img { width: 24px; height: 24px; object-fit: contain; }
+  .t-content { margin-top: 4px; }
+  .wide .t-content { margin-top: 0; }
+  .t-title { font-size: 15px; font-weight: 700; line-height: 1.1; }
+  .t-sub { font-size: 12px; color: rgba(255,255,255,0.6); margin-top: 4px; font-weight: 500; }
+  .tall .t-title, .tall .t-sub { color: #fff; opacity: 1; }
+
+  /* LIST MENU */
+  .settings-list { background: var(--surface-list); border: 1px solid var(--surface-border); border-radius: var(--radius-l); overflow: hidden; }
+  .list-item { display: flex; align-items: center; justify-content: space-between; padding: 18px; border-bottom: 1px solid rgba(255,255,255,0.05); cursor: pointer; }
+  .list-item:last-child { border-bottom: none; }
+  .list-item:active { background: rgba(255,255,255,0.05); }
+  .li-left { display: flex; align-items: center; gap: 14px; font-weight: 600; font-size: 16px; }
+  .li-icon { width: 22px; opacity: 0.8; }
+  .li-arrow { opacity: 0.3; transform: rotate(-90deg); font-size: 14px; font-weight: 700;}
+
+  /* AI FAB */
+  .fab-ai { position: fixed; bottom: 32px; right: 20px; width: 64px; height: 64px; border-radius: 50%; background: linear-gradient(135deg, #6c5ce7 0%, #a29bfe 100%); border: 1px solid rgba(255, 255, 255, 0.3); box-shadow: 0 8px 32px rgba(108, 92, 231, 0.5); display: flex; align-items: center; justify-content: center; z-index: 100; cursor: pointer; animation: ai-breath 3s infinite ease-in-out; transition: transform 0.2s; }
+  .fab-ai:active { transform: scale(0.9); }
+  .fab-icon-img { width: 32px; height: 32px; object-fit: contain; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.2)); }
+  @keyframes ai-breath { 0% { transform: scale(1); box-shadow: 0 8px 32px rgba(108, 92, 231, 0.5); } 50% { transform: scale(1.08); box-shadow: 0 15px 45px rgba(108, 92, 231, 0.7), 0 0 0 4px rgba(255,255,255,0.1); } 100% { transform: scale(1); box-shadow: 0 8px 32px rgba(108, 92, 231, 0.5); } }
+
+  /* LOADER */
+  #loader { position: fixed; inset: 0; background: #050505; z-index: 2000; display: flex; align-items: center; justify-content: center; transition: opacity 0.4s; }
+  .spinner { width: 40px; height: 40px; border: 3px solid rgba(255,255,255,0.2); border-top-color: #00cec9; border-radius: 50%; animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .hidden { opacity: 0; pointer-events: none; }
+
+/* === BREATH WIDGET STYLES === */
+.breath-val { font-size: 34px; font-weight: 800; line-height: 1.05; letter-spacing: -0.5px; color: #fff; }
+.breath-unit { font-size: 18px; font-weight: 600; color: rgba(255, 255, 255, 0.2); margin-left: 6px; }
+
+.zero-point { position: relative; width: 0; height: 0; display: flex; align-items: center; justify-content: center; }
+.circle { position: absolute; border-radius: 50%; top: 50%; left: 50%; }
+
+.c-echo {
+  width: 80px; height: 80px; 
+  border: 1px solid var(--acc-breath); opacity: 0;
+  animation: echo-loop 6s infinite ease-in-out; animation-delay: 0.1s; z-index: 1;
+}
+.c-core {
+  width: 70px; height: 70px;
+  background: var(--acc-breath);
+  box-shadow: 0 0 30px rgba(129, 236, 236, 0.4); 
+  animation: core-loop 6s infinite ease-in-out; z-index: 2;
+}
+
+@keyframes core-loop {
+  0% { transform: translate(-50%, -50%) scale(0.15); opacity: 0.4; }
+  50% { transform: translate(-50%, -50%) scale(1); opacity: 0.9; }
+  100% { transform: translate(-50%, -50%) scale(0.15); opacity: 0.4; }
+}
+@keyframes echo-loop {
+  0% { transform: translate(-50%, -50%) scale(0.15); opacity: 0; }
+  20% { opacity: 0.4; }
+  50% { transform: translate(-50%, -50%) scale(1.2); opacity: 0; }
+  100% { transform: translate(-50%, -50%) scale(0.15); opacity: 0; }
+}
+
+/* === MACROS WIDGET (PREMIUM) === */
+.macros-wrapper {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  height: 100%;
+  width: 100%;
+}
+
+.macros-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 2px; /* 🔥 Было 8px. Уменьшили зазор, чтобы сами круги стали шире */
+  width: 100%;
+  align-items: flex-start; 
+}
+
+.macro-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  width: 100%;
+}
+
+/* --- КОНТЕЙНЕР ДЛЯ ПОНЧИКА --- */
+/* Создаем квадратную область, которая сжимается */
+.donut-box {
+  position: relative;
+  width: 100%;
+  max-width: 88px; /* 🔥 Было 75px. Разрешаем кругам расти сильнее */
+  aspect-ratio: 1 / 1; 
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Сам SVG резиновый внутри коробки */
+.mini-donut { 
+  width: 100%; 
+  height: 100%;
+  transform: rotate(-90deg); 
+  filter: drop-shadow(0 4px 6px rgba(0,0,0,0.3));
+}
+
+.md-bg { fill: none; stroke: rgba(255,255,255,0.06); stroke-width: 6; }
+.md-val { 
+  fill: none; 
+  stroke-width: 6; 
+  stroke-linecap: round; 
+  stroke-dasharray: 151; /* Длина круга для viewBox 60 */
+  transition: stroke-dashoffset 1s ease;
+}
+
+.stroke-kcal { stroke: url(#grad-kcal); }
+.stroke-prot { stroke: url(#grad-prot); }
+.stroke-fats { stroke: url(#grad-fats); }
+.stroke-carb { stroke: url(#grad-carb); }
+
+/* Иконка (огонь/курица) по центру АВТОМАТИЧЕСКИ */
+.m-icon-center { 
+  position: absolute;
+  top: 50%; 
+  left: 50%;
+  transform: translate(-50%, -50%); /* Идеальная центровка */
+  font-size: 18px; /* Размер иконки */
+  line-height: 1;
+  pointer-events: none;
+}
+
+/* Текст под пончиком */
+.m-val-txt { 
+  font-size: 14px; 
+  font-weight: 800; 
+  color: #fff; 
+  margin-top: 6px; 
+  letter-spacing: -0.5px; 
+  text-align: center;
+}
+.m-lbl-txt { 
+  font-size: 10px; 
+  font-weight: 700; 
+  color: rgba(255,255,255,0.4); 
+  text-transform: uppercase; 
+  letter-spacing: 0.5px; 
+  text-align: center;
+}
+
+/* АДАПТИВНОСТЬ ДЛЯ МАЛЕНЬКИХ ЭКРАНОВ */
+/* Если экран меньше 360px, уменьшаем шрифт и иконки */
+@media (max-width: 360px) {
+  .m-icon-center { font-size: 14px; }
+  .m-val-txt { font-size: 12px; }
+  .m-lbl-txt { font-size: 8px; }
+  .macros-grid { gap: 4px; }
+}
+  
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <linearGradient id="grad-kcal" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ff9f0a"/>
+      <stop offset="100%" stop-color="#ff453a"/>
+    </linearGradient>
+    
+    <linearGradient id="grad-prot" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#48bfe3"/>
+      <stop offset="100%" stop-color="#5e60ce"/>
+    </linearGradient>
+
+    <linearGradient id="grad-fats" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f1c40f"/>
+      <stop offset="100%" stop-color="#e67e22"/>
+    </linearGradient>
+
+    <linearGradient id="grad-carb" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2ecc71"/>
+      <stop offset="100%" stop-color="#1abc9c"/>
+    </linearGradient>
+
+    <linearGradient id="grad-green-tech" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#30d158" stop-opacity="0.5"/><stop offset="100%" stop-color="#30d158" stop-opacity="0.0"/></linearGradient>
+  </defs>
+</svg>
+
+<div class="fx-layer">
+  <div class="orb orb-1"></div>
+  <div class="orb orb-2"></div>
+  <div class="noise"></div>
+</div>
+
+<div id="loader"><div class="spinner"></div></div>
+
+<div class="app-shell">
+  
+  <div class="header">
+    <div class="profile-lockup">
+      <div class="avatar-box"><img src="" id="ava" class="avatar-img" style="display:none"></div>
+      <div class="user-text"><p class="greeting-text">Доброе утро,</p><h1 id="username">Гость</h1></div>
+    </div>
+    <div class="icon-btn" onclick="haptic('light')">
+      <svg width="22" height="22" viewBox="0 0 24 24" stroke="white" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
+    </div>
+  </div>
+
+  <div class="widgets-wrapper">
+    <div class="widgets-container">
+      <div class="carousel" id="carouselTrack"></div>
+    </div>
+    <div class="dots" id="carouselDots"></div>
+  </div>
+
+  <div id="dynamicContent"></div>
+
+</div>
+
+<div class="fab-ai" onclick="nav('ai.html')">
+  <img id="fabIcon" src="" alt="AI" class="fab-icon-img">
+</div>
+
+<script>
+  // 🔴 ВСТАВЬ СЮДА СВОЙ URL
+  const API_URL = 'https://script.google.com/macros/s/AKfycbzUtBu8wULajQS9KyNPfu4PXCn_V7l_ntnjEY8g1dQNNdY3RBvD4Qkn2dgT6cVJmqbn-g/exec'; 
+  
+  const CFG = { iconBase: 'https://groskaiser-design.github.io/icons/' };
+
+  const DEFAULT_DATA = {
+    version: 1,
+    widgets: [
+      { type: 'kbju', title: 'Питание', val: '—', sub: 'Загрузка...' },
+      { type: 'breath', title: 'Дыхание', val: '0', unit: 'мин/д', btn: 'Начать', link: '#' },
+      { type: 'weight', title: 'Вес', val: '—', unit: '', sub: '...' }
+    ],
+    menu: []
+  };
+
+  /* --- SYNC LOGIC --- */
+/* --- SYNC LOGIC (FINAL: ЗАЩИТА + ВЕРСИИ) --- */
+  async function syncData() {
+    const loader = document.getElementById('loader');
+    
+    // ШАГ 1: Мгновенно показываем то, что есть в памяти (чтобы не было белого экрана)
+    const localData = loadCache();
+    
+    if (localData && localData.widgets && localData.widgets.length > 0) {
+      renderAll(localData);
+      loader.classList.add('hidden');
+    } else {
+      renderAll(DEFAULT_DATA);
+      loader.classList.add('hidden');
+    }
+
+    if (!API_URL) return;
+
+    try {
+      const initData = window.Telegram?.WebApp?.initData || '';
+      
+      const response = await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ action: 'get_data', init_data: initData })
+      });
+      
+      const json = await response.json();
+
+      // === ГЛАВНАЯ ЛОГИКА ===
+
+      // 1. ПРОВЕРКА БЕЗОПАСНОСТИ:
+      // Пришли ли виджеты? Не пустой ли массив?
+      // Если сервер глюкнул и прислал пустоту, isServerDataValid будет false.
+      const isServerDataValid = json.ok && Array.isArray(json.widgets) && json.widgets.length > 0;
+
+      if (isServerDataValid) {
+        
+        // 2. ПРОВЕРКА ОБНОВЛЕНИЙ:
+        
+        // А. Изменилась ли версия? (Ваш запрос про Config)
+        const isNewVersion = !localData || localData.version !== json.version;
+
+        // Б. Изменились ли данные внутри? (Ккал, вес и т.д.)
+        const cacheStr = JSON.stringify(localData?.widgets || []);
+        const serverStr = JSON.stringify(json.widgets);
+        const isDataChanged = cacheStr !== serverStr;
+
+        // ЕСЛИ (новая версия) ИЛИ (новые данные) -> СОХРАНЯЕМ И РИСУЕМ
+        if (isNewVersion || isDataChanged) {
+          console.log(`✅ ОБНОВЛЕНИЕ: Версия изменилась? [${isNewVersion}], Данные изменились? [${isDataChanged}]`);
+          saveCache(json);
+          renderAll(json);
+        } else {
+          console.log('💤 Данные актуальны, версия та же. Лишняя перерисовка не нужна.');
+        }
+
+      } else {
+        // СЮДА мы попадаем, если сервер прислал "нули" или ошибку.
+        // Мы просто ничего не делаем. Кэш остается старым. Пользователь счастлив.
+        console.warn('🛡 СРАБОТАЛА ЗАЩИТА: Сервер прислал пустые виджеты. Оставляем старые данные.');
+      }
+
+    } catch (e) { 
+      console.warn('Offline/Error:', e); 
+    }
+  }
+
+  function renderAll(data) {
+    const widgets = (data.widgets && data.widgets.length) ? data.widgets : DEFAULT_DATA.widgets;
+    const menu = (data.menu && data.menu.length) ? data.menu : [];
+    
+    renderWidgets(widgets);
+    renderMenu(menu);
+    initCarousel();
+  }
+
+  function loadCache() { try { return JSON.parse(localStorage.getItem('app_cache')); } catch(e){ return null; } }
+  function saveCache(data) { try { localStorage.setItem('app_cache', JSON.stringify(data)); } catch(e){} }
+
+/* --- RENDER WIDGETS --- */
+  function renderWidgets(widgets) {
+    const track = document.getElementById('carouselTrack');
+    track.innerHTML = '';
+
+    widgets.forEach(w => {
+      // 🔍 ОТЛАДКА: Смотрим в консоль, что пришло
+      if (w.type === 'macros') console.log('MACROS DATA:', w);
+
+      const el = document.createElement('div');
+      el.className = 'widget';
+      el.onclick = () => nav(w.link);
+
+      // Иконка из таблицы (если есть)
+      const icon = w.icon || '';
+
+      let content = '';
+      
+      if (w.type === 'kbju' || w.type === 'donut') {
+        // --- KBJU / DONUT ---
+        const valClean = String(w.val).replace(/[^0-9.,]/g, '').replace(',', '.');
+        const curr = Number(w.raw_curr) || parseFloat(valClean) || 0;
+        let max = Number(w.raw_max) || 2100;
+        if (!w.raw_max && w.sub) {
+           const match = w.sub.match(/(\d+[\s.,]?\d*)/);
+           if (match) max = parseFloat(match[0].replace(/\s/g,'').replace(',', '.')) || 2100;
+        }
+        const pct = Math.min(100, Math.max(0, (curr / max) * 100));
+        const offset = 251 - (251 * pct / 100);
+
+        content = `
+          <div class="w-left">
+            <div class="w-lbl">${w.title}</div>
+            <div class="w-val">${w.val} <span>${w.unit||''}</span></div>
+            <div class="w-sub">${w.sub}</div>
+          </div>
+          <div class="w-right">
+            <svg class="donut-svg" viewBox="0 0 100 100">
+              <circle class="d-bg" cx="50" cy="50" r="40"/>
+              <circle class="d-val" cx="50" cy="50" r="40" style="stroke-dashoffset: ${offset}px"/>
+            </svg>
+            <div class="d-icon">${icon || '🔥'}</div>
+          </div>`;
+
+      } else if (w.type === 'weight') {
+        // --- WEIGHT ---
+        content = `
+          <div class="w-left">
+            <div class="w-lbl" style="color: var(--acc-green)">${w.title} <span style="margin-left:6px; filter: grayscale(0); font-size:14px">${icon}</span></div>
+            <div class="w-val">${w.val} <span>${w.unit||''}</span></div>
+            <div class="w-sub" style="color: var(--acc-green)">${w.sub}</div>
+          </div>
+          <div class="w-right">
+            <div class="tech-graph-box">
+              <div class="tech-graph-track">
+                <svg class="tech-graph-svg" viewBox="0 0 100 50" preserveAspectRatio="none"><path class="tg-fill" d="M0,50 L0,40 L20,25 L40,35 L60,10 L80,25 L100,40 L100,50 Z"/><path class="tg-line" d="M0,40 L20,25 L40,35 L60,10 L80,25 L100,40"/></svg>
+                <svg class="tech-graph-svg" viewBox="0 0 100 50" preserveAspectRatio="none"><path class="tg-fill" d="M0,50 L0,40 L20,25 L40,35 L60,10 L80,25 L100,40 L100,50 Z"/><path class="tg-line" d="M0,40 L20,25 L40,35 L60,10 L80,25 L100,40"/></svg>
+              </div>
+            </div>
+          </div>`;
+
+      } else if (w.type === 'water') {
+        // --- WATER ---
+        const valClean = String(w.val).replace(/[^0-9.,]/g, '').replace(',', '.');
+        const curr = Number(w.raw_curr) || parseFloat(valClean) || 0;
+        let max = Number(w.raw_max) || 2.5; 
+        if (!w.raw_max && w.sub) {
+           const match = w.sub.match(/(\d+[\s.,]?\d*)/);
+           if (match) max = parseFloat(match[0].replace(/\s/g,'').replace(',', '.')) || 2.5;
+        }
+        const pct = Math.min(100, Math.max(0, (curr / max) * 100));
+        const waveLevel = -210 + (pct * 1.5); 
+
+        content = `
+          <div class="w-left">
+            <div class="w-lbl" style="color: var(--acc-blue)">${w.title} <span style="margin-left:6px; filter: grayscale(0); font-size:14px">${icon}</span></div>
+            <div class="w-val">${w.val} <span>${w.unit||''}</span></div>
+            <div class="w-sub">${w.sub}</div>
+          </div>
+          <div class="w-right">
+            <div class="wave-box"><div class="wave" style="margin-bottom: ${waveLevel}%"></div></div>
+          </div>`;
+
+      } else if (w.type === 'insight') {
+        // --- INSIGHT ---
+        el.style.borderTopColor = ''; 
+        const showBtn = w.link && w.link !== '#';
+        const btnHtml = showBtn ? `<div class="w-btn">${w.btn || 'Читать →'}</div>` : '';
+        const bulbAnim = `
+          <div class="bulb-box">
+            <svg class="v2-bulb" viewBox="0 0 50 60">
+               <path class="v2-path" d="M25 5 A 20 20 0 0 0 5 25 C 5 36 15 40 18 48 L 32 48 C 35 40 45 36 45 25 A 20 20 0 0 0 25 5" />
+               <line class="v2-path" x1="18" y1="55" x2="32" y2="55" stroke-width="3" />
+            </svg>
+          </div>`;
+
+        content = `
+          <div class="w-left">
+            <div class="w-lbl" style="color: ${w.color || 'var(--acc-orange)'}">${w.title}</div>
+            <div class="w-txt">${w.text}</div>
+            ${btnHtml}
+          </div>
+          <div class="w-right">${bulbAnim}</div>`;
+
+      } else if (w.type === 'news') {
+        // --- NEWS ---
+        content = `
+          <div class="w-left">
+            <div class="w-lbl"><span class="w-tag">BLOG</span></div>
+            <div class="w-txt">${w.text}</div>
+            <div class="w-btn" style="background: var(--acc-blue); color: #fff">${w.btn || 'Открыть'}</div>
+          </div>
+          <div class="w-right">
+             <div class="blog-anim-box"><div class="blog-col"></div><div class="blog-col"></div><div class="blog-col"></div></div>
+          </div>`;
+
+      } else if (w.type === 'alert') {
+        // --- ALERT ---
+        if (!w.text || w.text.trim() === '' || w.text === '0') return;
+        const targetUrl = (w.sub && w.sub !== '') ? w.sub : w.link;
+        el.onclick = () => nav(targetUrl);
+
+        el.style.background = 'linear-gradient(160deg, rgba(255,69,58,0.15) 0%, rgba(20,20,20,0.6) 100%)'; 
+        el.style.borderColor = 'rgba(255,69,58,0.3)';
+        
+        const bellAnim = `
+          <div class="bell-box">
+             <div class="bell-wave w1"></div><div class="bell-wave w2"></div>
+             <svg class="bell-svg" viewBox="0 0 24 24"><g class="bell-group"><path class="bell-path" d="M18 8 A6 6 0 0 0 6 8 C6 15 3 17 3 17 L21 17 C21 17 18 15 18 8 Z" /><path class="bell-clapper" d="M10 17 L10 19 A2 2 0 0 0 14 19 L14 17 Z" style="stroke:none" /></g></svg>
+          </div>`;
+        
+        content = `
+          <div class="w-left">
+            <div class="w-lbl" style="color: var(--acc-red)">${w.title}</div>
+            <div class="w-txt">${w.text}</div>
+            <div class="w-btn" style="background: rgba(255,69,58,0.2); color: var(--acc-red)">${w.btn || 'Перейти'}</div>
+          </div>
+          <div class="w-right">${bellAnim}</div>`;
+
+} else if (w.type === 'macros') {
+    el.style.padding = '0 4px';  // <--- ВОТ ЭТУ СТРОКУ ДОБАВИТЬ
+    el.style.display = 'flex';
+        // Фон берется из CSS класса .widget (стекло). 
+        // Если хочешь чуть темнее, раскомментируй строку ниже:
+        // el.style.background = 'linear-gradient(145deg, rgba(20,20,20,0.6) 0%, rgba(0,0,0,0.9) 100%)';
+        
+        let d = {};
+        try { d = typeof w.val === 'object' ? w.val : JSON.parse(w.val); } catch(e) { d = {}; }
+        
+        const getOffset = (cur, max) => {
+           const c = parseFloat(cur) || 0;
+           const m = parseFloat(max) || 1;
+           const pct = Math.min(1, Math.max(0, c / m));
+           return 151 - (151 * pct);
+        };
+
+        const kcal = d.kcal || "0/2000";
+        const prot = d.prot || "0/100";
+        const fats = d.fats || "0/60";
+        const carb = d.carb || "0/200";
+
+        const [k_c, k_m] = String(kcal).split('/');
+        const [p_c, p_m] = String(prot).split('/');
+        const [f_c, f_m] = String(fats).split('/');
+        const [c_c, c_m] = String(carb).split('/');
+
+        content = `
+
+        <div class="macros-wrapper">
+          <div class="macros-grid">
+          
+             <div class="macro-item">
+               <div class="donut-box">
+                 <svg class="mini-donut" viewBox="0 0 60 60">
+                   <circle class="md-bg" cx="30" cy="30" r="24"/>
+                   <circle class="md-val stroke-kcal" cx="30" cy="30" r="24" style="stroke-dashoffset: ${getOffset(k_c, k_m)}px"/>
+                 </svg>
+                 <div class="m-icon-center">🔥</div>
+               </div>
+               <div class="m-val-txt">${k_c}</div>
+               <div class="m-lbl-txt">Ккал</div>
+             </div>
+
+             <div class="macro-item">
+               <div class="donut-box">
+                 <svg class="mini-donut" viewBox="0 0 60 60">
+                   <circle class="md-bg" cx="30" cy="30" r="24"/>
+                   <circle class="md-val stroke-prot" cx="30" cy="30" r="24" style="stroke-dashoffset: ${getOffset(p_c, p_m)}px"/>
+                 </svg>
+                 <div class="m-icon-center">🐓</div>
+               </div>
+               <div class="m-val-txt">${p_c}</div>
+               <div class="m-lbl-txt">Белки</div>
+             </div>
+
+             <div class="macro-item">
+               <div class="donut-box">
+                 <svg class="mini-donut" viewBox="0 0 60 60">
+                   <circle class="md-bg" cx="30" cy="30" r="24"/>
+                   <circle class="md-val stroke-fats" cx="30" cy="30" r="24" style="stroke-dashoffset: ${getOffset(f_c, f_m)}px"/>
+                 </svg>
+                 <div class="m-icon-center">🥑</div>
+               </div>
+               <div class="m-val-txt">${f_c}</div>
+               <div class="m-lbl-txt">Жиры</div>
+             </div>
+
+             <div class="macro-item">
+               <div class="donut-box">
+                 <svg class="mini-donut" viewBox="0 0 60 60">
+                   <circle class="md-bg" cx="30" cy="30" r="24"/>
+                   <circle class="md-val stroke-carb" cx="30" cy="30" r="24" style="stroke-dashoffset: ${getOffset(c_c, c_m)}px"/>
+                 </svg>
+                 <div class="m-icon-center">🌾</div>
+               </div>
+               <div class="m-val-txt">${c_c}</div>
+               <div class="m-lbl-txt">Угли</div>
+             </div>
+             
+          </div>
+        </div>`;
+
+      } else if (w.type === 'breath') {
+        // --- BREATH ---
+        el.style.background = 'linear-gradient(145deg, rgba(129, 236, 236, 0.08) 0%, rgba(5, 5, 5, 0.4) 100%)';
+        el.style.borderTop = '1px solid rgba(129, 236, 236, 0.15)';
+        
+        content = `
+          <div class="w-left">
+            <div class="w-lbl" style="color: var(--acc-breath); margin-top: 12px;">${w.title}</div>
+            <div style="display:flex; align-items:baseline; margin-bottom: 8px;">
+              <div class="breath-val">${w.val}</div>
+              <span class="breath-unit">${w.unit || 'мин/д'}</span>
+            </div>
+            <div class="w-btn" style="background: rgba(129, 236, 236, 0.1); color: var(--acc-breath); border: 1px solid rgba(129, 236, 236, 0.2); padding: 9px 20px;">${w.btn || 'Начать'}</div>
+          </div>
+          <div class="w-right">
+            <div class="zero-point"><div class="circle c-echo"></div><div class="circle c-core"></div></div>
+          </div>`;
+      } 
+
+      el.innerHTML = content;
+      track.appendChild(el);
+    });
+  }
+
+  function renderMenu(menuData) {
+    const root = document.getElementById('dynamicContent');
+    root.innerHTML = '';
+    if(!menuData) return;
+
+    menuData.forEach(section => {
+      const wrapper = document.createElement('div'); wrapper.className = 'section-wrapper';
+      if (section.title) { const t=document.createElement('div'); t.className='section-title'; t.textContent=section.title; wrapper.appendChild(t); }
+      const container = document.createElement('div');
+      
+      if (section.type === 'list') {
+        container.className = 'settings-list';
+        section.items.forEach(item => {
+          const row = document.createElement('div'); row.className = 'list-item'; row.onclick = () => nav(item.link);
+          row.innerHTML = `<div class="li-left"><img src="${CFG.iconBase + (item.icon||'star.svg')}" class="li-icon">${item.title}</div><div class="li-arrow">⌄</div>`;
+          container.appendChild(row);
+        });
+      } else {
+        container.className = 'grid';
+        section.items.forEach(item => {
+          const tile = document.createElement('div');
+          const layout = item.layout || 'std';
+          tile.className = `tile ${layout}`; tile.onclick = () => nav(item.link);
+          tile.innerHTML = `<div class="t-icon-box"><img src="${CFG.iconBase + (item.icon||'star.svg')}" class="t-icon-img"></div><div class="t-content"><div class="t-title">${item.title}</div>${item.sub?`<div class="t-sub">${item.sub}</div>`:''}</div>`;
+          container.appendChild(tile);
+        });
+      }
+      wrapper.appendChild(container); root.appendChild(wrapper);
+    });
+    
+    const scrollPos = window.scrollY;
+    if (scrollPos > 0) window.scrollTo(0, scrollPos);
+  }
+
+  const tg = window.Telegram?.WebApp;
+  if(tg){ tg.ready(); tg.expand(); tg.setHeaderColor('#050505'); tg.setBackgroundColor('#050505'); tg.BackButton?.hide(); if (tg.isVersionAtLeast && tg.isVersionAtLeast('6.1')) tg.disableVerticalSwipes(); }
+
+  function nav(url) {
+    if(tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+    if(url && url !== '#') setTimeout(()=>window.location.href=url, 70);
+    else tg?.showPopup({ title: 'В разработке', message: 'Скоро появится' });
+  }
+
+  function haptic(style) { if(tg?.HapticFeedback) tg.HapticFeedback.impactOccurred(style); }
+
+  function getGreeting() {
+    const h = new Date().getHours();
+    if (h >= 5 && h < 12) return 'Доброе утро,'; if (h >= 12 && h < 18) return 'Добрый день,';
+    if (h >= 18) return 'Добрый вечер,'; return 'Доброй ночи,';
+  }
+
+  function loadUser() {
+    const u = tg?.initDataUnsafe?.user || { first_name: 'Александр' };
+    document.getElementById('username').textContent = u.first_name;
+    const greetingEl = document.querySelector('.greeting-text'); if (greetingEl) greetingEl.textContent = getGreeting();
+    if(u.photo_url){ const img = document.getElementById('ava'); img.src=u.photo_url; img.style.display='block'; }
+  }
+
+  function initCarousel() {
+    const track = document.getElementById('carouselTrack');
+    const dotsContainer = document.getElementById('carouselDots');
+    const slides = track.querySelectorAll('.widget');
+    if (slides.length < 2) { dotsContainer.style.display = 'none'; return; }
+    
+    dotsContainer.style.display = 'flex';
+    dotsContainer.innerHTML = '';
+    slides.forEach((_, i) => { const dot = document.createElement('div'); dot.className = `dot ${i === 0 ? 'active' : ''}`; dotsContainer.appendChild(dot); });
+    
+    if (window.carouselObserver) window.carouselObserver.disconnect();
+    window.carouselObserver = new IntersectionObserver(entries => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          const index = Array.from(slides).indexOf(entry.target);
+          if (index !== -1) {
+            const dots = dotsContainer.querySelectorAll('.dot');
+            dots.forEach(d => d.classList.remove('active'));
+            if(dots[index]) dots[index].classList.add('active');
+          }
+        }
+      });
+    }, { root: track, threshold: 0.6 });
+    slides.forEach(s => window.carouselObserver.observe(s));
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    loadUser();
+    document.getElementById('fabIcon').src = CFG.iconBase + 'ai.svg';
+    initCarousel();
+    syncData(); 
+  });
+
+</script>
+</body>
+</html>

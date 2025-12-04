@@ -1,0 +1,484 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Динамика веса</title>
+  </head>
+  <body>
+    <weight-chart></weight-chart>
+
+    <script>
+      class WeightChart extends HTMLElement {
+        constructor() {
+          super();
+          this.attachShadow({ mode: 'open' });
+          this._data = null;
+          this._drawChart = null;
+        }
+
+        // Наблюдаемые атрибуты
+        static get observedAttributes() {
+          return ['data'];
+        }
+
+        // Геттер/сеттер для данных
+        get data() {
+          return this._data;
+        }
+
+        set data(value) {
+          if (typeof value === 'string') {
+            try {
+              this._data = JSON.parse(value);
+            } catch (e) {
+              console.error('WeightChart: Invalid JSON data');
+              return;
+            }
+          } else {
+            this._data = value;
+          }
+          
+          if (this._drawChart && this._data) {
+            this._drawChart(this._data);
+          }
+        }
+
+        // Метод для установки данных
+        setData(data) {
+          this.data = data;
+        }
+
+        attributeChangedCallback(name, oldValue, newValue) {
+          if (name === 'data' && newValue) {
+            this.data = newValue;
+          }
+        }
+
+        connectedCallback() {
+          this.render();
+          this.initChart();
+        }
+
+        render() {
+          this.shadowRoot.innerHTML = `
+            <style>
+              :host {
+                --font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial, sans-serif;
+                
+                /* Настройки графика */
+                --chart-text-color: #ffffff;
+                --chart-text-size: 11px;
+                --chart-point-color: #f59e0b;
+                --chart-line-color: #ffffff;
+                --chart-line-width: 2.5;
+                --chart-height: 220px;
+                --chart-y-axis-width: 32px;
+                
+                /* Цвета */
+                --text: #ffffff;
+                --muted: rgba(255, 255, 255, 0.72);
+                --grid-color: rgba(255, 255, 255, 0.12);
+                
+                /* Фон и отступы */
+                --page-grad-from: #7B6EF6;
+                --page-grad-to: #6F7FF0;
+                --shadow: 0 8px 24px rgba(27, 35, 78, 0.22);
+                --outer-pad: clamp(12px, 4.5vw, 18px);
+                
+                display: block;
+                font-family: var(--font-family);
+                color: var(--text);
+                -webkit-font-smoothing: antialiased;
+              }
+
+              *, *::before, *::after {
+                box-sizing: border-box;
+              }
+
+              .page {
+                padding: var(--outer-pad);
+                padding-left: max(var(--outer-pad), env(safe-area-inset-left));
+                padding-right: max(var(--outer-pad), env(safe-area-inset-right));
+                padding-top: max(var(--outer-pad), env(safe-area-inset-top));
+                padding-bottom: max(var(--outer-pad), env(safe-area-inset-bottom));
+                min-height: 100vh;
+                background: linear-gradient(180deg, var(--page-grad-from) 0%, var(--page-grad-to) 100%);
+                background-attachment: fixed;
+              }
+
+              .card {
+                max-width: 680px;
+                margin: clamp(8px, 4vw, 20px) auto;
+                padding: 16px;
+                border-radius: 20px;
+                background: linear-gradient(180deg, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0.14) 100%);
+                backdrop-filter: blur(22px) saturate(1.35);
+                border: 1.5px solid rgba(255, 255, 255, 0.45);
+                box-shadow: var(--shadow);
+              }
+
+              .chart-container {
+                position: relative;
+                display: flex;
+                align-items: stretch;
+                padding: 12px;
+                padding-left: 0;
+              }
+
+              .y-axis {
+                flex-shrink: 0;
+                width: var(--chart-y-axis-width);
+                height: var(--chart-height);
+                margin-left: 4px;
+              }
+
+              .chart-scroll {
+                flex: 1;
+                overflow-x: auto;
+                overflow-y: hidden;
+                -webkit-overflow-scrolling: touch;
+                scrollbar-width: none;
+              }
+
+              .chart-scroll::-webkit-scrollbar {
+                display: none;
+              }
+
+              .chart-inner {
+                height: var(--chart-height);
+              }
+
+              .grid-line {
+                stroke: var(--grid-color);
+                stroke-width: 1;
+              }
+
+              .grid-label {
+                fill: var(--muted);
+                font-size: 10px;
+                font-family: var(--font-family);
+              }
+
+              .axis-label {
+                fill: var(--chart-text-color);
+                font-size: var(--chart-text-size);
+                font-family: var(--font-family);
+              }
+
+              .data-line {
+                fill: none;
+                stroke: var(--chart-line-color);
+                stroke-width: var(--chart-line-width);
+                stroke-linecap: round;
+                stroke-linejoin: round;
+                filter: drop-shadow(0 2px 6px rgba(255, 255, 255, 0.3));
+              }
+
+              .area-fill {
+                fill: url(#areaGradient);
+              }
+
+              .data-point {
+                fill: var(--chart-point-color);
+                stroke: rgba(255, 255, 255, 0.9);
+                stroke-width: 2;
+                filter: drop-shadow(0 2px 4px rgba(245, 158, 11, 0.4));
+                cursor: pointer;
+                transition: r 0.15s ease;
+              }
+
+              .data-point:hover {
+                r: 6;
+              }
+
+              .point-label {
+                fill: var(--chart-text-color);
+                font-size: var(--chart-text-size);
+                font-weight: 600;
+                font-family: var(--font-family);
+              }
+
+              .tooltip {
+                position: absolute;
+                padding: 8px 12px;
+                border-radius: 10px;
+                background: rgba(0, 0, 0, 0.75);
+                backdrop-filter: blur(8px);
+                border: 1px solid rgba(255, 255, 255, 0.2);
+                color: white;
+                font-size: 12px;
+                pointer-events: none;
+                opacity: 0;
+                transform: translateY(4px);
+                transition: opacity 0.15s ease, transform 0.15s ease;
+                white-space: nowrap;
+                z-index: 10;
+              }
+
+              .tooltip.visible {
+                opacity: 1;
+                transform: translateY(0);
+              }
+
+              .tooltip-date {
+                color: var(--muted);
+                font-size: 10px;
+                margin-bottom: 2px;
+              }
+
+              .tooltip-value {
+                font-weight: 700;
+                font-size: 14px;
+              }
+
+              .chart-caption {
+                text-align: center;
+                font-size: 12px;
+                color: var(--muted);
+                margin-top: 8px;
+                padding-left: var(--chart-y-axis-width);
+              }
+            </style>
+
+            <div class="page">
+              <div class="card">
+                <div class="chart-container">
+                  <svg class="y-axis"></svg>
+                  <div class="chart-scroll">
+                    <div class="chart-inner">
+                      <svg class="chart"></svg>
+                    </div>
+                  </div>
+                  <div class="tooltip">
+                    <div class="tooltip-date"></div>
+                    <div class="tooltip-value"></div>
+                  </div>
+                </div>
+                <div class="chart-caption">Динамика вашего веса (кг)</div>
+              </div>
+            </div>
+          `;
+        }
+
+        initChart() {
+          'use strict';
+
+          const root = this.shadowRoot;
+          const self = this;
+          
+          // Данные по умолчанию (демо)
+          const defaultData = [
+            { date: '01.09', weight: 82.0 },
+            { date: '03.09', weight: 81.8 },
+            { date: '05.09', weight: 81.5 },
+            { date: '08.09', weight: 81.2 },
+            { date: '10.09', weight: 80.9 },
+            { date: '12.09', weight: 80.5 },
+            { date: '15.09', weight: 80.2 },
+            { date: '18.09', weight: 79.8 },
+            { date: '20.09', weight: 79.5 },
+            { date: '23.09', weight: 79.2 },
+            { date: '25.09', weight: 79.0 },
+            { date: '28.09', weight: 78.6 },
+            { date: '01.10', weight: 78.3 },
+            { date: '04.10', weight: 78.0 },
+            { date: '07.10', weight: 77.8 },
+            { date: '10.10', weight: 77.5 },
+            { date: '13.10', weight: 77.2 },
+            { date: '16.10', weight: 77.0 },
+            { date: '19.10', weight: 76.7 },
+            { date: '22.10', weight: 76.5 },
+            { date: '25.10', weight: 76.2 },
+            { date: '28.10', weight: 75.9 },
+            { date: '31.10', weight: 75.6 },
+            { date: '03.11', weight: 75.3 },
+            { date: '06.11', weight: 75.0 },
+            { date: '09.11', weight: 74.8 },
+            { date: '12.11', weight: 74.6 },
+            { date: '15.11', weight: 74.5 },
+            { date: '18.11', weight: 74.3 },
+            { date: '20.11', weight: 74.2 }
+          ];
+
+          // DOM элементы
+          const chart = root.querySelector('.chart');
+          const yAxis = root.querySelector('.y-axis');
+          const chartScroll = root.querySelector('.chart-scroll');
+          const chartInner = root.querySelector('.chart-inner');
+          const tooltip = root.querySelector('.tooltip');
+          const tooltipDate = root.querySelector('.tooltip-date');
+          const tooltipValue = root.querySelector('.tooltip-value');
+
+          // Константы
+          const PADDING = { top: 20, right: 30, bottom: 30, left: 15 };
+          const HEIGHT = 220;
+          const Y_AXIS_WIDTH = 32;
+          const VISIBLE_POINTS = 5;
+          const GRID_LINES = 5;
+
+          function createSVGElement(tag) {
+            return document.createElementNS('http://www.w3.org/2000/svg', tag);
+          }
+
+          function drawChart(data) {
+            const containerWidth = chartScroll.clientWidth || 300;
+            const pointSpacing = (containerWidth - PADDING.left - PADDING.right) / (VISIBLE_POINTS - 1);
+            const width = PADDING.left + PADDING.right + (data.length - 1) * pointSpacing;
+            const chartWidth = width - PADDING.left - PADDING.right;
+            const chartHeight = HEIGHT - PADDING.top - PADDING.bottom;
+
+            const weights = data.map(d => d.weight);
+            const minWeight = Math.min(...weights) - 1;
+            const maxWeight = Math.max(...weights) + 1;
+
+            const xScale = i => PADDING.left + (i / (data.length - 1)) * chartWidth;
+            const yScale = w => PADDING.top + (1 - (w - minWeight) / (maxWeight - minWeight)) * chartHeight;
+
+            chartInner.style.minWidth = width + 'px';
+            chart.setAttribute('width', width);
+            chart.setAttribute('height', HEIGHT);
+            chart.style.width = width + 'px';
+            chart.style.height = HEIGHT + 'px';
+            chart.innerHTML = '';
+
+            yAxis.setAttribute('width', Y_AXIS_WIDTH);
+            yAxis.setAttribute('height', HEIGHT);
+            yAxis.innerHTML = '';
+
+            for (let i = 0; i <= GRID_LINES; i++) {
+              const y = PADDING.top + (i / GRID_LINES) * chartHeight;
+              const value = maxWeight - (i / GRID_LINES) * (maxWeight - minWeight);
+              
+              const label = createSVGElement('text');
+              label.setAttribute('x', Y_AXIS_WIDTH - 2);
+              label.setAttribute('y', y + 4);
+              label.setAttribute('text-anchor', 'end');
+              label.setAttribute('class', 'grid-label');
+              label.textContent = value.toFixed(0);
+              yAxis.appendChild(label);
+            }
+
+            const defs = createSVGElement('defs');
+            const gradient = createSVGElement('linearGradient');
+            gradient.setAttribute('id', 'areaGradient');
+            gradient.setAttribute('x1', '0%');
+            gradient.setAttribute('y1', '0%');
+            gradient.setAttribute('x2', '0%');
+            gradient.setAttribute('y2', '100%');
+
+            const stop1 = createSVGElement('stop');
+            stop1.setAttribute('offset', '0%');
+            stop1.setAttribute('stop-color', '#ffffff');
+            stop1.setAttribute('stop-opacity', '0.25');
+
+            const stop2 = createSVGElement('stop');
+            stop2.setAttribute('offset', '100%');
+            stop2.setAttribute('stop-color', '#ffffff');
+            stop2.setAttribute('stop-opacity', '0.02');
+
+            gradient.appendChild(stop1);
+            gradient.appendChild(stop2);
+            defs.appendChild(gradient);
+            chart.appendChild(defs);
+
+            for (let i = 0; i <= GRID_LINES; i++) {
+              const y = PADDING.top + (i / GRID_LINES) * chartHeight;
+              const line = createSVGElement('line');
+              line.setAttribute('x1', 0);
+              line.setAttribute('y1', y);
+              line.setAttribute('x2', width);
+              line.setAttribute('y2', y);
+              line.setAttribute('class', 'grid-line');
+              chart.appendChild(line);
+            }
+
+            data.forEach((d, i) => {
+              const label = createSVGElement('text');
+              label.setAttribute('x', xScale(i));
+              label.setAttribute('y', HEIGHT - 8);
+              label.setAttribute('text-anchor', 'middle');
+              label.setAttribute('class', 'axis-label');
+              label.textContent = d.date;
+              chart.appendChild(label);
+            });
+
+            let areaPath = `M ${xScale(0)} ${yScale(data[0].weight)}`;
+            for (let i = 1; i < data.length; i++) {
+              areaPath += ` L ${xScale(i)} ${yScale(data[i].weight)}`;
+            }
+            areaPath += ` L ${xScale(data.length - 1)} ${PADDING.top + chartHeight}`;
+            areaPath += ` L ${xScale(0)} ${PADDING.top + chartHeight} Z`;
+
+            const area = createSVGElement('path');
+            area.setAttribute('d', areaPath);
+            area.setAttribute('class', 'area-fill');
+            chart.appendChild(area);
+
+            let linePath = `M ${xScale(0)} ${yScale(data[0].weight)}`;
+            for (let i = 1; i < data.length; i++) {
+              linePath += ` L ${xScale(i)} ${yScale(data[i].weight)}`;
+            }
+
+            const line = createSVGElement('path');
+            line.setAttribute('d', linePath);
+            line.setAttribute('class', 'data-line');
+            chart.appendChild(line);
+
+            data.forEach((d, i) => {
+              const cx = xScale(i);
+              const cy = yScale(d.weight);
+
+              const label = createSVGElement('text');
+              label.setAttribute('x', cx);
+              label.setAttribute('y', cy - 12);
+              label.setAttribute('text-anchor', 'middle');
+              label.setAttribute('class', 'point-label');
+              label.textContent = d.weight.toFixed(1);
+              chart.appendChild(label);
+
+              const point = createSVGElement('circle');
+              point.setAttribute('cx', cx);
+              point.setAttribute('cy', cy);
+              point.setAttribute('r', 4);
+              point.setAttribute('class', 'data-point');
+
+              point.addEventListener('mouseenter', () => showTooltip(cx, cy, d.date, d.weight));
+              point.addEventListener('touchstart', () => showTooltip(cx, cy, d.date, d.weight), { passive: true });
+              point.addEventListener('mouseleave', hideTooltip);
+
+              chart.appendChild(point);
+            });
+
+            requestAnimationFrame(() => {
+              chartScroll.scrollLeft = chartScroll.scrollWidth;
+            });
+          }
+
+          function showTooltip(x, y, date, weight) {
+            tooltipDate.textContent = date;
+            tooltipValue.textContent = weight.toFixed(1) + ' кг';
+            tooltip.style.left = (x - chartScroll.scrollLeft + Y_AXIS_WIDTH + 4) + 'px';
+            tooltip.style.top = (y - 50) + 'px';
+            tooltip.classList.add('visible');
+          }
+
+          function hideTooltip() {
+            tooltip.classList.remove('visible');
+          }
+
+          chartScroll.addEventListener('scroll', hideTooltip, { passive: true });
+
+          // Сохраняем ссылку на функцию отрисовки
+          this._drawChart = drawChart;
+
+          // Используем переданные данные или данные по умолчанию
+          const dataToUse = this._data || defaultData;
+          drawChart(dataToUse);
+        }
+      }
+
+      customElements.define('weight-chart', WeightChart);
+    </script>
+  </body>
+</html>
