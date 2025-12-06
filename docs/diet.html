@@ -37,7 +37,7 @@
     font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', Roboto, sans-serif;
     color: var(--text-main);
     min-height: 100vh;
-    padding-bottom: 40px;
+    padding-bottom: 100px; /* Увеличил отступ снизу для кнопки */
   }
 
   /* Скрытие скроллбара */
@@ -216,6 +216,26 @@
 
   .empty-state { text-align: center; padding: 40px 20px; color: var(--text-muted); font-size: 14px; }
 
+  /* === 🔥 FAB BUTTON (Новый рацион) === */
+  .fab-container {
+    position: fixed; bottom: 20px; left: 0; right: 0;
+    display: flex; justify-content: center; z-index: 100;
+    padding: 0 20px;
+  }
+  .action-btn {
+    background: var(--acc-blue); 
+    color: #fff; border: none; 
+    border-radius: 20px;
+    padding: 16px 32px;
+    font-size: 17px; font-weight: 700;
+    box-shadow: 0 8px 24px rgba(10, 132, 255, 0.4);
+    cursor: pointer; transition: transform 0.2s, opacity 0.2s;
+    display: flex; align-items: center; gap: 10px;
+    backdrop-filter: blur(10px);
+  }
+  .action-btn:active { transform: scale(0.96); opacity: 0.9; }
+  .action-btn.loading { opacity: 0.7; pointer-events: none; background: #333; box-shadow: none; }
+
 </style>
 </head>
 <body>
@@ -277,13 +297,20 @@
 
   </div>
 
+  <div class="fab-container">
+    <button class="action-btn" id="btnReshuffle" onclick="requestReshuffle()">
+      🎲 Новый рацион
+    </button>
+  </div>
+
 <script>
   // --- CONFIG ---
+  // УБЕДИСЬ, ЧТО ЭТО ССЫЛКА НА ТВОЙ АКТУАЛЬНЫЙ ДЕПЛОЙ
   const GAS_URL = 'https://script.google.com/macros/s/AKfycbybxqI4xOLAUOcMXGReNl0PVjGToGg6_x3ZxlKNnUHg3XcaZGhkbsu61Adgkb4emrkm/exec';
   const STORAGE_KEY = 'ultima_ration_v1';
   const tg = window.Telegram?.WebApp;
 
-  // --- DEFAULT STATE (Заглушка, пока данные грузятся) ---
+  // --- DEFAULT STATE ---
   const DEFAULT_STATE = {
     "totals": {"protein":0, "fat":0, "carbs":0, "kcal":0},
     "basket": [],
@@ -318,15 +345,11 @@
   // --- INIT ---
   document.addEventListener('DOMContentLoaded', () => {
     try { tg?.ready(); tg?.expand(); tg?.setHeaderColor('#050505'); } catch(e) {}
-    
-    // Initial Render (показываем то, что есть в памяти)
     renderAll(appState);
-    
-    // Запускаем синхронизацию
     syncLoad();
   });
 
-  // --- STATE ---
+  // --- LOGIC ---
   function loadState() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -338,50 +361,71 @@
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(appState)); } catch(e) {}
   }
 
-  // --- SYNC ---
+  // 🔄 ПОЛУЧЕНИЕ ДАННЫХ
   async function syncLoad() {
     if (!GAS_URL.includes('/exec')) return;
-    
-    // 🔥 ГЛАВНОЕ ИСПРАВЛЕНИЕ: Берем initData (строку), а не userId
     const initData = tg?.initData;
-    
-    if (!initData) {
-      console.warn('Нет initData (запущен в браузере?)');
-      return;
-    }
+    if (!initData) return;
 
     try {
-      console.log('Отправляю запрос на сервер...');
       const response = await fetch(GAS_URL, {
         method: 'POST',
-        // 🔥 ОТПРАВЛЯЕМ ПРАВИЛЬНЫЙ JSON
-        body: JSON.stringify({ 
-           action: 'get_ration', 
-           initData: initData 
-        })
+        body: JSON.stringify({ action: 'get_ration', initData: initData })
       });
-      
       const data = await response.json();
       
       if (data.ok && data.ration) {
-        // Если данные пришли и они отличаются от текущих - обновляем
         if (JSON.stringify(appState) !== JSON.stringify(data.ration)) {
-          console.log('Получены новые данные!', data.ration);
           appState = data.ration;
           saveState();
           renderAll(appState);
-          try { tg.HapticFeedback.notificationOccurred('success'); } catch(e){}
-        } else {
-          console.log('Данные актуальны');
         }
       }
     } catch (e) { console.warn('Sync failed', e); }
   }
 
-  // --- RENDER LOGIC ---
+  // 🎲 ЗАПРОС НА ПЕРЕМЕШИВАНИЕ (НОВАЯ ФУНКЦИЯ)
+  async function requestReshuffle() {
+    if (!GAS_URL.includes('/exec')) return alert('URL не настроен');
+    const initData = tg?.initData;
+    if (!initData) return alert('Запустите из Telegram');
+
+    const btn = document.getElementById('btnReshuffle');
+    
+    // Анимация загрузки
+    try { tg.HapticFeedback.impactOccurred('medium'); } catch(e){}
+    btn.classList.add('loading');
+    btn.innerHTML = '⏳ Генерируем...';
+
+    try {
+      // 1. Отправляем команду перемешать
+      const response = await fetch(GAS_URL, {
+        method: 'POST',
+        body: JSON.stringify({ action: 'reshuffle', initData: initData })
+      });
+      
+      const data = await response.json();
+
+      if (data.ok) {
+        // 2. Если ок - сразу запрашиваем обновленные данные
+        await syncLoad();
+        try { tg.HapticFeedback.notificationOccurred('success'); } catch(e){}
+      } else {
+        alert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));
+      }
+
+    } catch (e) {
+      alert('Ошибка сети: ' + e.message);
+    } finally {
+      // Возвращаем кнопку в исходное состояние
+      btn.classList.remove('loading');
+      btn.innerHTML = '🎲 Новый рацион';
+    }
+  }
+
+  // --- RENDER FUNCTIONS ---
   function renderAll(data) {
     if (!data) return;
-    // Если корзина пуста - показываем нули
     renderHeader(data.totals || DEFAULT_STATE.totals, false); 
     renderTableBasket(data.basket || []);
     renderSchedule();
@@ -400,10 +444,8 @@
 
   function renderHeader(t, isDaily) {
     if(!t) return;
-    
     const label = document.getElementById('headLabelKcal');
     if(label) label.textContent = isDaily ? 'Калории (День)' : 'Калории (Всего)';
-
     animateValue('totalKcal', t.kcal);
     animateValue('totalPro', t.protein);
     animateValue('totalFat', t.fat);
@@ -415,7 +457,7 @@
     container.innerHTML = '';
     
     if(!basket || basket.length === 0) {
-       container.innerHTML = '<div style="padding:20px; text-align:center; color:rgba(255,255,255,0.4)">Загрузка или корзина пуста...</div>';
+       container.innerHTML = '<div style="padding:20px; text-align:center; color:rgba(255,255,255,0.4)">Корзина пуста...</div>';
        return;
     }
 
@@ -445,7 +487,6 @@
     });
   }
 
-  // --- TAB & SCHEDULE INTERACTION ---
   window.switchTab = function(tabName) {
     try { tg.HapticFeedback.selectionChanged(); } catch(e){}
     activeTab = tabName;
@@ -458,7 +499,6 @@
 
     if (tabName === 'basket') {
       if(appState.totals) renderHeader(appState.totals, false);
-      
       indicator.style.transform = 'translateX(0%)';
       btns[0].classList.add('active');
       basketView.classList.add('active');
@@ -466,12 +506,10 @@
     } else {
       const day1 = appState.days ? appState.days[1] : null;
       if (day1) renderHeader(day1, true);
-
       indicator.style.transform = 'translateX(100%)';
       btns[1].classList.add('active');
       basketView.classList.remove('active');
       schedView.classList.add('active');
-      
       const pills = document.querySelectorAll('.day-pill');
       pills.forEach(p => p.classList.remove('active'));
       if(pills[0]) pills[0].classList.add('active');
@@ -482,15 +520,11 @@
   function renderSchedule() {
     const daysContainer = document.getElementById('daysGrid');
     daysContainer.innerHTML = '';
-    
     for (let i = 1; i <= 7; i++) {
       const pill = document.createElement('div');
       pill.className = `day-pill ${i === 1 ? 'active' : ''}`; 
       pill.onclick = () => selectDay(pill, i);
-      pill.innerHTML = `
-        <span class="day-name">ДЕНЬ</span>
-        <span class="day-num">${i}</span>
-      `;
+      pill.innerHTML = `<span class="day-name">ДЕНЬ</span><span class="day-num">${i}</span>`;
       daysContainer.appendChild(pill);
     }
     renderMealsForDay(1);
@@ -500,11 +534,8 @@
     try { tg.HapticFeedback.selectionChanged(); } catch(e){}
     document.querySelectorAll('.day-pill').forEach(p => p.classList.remove('active'));
     el.classList.add('active');
+    if (appState.days && appState.days[dayNum]) renderHeader(appState.days[dayNum], true);
     
-    if (appState.days && appState.days[dayNum]) {
-      renderHeader(appState.days[dayNum], true);
-    }
-
     const cont = document.getElementById('mealsContainer');
     cont.style.opacity = '0';
     cont.style.transform = 'translateY(5px)';
@@ -518,10 +549,8 @@
   function renderMealsForDay(dayNum) {
     const container = document.getElementById('mealsContainer');
     container.innerHTML = '';
-    
     const basket = appState.basket || [];
     
-    // MOCK-схема блюд (реальные продукты)
     const meals = [
       { time: 'Завтрак', type: 'Eggs', type2: 'Cereal', name: 'Омлет с отрубями' },
       { time: 'Снек', type: 'Fruit1', type2: 'Nut', name: 'Фруктовый салат' },
@@ -537,7 +566,6 @@
       const w1 = ing1 ? Math.round(ing1.weight / 7) : 0;
       const ing2 = basket.find(b => b.category === m.type2);
       const w2 = ing2 ? Math.round(ing2.weight / 7) : 0;
-      
       const name1 = ing1 ? ing1.name.split('+')[0] : '—';
       const name2 = ing2 ? ing2.name.split('+')[0] : '—';
 
