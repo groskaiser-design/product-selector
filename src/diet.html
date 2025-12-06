@@ -220,7 +220,6 @@
 </head>
 <body>
 
-  <!-- Background Effects -->
   <div class="fx-layer">
     <div class="orb orb-1"></div>
     <div class="orb orb-2"></div>
@@ -229,7 +228,6 @@
 
   <div class="page">
     
-    <!-- 1. HEADER SUMMARY -->
     <div class="summary-grid">
       <div class="s-card">
         <div class="s-label" id="headLabelKcal">Калории</div>
@@ -253,14 +251,12 @@
       </div>
     </div>
 
-    <!-- 2. TABS -->
     <div class="tabs">
       <div class="tab-indicator" id="tabIndicator"></div>
       <div class="tab-btn active" onclick="switchTab('basket')">Продукты</div>
       <div class="tab-btn" onclick="switchTab('schedule')">Меню на неделю</div>
     </div>
 
-    <!-- 3. VIEW: BASKET -->
     <div id="view-basket" class="view-section active">
       <div class="basket-table-wrapper">
         <div class="t-header grid-layout">
@@ -274,7 +270,6 @@
       </div>
     </div>
 
-    <!-- 4. VIEW: SCHEDULE -->
     <div id="view-schedule" class="view-section">
       <div class="days-grid" id="daysGrid"></div>
       <div id="mealsContainer"></div>
@@ -288,21 +283,11 @@
   const STORAGE_KEY = 'ultima_ration_v1';
   const tg = window.Telegram?.WebApp;
 
-  // --- MOCK DATA (With Daily Targets Mockup) ---
-  const MOCK_DATA = {
-    "id": "196047220", 
-    "totals": {"protein":1160, "fat":569, "carbs":2744, "kcal":20743}, // Weekly Totals
-    "basket": [{"category":"Veg","name":"Кабачок, сырой+Топинамбур белый, сырой+Свёкла, сырая","weight":3801,"protein":61,"fat":9,"carbs":381}, {"category":"Nut","name":"Бразильский орех сушёный","weight":210,"protein":30,"fat":141,"carbs":25}, {"category":"Seed","name":"Семена подсолнечника, сушёные","weight":105,"protein":22,"fat":54,"carbs":25}, {"category":"Fruit1","name":"Ананас, сырой","weight":824,"protein":4,"fat":1,"carbs":108}, {"category":"Fruit2","name":"Груша, сырая","weight":710,"protein":3,"fat":1,"carbs":108}, {"category":"Berry","name":"Клюква, сырая","weight":885,"protein":4,"fat":1,"carbs":108}, {"category":"Cereal","name":"Пшеничные отруби, сырые","weight":710,"protein":109,"fat":31,"carbs":459}, {"category":"Legume","name":"Чечевица жёлтая, сырая","weight":728,"protein":179,"fat":7,"carbs":459}, {"category":"Pasta","name":"Пенне, пшеничные, сырые","weight":612,"protein":78,"fat":9,"carbs":459}, {"category":"Root","name":"Батат белый, сырой","weight":2293,"protein":34,"fat":2,"carbs":459}, {"category":"Meat","name":"Говядина, шейная часть","weight":305,"protein":62,"fat":24,"carbs":0}, {"category":"Poultry","name":"Курица, крылья (без кожи)","weight":1028,"protein":185,"fat":57,"carbs":0}, {"category":"Fish","name":"Угорь","weight":670,"protein":123,"fat":78,"carbs":0}, {"category":"Seafood","name":"Креветки, северные (сырые, неочищенные)","weight":220,"protein":31,"fat":1,"carbs":0}, {"category":"SolidDairy","name":"Творог обезжиренный","weight":746,"protein":92,"fat":2,"carbs":20}, {"category":"LiqDairy","name":"Молоко коровье, обезжиренное (0.5%)","weight":907,"protein":31,"fat":5,"carbs":44}, {"category":"Eggs","name":"Яичный белок, сырой","weight":849,"protein":92,"fat":2,"carbs":6}, {"category":"Fats","name":"Авокадо (California), сырое","weight":991,"protein":20,"fat":146,"carbs":84}],
-    // Added 'days' structure to simulate future backend
-    "days": {
-      1: { kcal: 2950, protein: 165, fat: 80, carbs: 390 },
-      2: { kcal: 2900, protein: 160, fat: 82, carbs: 380 },
-      3: { kcal: 3100, protein: 170, fat: 85, carbs: 400 }, // Training Day
-      4: { kcal: 2928, protein: 163, fat: 81, carbs: 386 },
-      5: { kcal: 2928, protein: 163, fat: 81, carbs: 386 },
-      6: { kcal: 2850, protein: 155, fat: 75, carbs: 380 },
-      7: { kcal: 2800, protein: 150, fat: 70, carbs: 370 }
-    }
+  // --- DEFAULT STATE (Заглушка, пока данные грузятся) ---
+  const DEFAULT_STATE = {
+    "totals": {"protein":0, "fat":0, "carbs":0, "kcal":0},
+    "basket": [],
+    "days": {}
   };
 
   const CATEGORY_MAP = {
@@ -334,8 +319,10 @@
   document.addEventListener('DOMContentLoaded', () => {
     try { tg?.ready(); tg?.expand(); tg?.setHeaderColor('#050505'); } catch(e) {}
     
-    // Initial Render
+    // Initial Render (показываем то, что есть в памяти)
     renderAll(appState);
+    
+    // Запускаем синхронизацию
     syncLoad();
   });
 
@@ -343,11 +330,8 @@
   function loadState() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      // Merge with MOCK_DATA if days are missing in old cache
-      const parsed = raw ? JSON.parse(raw) : MOCK_DATA;
-      if (!parsed.days) parsed.days = MOCK_DATA.days;
-      return parsed;
-    } catch(e) { return MOCK_DATA; }
+      return raw ? JSON.parse(raw) : DEFAULT_STATE;
+    } catch(e) { return DEFAULT_STATE; }
   }
 
   function saveState() {
@@ -357,50 +341,66 @@
   // --- SYNC ---
   async function syncLoad() {
     if (!GAS_URL.includes('/exec')) return;
-    const userId = tg?.initDataUnsafe?.user?.id ? String(tg.initDataUnsafe.user.id) : appState.id;
+    
+    // 🔥 ГЛАВНОЕ ИСПРАВЛЕНИЕ: Берем initData (строку), а не userId
+    const initData = tg?.initData;
+    
+    if (!initData) {
+      console.warn('Нет initData (запущен в браузере?)');
+      return;
+    }
+
     try {
+      console.log('Отправляю запрос на сервер...');
       const response = await fetch(GAS_URL, {
         method: 'POST',
-        body: JSON.stringify({ action: 'get_ration', userId: userId })
+        // 🔥 ОТПРАВЛЯЕМ ПРАВИЛЬНЫЙ JSON
+        body: JSON.stringify({ 
+           action: 'get_ration', 
+           initData: initData 
+        })
       });
+      
       const data = await response.json();
+      
       if (data.ok && data.ration) {
+        // Если данные пришли и они отличаются от текущих - обновляем
         if (JSON.stringify(appState) !== JSON.stringify(data.ration)) {
+          console.log('Получены новые данные!', data.ration);
           appState = data.ration;
           saveState();
           renderAll(appState);
           try { tg.HapticFeedback.notificationOccurred('success'); } catch(e){}
+        } else {
+          console.log('Данные актуальны');
         }
       }
-    } catch (e) { console.warn('Sync failed, using offline data', e); }
+    } catch (e) { console.warn('Sync failed', e); }
   }
 
   // --- RENDER LOGIC ---
   function renderAll(data) {
     if (!data) return;
-    // By default, show weekly totals
-    renderHeader(data.totals, false); 
-    renderTableBasket(data.basket);
+    // Если корзина пуста - показываем нули
+    renderHeader(data.totals || DEFAULT_STATE.totals, false); 
+    renderTableBasket(data.basket || []);
     renderSchedule();
   }
 
-  const formatNum = (n) => Math.round(n).toLocaleString('ru-RU');
+  const formatNum = (n) => Math.round(n || 0).toLocaleString('ru-RU');
 
-  // Trigger animation for changing numbers
   function animateValue(id, newValue) {
     const el = document.getElementById(id);
     if (!el) return;
-    // Simple visual update, could be enhanced with counting anim
     el.textContent = formatNum(newValue);
     el.classList.remove('val-anim');
-    void el.offsetWidth; // trigger reflow
+    void el.offsetWidth; 
     el.classList.add('val-anim');
   }
 
   function renderHeader(t, isDaily) {
     if(!t) return;
     
-    // Change label based on context
     const label = document.getElementById('headLabelKcal');
     if(label) label.textContent = isDaily ? 'Калории (День)' : 'Калории (Всего)';
 
@@ -413,7 +413,11 @@
   function renderTableBasket(basket) {
     const container = document.getElementById('tableBody');
     container.innerHTML = '';
-    if(!basket) return;
+    
+    if(!basket || basket.length === 0) {
+       container.innerHTML = '<div style="padding:20px; text-align:center; color:rgba(255,255,255,0.4)">Загрузка или корзина пуста...</div>';
+       return;
+    }
 
     const grouped = {};
     basket.forEach(item => {
@@ -453,15 +457,13 @@
     btns.forEach(b => b.classList.remove('active'));
 
     if (tabName === 'basket') {
-      // RESET HEADER TO WEEKLY TOTALS
-      renderHeader(appState.totals, false);
+      if(appState.totals) renderHeader(appState.totals, false);
       
       indicator.style.transform = 'translateX(0%)';
       btns[0].classList.add('active');
       basketView.classList.add('active');
       schedView.classList.remove('active');
     } else {
-      // Switch to schedule, default to Day 1
       const day1 = appState.days ? appState.days[1] : null;
       if (day1) renderHeader(day1, true);
 
@@ -470,7 +472,6 @@
       basketView.classList.remove('active');
       schedView.classList.add('active');
       
-      // Ensure Day 1 is visually selected
       const pills = document.querySelectorAll('.day-pill');
       pills.forEach(p => p.classList.remove('active'));
       if(pills[0]) pills[0].classList.add('active');
@@ -500,7 +501,6 @@
     document.querySelectorAll('.day-pill').forEach(p => p.classList.remove('active'));
     el.classList.add('active');
     
-    // UPDATE HEADER WITH DAILY DATA
     if (appState.days && appState.days[dayNum]) {
       renderHeader(appState.days[dayNum], true);
     }
@@ -520,7 +520,8 @@
     container.innerHTML = '';
     
     const basket = appState.basket || [];
-    // Mock logic for demo
+    
+    // MOCK-схема блюд (реальные продукты)
     const meals = [
       { time: 'Завтрак', type: 'Eggs', type2: 'Cereal', name: 'Омлет с отрубями' },
       { time: 'Снек', type: 'Fruit1', type2: 'Nut', name: 'Фруктовый салат' },
@@ -533,16 +534,20 @@
       const card = document.createElement('div');
       card.className = 'meal-card';
       const ing1 = basket.find(b => b.category === m.type);
-      const w1 = ing1 ? Math.round(ing1.weight / 7) : 100;
+      const w1 = ing1 ? Math.round(ing1.weight / 7) : 0;
       const ing2 = basket.find(b => b.category === m.type2);
-      const w2 = ing2 ? Math.round(ing2.weight / 7) : 50;
+      const w2 = ing2 ? Math.round(ing2.weight / 7) : 0;
+      
+      const name1 = ing1 ? ing1.name.split('+')[0] : '—';
+      const name2 = ing2 ? ing2.name.split('+')[0] : '—';
+
       card.innerHTML = `
         <div class="meal-time">${m.time}</div>
         <div class="meal-content">
           <div class="meal-title">${m.name}</div>
           <div class="meal-ingr">
-            • ${ing1 ? ing1.name.split('+')[0] : 'Основное'} (${w1}г)<br>
-            • ${ing2 ? ing2.name.split('+')[0] : 'Гарнир'} (${w2}г)
+            • ${name1} ${w1 ? '('+w1+'г)' : ''}<br>
+            • ${name2} ${w2 ? '('+w2+'г)' : ''}
           </div>
           <div class="meal-macros">
             <span class="m-tag">Белки: ${Math.round((w1+w2)*0.15)}г</span>
