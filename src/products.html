@@ -271,7 +271,7 @@
     }
   }
 
-  // 🔴 3. DATA SERVICE (С ФУНКЦИЕЙ ЧИСТКИ МУСОРА)
+  // 🔴 3. DATA SERVICE (FIXED & DEBUGGED)
   const DataService = {
     categories: [],
     productsMap: {}, 
@@ -281,8 +281,11 @@
       const hasCache = this.loadFromCache();
       
       if (hasCache) {
+        console.log("🟢 Loaded from cache");
         renderCategories();
         hideLoader();
+      } else {
+        console.log("⚪ Cache empty, waiting for server...");
       }
       
       updateSaveButton();
@@ -302,21 +305,24 @@
           if (savedSelection) {
              const parsed = JSON.parse(savedSelection);
              state.selected = new Set(parsed);
-             
-             // 🔥 ЧИСТКА 1: Проверяем кэш на мусор
              this.cleanupZombieProducts();
-             
              state.initialSelected = new Set(state.selected);
           }
           return true;
         }
-      } catch(e) { console.error(e); }
+      } catch(e) { console.error("Cache load error:", e); }
       return false;
     },
 
     async syncWithServer() {
       try {
-        if (!API_URL.includes("script.google.com")) { console.warn("No API URL"); hideLoader(); return; }
+        console.log("📡 Syncing with server...", { ver: this.serverVer });
+        
+        if (!API_URL.includes("script.google.com")) { 
+            console.warn("⚠️ No API URL configured"); 
+            hideLoader(); 
+            return; 
+        }
 
         const response = await fetch(API_URL, {
             method: 'POST',
@@ -325,36 +331,58 @@
         });
 
         const res = await response.json();
+        console.log("📩 Server response:", res); // 🔥 СМОТРИ СЮДА В КОНСОЛИ
         
-        // 1. Сначала обновляем каталог (если есть обнова)
-        if (res.ok && res.needUpdate && res.catalog) {
+        if (!res.ok) {
+            console.error("❌ Server Error:", res.error);
+            hideLoader();
+            return;
+        }
+
+        // 1. Обновляем каталог (если есть обнова)
+        if (res.needUpdate && res.catalog) {
+            console.log("📦 Updating catalog...");
             this.processCatalog(res.catalog, res.serverVer);
         }
 
-        // 2. Потом обновляем выбор юзера
-        if (res.ok && res.userSelection) {
+        // 2. Обновляем выбор юзера
+        if (res.userSelection) {
             try {
+                console.log("👤 Updating user selection...", res.userSelection);
                 const serverSel = JSON.parse(res.userSelection);
+                
+                // Обновляем состояние
                 state.selected = new Set(serverSel);
                 
-                // 🔥 ЧИСТКА 2: Чистим то, что пришло с сервера, от удаленных продуктов
+                // Чистим мусор (только если каталог загружен)
                 this.cleanupZombieProducts();
                 
-                // Запоминаем "чистое" состояние
+                // Синхронизируем начальное состояние
                 state.initialSelected = new Set(state.selected);
                 
                 saveSelectionToCache();
                 updateSaveButton();
-                renderCategories();
-            } catch(e) {}
+                renderCategories(); // Обновляем цифры на карточках категорий
+
+                // 🔥 ВАЖНЫЙ ФИКС: Если пользователь уже открыл категорию, принудительно обновляем список
+                if (state.activeCatId) {
+                    console.log("🔄 Refreshing active category view...");
+                    const products = this.getProducts(state.activeCatId);
+                    startInfiniteRender(products, el.productList);
+                    updateSelectAllBtn();
+                }
+
+            } catch(e) { console.error("Error parsing user selection:", e); }
+        } else {
+            console.log("👤 No user selection on server (fresh user)");
         }
         
         hideLoader();
 
       } catch(e) { 
-         console.warn("Sync skipped:", e); 
+         console.warn("⚠️ Sync skipped (Network/Fetch error):", e); 
          hideLoader();
-         if (!DataService.categories.length) alert("Ошибка загрузки данных. Проверьте интернет.");
+         if (!DataService.categories.length) alert("Ошибка загрузки. Проверьте интернет.");
       }
     },
 
@@ -384,34 +412,29 @@
             serverVer: this.serverVer
         }));
         
-        // 🔥 ЧИСТКА 3: Каталог обновился - проверяем, не исчезли ли выбранные продукты
         this.cleanupZombieProducts();
-        
         renderCategories();
-        hideLoader();
     },
 
     // 🧹 ГЛАВНАЯ ФУНКЦИЯ-САНИТАР
     cleanupZombieProducts() {
         if (!state.selected || state.selected.size === 0) return;
+        
+        // 🔥 ВАЖНО: Если карта продуктов пуста, НЕ чистим, чтобы не удалить всё случайно
+        if (Object.keys(this.productsMap).length === 0) return;
 
-        // 1. Собираем все существующие ID продуктов в одну кучу (Set) для быстрого поиска
         const validIds = new Set();
         Object.values(this.productsMap).flat().forEach(p => validIds.add(p.id));
 
-        // 2. Фильтруем выбор пользователя
         const cleanSet = new Set();
         state.selected.forEach(id => {
-            if (validIds.has(id)) {
-                cleanSet.add(id); // Оставляем только живые
-            }
+            if (validIds.has(id)) cleanSet.add(id);
         });
 
-        // 3. Если что-то удалилось, обновляем состояние
         if (cleanSet.size !== state.selected.size) {
             console.log(`🧹 Removed ${state.selected.size - cleanSet.size} zombie products`);
             state.selected = cleanSet;
-            saveSelectionToCache(); // Сохраняем чистый список в кэш
+            saveSelectionToCache();
         }
     },
 
@@ -426,12 +449,10 @@
     },
 
     async saveSelectionToServer() {
-        // Перед отправкой на всякий случай еще раз чистим (для надежности)
-        this.cleanupZombieProducts();
-        
+        // Сохраняем локально перед отправкой
         saveSelectionToCache();
         try {
-            await fetch(API_URL, {
+            const response = await fetch(API_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'text/plain;charset=utf-8' },
                 body: JSON.stringify({
@@ -440,8 +461,13 @@
                     selection: Array.from(state.selected)
                 })
             });
-            return true;
-        } catch(e) { return false; }
+            const res = await response.json();
+            console.log("💾 Save response:", res);
+            return res.ok;
+        } catch(e) { 
+            console.error("Save failed:", e);
+            return false; 
+        }
     }
   };
 
