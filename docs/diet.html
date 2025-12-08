@@ -488,7 +488,7 @@
     });
   }
 
-  window.switchTab = function(tabName) {
+window.switchTab = function(tabName) {
     try { tg.HapticFeedback.selectionChanged(); } catch(e){}
     activeTab = tabName;
     const indicator = document.getElementById('tabIndicator');
@@ -499,21 +499,34 @@
     btns.forEach(b => b.classList.remove('active'));
 
     if (tabName === 'basket') {
+      // ВКЛАДКА КОРЗИНА
+      // Берем общие итоги из weekly_totals, если они есть
       if(appState.totals) renderHeader(appState.totals, false);
+      
       indicator.style.transform = 'translateX(0%)';
       btns[0].classList.add('active');
       basketView.classList.add('active');
       schedView.classList.remove('active');
     } else {
-      const day1 = appState.days ? appState.days[1] : null;
-      if (day1) renderHeader(day1, true);
+      // ВКЛАДКА МЕНЮ
+      // Ищем данные за 1-й день в массиве
+      const daysArr = Array.isArray(appState.days) ? appState.days : [];
+      const day1 = daysArr.find(d => d.day_num === 1);
+      
+      // Если день найден - показываем его КБЖУ в шапке
+      if (day1 && day1.totals) renderHeader(day1.totals, true);
+      
       indicator.style.transform = 'translateX(100%)';
       btns[1].classList.add('active');
       basketView.classList.remove('active');
       schedView.classList.add('active');
+      
+      // Сбрасываем выделение дней и активируем первый
       const pills = document.querySelectorAll('.day-pill');
       pills.forEach(p => p.classList.remove('active'));
       if(pills[0]) pills[0].classList.add('active');
+      
+      // Рендерим меню первого дня
       renderMealsForDay(1);
     }
   }
@@ -532,55 +545,72 @@
   }
 
   function selectDay(el, dayNum) {
-    try { tg.HapticFeedback.selectionChanged(); } catch(e){}
-    document.querySelectorAll('.day-pill').forEach(p => p.classList.remove('active'));
-    el.classList.add('active');
-    if (appState.days && appState.days[dayNum]) renderHeader(appState.days[dayNum], true);
-    
-    const cont = document.getElementById('mealsContainer');
-    cont.style.opacity = '0';
-    cont.style.transform = 'translateY(5px)';
-    setTimeout(() => {
-      renderMealsForDay(dayNum);
-      cont.style.opacity = '1';
-      cont.style.transform = 'translateY(0)';
-    }, 200);
-  }
+      try { tg.HapticFeedback.selectionChanged(); } catch(e){}
+      
+      // Визуальное переключение таблетки
+      document.querySelectorAll('.day-pill').forEach(p => p.classList.remove('active'));
+      el.classList.add('active');
 
-  function renderMealsForDay(dayNum) {
+      // Обновление шапки с КБЖУ (ищем день в массиве)
+      const daysArr = Array.isArray(appState.days) ? appState.days : [];
+      const selectedDay = daysArr.find(d => d.day_num === dayNum);
+      
+      if (selectedDay && selectedDay.totals) {
+          renderHeader(selectedDay.totals, true);
+      }
+      
+      // Анимация смены контента
+      const cont = document.getElementById('mealsContainer');
+      cont.style.opacity = '0';
+      cont.style.transform = 'translateY(5px)';
+      
+      setTimeout(() => {
+        renderMealsForDay(dayNum);
+        cont.style.opacity = '1';
+        cont.style.transform = 'translateY(0)';
+      }, 200);
+    }
+
+ function renderMealsForDay(dayNum) {
     const container = document.getElementById('mealsContainer');
     container.innerHTML = '';
-    const basket = appState.basket || [];
     
-    const meals = [
-      { time: 'Завтрак', type: 'Eggs', type2: 'Cereal', name: 'Омлет с отрубями' },
-      { time: 'Снек', type: 'Fruit1', type2: 'Nut', name: 'Фруктовый салат' },
-      { time: 'Обед', type: 'Meat', type2: 'Pasta', name: 'Говядина с пастой' },
-      { time: 'Полдник', type: 'SolidDairy', type2: 'Berry', name: 'Творог с ягодами' },
-      { time: 'Ужин', type: 'Fish', type2: 'Veg', name: 'Угорь с овощами' },
-    ];
+    // 1. Ищем нужный день в массиве days, который пришел с бэкенда
+    // JSON имеет структуру: { days: [ {day_num: 1...}, {day_num: 2...} ] }
+    const daysArr = Array.isArray(appState.days) ? appState.days : [];
+    const dayData = daysArr.find(d => d.day_num === dayNum);
+
+    // Если данных на этот день нет
+    if (!dayData || !dayData.meals || dayData.meals.length === 0) {
+      container.innerHTML = '<div class="empty-state">Меню на этот день еще не сформировано</div>';
+      return;
+    }
     
-    meals.forEach(m => {
+    // 2. Проходим по всем приемам пищи (meals) внутри дня
+    dayData.meals.forEach(meal => {
       const card = document.createElement('div');
       card.className = 'meal-card';
-      const ing1 = basket.find(b => b.category === m.type);
-      const w1 = ing1 ? Math.round(ing1.weight / 7) : 0;
-      const ing2 = basket.find(b => b.category === m.type2);
-      const w2 = ing2 ? Math.round(ing2.weight / 7) : 0;
-      const name1 = ing1 ? ing1.name.split('+')[0] : '—';
-      const name2 = ing2 ? ing2.name.split('+')[0] : '—';
 
+      // Собираем ингредиенты в список
+      // Мы используем готовое поле display_str, которое подготовили в GAS
+      let ingredientsHTML = '';
+      if (meal.ingredients && Array.isArray(meal.ingredients)) {
+        ingredientsHTML = meal.ingredients
+          .map(ing => `• ${ing.display_str}`) // "• Творог (198г)"
+          .join('<br>');
+      }
+
+      // Вставляем данные в карточку
       card.innerHTML = `
-        <div class="meal-time">${m.time}</div>
+        <div class="meal-time">${meal.title || 'Прием'}</div>
         <div class="meal-content">
-          <div class="meal-title">${m.name}</div>
+          <div class="meal-title">${meal.dish_name}</div>
           <div class="meal-ingr">
-            • ${name1} ${w1 ? '('+w1+'г)' : ''}<br>
-            • ${name2} ${w2 ? '('+w2+'г)' : ''}
+            ${ingredientsHTML}
           </div>
           <div class="meal-macros">
-            <span class="m-tag">Белки: ${Math.round((w1+w2)*0.15)}г</span>
-            <span class="m-tag">Ккал: ${Math.round((w1+w2)*1.2)}</span>
+            <span class="m-tag">Белки: ${meal.macros.protein}г</span>
+            <span class="m-tag">Ккал: ${meal.macros.kcal}</span>
           </div>
         </div>
       `;
