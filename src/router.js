@@ -391,12 +391,7 @@
     const scrollPos = window.scrollY;
     if (scrollPos > 0) window.scrollTo(0, scrollPos);
     
-    setTimeout(() => {
-        document.querySelectorAll('.t-icon-box').forEach(el => el.classList.add('snow-topped'));
-        // Можно добавить и на аватарку
-        const avaBox = document.querySelector('.avatar-box');
-        if(avaBox) avaBox.classList.add('snow-topped');
-    }, 100);
+ 
 
   }
 
@@ -457,7 +452,7 @@
     syncData(); 
     // ЗАПУСК НОВОГО ГОДА ❄️
     startSnowfall();
-    addSnowDrifts();
+  
   });
 
 
@@ -486,17 +481,4 @@
 
     container.appendChild(flake);
   }
-}
-
-// 2. Добавление сугробов на элементы
-function addSnowDrifts() {
-  // Ищем элементы, куда положить снег
-  
-  // А. Кнопки в шапке (колокольчик, настройки и т.д.)
-  document.querySelectorAll('.icon-btn').forEach(el => el.classList.add('snow-topped'));
-  
-  // Б. Плавающая кнопка AI
-  const fab = document.querySelector('.fab-ai');
-  if(fab) fab.classList.add('snow-topped');
-
 }
