@@ -647,44 +647,61 @@
 
 DOM.shutter.addEventListener('click', async () => {
     if (state.isCapturing || state.isSwitching) return; 
-    if (state.sensorActive && !state.levelOK) { haptic('error'); showToast("Выровняйте телефон"); return; }
+    
+    // Проверка уровня
+    if (state.sensorActive && !state.levelOK) { 
+        haptic('error'); 
+        showToast("Выровняйте телефон"); 
+        return; 
+    }
     
     try {
-        state.isCapturing = true; haptic('heavy');
-        DOM.shutter.style.transform = 'scale(0.8)'; DOM.shutter.style.opacity = '0.5';
+        state.isCapturing = true; 
+        haptic('heavy');
+        DOM.shutter.style.transform = 'scale(0.8)'; 
+        DOM.shutter.style.opacity = '0.5';
         
         await new Promise(r => setTimeout(r, 50));
         const vid = DOM.video;
+        
         if (vid.readyState < 2 || vid.videoWidth === 0) throw new Error("Камера не готова");
 
-        // === FIX START: ОПТИМИЗАЦИЯ РАЗМЕРА ===
-        const MAX_SIDE = 1024; // Оптимально для OpenAI и скорости
+        // === ВАЖНОЕ ИСПРАВЛЕНИЕ: СЖАТИЕ ФОТО ===
+        const MAX_SIDE = 1024; // Ограничиваем размер до 1024px (этого достаточно для ИИ)
         let w = vid.videoWidth;
         let h = vid.videoHeight;
         
+        // Считаем новые размеры, сохраняя пропорции
         if (w > h) {
           if (w > MAX_SIDE) { h *= MAX_SIDE / w; w = MAX_SIDE; }
         } else {
           if (h > MAX_SIDE) { w *= MAX_SIDE / h; h = MAX_SIDE; }
         }
 
+        // Рисуем уменьшенную картинку на виртуальном холсте
         const c = document.createElement('canvas'); 
         c.width = w; 
         c.height = h;
         const ctx = c.getContext('2d');
         ctx.drawImage(vid, 0, 0, w, h);
         
-        // Качество 0.6-0.7 достаточно для распознавания еды, но экономит мегабайты
+        // Конвертируем в Base64 с качеством 0.7 (сильно экономит место)
         const blob = await new Promise(resolve => c.toBlob(resolve, 'image/jpeg', 0.7)); 
-        // === FIX END ===
+        // === КОНЕЦ ИСПРАВЛЕНИЯ ===
 
         if (!blob) throw new Error("Пустой кадр");
         showPreview(blob);
+
     } catch(err) {
-        console.error(err); haptic('error'); showToast("Ошибка: " + err.message);
-        state.isCapturing = false; updateUI();
+        console.error(err); 
+        haptic('error'); 
+        showToast("Ошибка: " + err.message);
+        state.isCapturing = false; 
+        updateUI();
     } finally {
-        DOM.shutter.style.transform = ''; DOM.shutter.style.opacity = ''; state.isCapturing = false;
+        DOM.shutter.style.transform = ''; 
+        DOM.shutter.style.opacity = ''; 
+        state.isCapturing = false;
     }
   });
 
