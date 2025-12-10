@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Ultima Scanner v3.0</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  /* === 1. CORE STYLES (From Scanner) === */
+  :root {
+    --bg-core: #050505;
+    --text-main: #ffffff;
+    --text-muted: rgba(255, 255, 255, 0.55);
+    --surface-border: rgba(255, 255, 255, 0.1);
+    --acc-blue: #0a84ff;
+    --acc-green: #30d158;
+    --acc-red: #ff453a;
+    --safe-bottom: calc(12px + env(safe-area-inset-bottom));
+  }
+
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; outline: none; }
+  body {
+    background-color: var(--bg-core);
+    margin: 0; padding: 0; width: 100%; height: 100vh;
+    color: var(--text-main);
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', Roboto, sans-serif;
+    overflow: hidden; 
+  }
+
+  /* === 2. MAIN FEED UI === */
+  .app-view {
+    position: absolute; inset: 0; z-index: 1;
+    display: flex; flex-direction: column;
+    transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  .app-view.shifted { transform: scale(0.95) translateY(-20px); opacity: 0.5; pointer-events: none; }
+
+  .feed-container {
+    flex: 1; padding: 20px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-muted); font-size: 14px;
+  }
+
+  /* === 3. OMNI BAR (MENU) === */
+  .omni-bar { 
+    position: absolute; bottom: 0; left: 0; right: 0; 
+    background: rgba(10, 10, 10, 0.85); 
+    backdrop-filter: blur(30px); 
+    border-top: 1px solid var(--surface-border); 
+    padding: 8px 12px var(--safe-bottom) 12px; 
+    z-index: 100; 
+    display: flex; align-items: flex-end; gap: 8px; 
+    transition: transform 0.3s;
+  }
+  .omni-bar.hidden { transform: translateY(100%); }
+
+  .icon-btn { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; cursor: pointer; }
+  
+  .input-wrap { flex: 1; min-height: 42px; background: rgba(255,255,255,0.08); border-radius: 20px; padding: 4px 16px; display: flex; align-items: center; }
+  textarea { width: 100%; background: transparent; border: none; color: #fff; font-size: 15px; resize: none; padding: 10px 0; margin: 0; max-height: 100px; }
+  
+  .action-btn { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; cursor: pointer; transition: 0.2s; }
+  .action-btn:active { transform: scale(0.9); }
+
+  /* === 4. CAMERA LAYER (From Cam.html) === */
+  .camera-layer {
+    position: fixed; inset: 0; z-index: 200;
+    background: #000;
+    transform: translateY(100%);
+    transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+    display: flex; flex-direction: column;
+  }
+  .camera-layer.active { transform: translateY(0); }
+
+  .cam-viewport {
+    position: relative; flex: 1; width: 100%; overflow: hidden;
+    background: #000; display: flex; align-items: center; justify-content: center;
+  }
+  video { position: absolute; width: 100%; height: 100%; object-fit: cover; }
+  #uiCanvas { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none; }
+
+  /* Cam UI Controls */
+  .cam-ui {
+    position: absolute; inset: 0; z-index: 20;
+    display: flex; flex-direction: column; justify-content: space-between;
+    padding: calc(16px + env(safe-area-inset-top)) 16px calc(32px + env(safe-area-inset-bottom)) 16px;
+    pointer-events: none;
+  }
+  .top-bar { display: flex; justify-content: space-between; pointer-events: auto; }
+  .btn-close { width: 40px; height: 40px; border-radius: 50%; background: rgba(0,0,0,0.4); backdrop-filter: blur(10px); display: flex; align-items: center; justify-content: center; color: #fff; cursor: pointer; border: 1px solid rgba(255,255,255,0.1); }
+  
+  .status-chip { background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.1); backdrop-filter: blur(10px); padding: 8px 16px; border-radius: 20px; display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #ff9f0a; box-shadow: 0 0 8px #ff9f0a; transition: 0.3s; }
+  .status-dot.ok { background: var(--acc-green); box-shadow: 0 0 8px var(--acc-green); }
+
+  .shutter-area { display: flex; justify-content: center; align-items: center; pointer-events: auto; padding-bottom: 20px; }
+  .shutter-outer { width: 80px; height: 80px; border-radius: 50%; border: 4px solid rgba(255,255,255,0.8); display:flex; align-items:center; justify-content:center; transition: 0.3s; cursor: pointer; }
+  .shutter-inner { width: 62px; height: 62px; border-radius: 50%; background: #fff; transition: 0.3s; }
+  .shutter-outer:active .shutter-inner { transform: scale(0.9); }
+  .shutter-outer.disabled { border-color: rgba(255,69,58,0.5); opacity: 0.7; }
+  .shutter-outer.disabled .shutter-inner { background: var(--acc-red); transform: scale(0.4); }
+
+  /* Toast */
+  .toast { position: absolute; top: 100px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.7); color: #fff; padding: 8px 16px; border-radius: 20px; font-size: 13px; pointer-events: none; opacity: 0; transition: 0.3s; z-index: 300; }
+  .toast.visible { opacity: 1; }
+
+</style>
+</head>
+<body>
+
+  <div class="app-view" id="appView">
+    <div class="feed-container">
+      <div style="text-align: center;">
+        <h2>Food Diary</h2>
+        <p>Нажми на камеру, чтобы добавить еду</p>
+      </div>
+    </div>
+
+    <div class="omni-bar" id="omniBar">
+      <div class="icon-btn">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
+      </div>
+      <div class="input-wrap">
+        <textarea id="msgInput" rows="1" placeholder="Яблоко 200г, кофе..."></textarea>
+      </div>
+      <div class="action-btn" onclick="openCamera()">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+      </div>
+    </div>
+  </div>
+
+  <div class="camera-layer" id="cameraLayer">
+    <div class="cam-viewport">
+      <video id="video" autoplay playsinline muted></video>
+      <canvas id="uiCanvas"></canvas>
+      
+      <div class="cam-ui">
+        <div class="top-bar">
+          <div class="btn-close" onclick="closeCamera()">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+          </div>
+          <div class="status-chip">
+            <div class="status-dot" id="lvlDot"></div>
+            <span id="lvlText">Уровень</span>
+          </div>
+          <div style="width: 40px"></div>
+        </div>
+
+        <div class="shutter-area">
+          <div class="shutter-outer disabled" id="shutterBtn">
+            <div class="shutter-inner"></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="toast" class="toast">Сообщение</div>
+    </div>
+  </div>
+
+<script>
+  // --- TELEGRAM INIT ---
+  const tg = window.Telegram?.WebApp;
+  if(tg) { tg.ready(); tg.expand(); tg.setHeaderColor('#050505'); }
+
+  // --- STATE ---
+  const state = {
+    stream: null,
+    levelOK: false,
+    angleX: 0, angleY: 0,
+    isCameraOpen: false
+  };
+
+  const DOM = {
+    app: document.getElementById('appView'),
+    camLayer: document.getElementById('cameraLayer'),
+    video: document.getElementById('video'),
+    canvas: document.getElementById('uiCanvas'),
+    ctx: document.getElementById('uiCanvas').getContext('2d'),
+    shutter: document.getElementById('shutterBtn'),
+    lvlDot: document.getElementById('lvlDot'),
+    lvlText: document.getElementById('lvlText'),
+    toast: document.getElementById('toast')
+  };
+
+  // --- 1. OPEN/CLOSE LOGIC ---
+  async function openCamera() {
+    state.isCameraOpen = true;
+    DOM.camLayer.classList.add('active');
+    DOM.app.classList.add('shifted');
+    
+    // Запуск потока
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: false, 
+        video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1920 } } 
+      });
+      state.stream = stream;
+      DOM.video.srcObject = stream;
+      requestAnimationFrame(drawLoop);
+      window.addEventListener('deviceorientation', handleOrientation);
+    } catch(e) {
+      showToast("Ошибка камеры: " + e.message);
+      closeCamera();
+    }
+  }
+
+  function closeCamera() {
+    state.isCameraOpen = false;
+    DOM.camLayer.classList.remove('active');
+    DOM.app.classList.remove('shifted');
+    
+    // Остановка потока
+    if(state.stream) {
+      state.stream.getTracks().forEach(t => t.stop());
+      state.stream = null;
+    }
+    window.removeEventListener('deviceorientation', handleOrientation);
+  }
+
+  // --- 2. SENSOR LOGIC (Level) ---
+  function handleOrientation(e) {
+    state.angleX = e.beta; 
+    state.angleY = e.gamma;
+  }
+
+  // --- 3. DRAW LOOP (Visuals) ---
+  function drawLoop() {
+    if(!state.isCameraOpen) return;
+    
+    const w = DOM.canvas.width = window.innerWidth;
+    const h = DOM.canvas.height = window.innerHeight;
+    const ctx = DOM.ctx;
+    const cx = w/2, cy = h/2;
+
+    ctx.clearRect(0,0,w,h);
+
+    // Рисуем уровень
+    const rTarget = 20; 
+    const maxOffset = 60;
+    const dx = (Math.max(-20, Math.min(20, state.angleY || 0)) / 20) * maxOffset;
+    const dy = (Math.max(-20, Math.min(20, state.angleX || 0)) / 20) * maxOffset;
+    
+    const isInside = Math.hypot(dx, dy) < rTarget;
+    
+    if(state.levelOK !== isInside) {
+      state.levelOK = isInside;
+      updateUI();
+      if(isInside && tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+    }
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, rTarget + 2, 0, Math.PI*2);
+    ctx.strokeStyle = state.levelOK ? '#30d158' : 'rgba(255,255,255,0.5)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(cx + dx, cy + dy, 10, 0, Math.PI*2);
+    ctx.fillStyle = state.levelOK ? '#30d158' : 'rgba(255,255,255,0.8)';
+    ctx.fill();
+
+    requestAnimationFrame(drawLoop);
+  }
+
+  function updateUI() {
+    if(state.levelOK) {
+      DOM.lvlDot.classList.add('ok');
+      DOM.lvlText.textContent = "Ровно";
+      DOM.shutter.classList.remove('disabled');
+    } else {
+      DOM.lvlDot.classList.remove('ok');
+      DOM.lvlText.textContent = "Выровняйте";
+      DOM.shutter.classList.add('disabled');
+    }
+  }
+
+  // --- 4. SHUTTER ACTION ---
+  DOM.shutter.onclick = () => {
+    if(!state.levelOK) {
+      showToast("Сначала выровняйте телефон!");
+      if(tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('error');
+      return;
+    }
+    
+    // В СЛЕДУЮЩЕМ ШАГЕ: Снятие фото -> Отправка -> База
+    if(tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('heavy');
+    showToast("Щелк! (Логика отправки в след. шаге)");
+  };
+
+  function showToast(msg) {
+    DOM.toast.textContent = msg;
+    DOM.toast.classList.add('visible');
+    setTimeout(() => DOM.toast.classList.remove('visible'), 2000);
+  }
+
+</script>
+</body>
+</html>
