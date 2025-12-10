@@ -645,18 +645,39 @@
     requestAnimationFrame(drawLoop);
   }
 
-  DOM.shutter.addEventListener('click', async () => {
+DOM.shutter.addEventListener('click', async () => {
     if (state.isCapturing || state.isSwitching) return; 
     if (state.sensorActive && !state.levelOK) { haptic('error'); showToast("Выровняйте телефон"); return; }
+    
     try {
         state.isCapturing = true; haptic('heavy');
         DOM.shutter.style.transform = 'scale(0.8)'; DOM.shutter.style.opacity = '0.5';
+        
         await new Promise(r => setTimeout(r, 50));
         const vid = DOM.video;
         if (vid.readyState < 2 || vid.videoWidth === 0) throw new Error("Камера не готова");
-        const c = document.createElement('canvas'); c.width = vid.videoWidth; c.height = vid.videoHeight;
-        c.getContext('2d').drawImage(vid, 0, 0);
-        const blob = await new Promise(resolve => c.toBlob(resolve, 'image/jpeg', 0.95));
+
+        // === FIX START: ОПТИМИЗАЦИЯ РАЗМЕРА ===
+        const MAX_SIDE = 1024; // Оптимально для OpenAI и скорости
+        let w = vid.videoWidth;
+        let h = vid.videoHeight;
+        
+        if (w > h) {
+          if (w > MAX_SIDE) { h *= MAX_SIDE / w; w = MAX_SIDE; }
+        } else {
+          if (h > MAX_SIDE) { w *= MAX_SIDE / h; h = MAX_SIDE; }
+        }
+
+        const c = document.createElement('canvas'); 
+        c.width = w; 
+        c.height = h;
+        const ctx = c.getContext('2d');
+        ctx.drawImage(vid, 0, 0, w, h);
+        
+        // Качество 0.6-0.7 достаточно для распознавания еды, но экономит мегабайты
+        const blob = await new Promise(resolve => c.toBlob(resolve, 'image/jpeg', 0.7)); 
+        // === FIX END ===
+
         if (!blob) throw new Error("Пустой кадр");
         showPreview(blob);
     } catch(err) {
@@ -711,7 +732,17 @@
     }
   }
 
-  function haptic(style) { if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred(style); }
+  function haptic(style) { 
+    if (!tg || !tg.HapticFeedback) return;
+    
+    // Разделяем типы вибрации согласно документации Telegram
+    if (['error', 'success', 'warning'].includes(style)) {
+      tg.HapticFeedback.notificationOccurred(style);
+    } else {
+      // light, medium, heavy, rigid, soft
+      tg.HapticFeedback.impactOccurred(style);
+    }
+  }
 </script>
 </body>
 </html>
