@@ -407,9 +407,8 @@
     if(tg.disableVerticalSwipes) tg.disableVerticalSwipes();
   }
 
-  // === API HELPER ===
+  // === API HELPER (CORS FIX) ===
   const API = {
-    // Конвертация Blob в Base64 (без префикса data:image/...)
     blobToBase64: (blob) => {
       return new Promise((resolve, _) => {
         const reader = new FileReader();
@@ -420,23 +419,19 @@
         reader.readAsDataURL(blob);
       });
     },
-
-    // Отправка данных на GAS
     send: async (action, payload) => {
-      // Данные юзера из Telegram (или заглушка для тестов)
       const user = tg?.initDataUnsafe?.user || { id: 0, first_name: 'BrowserTest' };
-      
       const body = {
         action: action,
         user: user,
         initData: tg?.initData || '',
         ...payload
       };
-
+      
+      // 🔥 КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ ЗДЕСЬ: text/plain
       const response = await fetch(API_URL, {
         method: "POST",
-        // mode: "no-cors", // НЕ ВКЛЮЧАЙ ЭТО, иначе не получишь ответ JSON!
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "text/plain;charset=utf-8" }, 
         body: JSON.stringify(body)
       });
 
@@ -446,7 +441,7 @@
     }
   };
 
-  // === STATE & DOM (Твой код) ===
+  // === STATE & DOM ===
   const state = {
     stream: null,
     track: null,
@@ -459,7 +454,7 @@
     currentDevIdx: 0, 
     torchOn: false,
     sensorActive: false,
-    uiMode: 'menu'
+    uiMode: 'menu' 
   };
 
   const DOM = {
@@ -485,14 +480,14 @@
     btnClose: document.getElementById('btnClose')
   };
 
-  // === ЛОГИКА ПЕРЕКЛЮЧЕНИЯ ===
+  // === LOGIC ===
   DOM.btnStartCam.onclick = async () => {
     state.uiMode = 'camera';
     DOM.omniBar.classList.add('hidden');
     DOM.camUI.classList.remove('idle');
     DOM.camUI.style.pointerEvents = 'auto'; 
     if(tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
-    await initCamera();
+    await initCamera(); 
   };
 
   DOM.btnClose.onclick = () => {
@@ -500,10 +495,9 @@
     DOM.camUI.classList.add('idle');
     DOM.camUI.style.pointerEvents = 'none';
     DOM.omniBar.classList.remove('hidden');
-    stopStream();
+    stopStream(); 
   };
 
-  // === ЛОГИКА КАМЕРЫ И СЕНСОРОВ (Оставляем как было) ===
   let toastTimer;
   function showToast(msg) {
     DOM.toast.textContent = msg;
@@ -679,71 +673,37 @@
     DOM.finalImg.src = ''; state.photoBlob = null; DOM.commentInput.value = ''; 
   }
 
-  // 🔥 ОБНОВЛЕННАЯ ФУНКЦИЯ ОТПРАВКИ 🔥
+  // --- 🔥 ОТПРАВКА НА БЭК (ИСПРАВЛЕНО ДЛЯ CORS) ---
   async function sendPhoto() {
     const btn = DOM.btnSend;
     if (btn.disabled) return; 
-    
-    // UI: Блокируем кнопку
-    btn.disabled = true;
-    btn.textContent = 'Анализ...';
-    btn.style.opacity = '0.8'; 
-    haptic('light');
+    btn.disabled = true; btn.textContent = 'Анализ...'; btn.style.opacity = '0.8'; haptic('light');
 
     try {
         if (!state.photoBlob) throw new Error("Нет фото");
-
-        // 1. Готовим данные
         const base64 = await API.blobToBase64(state.photoBlob);
         const userText = DOM.commentInput.value;
 
-        // 2. Отправляем на БЭК
-        const result = await API.send('scan', {
-            image: base64,
-            userText: userText
-        });
+        // Отправка (API.send теперь использует text/plain)
+        const result = await API.send('scan', { image: base64, userText: userText });
 
-        // 3. Сохраняем результат
-        // Нам придет result.data (draft) и result.scanId (для обновления лога)
-        // Сохраним это в localStorage, чтобы передать на следующий экран
-        const sessionData = {
-            draft: result.data,
-            scanId: result.scanId,
-            preview: DOM.finalImg.src // Опционально: можно сохранить blob url, но он сгорит при перезагрузке
-        };
+        const sessionData = { draft: result.data, scanId: result.scanId, preview: DOM.finalImg.src };
         localStorage.setItem('ultima_session', JSON.stringify(sessionData));
 
-        // 4. Успех
-        btn.textContent = 'Успех!';
-        btn.style.backgroundColor = 'var(--acc-green)'; 
-        btn.style.borderColor = 'var(--acc-green)';
-        haptic('success');
+        btn.textContent = 'Успех!'; btn.style.backgroundColor = 'var(--acc-green)'; btn.style.borderColor = 'var(--acc-green)'; haptic('success');
 
-        // 5. Переход (в будущем здесь будет window.location = 'scanner.html')
         setTimeout(() => {
-            alert("Переход к черновику! scanId: " + result.scanId);
-            // window.location.href = 'scanner.html?load_session=true';
-            
-            // Пока просто сбросим для теста
-            retake(); 
-            btn.textContent = 'Готово';
-            btn.disabled = false;
-            btn.style.backgroundColor = ''; 
-            btn.style.borderColor = '';
-            btn.style.opacity = '1';
-        }, 1000);
+             // Здесь будет переход на scanner.html
+             alert("Ответ сервера (scanId " + result.scanId + "): " + JSON.stringify(result.data));
+             retake(); 
+             btn.textContent = 'Готово'; btn.disabled = false; btn.style.backgroundColor = ''; btn.style.borderColor = ''; btn.style.opacity = '1';
+        }, 500);
 
     } catch (e) {
         console.error(e);
-        btn.textContent = 'Ошибка';
-        btn.style.backgroundColor = 'var(--acc-red)';
-        haptic('error');
-        alert("Ошибка сервера: " + e.message); // Покажем детали ошибки
-        setTimeout(() => {
-            btn.textContent = 'Готово';
-            btn.disabled = false;
-            btn.style.backgroundColor = '';
-        }, 2000);
+        btn.textContent = 'Ошибка'; btn.style.backgroundColor = 'var(--acc-red)'; haptic('error');
+        alert("Ошибка: " + e.message);
+        setTimeout(() => { btn.textContent = 'Готово'; btn.disabled = false; btn.style.backgroundColor = ''; }, 2000);
     }
   }
 
