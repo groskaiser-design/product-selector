@@ -396,6 +396,10 @@
   </div>
 
 <script>
+  // === CONFIG ===
+  const API_URL = "https://script.google.com/macros/s/AKfycbx0fUaaCH-JwnG5R_3TFgU5FSibsEuhuS0ZZZfyxPNVPQ1ZpCfUIaa5aE8vjgqitac/exec"; // ⚠️ ВСТАВЬ СЮДА СВОЙ URL!
+
+  // === TELEGRAM INIT ===
   const tg = window.Telegram?.WebApp;
   if(tg) {
     tg.ready(); tg.expand();
@@ -403,6 +407,46 @@
     if(tg.disableVerticalSwipes) tg.disableVerticalSwipes();
   }
 
+  // === API HELPER ===
+  const API = {
+    // Конвертация Blob в Base64 (без префикса data:image/...)
+    blobToBase64: (blob) => {
+      return new Promise((resolve, _) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+           const base64 = reader.result.split(',')[1]; 
+           resolve(base64);
+        };
+        reader.readAsDataURL(blob);
+      });
+    },
+
+    // Отправка данных на GAS
+    send: async (action, payload) => {
+      // Данные юзера из Telegram (или заглушка для тестов)
+      const user = tg?.initDataUnsafe?.user || { id: 0, first_name: 'BrowserTest' };
+      
+      const body = {
+        action: action,
+        user: user,
+        initData: tg?.initData || '',
+        ...payload
+      };
+
+      const response = await fetch(API_URL, {
+        method: "POST",
+        // mode: "no-cors", // НЕ ВКЛЮЧАЙ ЭТО, иначе не получишь ответ JSON!
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+
+      const json = await response.json();
+      if (!json.ok) throw new Error(json.error || 'Server Error');
+      return json;
+    }
+  };
+
+  // === STATE & DOM (Твой код) ===
   const state = {
     stream: null,
     track: null,
@@ -441,240 +485,126 @@
     btnClose: document.getElementById('btnClose')
   };
 
-  // --- ЛОГИКА ПЕРЕКЛЮЧЕНИЯ ---
-
-  // 1. СТАРТ КАМЕРЫ
+  // === ЛОГИКА ПЕРЕКЛЮЧЕНИЯ ===
   DOM.btnStartCam.onclick = async () => {
     state.uiMode = 'camera';
-    
-    // UI: Прячем меню, показываем интерфейс камеры
     DOM.omniBar.classList.add('hidden');
     DOM.camUI.classList.remove('idle');
     DOM.camUI.style.pointerEvents = 'auto'; 
     if(tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
-
-    // ЛОГИКА: Запускаем поток
     await initCamera();
   };
 
-  // 2. СТОП КАМЕРЫ (Выход в меню)
   DOM.btnClose.onclick = () => {
     state.uiMode = 'menu';
-    
-    // UI: Возвращаем меню
     DOM.camUI.classList.add('idle');
     DOM.camUI.style.pointerEvents = 'none';
     DOM.omniBar.classList.remove('hidden');
-    
-    // ЛОГИКА: Глушим поток, чтобы не тратить батарею
     stopStream();
   };
 
+  // === ЛОГИКА КАМЕРЫ И СЕНСОРОВ (Оставляем как было) ===
   let toastTimer;
   function showToast(msg) {
     DOM.toast.textContent = msg;
     DOM.toast.classList.add('visible');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => {
-      DOM.toast.classList.remove('visible');
-    }, 2000);
+    toastTimer = setTimeout(() => { DOM.toast.classList.remove('visible'); }, 2000);
   }
 
   function stopStream() {
-    if (state.stream) {
-      state.stream.getTracks().forEach(t => t.stop());
-      state.stream = null;
-    }
-    state.track = null;
-    state.torchOn = false; 
+    if (state.stream) { state.stream.getTracks().forEach(t => t.stop()); state.stream = null; }
+    state.track = null; state.torchOn = false; 
     updateTorchUI();
     DOM.video.srcObject = null;
-    DOM.video.classList.remove('active'); // Скрываем элемент видео
+    DOM.video.classList.remove('active');
   }
 
   async function startStream(deviceId) {
     if (state.stream) stopStream();
-
-    const constraints = {
-      audio: false,
-      video: {
-        deviceId: deviceId ? { exact: deviceId } : undefined,
-        facingMode: deviceId ? undefined : 'environment',
-        width: { ideal: 1920 }, 
-        height: { ideal: 2560 }
-      }
-    };
-
+    const constraints = { audio: false, video: { deviceId: deviceId ? { exact: deviceId } : undefined, facingMode: deviceId ? undefined : 'environment', width: { ideal: 1920 }, height: { ideal: 2560 } } };
     try {
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      state.stream = stream;
-      state.track = stream.getVideoTracks()[0];
-      DOM.video.srcObject = stream;
-      DOM.video.classList.add('active'); // Показываем видео
-
+      state.stream = stream; state.track = stream.getVideoTracks()[0];
+      DOM.video.srcObject = stream; DOM.video.classList.add('active');
       const settings = state.track.getSettings();
       if (settings.deviceId) localStorage.setItem('ultima_cam_id', settings.deviceId);
-
+      
       let label = state.track.label || "Камера";
       label = label.replace(/\(.*\)/, '').replace(/camera2/i, '').replace(/facing/i, '').trim();
       if(label.length < 2) label = "Камера " + (state.currentDevIdx + 1);
-      
       if(state.devices.length > 1) showToast(label);
 
       const caps = state.track.getCapabilities();
-      if (caps.focusMode?.includes('continuous')) {
-        try { await state.track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch(e){}
-      }
-
+      if (caps.focusMode?.includes('continuous')) { try { await state.track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch(e){} }
     } catch (e) {
-      if (deviceId) {
-        localStorage.removeItem('ultima_cam_id');
-        await startStream(null);
-      } else {
-        alert("Ошибка камеры: " + e.message);
-      }
+      if (deviceId) { localStorage.removeItem('ultima_cam_id'); await startStream(null); } 
+      else { alert("Ошибка камеры: " + e.message); }
     }
   }
 
   DOM.btnSwitch.onclick = async () => {
     if (state.devices.length < 2 || state.isSwitching) return;
-    state.isSwitching = true;
-    haptic('medium');
-    
+    state.isSwitching = true; haptic('medium');
     DOM.loader.classList.remove('hidden');
-    DOM.btnSwitch.classList.add('disabled');
-    DOM.btnTorch.classList.add('disabled');
-    DOM.shutter.classList.add('disabled');
-    
-    const svg = DOM.btnSwitch.querySelector('svg');
-    svg.style.transition = 'transform 0.4s';
-    svg.style.transform = 'rotate(180deg)';
-
-    // При переключении камер не используем полный stopStream, чтобы не схлопывать UI
+    DOM.btnSwitch.classList.add('disabled'); DOM.btnTorch.classList.add('disabled'); DOM.shutter.classList.add('disabled');
+    const svg = DOM.btnSwitch.querySelector('svg'); svg.style.transition = 'transform 0.4s'; svg.style.transform = 'rotate(180deg)';
     if (state.stream) state.stream.getTracks().forEach(t => t.stop());
-
     await new Promise(r => setTimeout(r, 500));
-
     let nextIdx = state.currentDevIdx + 1;
     if (nextIdx >= state.devices.length) nextIdx = 0;
     state.currentDevIdx = nextIdx;
-
     await startStream(state.devices[nextIdx].deviceId);
-    
     DOM.loader.classList.add('hidden');
-    DOM.btnSwitch.classList.remove('disabled');
-    DOM.btnTorch.classList.remove('disabled');
-    DOM.shutter.classList.remove('disabled');
-    
-    state.isSwitching = false;
-    setTimeout(() => svg.style.transform = '', 400);
+    DOM.btnSwitch.classList.remove('disabled'); DOM.btnTorch.classList.remove('disabled'); DOM.shutter.classList.remove('disabled');
+    state.isSwitching = false; setTimeout(() => svg.style.transform = '', 400);
   };
 
   DOM.btnTorch.onclick = async () => {
     if(!state.track) return;
     const caps = state.track.getCapabilities();
     if (!caps.torch) { showToast("Вспышка недоступна"); haptic('error'); return; }
-    
     const newState = !state.torchOn;
-    try {
-      await state.track.applyConstraints({ advanced: [{ torch: newState }] });
-      state.torchOn = newState; 
-      updateTorchUI(); 
-      haptic('light');
-    } catch(e) { showToast("Ошибка вспышки"); }
+    try { await state.track.applyConstraints({ advanced: [{ torch: newState }] }); state.torchOn = newState; updateTorchUI(); haptic('light'); } 
+    catch(e) { showToast("Ошибка вспышки"); }
   };
 
   function updateTorchUI() {
-    if (state.torchOn) {
-      DOM.btnTorch.style.backgroundColor = 'var(--acc-orange)';
-      DOM.btnTorch.style.color = '#000';
-    } else {
-      DOM.btnTorch.style.backgroundColor = '';
-      DOM.btnTorch.style.color = '#fff';
-    }
+    if (state.torchOn) { DOM.btnTorch.style.backgroundColor = 'var(--acc-orange)'; DOM.btnTorch.style.color = '#000'; } 
+    else { DOM.btnTorch.style.backgroundColor = ''; DOM.btnTorch.style.color = '#fff'; }
   }
 
-  // === SENSORS ===
   function checkSensorPerms() {
-    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-      DOM.permReq.classList.remove('hidden'); 
-    } else {
-      window.addEventListener('deviceorientation', handleOrientation);
-    }
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') { DOM.permReq.classList.remove('hidden'); } 
+    else { window.addEventListener('deviceorientation', handleOrientation); }
   }
-
   async function requestSensors() {
-    try {
-      const resp = await DeviceOrientationEvent.requestPermission();
-      if (resp === 'granted') {
-        window.addEventListener('deviceorientation', handleOrientation);
-      } else {
-        console.warn("Permission denied");
-      }
-    } catch (e) { 
-      console.warn(e); 
-    } finally {
-      DOM.permReq.classList.add('hidden');
-    }
+    try { const resp = await DeviceOrientationEvent.requestPermission(); if (resp === 'granted') { window.addEventListener('deviceorientation', handleOrientation); } } 
+    catch (e) {} finally { DOM.permReq.classList.add('hidden'); }
   }
-
   function handleOrientation(e) {
     let x = e.beta; let y = e.gamma; 
     if (x === null || y === null) return;
-    state.sensorActive = true; 
-    state.angleX = x; state.angleY = y;
+    state.sensorActive = true; state.angleX = x; state.angleY = y;
   }
-
   function updateUI() {
-    if (state.uiMode === 'menu') return; // В меню UI камеры не обновляем
-
+    if (state.uiMode === 'menu') return;
     if (state.isCapturing || state.isSwitching) return;
-    
-    if (!state.sensorActive) {
-         DOM.lvlDot.classList.remove('ok'); DOM.lvlText.textContent = "Камера";
-         DOM.shutter.classList.remove('disabled'); DOM.shutter.classList.add('active');
-         return;
-    }
-
-    if (state.levelOK) {
-      DOM.lvlDot.classList.add('ok'); DOM.lvlText.textContent = "Ровно";
-      DOM.shutter.classList.remove('disabled'); DOM.shutter.classList.add('active');
-    } else {
-      DOM.lvlDot.classList.remove('ok'); DOM.lvlText.textContent = "Выровняйте";
-      DOM.shutter.classList.add('disabled'); DOM.shutter.classList.remove('active');
-    }
+    if (!state.sensorActive) { DOM.lvlDot.classList.remove('ok'); DOM.lvlText.textContent = "Камера"; DOM.shutter.classList.remove('disabled'); DOM.shutter.classList.add('active'); return; }
+    if (state.levelOK) { DOM.lvlDot.classList.add('ok'); DOM.lvlText.textContent = "Ровно"; DOM.shutter.classList.remove('disabled'); DOM.shutter.classList.add('active'); } 
+    else { DOM.lvlDot.classList.remove('ok'); DOM.lvlText.textContent = "Выровняйте"; DOM.shutter.classList.add('disabled'); DOM.shutter.classList.remove('active'); }
   }
-  
-  function resizeCanvas() {
-    const w = window.innerWidth; const h = window.innerHeight;
-    if (DOM.canvas.width !== w || DOM.canvas.height !== h) { DOM.canvas.width = w; DOM.canvas.height = h; }
-  }
+  function resizeCanvas() { const w = window.innerWidth; const h = window.innerHeight; if (DOM.canvas.width !== w || DOM.canvas.height !== h) { DOM.canvas.width = w; DOM.canvas.height = h; } }
 
   async function initCamera() {
-    try {
-      const savedId = localStorage.getItem('ultima_cam_id');
-      await startStream(savedId);
-      await updateDeviceList();
-      resizeCanvas();
-      window.addEventListener('resize', resizeCanvas);
-      requestAnimationFrame(drawLoop);
-      checkSensorPerms();
-    } catch (e) {
-      console.warn("Init Error:", e);
-    }
+    try { const savedId = localStorage.getItem('ultima_cam_id'); await startStream(savedId); await updateDeviceList(); resizeCanvas(); window.addEventListener('resize', resizeCanvas); requestAnimationFrame(drawLoop); checkSensorPerms(); } 
+    catch (e) { console.warn("Init Error:", e); }
   }
-
   async function updateDeviceList() {
     try {
       const allDevices = await navigator.mediaDevices.enumerateDevices();
       state.devices = allDevices.filter(d => d.kind === 'videoinput');
-      
-      if (state.devices.length > 1) {
-        DOM.btnSwitch.classList.remove('hidden');
-      } else {
-        DOM.btnSwitch.classList.add('hidden');
-      }
-
+      if (state.devices.length > 1) { DOM.btnSwitch.classList.remove('hidden'); } else { DOM.btnSwitch.classList.add('hidden'); }
       if (state.track) {
         const currentId = state.track.getSettings().deviceId;
         state.currentDevIdx = state.devices.findIndex(d => d.deviceId === currentId);
@@ -686,67 +616,29 @@
   function drawLoop() {
     const ctx = DOM.ctx; const w = DOM.canvas.width; const h = DOM.canvas.height;
     ctx.clearRect(0, 0, w, h);
+    if (state.uiMode === 'menu') { requestAnimationFrame(drawLoop); return; }
     
-    // В режиме меню не рисуем
-    if (state.uiMode === 'menu') {
-       requestAnimationFrame(drawLoop);
-       return;
-    }
-
     const cx = w / 2; const cy = h / 2;
-    const cardRatio = 1.586; 
-    const cardW = w * 0.22; 
-    const cardH = cardW * cardRatio;
-    const cardX = cx + 80; 
-    const cardY = cy - cardH / 2; 
-    const r = 8; 
-
-    ctx.beginPath();
-    ctx.moveTo(cardX + r, cardY);
-    ctx.lineTo(cardX + cardW - r, cardY);
-    ctx.quadraticCurveTo(cardX + cardW, cardY, cardX + cardW, cardY + r);
-    ctx.lineTo(cardX + cardW, cardY + cardH - r);
-    ctx.quadraticCurveTo(cardX + cardW, cardY + cardH, cardX + cardW - r, cardY + cardH);
-    ctx.lineTo(cardX + r, cardY + cardH);
-    ctx.quadraticCurveTo(cardX, cardY + cardH, cardX, cardY + cardH - r);
-    ctx.lineTo(cardX, cardY + r);
-    ctx.quadraticCurveTo(cardX, cardY, cardX + r, cardY);
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)'; 
-    ctx.fill(); 
-
-    ctx.save();
-    ctx.translate(cardX + cardW / 2, cardY + cardH / 2);
-    ctx.rotate(-Math.PI / 2);
-    ctx.fillStyle = '#ffffff';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.font = 'bold 12px sans-serif';
-    ctx.fillText("CREDIT CARD", 0, -10);
-    ctx.font = '10px sans-serif'; 
-    ctx.fillText("(необязательно)", 0, 10); 
-    ctx.restore(); 
+    const cardRatio = 1.586; const cardW = w * 0.22; const cardH = cardW * cardRatio;
+    const cardX = cx + 80; const cardY = cy - cardH / 2; const r = 8; 
+    ctx.beginPath(); ctx.moveTo(cardX + r, cardY); ctx.lineTo(cardX + cardW - r, cardY); ctx.quadraticCurveTo(cardX + cardW, cardY, cardX + cardW, cardY + r); ctx.lineTo(cardX + cardW, cardY + cardH - r); ctx.quadraticCurveTo(cardX + cardW, cardY + cardH, cardX + cardW - r, cardY + cardH); ctx.lineTo(cardX + r, cardY + cardH); ctx.quadraticCurveTo(cardX, cardY + cardH, cardX, cardY + cardH - r); ctx.lineTo(cardX, cardY + r); ctx.quadraticCurveTo(cardX, cardY, cardX + r, cardY);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)'; ctx.fill(); 
+    ctx.save(); ctx.translate(cardX + cardW / 2, cardY + cardH / 2); ctx.rotate(-Math.PI / 2); ctx.fillStyle = '#ffffff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = 'bold 12px sans-serif'; ctx.fillText("CREDIT CARD", 0, -10); ctx.font = '10px sans-serif'; ctx.fillText("(необязательно)", 0, 10); ctx.restore(); 
 
     if (state.sensorActive) {
         const rBubble = 14; const rTarget = 18; const maxOffset = 60; 
         const rawX = (isNaN(state.angleY) || state.angleY === null) ? 0 : state.angleY;
         const rawY = (isNaN(state.angleX) || state.angleX === null) ? 0 : state.angleX;
         const clamp = (val) => Math.max(-20, Math.min(20, val));
-        const dx = (clamp(rawX) / 20) * maxOffset; 
-        const dy = (clamp(rawY) / 20) * maxOffset;
+        const dx = (clamp(rawX) / 20) * maxOffset; const dy = (clamp(rawY) / 20) * maxOffset;
         const dist = Math.hypot(dx, dy);
         const isInside = (dist + rBubble) <= rTarget;
-
-        if (state.levelOK !== isInside && !state.isCapturing && !state.isSwitching) {
-          state.levelOK = isInside; updateUI();
-          if(isInside) haptic('medium');
-        }
-
+        if (state.levelOK !== isInside && !state.isCapturing && !state.isSwitching) { state.levelOK = isInside; updateUI(); if(isInside) haptic('medium'); }
         ctx.shadowBlur = 4; ctx.shadowColor = 'rgba(0,0,0,0.5)';
         ctx.beginPath(); ctx.arc(cx, cy, rTarget, 0, Math.PI * 2); 
         const color = (state.levelOK || state.isCapturing) ? '#30d158' : 'rgba(255,255,255,0.85)';
         ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.stroke();
-        ctx.beginPath(); ctx.arc(cx + dx, cy + dy, rBubble, 0, Math.PI * 2); 
-        ctx.fillStyle = color; ctx.fill(); ctx.shadowBlur = 0;
+        ctx.beginPath(); ctx.arc(cx + dx, cy + dy, rBubble, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill(); ctx.shadowBlur = 0;
     } else {
         ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 2;
         ctx.beginPath(); ctx.moveTo(cx-10, cy); ctx.lineTo(cx+10, cy); ctx.stroke();
@@ -757,49 +649,29 @@
 
   DOM.shutter.addEventListener('click', async () => {
     if (state.isCapturing || state.isSwitching) return; 
-    
-    if (state.sensorActive && !state.levelOK) { 
-        haptic('error'); showToast("Выровняйте телефон"); return; 
-    }
-
+    if (state.sensorActive && !state.levelOK) { haptic('error'); showToast("Выровняйте телефон"); return; }
     try {
-        state.isCapturing = true; 
-        haptic('heavy');
-        
-        DOM.shutter.style.transform = 'scale(0.8)'; 
-        DOM.shutter.style.opacity = '0.5';
-        
+        state.isCapturing = true; haptic('heavy');
+        DOM.shutter.style.transform = 'scale(0.8)'; DOM.shutter.style.opacity = '0.5';
         await new Promise(r => setTimeout(r, 50));
-
         const vid = DOM.video;
         if (vid.readyState < 2 || vid.videoWidth === 0) throw new Error("Камера не готова");
-
-        const c = document.createElement('canvas');
-        c.width = vid.videoWidth; c.height = vid.videoHeight;
+        const c = document.createElement('canvas'); c.width = vid.videoWidth; c.height = vid.videoHeight;
         c.getContext('2d').drawImage(vid, 0, 0);
-
         const blob = await new Promise(resolve => c.toBlob(resolve, 'image/jpeg', 0.95));
         if (!blob) throw new Error("Пустой кадр");
-
         showPreview(blob);
-
     } catch(err) {
-        console.error(err);
-        haptic('error'); 
-        showToast("Ошибка: " + err.message);
-        state.isCapturing = false;
-        updateUI();
+        console.error(err); haptic('error'); showToast("Ошибка: " + err.message);
+        state.isCapturing = false; updateUI();
     } finally {
-        DOM.shutter.style.transform = ''; DOM.shutter.style.opacity = '';
-        state.isCapturing = false;
+        DOM.shutter.style.transform = ''; DOM.shutter.style.opacity = ''; state.isCapturing = false;
     }
   });
 
   function showPreview(blob) {
-    if(!blob) return;
-    state.photoBlob = blob;
-    DOM.finalImg.src = URL.createObjectURL(blob);
-    DOM.preview.style.display = 'flex';
+    if(!blob) return; state.photoBlob = blob;
+    DOM.finalImg.src = URL.createObjectURL(blob); DOM.preview.style.display = 'flex';
   }
   function retake() {
     DOM.preview.style.display = 'none';
@@ -807,22 +679,52 @@
     DOM.finalImg.src = ''; state.photoBlob = null; DOM.commentInput.value = ''; 
   }
 
+  // 🔥 ОБНОВЛЕННАЯ ФУНКЦИЯ ОТПРАВКИ 🔥
   async function sendPhoto() {
     const btn = DOM.btnSend;
     if (btn.disabled) return; 
     
+    // UI: Блокируем кнопку
     btn.disabled = true;
-    btn.textContent = 'Обработка...';
+    btn.textContent = 'Анализ...';
     btn.style.opacity = '0.8'; 
     haptic('light');
 
     try {
-        await new Promise(r => setTimeout(r, 1500));
-        btn.textContent = 'Отправлено!';
+        if (!state.photoBlob) throw new Error("Нет фото");
+
+        // 1. Готовим данные
+        const base64 = await API.blobToBase64(state.photoBlob);
+        const userText = DOM.commentInput.value;
+
+        // 2. Отправляем на БЭК
+        const result = await API.send('scan', {
+            image: base64,
+            userText: userText
+        });
+
+        // 3. Сохраняем результат
+        // Нам придет result.data (draft) и result.scanId (для обновления лога)
+        // Сохраним это в localStorage, чтобы передать на следующий экран
+        const sessionData = {
+            draft: result.data,
+            scanId: result.scanId,
+            preview: DOM.finalImg.src // Опционально: можно сохранить blob url, но он сгорит при перезагрузке
+        };
+        localStorage.setItem('ultima_session', JSON.stringify(sessionData));
+
+        // 4. Успех
+        btn.textContent = 'Успех!';
         btn.style.backgroundColor = 'var(--acc-green)'; 
         btn.style.borderColor = 'var(--acc-green)';
         haptic('success');
+
+        // 5. Переход (в будущем здесь будет window.location = 'scanner.html')
         setTimeout(() => {
+            alert("Переход к черновику! scanId: " + result.scanId);
+            // window.location.href = 'scanner.html?load_session=true';
+            
+            // Пока просто сбросим для теста
             retake(); 
             btn.textContent = 'Готово';
             btn.disabled = false;
@@ -830,10 +732,13 @@
             btn.style.borderColor = '';
             btn.style.opacity = '1';
         }, 1000);
+
     } catch (e) {
+        console.error(e);
         btn.textContent = 'Ошибка';
         btn.style.backgroundColor = 'var(--acc-red)';
         haptic('error');
+        alert("Ошибка сервера: " + e.message); // Покажем детали ошибки
         setTimeout(() => {
             btn.textContent = 'Готово';
             btn.disabled = false;
@@ -843,9 +748,6 @@
   }
 
   function haptic(style) { if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred(style); }
-
-  // УДАЛЕН АВТОЗАПУСК: initCamera() здесь больше нет.
-  // Теперь камера стартует только по клику на btnStartCam.
 </script>
 </body>
 </html>
