@@ -390,6 +390,14 @@
     
     const scrollPos = window.scrollY;
     if (scrollPos > 0) window.scrollTo(0, scrollPos);
+    
+    setTimeout(() => {
+        document.querySelectorAll('.t-icon-box').forEach(el => el.classList.add('snow-topped'));
+        // Можно добавить и на аватарку
+        const avaBox = document.querySelector('.avatar-box');
+        if(avaBox) avaBox.classList.add('snow-topped');
+    }, 100);
+
   }
 
   const tg = window.Telegram?.WebApp;
@@ -447,4 +455,48 @@
     document.getElementById('fabIcon').src = CFG.iconBase + 'ai.svg';
     initCarousel();
     syncData(); 
+    // ЗАПУСК НОВОГО ГОДА ❄️
+    startSnowfall();
+    addSnowDrifts();
   });
+
+
+  /* === НОВЫЙ ГОД === */
+
+  // 1. Запуск снегопада
+    function startSnowfall() {
+    const count = 30; // Количество снежинок (не ставь больше 50 для производительности)
+    const container = document.body;
+
+    for (let i = 0; i < count; i++) {
+    const flake = document.createElement('div');
+    flake.className = 'snowflake';
+    
+    // Рандомизация
+    const size = Math.random() * 4 + 2 + 'px'; // Размер от 2 до 6px
+    const left = Math.random() * 100 + 'vw';
+    const duration = Math.random() * 5 + 5 + 's'; // Скорость падения от 5 до 10 сек
+    const delay = Math.random() * -10 + 's'; // Отрицательная задержка, чтобы снег уже шел при запуске
+
+    flake.style.width = size;
+    flake.style.height = size;
+    flake.style.left = left;
+    flake.style.animationDuration = duration;
+    flake.style.animationDelay = delay;
+
+    container.appendChild(flake);
+  }
+}
+
+// 2. Добавление сугробов на элементы
+function addSnowDrifts() {
+  // Ищем элементы, куда положить снег
+  
+  // А. Кнопки в шапке (колокольчик, настройки и т.д.)
+  document.querySelectorAll('.icon-btn').forEach(el => el.classList.add('snow-topped'));
+  
+  // Б. Плавающая кнопка AI
+  const fab = document.querySelector('.fab-ai');
+  if(fab) fab.classList.add('snow-topped');
+
+}
