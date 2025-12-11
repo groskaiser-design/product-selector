@@ -243,6 +243,28 @@
   }
   .cam-trigger-btn:active { transform: scale(0.9); opacity: 0.7; }
 
+  /* ...existing styles... */
+  
+  /* ИЗМЕНЕНИЯ ДЛЯ OMNI BAR */
+  .cam-trigger-btn.mode-send { 
+    background-color: var(--acc-blue); 
+    box-shadow: 0 0 15px rgba(10, 132, 255, 0.4);
+    border-color: transparent;
+  }
+  
+  /* Скрываем ненужную иконку */
+  .icon-hidden { display: none !important; }
+  
+  /* Стили для SVG иконок внутри кнопки */
+  .omni-btn-icon {
+    width: 24px; height: 24px;
+    stroke: currentColor;
+    stroke-width: 2;
+    fill: none;
+    stroke-linecap: round; 
+    stroke-linejoin: round;
+  }
+
   /* === PERMISSION & PREVIEW === */
   .perm-overlay {
     position: absolute; inset: 0; z-index: 100;
@@ -367,10 +389,15 @@
         <textarea class="omni-input" rows="1" placeholder="Яблоко 200г, кофе..."></textarea>
       </div>
       <div class="cam-trigger-btn" id="btnStartCam">
-      <img 
-        src="https://raw.githubusercontent.com/groskaiser-design/icons/main/cam.svg" 
-        alt="Camera" 
-        style="width: 28px; height: 28px; display: block;">
+        <svg id="icoCam" class="omni-btn-icon" viewBox="0 0 24 24">
+          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+          <circle cx="12" cy="13" r="4"></circle>
+        </svg>
+        
+        <svg id="icoSend" class="omni-btn-icon icon-hidden" viewBox="0 0 24 24">
+          <line x1="22" y1="2" x2="11" y2="13"></line>
+          <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+        </svg>
       </div>
     </div>
 
@@ -480,19 +507,99 @@
     
     omniBar: document.getElementById('omniBar'),
     camUI: document.getElementById('camUI'),
+
+    omniInput: document.querySelector('.omni-input'), // Текстовое поле
+    icoCam: document.getElementById('icoCam'),
+    icoSend: document.getElementById('icoSend'),
+
     btnStartCam: document.getElementById('btnStartCam'),
     btnClose: document.getElementById('btnClose')
   };
 
   // === LOGIC ===
+// === OMNI BAR LOGIC (TEXT vs CAMERA) ===
+  
+  // 1. Слушаем ввод текста
+  DOM.omniInput.addEventListener('input', () => {
+    const hasText = DOM.omniInput.value.trim().length > 0;
+    
+    // Авто-высота поля (как в scanner.html)
+    DOM.omniInput.style.height = 'auto'; 
+    DOM.omniInput.style.height = Math.min(DOM.omniInput.scrollHeight, 80) + 'px';
+
+    if (hasText) {
+      // Режим ОТПРАВКИ
+      DOM.btnStartCam.classList.add('mode-send');
+      DOM.icoCam.classList.add('icon-hidden');
+      DOM.icoSend.classList.remove('icon-hidden');
+    } else {
+      // Режим КАМЕРЫ
+      DOM.btnStartCam.classList.remove('mode-send');
+      DOM.icoCam.classList.remove('icon-hidden');
+      DOM.icoSend.classList.add('icon-hidden');
+    }
+  });
+
+  // 2. Умный обработчик клика
   DOM.btnStartCam.onclick = async () => {
-    state.uiMode = 'camera';
-    DOM.omniBar.classList.add('hidden');
-    DOM.camUI.classList.remove('idle');
-    DOM.camUI.style.pointerEvents = 'auto'; 
-    if(tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
-    await initCamera(); 
+    const text = DOM.omniInput.value.trim();
+    
+    if (text.length > 0) {
+      // --- ЛОГИКА ОТПРАВКИ ТЕКСТА (TextParser) ---
+      await sendTextOnly(text);
+    } else {
+      // --- ЛОГИКА ЗАПУСКА КАМЕРЫ (Старая) ---
+      state.uiMode = 'camera';
+      DOM.omniBar.classList.add('hidden');
+      DOM.camUI.classList.remove('idle');
+      DOM.camUI.style.pointerEvents = 'auto'; 
+      if(tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+      await initCamera(); 
+    }
   };
+
+  // 3. Функция отправки чистого текста
+  async function sendTextOnly(text) {
+    const btn = DOM.btnStartCam;
+    
+    // Анимация нажатия
+    haptic('medium');
+    btn.style.transform = 'scale(0.9)';
+    btn.style.opacity = '0.7';
+    
+    try {
+      showToast("Анализирую текст..."); // Визуальная обратная связь
+      
+      // Отправляем на бэк (action: scan, image: null)
+      // Бэк поймет, что это текст, благодаря нашему обновлению orchestrateScan_
+      const result = await API.send('scan', { 
+        image: null, // Изображения нет
+        userText: text 
+      });
+
+      // Успех
+      haptic('success');
+      DOM.omniInput.value = ''; // Чистим поле
+      DOM.omniInput.style.height = 'auto';
+      
+      // Возвращаем кнопку в режим камеры
+      DOM.btnStartCam.classList.remove('mode-send');
+      DOM.icoCam.classList.remove('icon-hidden');
+      DOM.icoSend.classList.add('icon-hidden');
+      
+      // ПОКАЗЫВАЕМ РЕЗУЛЬТАТ
+      // В идеале здесь нужно открыть Draft Sheet, но пока просто алерт с JSON
+      alert("TextParser ответил:\n" + JSON.stringify(result.data, null, 2));
+
+    } catch (e) {
+      console.error(e);
+      haptic('error');
+      showToast("Ошибка: " + e.message);
+    } finally {
+      btn.style.transform = '';
+      btn.style.opacity = '';
+    }
+  }
 
   DOM.btnClose.onclick = () => {
     state.uiMode = 'menu';
