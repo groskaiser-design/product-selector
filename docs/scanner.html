@@ -3,7 +3,8 @@
 <head>
 <script src="version-control.js?t=1"></script>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Ultima FoodCam</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
@@ -23,14 +24,49 @@
 }
 
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; outline: none; }
-  body {
-    margin: 0; padding: 0;
-    color: var(--text-main);
-    font-family: var(--font-stack);
-    height: 100vh; overflow: hidden;
-    display: flex; flex-direction: column;
-    overscroll-behavior-y: none;
-  }
+/* === 1. BODY IS STATIC (DEAD FIX) === */
+html, body {
+  background-color: var(--bg-core);
+  margin: 0; padding: 0; 
+  width: 100%; height: 100vh;
+  overflow: hidden; 
+  position: fixed; top: 0; left: 0; /* Dead fix */
+  -webkit-font-smoothing: antialiased; 
+}
+
+/* === 2. FX LAYER (фон не прыгает) === */
+.fx-layer { 
+  position: fixed; 
+  top: 0; left: 0; width: 100%; 
+  /* Высота будет задана жестко через JS, чтобы не прыгала */
+  height: 100vh; 
+  z-index: 0; 
+  pointer-events: none; 
+}
+
+/* === 3. APP CONTAINER (он ресайзится) === */
+.app-layout {
+  position: relative; 
+  z-index: 1; 
+  top: 0; left: 0; right: 0;
+  height: 100%; /* Задается через JS */
+  width: 100%;
+  overflow: hidden;
+  display: flex; 
+  flex-direction: column;
+}
+
+/* === 4. OMNI-BAR (ABSOLUTE) === */
+.omni-bar { 
+  position: absolute; /* ВАЖНО: Absolute, а не Fixed! */
+  bottom: 0; left: 0; right: 0; 
+  /* Стили оформления оставляем твои, главное позиционирование */
+  background: linear-gradient(to top, rgba(0,0,0,0.6) 0%, transparent 100%); 
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom)) 12px; 
+  z-index: 100; 
+  display: flex; align-items: flex-end; gap: 10px; 
+  transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
 
   /* === ICONS (SVG) === */
   .icon-svg {
@@ -710,6 +746,51 @@
   </div>
 
 <script>
+  // FIX FROM SCANNER0.HTML: STABLE LAYOUT ENGINE
+(function initStableLayout() {
+  const app = document.getElementById('appLayout'); 
+  const omniBar = document.getElementById('omniBar');
+  const fxLayer = document.getElementById('fxLayer');
+  
+  // 1. LOCK BACKGROUND HEIGHT ONCE
+  // Это предотвращает "прыжки" фона при открытии клавиатуры
+  if (fxLayer) {
+    fxLayer.style.height = window.innerHeight + 'px';
+  }
+
+  function setHeight() {
+    const tg = window.Telegram?.WebApp;
+    // Берем viewportHeight из Telegram API (самый точный источник)
+    const h = (tg && tg.viewportHeight) ? tg.viewportHeight : window.innerHeight;
+    
+    // Resize only the main app container, NOT the background
+    if (app) app.style.height = `${h}px`;
+    
+    // В scanner0.html тут еще был паддинг для списка, 
+    // но в камере у нас cam-viewport flex:1, так что это не обязательно,
+    // однако высоту самого контейнера мы обязаны менять.
+  }
+
+  const tg = window.Telegram?.WebApp;
+  if (tg) {
+    tg.onEvent('viewportChanged', ({ isStateStable }) => {
+      // isStateStable - ждем конца анимации клавиатуры
+      setHeight();
+    });
+    tg.expand();
+  }
+  
+  window.addEventListener('resize', setHeight);
+  setHeight(); // Первичный вызов
+  
+  // Дополнительный триггер при вводе (из scanner0.html)
+  const txt = document.querySelector('.omni-input');
+  if(txt) {
+      txt.addEventListener('input', () => requestAnimationFrame(setHeight));
+      txt.addEventListener('focus', () => setTimeout(setHeight, 100)); // Страховка
+  }
+})();
+
   // === CONFIG ===
   const API_URL = "https://script.google.com/macros/s/AKfycbx0fUaaCH-JwnG5R_3TFgU5FSibsEuhuS0ZZZfyxPNVPQ1ZpCfUIaa5aE8vjgqitac/exec"; // ⚠️ ВСТАВЬ СЮДА СВОЙ URL!
 
