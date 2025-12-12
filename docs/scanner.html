@@ -316,6 +316,88 @@
     to { opacity: 1; transform: translateY(0) scale(1); }
   }
   
+/* === MISSING CAMERA STYLES (ВСТАВИТЬ ОБЯЗАТЕЛЬНО) === */
+  .cam-layer {
+    position: absolute; inset: 0; z-index: 60; /* Поверх хидера (z-50) */
+    background: #000;
+    display: flex; flex-direction: column;
+    opacity: 0; pointer-events: none; transition: opacity 0.3s;
+  }
+  .cam-layer.active { opacity: 1; pointer-events: auto; }
+
+  .cam-viewport {
+    position: relative; flex: 1; width: 100%; overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+  }
+  video {
+    position: absolute; width: 100%; height: 100%; object-fit: cover;
+    z-index: 1; opacity: 0; transition: opacity 0.3s;
+  }
+  video.active { opacity: 1; }
+
+  /* UI Canvas (Уровень и прицел) */
+  #uiCanvas {
+    position: absolute; inset: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none;
+  }
+
+  /* Controls Overlay */
+  .cam-controls {
+    position: absolute; inset: 0; z-index: 20;
+    display: flex; flex-direction: column; justify-content: space-between;
+    padding: calc(16px + env(safe-area-inset-top)) 16px calc(80px + env(safe-area-inset-bottom)) 16px;
+    pointer-events: none;
+  }
+  .cam-controls > * { pointer-events: auto; }
+
+  /* Top Bar */
+  .cam-top { display: flex; justify-content: space-between; align-items: center; height: 48px; }
+  .btn-circle {
+    width: 44px; height: 44px; border-radius: 50%;
+    background: rgba(0,0,0,0.4); backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.1);
+    display: flex; align-items: center; justify-content: center; color: #fff; cursor: pointer;
+  }
+  .lvl-chip {
+    background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.1); backdrop-filter: blur(10px);
+    padding: 6px 14px; border-radius: 20px; display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600;
+  }
+  .lvl-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--acc-red); box-shadow: 0 0 8px var(--acc-red); transition: 0.3s; }
+  .lvl-dot.ok { background: var(--acc-green); box-shadow: 0 0 8px var(--acc-green); }
+
+  /* Bottom Grid */
+  .cam-grid { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; width: 100%; }
+  
+  .shutter-outer {
+    width: 76px; height: 76px; border-radius: 50%;
+    border: 4px solid rgba(255,255,255,0.8);
+    display: flex; align-items: center; justify-content: center; transition: 0.2s;
+  }
+  .shutter-inner { width: 58px; height: 58px; border-radius: 50%; background: #fff; transition: 0.2s; }
+  .shutter-outer:active .shutter-inner { transform: scale(0.9); }
+  
+  /* PREVIEW SCREEN */
+  .preview-layer {
+    position: absolute; inset: 0; z-index: 70; background: #000;
+    display: none; flex-direction: column;
+  }
+  .preview-img { flex: 1; object-fit: contain; background: #111; margin-bottom: 10px; }
+  .preview-ui { padding: 0 20px 100px 20px; display: flex; flex-direction: column; gap: 16px; }
+  .preview-input {
+    width: 100%; height: 60px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 16px; padding: 12px; color: #fff; font-size: 15px; resize: none;
+  }
+  .p-btns { display: flex; gap: 12px; }
+  .p-btn { flex: 1; padding: 14px; border-radius: 14px; border: none; font-weight: 600; font-size: 16px; background: rgba(255,255,255,0.1); color: #fff; text-align: center; }
+  .p-btn.primary { background: var(--acc-blue); }
+
+  /* TOAST */
+  .toast {
+    position: absolute; top: 100px; left: 50%; transform: translateX(-50%);
+    background: rgba(0,0,0,0.8); padding: 8px 16px; border-radius: 20px;
+    font-size: 13px; opacity: 0; pointer-events: none; transition: opacity 0.3s; z-index: 80;
+  }
+  .toast.visible { opacity: 1; }
+
 </style>
 </head>
 <body>
@@ -338,6 +420,55 @@
 <!-- APP LAYOUT CONTAINER (Resizes safely) -->
 <div class="app-layout" id="appLayout">
   
+  <div class="cam-layer" id="camLayer">
+    <div class="cam-viewport">
+      <video id="video" autoplay playsinline muted></video>
+      <canvas id="uiCanvas"></canvas>
+      <div id="camToast" class="toast">Camera info</div>
+      
+      <div class="cam-controls">
+        <div class="cam-top">
+          <div class="btn-circle" id="btnCloseCam">✕</div>
+          <div class="lvl-chip"><div class="lvl-dot" id="lvlDot"></div><span id="lvlText">LEVEL</span></div>
+          <div class="btn-circle" id="btnTorch" style="opacity:0">⚡</div>
+        </div>
+        
+        <div style="flex:1"></div> <div class="cam-grid">
+          <div style="display:flex; justify-content:flex-start">
+             </div>
+          <div style="display:flex; justify-content:center">
+            <div class="shutter-outer" id="btnShutter">
+              <div class="shutter-inner"></div>
+            </div>
+          </div>
+          <div style="display:flex; justify-content:flex-end">
+            <div class="btn-circle" id="btnSwitchCam">↻</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="preview-layer" id="previewLayer">
+    <img id="finalImg" class="preview-img">
+    <div class="preview-ui">
+      <textarea id="commentInput" class="preview-input" placeholder="Комментарий (опционально)..."></textarea>
+      <div class="p-btns">
+        <div class="p-btn" onclick="CameraApp.retake()">Переснять</div>
+        <div class="p-btn primary" id="btnSendPhoto" onclick="CameraApp.send()">Готово</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="permReq" class="processing-overlay">
+    <div class="proc-card">
+      <div style="font-size:40px; margin-bottom:16px">📐</div>
+      <div class="proc-title">Доступ к датчикам</div>
+      <div class="s-lbl" style="text-align:center; margin-bottom:20px; opacity:0.7">Нужен доступ к гироскопу для работы уровня.</div>
+      <div class="p-btn primary" onclick="CameraApp.requestSensors()" style="width:100%">Разрешить</div>
+    </div>
+  </div>
+
   <div class="fixed-header-group">
     <!-- CALENDAR -->
     <div class="calendar-block">
@@ -452,6 +583,46 @@
   </div>
 </div> <!-- End App Layout -->
 
+<div class="omni-bar" id="omniBar">
+    <div class="icon-btn">
+       <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h7"></path></svg>
+    </div>
+    
+    <div class="input-wrap">
+      <textarea id="omniInput" rows="1" placeholder="Яблоко 200г, кофе..."></textarea>
+    </div>
+    
+    <div class="action-btn" id="btnOmniAction">
+      <svg id="icoCam" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+        <circle cx="12" cy="13" r="4"></circle>
+      </svg>
+      <svg id="icoSend" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="display:none">
+        <line x1="22" y1="2" x2="11" y2="13"></line>
+        <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+      </svg>
+    </div>
+  </div>
+  
+  <div class="processing-overlay" id="procOverlay">
+    <div class="proc-card">
+      <div class="proc-visual"><div class="proc-orb"></div><div class="proc-ring"></div></div>
+      <div class="proc-title">Анализ...</div>
+      <div class="proc-steps" id="procSteps"></div>
+      <div class="proc-close" onclick="CameraApp.cancel()">Отмена</div>
+    </div>
+  </div>
+
+  <div class="draft-overlay" id="draftOverlay">
+    <div class="draft-sheet">
+      <div class="ds-header"><div class="ds-title">Проверка</div><div class="ds-subtitle">Подтвердите состав</div></div>
+      <div id="draftList"></div>
+      <div class="ds-actions">
+        <button class="ds-btn sec" onclick="DraftManager.close()">Отмена</button>
+        <button class="ds-btn prim" id="btnConfirmDraft" onclick="DraftManager.confirm()">В дневник</button>
+      </div>
+    </div>
+  </div>
   
 <script>
 /* ============================================================
