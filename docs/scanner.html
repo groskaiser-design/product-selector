@@ -4,14 +4,13 @@
 <script src="version-control.js?t=1"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
-<title>Ultima AI Diary</title>
+<title>Ultima Scanner v2.20</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
-  /* =========================================
-     1. CORE STYLES (FROM SCANNER.HTML)
-     ========================================= */
+  /* === 1. CORE & RESET === */
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; outline: none; }
   *::-webkit-scrollbar { display: none; width: 0; height: 0; background: transparent; }
+  * { scrollbar-width: none; }
   
   :root {
     --bg-core: #050505;
@@ -22,7 +21,7 @@
     
     --acc-green: #30d158;
     --acc-blue: #0a84ff;
-    --acc-orange: #ff9f0a;
+    --acc-yellow: #ffcc00;
     --acc-red: #ff453a;
     --acc-over: #00f2ea;
     --acc-over-glow: rgba(0, 242, 234, 0.6);
@@ -32,223 +31,437 @@
     
     --safe-top: calc(12px + env(safe-area-inset-top));
     --safe-bottom: calc(12px + env(safe-area-inset-bottom));
+    
     --header-height: 340px; 
   }
 
-  body {
+  /* === FIX FROM AI.HTML: BODY IS STATIC BACKGROUND === */
+  html, body {
     background-color: var(--bg-core);
     margin: 0; padding: 0; width: 100%; height: 100vh;
     overflow: hidden; 
     color: var(--text-main);
     font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Roboto', sans-serif;
-    position: fixed; inset: 0;
+    position: fixed; top: 0; left: 0; /* Dead fix */
+    -webkit-font-smoothing: antialiased; 
   }
 
-  /* FX BACKGROUND */
-  .fx-layer { position: fixed; inset: 0; z-index: 0; pointer-events: none; }
+  /* FX BACKGROUND (Behind everything) */
+  .fx-layer { 
+    position: fixed; 
+    top: 0; left: 0; width: 100%; 
+    /* Высота будет задана жестко через JS, чтобы не прыгала */
+    height: 100vh; 
+    z-index: 0; 
+    pointer-events: none; 
+  }
   .orb { position: absolute; border-radius: 50%; will-change: transform; animation: float 30s infinite linear; }
   .orb-1 { width: 90vw; height: 90vw; opacity: 0.4; background: radial-gradient(circle, rgba(108, 92, 231, 0.8) 0%, transparent 70%); top: -20%; left: -20%; }
   .orb-2 { width: 400px; height: 400px; opacity: 0.5; background: radial-gradient(circle, rgba(10, 132, 255, 0.6) 0%, transparent 70%); bottom: -150px; right: -100px; animation: breathe 6s infinite ease-in-out; }
-  .noise { position: fixed; inset: 0; opacity: 0.04; background: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+  .noise { position: fixed; inset: 0; opacity: 0.04; background: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); pointer-events: none; }
   @keyframes float { 0% {transform:rotate(0deg)} 100% {transform:rotate(360deg)} }
   @keyframes breathe { 0%, 100% { transform: scale(1); opacity: 0.4; } 50% { transform: scale(1.1); opacity: 0.6; } }
 
-  /* =========================================
-     2. DASHBOARD LAYER (Z-INDEX 1)
-     ========================================= */
+  /* === MAIN APP CONTAINER (The one that resizes) === */
   .app-layout {
-    position: absolute; inset: 0; z-index: 1;
-    display: flex; flex-direction: column;
-    transition: transform 0.4s cubic-bezier(0.1, 0.9, 0.2, 1), opacity 0.4s;
-    background: transparent;
+    position: relative; 
+    z-index: 1; 
+    top: 0; left: 0; right: 0;
+    height: 100%; /* Will be set by JS */
+    width: 100%;
+    overflow: hidden;
+    display: flex; 
+    flex-direction: column;
   }
-  /* Эффект "ухода на задний план" при открытии камеры */
-  .app-layout.pushed { transform: scale(0.92); opacity: 0; pointer-events: none; }
 
-  /* HEADER GROUP (Calendar + Widgets) */
+  /* === HEADER (Absolute inside App Layout) === */
   .fixed-header-group {
-    position: relative; z-index: 10;
+    position: absolute; 
+    top: 0; left: 0; right: 0;
+    z-index: 50;
     background: linear-gradient(180deg, rgba(5,5,5,0.95) 0%, rgba(5,5,5,0.85) 70%, rgba(5,5,5,0) 100%);
     backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    padding-bottom: 0px; 
+    overscroll-behavior: none;
   }
 
-  /* CALENDAR */
-  .calendar-block { padding-top: var(--safe-top); padding-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.05); }
-  .calendar-header { display: flex; justify-content: space-between; padding: 0 16px 8px 16px; }
-  .month-label { font-size: 11px; font-weight: 800; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1.5px; }
-  .calendar-swipe-area { width: 100%; height: 52px; overflow: hidden; position: relative; touch-action: pan-y; }
-  .calendar-track { display: flex; width: 300%; height: 100%; transform: translateX(-33.333333%); will-change: transform; }
-  .calendar-week { flex: 1; display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; padding: 0 10px; }
-  .day-cell { display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 12px; transition: 0.2s; position: relative; }
-  .day-cell.selected { background: linear-gradient(135deg, rgba(255,255,255,0.15), rgba(255,255,255,0.05)); border: 1px solid rgba(255,255,255,0.2); }
-  .dc-name { font-size: 9px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; }
-  .dc-num { font-size: 17px; font-weight: 600; color: #fff; }
-  .day-cell.selected .dc-num { font-weight: 700; }
-
-  /* WIDGETS CAROUSEL */
-  .carousel-track { display: flex; gap: 12px; padding: 20px 16px 30px 16px; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; }
-  .widget { flex: 0 0 calc(100% - 16px); scroll-snap-align: center; height: 160px; border-radius: var(--radius-xl); background: var(--surface-glass); border: 1px solid var(--surface-border); backdrop-filter: blur(20px); position: relative; padding: 16px; overflow: hidden; }
+  /* === 2. INFINITE CALENDAR === */
+  .calendar-block {
+    padding-top: var(--safe-top);
+    padding-bottom: 8px;
+    user-select: none;
+    overflow: hidden;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+  }
+  .calendar-header { display: flex; align-items: center; justify-content: space-between; padding: 0 16px 8px 16px; }
+  .month-label { font-size: 11px; font-weight: 800; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1.5px; opacity: 0.9; }
   
-  /* MACROS WIDGET */
+  .calendar-swipe-area { width: 100%; height: 52px; overflow: hidden; position: relative; touch-action: pan-y; cursor: grab; }
+  .calendar-track { display: flex; width: 300%; height: 100%; transform: translateX(-33.333333%); will-change: transform; }
+  .calendar-week { flex: 1; display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; height: 100%; padding: 0 10px; }
+
+  .day-cell { height: 52px; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 12px; background: transparent; transition: background 0.2s, transform 0.1s; position: relative; cursor: pointer; user-select: none; }
+  .day-cell:active { transform: scale(0.92); }
+  .dc-name { font-size: 9px; font-weight: 600; color: var(--text-muted); margin-bottom: 3px; text-transform: uppercase; }
+  .dc-num { font-size: 17px; font-weight: 600; color: #fff; font-variant-numeric: tabular-nums; }
+  .day-cell.selected { background: linear-gradient(135deg, rgba(255,255,255,0.15), rgba(255,255,255,0.05)); border: 1px solid rgba(255,255,255,0.2); box-shadow: 0 4px 12px rgba(0,0,0,0.2); transform: scale(1); }
+  .day-cell.selected .dc-name { color: #fff; opacity: 0.8; }
+  .day-cell.selected .dc-num { color: #fff; font-weight: 700; }
+  .day-cell.is-today::after { content: ''; position: absolute; bottom: 5px; width: 4px; height: 4px; border-radius: 50%; background: var(--acc-blue); box-shadow: 0 0 6px var(--acc-blue); }
+
+  /* === 3. WIDGETS === */
+  .carousel-wrap { padding: 0; }
+  .carousel-track { display: flex; gap: 12px; padding: 30px 16px 40px 16px; overflow-x: auto; scroll-snap-type: x mandatory; cursor: grab; scrollbar-width: none; }
+  .widget { flex: 0 0 calc(100% - 16px); scroll-snap-align: center; height: 160px; border-radius: var(--radius-xl); background: linear-gradient(165deg, rgba(255,255,255,0.09) 0%, rgba(255,255,255,0.02) 100%); border: 1px solid var(--surface-border); border-top: 1px solid rgba(255,255,255,0.15); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); position: relative; overflow: hidden; padding: 16px 12px; transition: 0.3s ease; }
+  .widget.is-overload { box-shadow: 0 10px 40px -5px rgba(0, 242, 234, 0.25); border-color: rgba(0, 242, 234, 0.3); }
+
+  /* Macros */
   .macros-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; height: 100%; align-items: center; }
-  .macro-item { display: flex; flex-direction: column; align-items: center; }
+  .macro-item { display: flex; flex-direction: column; align-items: center; justify-content: center; }
   .donut-box { width: 100%; max-width: 74px; aspect-ratio: 1; position: relative; display: flex; align-items: center; justify-content: center; margin-bottom: 8px; }
-  .mini-donut { width: 100%; height: 100%; transform: rotate(-90deg); }
+  .mini-donut { width: 100%; height: 100%; transform: rotate(-90deg); filter: drop-shadow(0 4px 8px rgba(0,0,0,0.25)); }
   .md-bg { fill: none; stroke: rgba(255,255,255,0.05); stroke-width: 7; }
   .md-val { fill: none; stroke-width: 7; stroke-linecap: round; stroke-dasharray: 151; transition: stroke-dashoffset 1s ease; }
   .m-icon { position: absolute; font-size: 20px; }
-  .m-data { text-align: center; }
-  .m-nums { font-size: 13px; font-weight: 800; color: #fff; }
-  .m-nums span { color: rgba(255,255,255,0.45); font-size: 11px; }
-  .m-lbl { font-size: 9px; font-weight: 700; text-transform: uppercase; color: rgba(255,255,255,0.5); }
-  .stroke-kcal { stroke: #ff9f0a; } .stroke-prot { stroke: #0a84ff; } .stroke-fats { stroke: #ffcc00; } .stroke-carb { stroke: #30d158; }
+  .m-data { display: flex; flex-direction: column; align-items: center; }
+  .m-nums { font-size: 13px; font-weight: 800; color: #fff; font-variant-numeric: tabular-nums; }
+  .m-nums span { color: rgba(255,255,255,0.45); font-size: 11px; margin-left: 1px; }
+  .m-lbl { font-size: 9px; font-weight: 700; text-transform: uppercase; color: rgba(255,255,255,0.5); margin-top: 2px; }
+  
+  .stroke-kcal { stroke: url(#grad-kcal); }
+  .stroke-prot { stroke: url(#grad-prot); }
+  .stroke-fats { stroke: url(#grad-fats); }
+  .stroke-carb { stroke: url(#grad-carb); }
 
-  /* WATER WIDGET */
-  .widget.water-widget { display: flex; flex-direction: column; justify-content: space-between; }
-  .water-header { display: flex; justify-content: space-between; }
-  .water-title { font-size: 11px; font-weight: 800; text-transform: uppercase; color: var(--text-muted); }
-  .water-cols { display: flex; gap: 6px; height: 50px; align-items: flex-end; }
-  .water-tube { flex: 1; height: 100%; background: rgba(0,0,0,0.4); border-radius: 6px; position: relative; overflow: hidden; border: 1px solid rgba(255,255,255,0.1); }
-  .water-fill { position: absolute; bottom: 0; left: 0; right: 0; background: var(--acc-blue); transition: height 0.3s; }
+  /* Water */
+  .widget.water-widget { display: flex; flex-direction: column; padding: 16px 20px; justify-content: space-between; }
+  .water-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+  .water-title { font-size: 11px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-muted); opacity: 0.8; }
+  .water-percent { font-size: 12px; font-weight: 700; color: var(--acc-blue); transition: color 0.3s; }
+  .widget.is-overload .water-percent { color: var(--acc-over); text-shadow: 0 0 8px var(--acc-over-glow); }
+  .water-cols { display: flex; justify-content: space-between; align-items: flex-end; height: 50px; gap: 6px; margin: 8px 0; }
+  .water-tube { flex: 1; height: 100%; background: rgba(0,0,0,0.4); border-radius: 6px; border: 1px solid rgba(255,255,255,0.06); position: relative; overflow: hidden; }
+  .water-fill { position: absolute; bottom: 0; left: 0; right: 0; height: var(--h, 0%); background: var(--acc-blue); transition: height 0.3s cubic-bezier(0.25, 1, 0.5, 1), background-color 0.3s, box-shadow 0.3s; box-shadow: 0 0 12px rgba(10, 132, 255, 0.5); }
+  .water-fill::after { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: rgba(255,255,255,0.6); opacity: 0.8; }
+  .widget.is-overload .water-fill { background: var(--acc-over); box-shadow: 0 0 15px var(--acc-over-glow); }
   .water-footer { display: flex; justify-content: space-between; align-items: flex-end; }
-  .wf-fact { font-size: 28px; font-weight: 800; line-height: 1; }
-  .water-controls { display: flex; gap: 12px; }
-  .water-btn { width: 44px; height: 44px; background: rgba(255,255,255,0.1); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 20px; }
+  .water-info { display: flex; flex-direction: column; gap: 2px; }
+  .wf-row { display: flex; align-items: baseline; gap: 4px; }
+  .wf-fact { font-size: 28px; font-weight: 800; color: #fff; line-height: 1; letter-spacing: -0.5px; }
+  .wf-unit { font-size: 12px; font-weight: 600; color: var(--text-muted); }
+  .wf-plan { font-size: 11px; font-weight: 500; color: var(--text-muted); opacity: 0.7; }
+  .water-controls { display: flex; gap: 24px; }
+  .water-btn { width: 54px; height: 44px; border-radius: 14px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); color: #fff; font-size: 22px; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: 0.2s; }
+  .water-btn:active { background: var(--acc-blue); transform: scale(0.92); }
+  .widget.is-overload .water-btn:active { background: var(--acc-over); }
+  .dots { display: flex; justify-content: center; gap: 6px; margin-top: 0px; pointer-events: none; transform: translateY(-20px); }
+  .dot { width: 6px; height: 6px; border-radius: 10px; background: rgba(255,255,255,0.2); transition: 0.3s; }
+  .dot.active { width: 20px; background: #fff; }
 
-  /* TIMELINE */
-  .scroll-container { flex: 1; overflow-y: auto; padding: 0 16px 120px 16px; -webkit-overflow-scrolling: touch; }
-  .timeline { display: flex; flex-direction: column; gap: 12px; }
-  .meal-card { background: var(--surface-glass); border: 1px solid var(--surface-border); border-radius: var(--radius-l); padding: 14px; animation: slideIn 0.4s ease; }
+  /* === 4. SCROLL CONTAINER === */
+  .scroll-container {
+    flex: 1; 
+    overflow-y: auto; 
+    -webkit-overflow-scrolling: touch;
+    padding-top: var(--header-height); 
+    /* Dynamic padding will be handled by JS, but keep safe default */
+    padding-bottom: 120px;
+    mask-image: linear-gradient(to bottom, transparent 0px, black 20px, black 100%);
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0px, black 20px, black 100%);
+  }
+
+  .timeline { padding: 10px 16px 0 16px; display: flex; flex-direction: column; gap: 12px; }
+  
+  .meal-card { 
+    background: var(--surface-glass); 
+    border: 1px solid var(--surface-border); 
+    border-radius: var(--radius-l); 
+    padding: 14px; 
+    backdrop-filter: blur(12px); 
+    transition: background 0.2s; 
+  }
+  .meal-card:active { background: rgba(255,255,255,0.1); }
+  
+  /* Grid Columns */
   .col-headers, .prod-item { display: grid; grid-template-columns: minmax(0, 1fr) 34px 30px 22px 22px 22px; gap: 5px; align-items: center; }
   .col-headers { margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,0.08); }
-  .mh-time, .pi-name, .pi-val { font-size: 13px; color: #fff; font-feature-settings: "tnum"; }
-  .pi-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .pi-val { text-align: right; }
+  .mh-time, .ch-item, .pi-name, .pi-val, .pi-w, .pi-k, .pi-p, .pi-f, .pi-c { font-size: 13px; font-weight: 400; color: #fff; font-feature-settings: "tnum"; white-space: nowrap; }
+  .mh-time { text-align: left; } 
+  .pi-name { overflow: hidden; text-overflow: ellipsis; }
+  .ch-item, .pi-val { text-align: right; }
+  .prod-item { margin-bottom: 10px; min-height: 20px; }
+  .prod-item:last-child { margin-bottom: 2px; }
 
-  /* =========================================
-     3. CAMERA LAYER (Z-INDEX 100)
-     ========================================= */
-  .camera-layer {
-    position: fixed; inset: 0; z-index: 100;
-    background: #000;
-    transform: translateY(100%);
-    transition: transform 0.4s cubic-bezier(0.1, 0.9, 0.2, 1);
-    display: flex; flex-direction: column;
-  }
-  .camera-layer.active { transform: translateY(0); }
-
-  .cam-viewport { position: relative; flex: 1; overflow: hidden; display: flex; align-items: center; justify-content: center; background: #000; }
-  video { position: absolute; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity 0.3s; }
-  video.active { opacity: 1; }
-  #uiCanvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
-
-  /* CAM UI OVERLAYS */
-  .cam-ui-layer { position: absolute; inset: 0; z-index: 20; padding: calc(16px + env(safe-area-inset-top)) 16px 100px 16px; display: flex; flex-direction: column; justify-content: space-between; pointer-events: none; }
-  .cam-ui-layer.active { pointer-events: auto; }
-  
-  .top-bar { display: flex; justify-content: space-between; align-items: center; }
-  .btn-close { width: 40px; height: 40px; border-radius: 50%; background: rgba(0,0,0,0.4); backdrop-filter: blur(10px); display: flex; align-items: center; justify-content: center; color: #fff; cursor: pointer; border: 1px solid rgba(255,255,255,0.1); }
-  
-  .controls-grid { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; width: 100%; }
-  .shutter-outer { width: 80px; height: 80px; border-radius: 50%; border: 4px solid rgba(255,255,255,0.8); display: flex; align-items: center; justify-content: center; cursor: pointer; pointer-events: auto; transition: 0.2s; }
-  .shutter-inner { width: 62px; height: 62px; border-radius: 50%; background: #fff; transition: 0.2s; }
-  .shutter-outer:active .shutter-inner { transform: scale(0.9); }
-  .shutter-outer.disabled { border-color: var(--acc-red); opacity: 0.5; }
-
-  /* =========================================
-     4. OMNI BAR (Z-INDEX 50)
-     ========================================= */
+  /* === 5. OMNI-BAR (CHANGED: ABSOLUTE IN CONTAINER) === */
   .omni-bar { 
-    position: fixed; bottom: 0; left: 0; right: 0; 
-    background: rgba(10, 10, 10, 0.85); backdrop-filter: blur(30px); -webkit-backdrop-filter: blur(30px);
+    position: absolute; /* CRITICAL CHANGE: Not fixed! */
+    bottom: 0; left: 0; right: 0; 
+    background: rgba(10, 10, 10, 0.85); 
+    backdrop-filter: blur(30px); 
     border-top: 1px solid var(--surface-border); 
     padding: 8px 12px var(--safe-bottom) 12px; 
-    z-index: 50; 
-    display: flex; align-items: flex-end; gap: 10px; 
-    transition: transform 0.3s;
+    z-index: 100; 
+    display: flex; align-items: flex-end; gap: 8px; 
   }
-  .omni-bar.hidden { transform: translateY(100%); }
+  .icon-btn { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; }
+  .input-wrap { flex: 1; min-height: 42px; background: rgba(255,255,255,0.08); border-radius: 20px; padding: 4px 16px; display: flex; align-items: center; }
+  textarea { width: 100%; background: transparent; border: none; color: #fff; font-size: 15px; resize: none; font-family: inherit; padding: 10px 0; margin: 0; }
+  .action-btn { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; transition: 0.2s; }
+  .mode-cam { color: #fff; }
+  .mode-send { background: var(--acc-blue); color: #fff; box-shadow: 0 0 12px rgba(10,132,255,0.4); }
 
-  .omni-icon-btn { width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; color: #fff; cursor: pointer; }
-  .input-wrap { flex: 1; min-height: 42px; background: rgba(255,255,255,0.1); border-radius: 20px; padding: 2px 16px; display: flex; align-items: center; }
-  .omni-input { width: 100%; background: transparent; border: none; color: #fff; font-size: 16px; resize: none; padding: 10px 0; margin: 0; max-height: 80px; font-family: inherit; }
-  .omni-input::placeholder { color: rgba(255,255,255,0.4); }
+  /* === 6. SHEET (Outside Container, Fixed to Window) === */
+  .sheet-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 200; opacity: 0; pointer-events: none; transition: opacity 0.3s; backdrop-filter: blur(4px); }
+  .sheet-overlay.visible { opacity: 1; pointer-events: auto; }
+  .sheet { position: fixed; bottom: 0; left: 0; right: 0; background: #151517; border-radius: 24px 24px 0 0; padding: 24px 16px calc(30px + env(safe-area-inset-bottom)) 16px; transform: translateY(100%); transition: transform 0.3s cubic-bezier(0.1, 0.7, 0.1, 1); border-top: 1px solid rgba(255,255,255,0.15); }
+  .sheet-overlay.visible .sheet { transform: translateY(0); }
+  .sheet-item { background: rgba(255,255,255,0.06); border-radius: 16px; padding: 16px; display: flex; align-items: center; gap: 16px; cursor: pointer; margin-bottom: 8px; }
+  .sheet-item:active { background: rgba(255,255,255,0.12); }
+  .sheet-icon { font-size: 24px; }
+  .sheet-lbl { font-size: 16px; font-weight: 600; color: #fff; }
+
+
+  /* === PROCESSING OVERLAY === */
+.processing-overlay {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(5, 5, 5, 0.6); /* Полупрозрачный фон */
+  backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); /* Тот самый Blur */
+  display: flex; align-items: center; justify-content: center;
+  opacity: 0; pointer-events: none; transition: 0.4s ease;
+}
+.processing-overlay.active { opacity: 1; pointer-events: auto; }
+
+.proc-card {
+  width: 90%; max-width: 320px;
+  background: rgba(30, 30, 30, 0.6);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 24px; padding: 30px 20px;
+  display: flex; flex-direction: column; align-items: center;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+}
+
+/* Анимация Орба (Глаз AI) */
+.proc-visual { position: relative; width: 60px; height: 60px; margin-bottom: 20px; }
+.proc-orb {
+  position: absolute; inset: 0; border-radius: 50%;
+  background: radial-gradient(circle, #0a84ff 0%, transparent 70%);
+  animation: pulse-ai 2s infinite;
+}
+.proc-ring {
+  position: absolute; inset: -10px; border-radius: 50%;
+  border: 2px solid rgba(10, 132, 255, 0.3);
+  border-top-color: #0a84ff;
+  animation: spin-ai 1.5s infinite linear;
+}
+@keyframes pulse-ai { 0% { opacity: 0.5; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1.1); } 100% { opacity: 0.5; transform: scale(0.8); } }
+@keyframes spin-ai { 100% { transform: rotate(360deg); } }
+
+.proc-title { font-size: 17px; font-weight: 700; color: #fff; margin-bottom: 20px; letter-spacing: 0.5px; }
+
+/* Список шагов */
+.proc-steps { width: 100%; display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px; }
+.step { display: flex; align-items: center; gap: 10px; opacity: 0.4; transition: 0.3s; transform: translateX(-10px); }
+.step.active { opacity: 1; transform: translateX(0); font-weight: 600; }
+.step.done { opacity: 0.5; transform: translateX(0); color: var(--acc-green); }
+.s-icon { font-size: 14px; width: 20px; text-align: center; }
+.s-lbl { font-size: 13px; color: #fff; }
+
+.proc-close { margin-top: 10px; font-size: 13px; color: rgba(255,255,255,0.4); text-decoration: underline; cursor: pointer; }
+
+/* === DRAFT SHEET (Валидация) === */
+.draft-overlay {
+  position: fixed; inset: 0; z-index: 1100;
+  background: rgba(0,0,0,0.5);
+  display: flex; flex-direction: column; justify-content: flex-end;
+  opacity: 0; pointer-events: none; transition: 0.3s;
+}
+.draft-overlay.visible { opacity: 1; pointer-events: auto; }
+
+.draft-sheet {
+  background: #1c1c1e;
+  border-radius: 24px 24px 0 0;
+  border-top: 1px solid rgba(255,255,255,0.15);
+  padding: 24px 20px calc(20px + env(safe-area-inset-bottom)) 20px;
+  transform: translateY(100%); transition: transform 0.3s cubic-bezier(0.1, 0.8, 0.2, 1);
+  max-height: 80vh; overflow-y: auto;
+}
+.draft-overlay.visible .draft-sheet { transform: translateY(0); }
+
+.ds-header { margin-bottom: 20px; }
+.ds-title { font-size: 20px; font-weight: 800; margin-bottom: 4px; }
+.ds-subtitle { font-size: 13px; color: var(--text-muted); line-height: 1.4; }
+
+/* Элемент списка черновика */
+.draft-item {
+  display: flex; align-items: center; gap: 10px;
+  background: rgba(255,255,255,0.06);
+  padding: 12px; border-radius: 16px; margin-bottom: 10px;
+}
+.di-icon { font-size: 20px; }
+.di-inputs { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+.di-name { background: transparent; border: none; color: #fff; font-size: 15px; font-weight: 600; width: 100%; }
+.di-row { display: flex; align-items: center; gap: 8px; }
+.di-weight { background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; color: var(--acc-blue); font-weight: 700; width: 60px; text-align: center; padding: 4px; font-size: 14px; }
+.di-unit { font-size: 13px; color: var(--text-muted); }
+.di-del { width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; color: var(--acc-red); opacity: 0.7; }
+
+.ds-actions { display: flex; gap: 12px; margin-top: 20px; }
+.ds-btn { flex: 1; height: 48px; border-radius: 14px; border: none; font-size: 16px; font-weight: 600; cursor: pointer; }
+.ds-btn.sec { background: rgba(255,255,255,0.1); color: #fff; }
+.ds-btn.prim { background: var(--acc-blue); color: #fff; box-shadow: 0 4px 12px rgba(10,132,255,0.3); }
+
+  /* === ANIMATIONS === */
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateY(-20px) scale(0.95); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+
+/* === 7. CAMERA MODULE INTEGRATION === */
+  .camera-wrapper {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: #000; z-index: 900;
+    display: flex; flex-direction: column;
+    transform: translateY(100%); transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+    visibility: hidden; 
+  }
+  .camera-wrapper.active { transform: translateY(0); visibility: visible; }
+
+  /* Viewport */
+  .cam-viewport {
+    position: relative; flex: 1; width: 100%; overflow: hidden;
+    display: flex; align-items: center; justify-content: center; background: #000;
+  }
+  video.cam-feed {
+    position: absolute; width: 100%; height: 100%; object-fit: cover;
+    opacity: 0; transition: opacity 0.3s;
+  }
+  video.cam-feed.active { opacity: 1; }
   
-  .cam-trigger-btn { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; cursor: pointer; transition: 0.2s; }
-  .cam-trigger-btn.mode-send { background-color: var(--acc-blue); box-shadow: 0 0 15px rgba(10, 132, 255, 0.4); }
-  .omni-btn-icon { width: 24px; height: 24px; stroke: currentColor; stroke-width: 2; fill: none; stroke-linecap: round; stroke-linejoin: round; }
-  .icon-hidden { display: none !important; }
-  #icoSend { margin-right: 2px; margin-top: 2px; }
+  /* Canvas & Overlays */
+  #uiCanvas { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none; }
+  .cam-ui-layer {
+    position: absolute; inset: 0; z-index: 20;
+    display: flex; flex-direction: column; justify-content: space-between;
+    padding: calc(16px + env(safe-area-inset-top)) 16px calc(32px + env(safe-area-inset-bottom)) 16px;
+    pointer-events: none;
+  }
 
-  /* =========================================
-     5. OVERLAYS (Z-INDEX 1000+)
-     ========================================= */
-  .processing-overlay { position: fixed; inset: 0; z-index: 1000; background: rgba(5, 5, 5, 0.6); backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: 0.4s ease; }
-  .processing-overlay.active { opacity: 1; pointer-events: auto; }
-  .proc-card { width: 90%; max-width: 320px; background: rgba(30, 30, 30, 0.6); border: 1px solid rgba(255,255,255,0.1); border-radius: 24px; padding: 30px 20px; display: flex; flex-direction: column; align-items: center; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
-  .proc-visual { position: relative; width: 60px; height: 60px; margin-bottom: 20px; }
-  .proc-orb { position: absolute; inset: 0; border-radius: 50%; background: radial-gradient(circle, #0a84ff 0%, transparent 70%); animation: pulse-ai 2s infinite; }
-  .proc-ring { position: absolute; inset: -10px; border-radius: 50%; border: 2px solid rgba(10, 132, 255, 0.3); border-top-color: #0a84ff; animation: spin-ai 1.5s infinite linear; }
-  .proc-steps { width: 100%; display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px; }
-  .step { display: flex; align-items: center; gap: 10px; opacity: 0.4; transition: 0.3s; transform: translateX(-10px); }
-  .step.active { opacity: 1; transform: translateX(0); font-weight: 600; }
-  .step.done { opacity: 0.5; transform: translateX(0); color: var(--acc-green); }
-  .s-icon { font-size: 14px; width: 20px; text-align: center; }
-  .s-lbl { font-size: 13px; color: #fff; }
-  .proc-close { margin-top: 10px; font-size: 13px; color: rgba(255,255,255,0.4); text-decoration: underline; cursor: pointer; }
+  /* Controls */
+  .cam-top-bar { display: flex; justify-content: space-between; align-items: center; pointer-events: auto; height: 48px; }
+  .btn-close-cam {
+    width: 40px; height: 40px; border-radius: 50%;
+    background: rgba(0,0,0,0.4); backdrop-filter: blur(10px);
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; cursor: pointer; border: 1px solid rgba(255,255,255,0.1);
+  }
+  .status-chip {
+    background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.1);
+    backdrop-filter: blur(10px); padding: 8px 16px; border-radius: 20px;
+    display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600;
+  }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--acc-yellow); box-shadow: 0 0 8px var(--acc-yellow); transition: 0.3s; }
+  .status-dot.ok { background: var(--acc-green); box-shadow: 0 0 8px var(--acc-green); }
 
-  @keyframes pulse-ai { 0% { opacity: 0.5; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1.1); } 100% { opacity: 0.5; transform: scale(0.8); } }
-  @keyframes spin-ai { 100% { transform: rotate(360deg); } }
-  @keyframes slideIn { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
+  /* Bottom Actions */
+  .cam-controls-grid {
+    display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
+    pointer-events: auto; width: 100%; margin-bottom: 20px;
+  }
+  .action-circle {
+    width: 50px; height: 50px; border-radius: 50%;
+    background: rgba(30,30,30,0.6); backdrop-filter: blur(12px);
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; border: 1px solid rgba(255,255,255,0.15); cursor: pointer; transition: 0.2s;
+  }
+  .action-circle:active { transform: scale(0.9); }
+  .action-circle.active { background: var(--acc-yellow); color: #000; }
+  
+  .shutter-outer {
+    width: 80px; height: 80px; border-radius: 50%;
+    border: 4px solid rgba(255,255,255,0.8);
+    display:flex; align-items:center; justify-content:center; transition: 0.3s;
+  }
+  .shutter-inner { width: 62px; height: 62px; border-radius: 50%; background: #fff; transition: 0.3s; cursor: pointer; }
+  .shutter-outer:active .shutter-inner { transform: scale(0.9); }
+  .shutter-outer.disabled { border-color: var(--acc-red); opacity: 0.8; }
+  .shutter-outer.disabled .shutter-inner { background: var(--acc-red); transform: scale(0.4); }
 
-  .draft-overlay { position: fixed; inset: 0; z-index: 1100; background: rgba(0,0,0,0.5); display: flex; flex-direction: column; justify-content: flex-end; opacity: 0; pointer-events: none; transition: 0.3s; }
-  .draft-overlay.visible { opacity: 1; pointer-events: auto; }
-  .draft-sheet { background: #1c1c1e; border-radius: 24px 24px 0 0; border-top: 1px solid rgba(255,255,255,0.15); padding: 24px 20px calc(20px + env(safe-area-inset-bottom)) 20px; transform: translateY(100%); transition: transform 0.3s cubic-bezier(0.1, 0.8, 0.2, 1); max-height: 80vh; overflow-y: auto; }
-  .draft-overlay.visible .draft-sheet { transform: translateY(0); }
-  .draft-item { display: flex; align-items: center; gap: 10px; background: rgba(255,255,255,0.06); padding: 12px; border-radius: 16px; margin-bottom: 10px; }
-  .di-icon { font-size: 20px; }
-  .di-inputs { flex: 1; display: flex; flex-direction: column; gap: 6px; }
-  .di-name { background: transparent; border: none; color: #fff; font-size: 15px; font-weight: 600; width: 100%; padding: 0; margin: 0; font-family: inherit; }
-  .di-row { display: flex; align-items: center; gap: 8px; }
-  .di-weight { background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; color: var(--acc-blue); font-weight: 700; width: 60px; text-align: center; padding: 6px; font-size: 15px; -moz-appearance: textfield; }
-  .di-weight::-webkit-inner-spin-button { -webkit-appearance: none; }
-  .di-unit { font-size: 13px; color: var(--text-muted); }
-  .di-del { width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; color: var(--acc-red); opacity: 0.7; cursor: pointer; }
-  .ds-actions { display: flex; gap: 12px; margin-top: 20px; }
-  .ds-btn { flex: 1; height: 48px; border-radius: 14px; border: none; font-size: 16px; font-weight: 600; cursor: pointer; }
-  .ds-btn.sec { background: rgba(255,255,255,0.1); color: #fff; }
-  .ds-btn.prim { background: var(--acc-blue); color: #fff; box-shadow: 0 4px 12px rgba(10,132,255,0.3); }
+  /* Preview Layer */
+  .cam-preview-layer {
+    position: absolute; inset: 0; z-index: 950;
+    background: #000; display: none; flex-direction: column;
+  }
+  .preview-img-box { flex: 1; width: 100%; object-fit: contain; background: #111; }
+  .preview-toolbar { padding: 20px; display: flex; gap: 16px; background: #000; }
+  .p-btn { flex: 1; height: 48px; border-radius: 14px; font-weight: 600; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.1); color: #fff; }
+  .p-btn.primary { background: var(--acc-blue); border-color: transparent; }
 
-  .hidden { display: none !important; }
+  /* Utilities: Toast & Loader */
+  .cam-toast {
+    position: absolute; top: 100px; left: 50%; transform: translateX(-50%);
+    background: rgba(0,0,0,0.7); color: #fff; padding: 8px 16px;
+    border-radius: 20px; font-size: 13px; font-weight: 500;
+    pointer-events: none; opacity: 0; transition: opacity 0.3s; z-index: 50; backdrop-filter: blur(4px);
+  }
+  .cam-toast.visible { opacity: 1; }
+
+  .cam-loader-spinner {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    width: 40px; height: 40px; border: 4px solid rgba(255,255,255,0.3);
+    border-top: 4px solid #fff; border-radius: 50%; z-index: 5;
+    animation: spin 1s linear infinite; display: none;
+  }
+  .cam-loader-spinner.active { display: block; }
+  @keyframes spin { 0% { transform: translate(-50%, -50%) rotate(0deg); } 100% { transform: translate(-50%, -50%) rotate(360deg); } }
+
+  /* Perm Overlay */
+  .perm-overlay { position: absolute; inset: 0; z-index: 999; background: rgba(0,0,0,0.9); display: none; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 20px; }
+  .perm-overlay.active { display: flex; }
+
 </style>
 </head>
 <body>
 
-  <div class="fx-layer">
-    <div class="orb orb-1"></div>
-    <div class="orb orb-2"></div>
-    <div class="noise"></div>
-  </div>
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <linearGradient id="grad-kcal"><stop offset="0%" stop-color="#ff9f0a"/><stop offset="100%" stop-color="#ff453a"/></linearGradient>
+    <linearGradient id="grad-prot"><stop offset="0%" stop-color="#48bfe3"/><stop offset="100%" stop-color="#5e60ce"/></linearGradient>
+    <linearGradient id="grad-fats"><stop offset="0%" stop-color="#f1c40f"/><stop offset="100%" stop-color="#e67e22"/></linearGradient>
+    <linearGradient id="grad-carb"><stop offset="0%" stop-color="#2ecc71"/><stop offset="100%" stop-color="#1abc9c"/></linearGradient>
+  </defs>
+</svg>
 
-  <div class="app-layout" id="appLayout">
-    <div class="fixed-header-group">
-      <div class="calendar-block">
-        <div class="calendar-header"><div class="month-label" id="monthLabel">...</div></div>
-        <div class="calendar-swipe-area" id="swipeArea">
-          <div class="calendar-track" id="calTrack">
-            <div class="calendar-week" id="weekPrev"></div>
-            <div class="calendar-week" id="weekCurr"></div>
-            <div class="calendar-week" id="weekNext"></div>
-          </div>
+<div class="fx-layer" id="fxLayer">
+  <div class="orb orb-1"></div>
+  <div class="orb orb-2"></div>
+  <div class="noise"></div>
+</div>
+
+<!-- APP LAYOUT CONTAINER (Resizes safely) -->
+<div class="app-layout" id="appLayout">
+  
+  <div class="fixed-header-group">
+    <!-- CALENDAR -->
+    <div class="calendar-block">
+      <div class="calendar-header"><div class="month-label" id="monthLabel">...</div></div>
+      <div class="calendar-swipe-area" id="swipeArea">
+        <div class="calendar-track" id="calTrack">
+          <div class="calendar-week" id="weekPrev"></div>
+          <div class="calendar-week" id="weekCurr"></div>
+          <div class="calendar-week" id="weekNext"></div>
         </div>
       </div>
+    </div>
+    <!-- WIDGETS -->
+    <div class="carousel-wrap">
       <div class="carousel-track" id="track">
         <div class="widget">
-           <div class="macros-grid">
-            <div class="macro-item"><div class="donut-box"><svg class="mini-donut" viewBox="0 0 60 60"><circle class="md-bg" cx="30" cy="30" r="24"/><circle class="md-val stroke-kcal" cx="30" cy="30" r="24" style="stroke-dashoffset: 45px"/></svg><div class="m-icon">🔥</div></div><div class="m-data"><div class="m-nums" id="wid-kcal">1450</div><div class="m-lbl">ККАЛ</div></div></div>
-            <div class="macro-item"><div class="donut-box"><svg class="mini-donut" viewBox="0 0 60 60"><circle class="md-bg" cx="30" cy="30" r="24"/><circle class="md-val stroke-prot" cx="30" cy="30" r="24" style="stroke-dashoffset: 100px"/></svg><div class="m-icon">🐓</div></div><div class="m-data"><div class="m-nums" id="wid-prot">110</div><div class="m-lbl">БЕЛКИ</div></div></div>
-            <div class="macro-item"><div class="donut-box"><svg class="mini-donut" viewBox="0 0 60 60"><circle class="md-bg" cx="30" cy="30" r="24"/><circle class="md-val stroke-fats" cx="30" cy="30" r="24" style="stroke-dashoffset: 110px"/></svg><div class="m-icon">🥑</div></div><div class="m-data"><div class="m-nums" id="wid-fat">45</div><div class="m-lbl">ЖИРЫ</div></div></div>
-            <div class="macro-item"><div class="donut-box"><svg class="mini-donut" viewBox="0 0 60 60"><circle class="md-bg" cx="30" cy="30" r="24"/><circle class="md-val stroke-carb" cx="30" cy="30" r="24" style="stroke-dashoffset: 60px"/></svg><div class="m-icon">🌾</div></div><div class="m-data"><div class="m-nums" id="wid-carb">180</div><div class="m-lbl">УГЛИ</div></div></div>
+          <div class="macros-grid">
+            <div class="macro-item"><div class="donut-box"><svg class="mini-donut" viewBox="0 0 60 60"><circle class="md-bg" cx="30" cy="30" r="24"/><circle class="md-val stroke-kcal" cx="30" cy="30" r="24" style="stroke-dashoffset: 45px"/></svg><div class="m-icon">🔥</div></div><div class="m-data"><div class="m-nums">1450<span>/2100</span></div><div class="m-lbl">ККАЛ</div></div></div>
+            <div class="macro-item"><div class="donut-box"><svg class="mini-donut" viewBox="0 0 60 60"><circle class="md-bg" cx="30" cy="30" r="24"/><circle class="md-val stroke-prot" cx="30" cy="30" r="24" style="stroke-dashoffset: 100px"/></svg><div class="m-icon">🐓</div></div><div class="m-data"><div class="m-nums">110<span>/160</span></div><div class="m-lbl">БЕЛКИ</div></div></div>
+            <div class="macro-item"><div class="donut-box"><svg class="mini-donut" viewBox="0 0 60 60"><circle class="md-bg" cx="30" cy="30" r="24"/><circle class="md-val stroke-fats" cx="30" cy="30" r="24" style="stroke-dashoffset: 110px"/></svg><div class="m-icon">🥑</div></div><div class="m-data"><div class="m-nums">45<span>/70</span></div><div class="m-lbl">ЖИРЫ</div></div></div>
+            <div class="macro-item"><div class="donut-box"><svg class="mini-donut" viewBox="0 0 60 60"><circle class="md-bg" cx="30" cy="30" r="24"/><circle class="md-val stroke-carb" cx="30" cy="30" r="24" style="stroke-dashoffset: 60px"/></svg><div class="m-icon">🌾</div></div><div class="m-data"><div class="m-nums">180<span>/250</span></div><div class="m-lbl">УГЛИ</div></div></div>
           </div>
         </div>
         <div class="widget water-widget" id="waterCard">
@@ -257,347 +470,282 @@
           <div class="water-footer"><div class="water-info"><div class="wf-row"><div class="wf-fact" id="lbl-fact">0</div><div class="wf-unit">мл</div></div><div class="wf-plan">Цель: 2500</div></div><div class="water-controls"><div class="water-btn" onclick="updateWater(-250)">−</div><div class="water-btn" onclick="updateWater(250)">+</div></div></div>
         </div>
       </div>
-    </div>
-
-    <div class="scroll-container" id="scrollContainer">
-      <div class="timeline" id="timeline">
-        <div class="meal-card">
-          <div class="col-headers"><div class="mh-time">09:00</div><div class="pi-val">Вес</div><div class="pi-val">К</div><div class="pi-val">Б</div><div class="pi-val">Ж</div><div class="pi-val">У</div></div>
-          <div class="prod-item"><div class="pi-name">Овсяная каша</div><div class="pi-val">250</div><div class="pi-val">220</div><div class="pi-val">8</div><div class="pi-val">6</div><div class="pi-val">32</div></div>
-          <div class="prod-item"><div class="pi-name">Кофе с молоком</div><div class="pi-val">250</div><div class="pi-val">125</div><div class="pi-val">3</div><div class="pi-val">3</div><div class="pi-val">5</div></div>
-        </div>
-      </div>
+      <div class="dots"><div class="dot active"></div><div class="dot"></div></div>
     </div>
   </div>
 
-  <div class="camera-layer" id="cameraLayer">
-    <div class="cam-viewport">
-      <video id="video" autoplay playsinline muted></video>
-      <div id="loader" class="cam-loader hidden"><div class="spinner"></div></div>
-      <canvas id="uiCanvas"></canvas>
+  <!-- SCROLL CONTAINER -->
+  <div class="scroll-container" id="scrollContainer">
+    <div class="timeline">
       
-      <div class="cam-ui-layer active" id="camControls">
-        <div class="top-bar">
-          <div class="btn-close" id="btnCloseCam">
-            <svg width="24" height="24" fill="currentColor" viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
-          </div>
-          <div style="background:rgba(0,0,0,0.4); border-radius:20px; padding:6px 12px; backdrop-filter:blur(10px); font-size:13px; font-weight:600; display:flex; gap:6px; align-items:center;">
-             <div id="lvlDot" style="width:8px; height:8px; background:#ff9f0a; border-radius:50%; box-shadow:0 0 8px #ff9f0a"></div>
-             <span id="lvlText">Уровень</span>
-          </div>
-          <div style="width:40px"></div>
-        </div>
-        
-        <div class="controls-grid">
-           <div></div>
-           <div class="shutter-outer disabled" id="shutterBtn"><div class="shutter-inner"></div></div>
-           <div></div>
-        </div>
+      <!-- MEAL 1 -->
+      <div class="meal-card">
+        <div class="col-headers"><div class="mh-time" data-h="9" data-m="00">09:00</div><div class="ch-item">Вес</div><div class="ch-item">К</div><div class="ch-item">Б</div><div class="ch-item">Ж</div><div class="ch-item">У</div></div>
+        <div class="prod-item"><div class="pi-name">Овсяная каша на молоке с очень длинным названием</div><div class="pi-val pi-w">250</div><div class="pi-val pi-k">220</div><div class="pi-val pi-p">8</div><div class="pi-val pi-f">6</div><div class="pi-val pi-c">32</div></div>
+        <div class="prod-item"><div class="pi-name">Масло сливочное</div><div class="pi-val pi-w">10</div><div class="pi-val pi-k">75</div><div class="pi-val pi-p">0</div><div class="pi-val pi-f">8</div><div class="pi-val pi-c">0</div></div>
+        <div class="prod-item"><div class="pi-name">Кофе с молоком</div><div class="pi-val pi-w">250</div><div class="pi-val pi-k">125</div><div class="pi-val pi-p">3</div><div class="pi-val pi-f">3</div><div class="pi-val pi-c">5</div></div>
       </div>
+
+      <!-- MEAL 2 -->
+      <div class="meal-card">
+        <div class="col-headers"><div class="mh-time" data-h="11" data-m="30">11:30</div><div class="ch-item">Вес</div><div class="ch-item">К</div><div class="ch-item">Б</div><div class="ch-item">Ж</div><div class="ch-item">У</div></div>
+        <div class="prod-item"><div class="pi-name">Творог 5%</div><div class="pi-val pi-w">150</div><div class="pi-val pi-k">120</div><div class="pi-val pi-p">24</div><div class="pi-val pi-f">7</div><div class="pi-val pi-c">3</div></div>
+        <div class="prod-item"><div class="pi-name">Яблоко зеленое</div><div class="pi-val pi-w">120</div><div class="pi-val pi-k">60</div><div class="pi-val pi-p">0</div><div class="pi-val pi-f">0</div><div class="pi-val pi-c">14</div></div>
+      </div>
+
+      <!-- MEAL 3 -->
+      <div class="meal-card">
+        <div class="col-headers"><div class="mh-time" data-h="13" data-m="30">13:30</div><div class="ch-item">Вес</div><div class="ch-item">К</div><div class="ch-item">Б</div><div class="ch-item">Ж</div><div class="ch-item">У</div></div>
+        <div class="prod-item"><div class="pi-name">Борщ с говядиной</div><div class="pi-val pi-w">300</div><div class="pi-val pi-k">240</div><div class="pi-val pi-p">12</div><div class="pi-val pi-f">8</div><div class="pi-val pi-c">10</div></div>
+        <div class="prod-item"><div class="pi-name">Сметана 20%</div><div class="pi-val pi-w">30</div><div class="pi-val pi-k">62</div><div class="pi-val pi-p">1</div><div class="pi-val pi-f">6</div><div class="pi-val pi-c">1</div></div>
+      </div>
+
+      <!-- MEAL 4 -->
+      <div class="meal-card">
+        <div class="col-headers"><div class="mh-time" data-h="17" data-m="00">17:00</div><div class="ch-item">Вес</div><div class="ch-item">К</div><div class="ch-item">Б</div><div class="ch-item">Ж</div><div class="ch-item">У</div></div>
+        <div class="prod-item"><div class="pi-name">Протеиновый батончик</div><div class="pi-val pi-w">50</div><div class="pi-val pi-k">180</div><div class="pi-val pi-p">20</div><div class="pi-val pi-f">8</div><div class="pi-val pi-c">4</div></div>
+      </div>
+
+      <!-- MEAL 5 -->
+      <div class="meal-card">
+        <div class="col-headers"><div class="mh-time" data-h="19" data-m="30">19:30</div><div class="ch-item">Вес</div><div class="ch-item">К</div><div class="ch-item">Б</div><div class="ch-item">Ж</div><div class="ch-item">У</div></div>
+        <div class="prod-item"><div class="pi-name">Куриная грудка гриль</div><div class="pi-val pi-w">150</div><div class="pi-val pi-k">240</div><div class="pi-val pi-p">31</div><div class="pi-val pi-f">4</div><div class="pi-val pi-c">0</div></div>
+        <div class="prod-item"><div class="pi-name">Овощной салат</div><div class="pi-val pi-w">200</div><div class="pi-val pi-k">80</div><div class="pi-val pi-p">2</div><div class="pi-val pi-f">1</div><div class="pi-val pi-c">8</div></div>
+      </div>
+
     </div>
   </div>
 
+  <!-- OMNI BAR (Absolute inside App Layout) -->
   <div class="omni-bar" id="omniBar">
-    <div class="omni-icon-btn">
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
-    </div>
-    <div class="input-wrap">
-      <textarea class="omni-input" id="omniInput" rows="1" placeholder="Яблоко 200г, кофе..."></textarea>
-    </div>
-    <div class="cam-trigger-btn" id="btnAction">
-      <svg id="icoCam" class="omni-btn-icon" viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
-      <svg id="icoSend" class="omni-btn-icon icon-hidden" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
-    </div>
+    <div class="icon-btn" onclick="toggleSheet()"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg></div>
+    <div class="input-wrap"><textarea id="msgInput" rows="1" placeholder="Яблоко 200г, кофе..."></textarea></div>
+    <div class="action-btn mode-cam" id="actionBtn" onclick="handleAction()"><svg id="iconCam" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg><svg id="iconSend" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:none"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg></div>
   </div>
 
-  <div class="processing-overlay" id="procOverlay">
-    <div class="proc-card">
-      <div class="proc-visual"><div class="proc-orb"></div><div class="proc-ring"></div></div>
-      <div class="proc-title">Анализ снимка</div>
-      <div class="proc-steps" id="procSteps"></div>
-      <div class="proc-close" onclick="cancelProcessing()">Отмена</div>
-    </div>
-  </div>
+</div> <!-- End App Layout -->
 
-  <div class="draft-overlay" id="draftOverlay">
-    <div class="draft-sheet">
-      <div class="ds-header"><div class="ds-title">Проверь данные</div><div class="ds-subtitle">AI определил состав. Исправь при необходимости.</div></div>
-      <div class="ds-list" id="draftList"></div>
-      <div class="ds-actions">
-        <button class="ds-btn sec" onclick="closeDraft()">Отмена</button>
-        <button class="ds-btn prim" id="btnConfirmDraft" onclick="confirmDraftToNutritionist()">В дневник</button>
+<div class="camera-wrapper" id="cameraModule">
+  
+  <div class="cam-viewport">
+    <video id="camVideo" class="cam-feed" autoplay playsinline muted></video>
+    <canvas id="uiCanvas"></canvas>
+    
+    <div class="cam-loader-spinner" id="camSpinner"></div>
+    <div class="cam-toast" id="camToast">Notification</div>
+
+    <div class="cam-ui-layer" id="camUI">
+      <div class="cam-top-bar">
+        <div class="btn-close-cam" onclick="closeCameraModule()">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </div>
+        <div class="status-chip">
+          <div class="status-dot" id="lvlDot"></div>
+          <span id="lvlText">Камера</span>
+        </div>
+        <div style="width: 40px"></div>
+      </div>
+
+      <div class="cam-controls-grid">
+        <div style="display:flex; justify-content:flex-start">
+          <div class="action-circle" id="btnTorch" onclick="toggleTorch()">
+             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+          </div>
+        </div>
+        <div style="display:flex; justify-content:center">
+          <div class="shutter-outer" id="shutterBtn" onclick="takePhoto()">
+            <div class="shutter-inner"></div>
+          </div>
+        </div>
+        <div style="display:flex; justify-content:flex-end">
+          <div class="action-circle" id="btnSwitch" onclick="switchCamera()">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 10c0-4.418-3.582-8-8-8s-8 3.582-8 8c0 1.567.462 3.033 1.249 4.286L2 17h6v-6l-2.68 2.68C4.594 12.396 4 11.266 4 10c0-4.418 3.582-8 8-8s8 3.582 8 8-3.582 8-8 8v4c6.627 0 12-5.373 12-12z"/></svg>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="cam-preview-layer" id="camPreview">
+      <img id="finalPhoto" class="preview-img-box" />
+      <div class="comment-wrap" style="position:absolute; bottom:100px; left:0; right:0; padding:16px;">
+        <textarea id="camComment" rows="1" placeholder="Комментарий к фото (необязательно)" style="width:100%; background:rgba(255,255,255,0.15); border:1px solid rgba(255,255,255,0.2); border-radius:12px; padding:12px; color:#fff; backdrop-filter:blur(5px); font-size:15px; resize:none; font-family:inherit"></textarea>
+      </div>
+      <div class="preview-toolbar">
+        <button class="p-btn" onclick="retakePhoto()">Переснять</button>
+        <button class="p-btn primary" id="btnSendPhoto" onclick="sendPhotoToAI()">Готово</button>
       </div>
     </div>
   </div>
 
+  <div class="perm-overlay" id="permReq">
+    <div style="font-size:40px; margin-bottom:10px">📐</div>
+    <h3>Нужен доступ</h3>
+    <p style="color:var(--text-muted); margin-bottom:20px; font-size:14px">Разрешите доступ к датчикам уровня.</p>
+    <button class="p-btn primary" onclick="requestSensors()" style="width:auto; padding:0 30px">Разрешить</button>
+  </div>
+</div>
+
+<div class="sheet-overlay" id="sheet" onclick="toggleSheet()">
+  <div class="sheet" onclick="event.stopPropagation()">
+    <div class="sheet-item" onclick="alert('Logic: Import FatSecret PDF')"><div class="sheet-icon" style="color: #30d158">🥗</div><div class="sheet-lbl">FatSecret (PDF)</div></div>
+    <div class="sheet-item"><div class="sheet-icon" style="color: #0a84ff">🔗</div><div class="sheet-lbl">Вставить ссылку</div></div>
+  </div>
+</div>
+
+<div class="processing-overlay" id="procOverlay">
+  <div class="proc-card">
+    <div class="proc-visual">
+      <div class="proc-orb"></div>
+      <div class="proc-ring"></div>
+    </div>
+    <div class="proc-title">Анализ снимка</div>
+    
+    <div class="proc-steps" id="procSteps">
+      <div class="step pending" id="step-1"><div class="s-icon">🛡️</div><div class="s-lbl">Gatekeeper: Проверка контента...</div></div>
+      <div class="step pending" id="step-2"><div class="s-icon">🕵️</div><div class="s-lbl">Detective: Поиск ингредиентов...</div></div>
+      <div class="step pending" id="step-3"><div class="s-icon">📐</div><div class="s-lbl">Physicist: Расчет объема 3D...</div></div>
+      <div class="step pending" id="step-4"><div class="s-icon">🍳</div><div class="s-lbl">Technologist: Анализ жирности...</div></div>
+      <div class="step pending" id="step-5"><div class="s-icon">📝</div><div class="s-lbl">Synthesizer: Сборка отчета...</div></div>
+    </div>
+
+    <div class="proc-close" onclick="closeProcessing()">Отмена</div>
+  </div>
+</div>
+
+<div class="draft-overlay" id="draftOverlay">
+  <div class="draft-sheet">
+    <div class="ds-header">
+      <div class="ds-title">Проверь данные</div>
+      <div class="ds-subtitle">AI определил состав и вес. Исправь при необходимости.</div>
+    </div>
+    
+    <div class="ds-list" id="draftList">
+      </div>
+
+    <div class="ds-actions">
+      <button class="ds-btn sec" onclick="closeDraft()">Переснять</button>
+      <button class="ds-btn prim" onclick="confirmDraftToNutritionist()">В дневник</button>
+    </div>
+  </div>
+</div>
+  
 <script>
-  const API_URL = "https://script.google.com/macros/s/AKfycbx0fUaaCH-JwnG5R_3TFgU5FSibsEuhuS0ZZZfyxPNVPQ1ZpCfUIaa5aE8vjgqitac/exec"; 
+/* ============================================================
+ * BLOCK 0: TMA boot (FIXED & SAFE)
+ * ============================================================ */
+(function initTMA() {
+  try {
+    const tg = window.Telegram?.WebApp;
+    if (!tg) return; 
+    tg.ready();
+    tg.expand();
+    try { tg.setHeaderColor('#050505'); if (tg.setBackgroundColor) tg.setBackgroundColor('#050505'); } catch (e) {}
+    try { if (tg.BackButton) { tg.BackButton.show(); tg.BackButton.offClick(); tg.BackButton.onClick(function() { window.location.href = 'router.html'; }); } } catch (e) {}
+    try { if (tg.disableVerticalSwipes) tg.disableVerticalSwipes(); } catch (e) {}
+  } catch (globalErr) { console.error('Critical TMA Error:', globalErr); }
+})();
 
-  // === INIT ===
+
+// === CONFIG & API LAYER ===
+const API_URL = "https://script.google.com/macros/s/AKfycbx0fUaaCH-JwnG5R_3TFgU5FSibsEuhuS0ZZZfyxPNVPQ1ZpCfUIaa5aE8vjgqitac/exec"; // <-- ПРОВЕРЬ URL!
+
+const API = {
+  blobToBase64: (blob) => new Promise(resolve => { 
+    const reader = new FileReader(); 
+    reader.onloadend = () => resolve(reader.result); 
+    reader.readAsDataURL(blob); 
+  }),
+  send: async (action, payload) => {
+    const user = window.Telegram?.WebApp?.initDataUnsafe?.user || { id: 0, first_name: 'User' };
+    const body = { action, user, initData: window.Telegram?.WebApp?.initData || '', ...payload };
+    
+    // Используем text/plain хак для CORS
+    const res = await fetch(API_URL, { 
+      method: "POST", 
+      headers: { "Content-Type": "text/plain;charset=utf-8" }, 
+      body: JSON.stringify(body) 
+    });
+    
+    const json = await res.json();
+    if (!json.ok) throw new Error(json.error || 'Server Error');
+    return json;
+  }
+};
+
+// FIX FROM AI.HTML: STABLE LAYOUT ENGINE
+(function initStableLayout() {
+  const app = document.getElementById('appLayout'); 
+  const omniBar = document.getElementById('omniBar');
+  const scrollContainer = document.getElementById('scrollContainer');
+  const fxLayer = document.getElementById('fxLayer');
+  
+  // 1. LOCK BACKGROUND HEIGHT ONCE
+  // Это предотвращает "прыжки" фона при открытии клавиатуры
+  if (fxLayer) {
+    fxLayer.style.height = window.innerHeight + 'px';
+  }
+
+  function setHeight() {
+    const tg = window.Telegram?.WebApp;
+    const h = (tg && tg.viewportHeight) ? tg.viewportHeight : window.innerHeight;
+    
+    // Resize only the main app container, NOT the background
+    app.style.height = `${h}px`;
+    
+    // Dynamic padding for scroll container so content isn't hidden behind omni bar
+    if (omniBar && scrollContainer) {
+        const barHeight = omniBar.offsetHeight;
+        scrollContainer.style.paddingBottom = `${barHeight + 20}px`;
+    }
+  }
+
   const tg = window.Telegram?.WebApp;
-  if(tg) { tg.ready(); tg.expand(); tg.setHeaderColor('#050505'); tg.disableVerticalSwipes(); }
-  function haptic(style) { if(tg?.HapticFeedback) tg.HapticFeedback.impactOccurred(style); }
-
-  // === API HELPER ===
-  const API = {
-    blobToBase64: (blob) => new Promise(r => { const rd = new FileReader(); rd.onloadend = () => r(rd.result); rd.readAsDataURL(blob); }),
-    send: async (action, payload) => {
-      const user = tg?.initDataUnsafe?.user || { id: 0 };
-      const res = await fetch(API_URL, { method: "POST", headers: { "Content-Type": "text/plain" }, body: JSON.stringify({ action, user, ...payload }) });
-      const json = await res.json();
-      if (!json.ok) throw new Error(json.error);
-      return json;
-    }
-  };
-
-  // === GLOBAL STATE ===
-  const state = {
-    stream: null, track: null, levelOK: false, angleX: 0, angleY: 0,
-    photoBlob: null, isCapturing: false, sensorActive: false,
-    cameraActive: false
-  };
-
-  const DOM = {
-    app: document.getElementById('appLayout'),
-    camLayer: document.getElementById('cameraLayer'),
-    video: document.getElementById('video'),
-    canvas: document.getElementById('uiCanvas'),
-    ctx: document.getElementById('uiCanvas').getContext('2d'),
-    shutter: document.getElementById('shutterBtn'),
-    lvlDot: document.getElementById('lvlDot'),
-    lvlText: document.getElementById('lvlText'),
-    input: document.getElementById('omniInput'),
-    btnAction: document.getElementById('btnAction'),
-    icoCam: document.getElementById('icoCam'),
-    icoSend: document.getElementById('icoSend'),
-    omniBar: document.getElementById('omniBar')
-  };
-
-  // === 1. OMNI BAR LOGIC (ROUTER) ===
-  DOM.input.addEventListener('input', () => {
-    DOM.input.style.height = 'auto'; 
-    DOM.input.style.height = Math.min(DOM.input.scrollHeight, 80) + 'px';
-    const hasText = DOM.input.value.trim().length > 0;
-    if(hasText) {
-      DOM.btnAction.classList.add('mode-send');
-      DOM.icoCam.classList.add('icon-hidden');
-      DOM.icoSend.classList.remove('icon-hidden');
-    } else {
-      DOM.btnAction.classList.remove('mode-send');
-      DOM.icoCam.classList.remove('icon-hidden');
-      DOM.icoSend.classList.add('icon-hidden');
-    }
-  });
-
-  DOM.btnAction.onclick = async () => {
-    const text = DOM.input.value.trim();
-    if(text.length > 0) {
-      // TEXT MODE
-      await processText(text);
-    } else {
-      // CAMERA MODE
-      if (!state.cameraActive) openCamera();
-      else capturePhoto(); 
-    }
-  };
-
-  // === 2. CAMERA LOGIC (Slide Up) ===
-  async function openCamera() {
-    state.cameraActive = true;
-    haptic('light');
-    // Hide Omni Bar from Dashboard view
-    DOM.omniBar.classList.add('hidden');
-    DOM.camLayer.classList.add('active');
-    DOM.app.classList.add('pushed'); // Visual depth effect
-    
-    await startStream();
-    window.addEventListener('deviceorientation', handleOrientation);
-    requestAnimationFrame(drawLoop);
-  }
-
-  function closeCamera() {
-    state.cameraActive = false;
-    DOM.camLayer.classList.remove('active');
-    DOM.app.classList.remove('pushed');
-    DOM.omniBar.classList.remove('hidden');
-    stopStream();
-    window.removeEventListener('deviceorientation', handleOrientation);
-  }
-
-  document.getElementById('btnCloseCam').onclick = closeCamera;
-
-  async function startStream() {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 2560 } } });
-      state.stream = stream; 
-      DOM.video.srcObject = stream; DOM.video.classList.add('active');
-      resizeCanvas();
-    } catch(e) { alert("Cam Error: " + e.message); }
-  }
-
-  function stopStream() {
-    if(state.stream) state.stream.getTracks().forEach(t=>t.stop());
-    DOM.video.srcObject = null; DOM.video.classList.remove('active');
-  }
-
-  // === 3. SENSORS & DRAWING ===
-  function handleOrientation(e) {
-    if (e.beta === null) return;
-    state.sensorActive = true; state.angleX = e.beta; state.angleY = e.gamma;
-  }
-  function resizeCanvas() { DOM.canvas.width = window.innerWidth; DOM.canvas.height = window.innerHeight; }
-  
-  function drawLoop() {
-    if(!state.cameraActive) return;
-    const ctx = DOM.ctx; const w = DOM.canvas.width; const h = DOM.canvas.height;
-    ctx.clearRect(0,0,w,h);
-    
-    // Level Logic
-    const cx = w/2; const cy = h/2;
-    if(state.sensorActive) {
-       const rawX = state.angleY || 0; const rawY = state.angleX || 0;
-       const dx = (Math.max(-20, Math.min(20, rawX))/20)*60;
-       const dy = (Math.max(-20, Math.min(20, rawY))/20)*60;
-       const isInside = Math.hypot(dx,dy) < 5; // Strict 5px tolerance
-       
-       if(state.levelOK !== isInside) { 
-         state.levelOK = isInside; 
-         if(isInside) { haptic('medium'); DOM.lvlDot.style.background='#30d158'; DOM.lvlText.innerText='Ровно'; DOM.shutter.classList.remove('disabled'); }
-         else { DOM.lvlDot.style.background='#ff9f0a'; DOM.lvlText.innerText='Выровняйте'; DOM.shutter.classList.add('disabled'); }
-       }
-       
-       // Draw Bubble
-       ctx.shadowBlur = 4; ctx.shadowColor = 'rgba(0,0,0,0.5)';
-       ctx.beginPath(); ctx.arc(cx, cy, 18, 0, Math.PI*2);
-       ctx.strokeStyle = isInside ? '#30d158' : 'rgba(255,255,255,0.5)'; ctx.lineWidth=3; ctx.stroke();
-       ctx.beginPath(); ctx.arc(cx+dx, cy+dy, 14, 0, Math.PI*2);
-       ctx.fillStyle = isInside ? '#30d158' : 'rgba(255,255,255,0.8)'; ctx.fill();
-    }
-    requestAnimationFrame(drawLoop);
-  }
-
-  // === 4. CAPTURE & PROCESS ===
-  DOM.shutter.onclick = async () => {
-    if(state.sensorActive && !state.levelOK) { haptic('error'); return; }
-    haptic('heavy');
-    
-    // Capture Frame
-    const cvs = document.createElement('canvas');
-    cvs.width = DOM.video.videoWidth; cvs.height = DOM.video.videoHeight;
-    cvs.getContext('2d').drawImage(DOM.video, 0, 0);
-    
-    // Immediate Feedback: Close Cam, Show Loading
-    closeCamera();
-    const blob = await new Promise(r => cvs.toBlob(r, 'image/jpeg', 0.7));
-    processPhoto(blob);
-  };
-
-  async function processText(text) {
-    DOM.btnAction.style.opacity = 0.5;
-    haptic('medium');
-    startProcessingUI('text');
-    try {
-      const res = await API.send('scan', { image: null, userText: text });
-      stopProcessingUI();
-      DOM.input.value = '';
-      if(res.ok) openDraftSheet(res.data, res.scanId);
-      else throw new Error(res.error);
-    } catch(e) { stopProcessingUI(); alert(e.message); }
-    finally { DOM.btnAction.style.opacity = 1; }
-  }
-
-  async function processPhoto(blob) {
-    startProcessingUI('photo');
-    try {
-      const base64 = await API.blobToBase64(blob);
-      const res = await API.send('scan', { image: base64 });
-      stopProcessingUI();
-      if(res.ok) openDraftSheet(res.data, res.scanId);
-      else throw new Error(res.error);
-    } catch(e) { stopProcessingUI(); alert(e.message); }
-  }
-
-  // === 5. UI FLOW (OVERLAYS) ===
-  let procInt;
-  function startProcessingUI(mode) {
-    const steps = document.getElementById('procSteps');
-    if(mode === 'text') {
-       steps.innerHTML = `<div class="step active" id="s1">Gatekeeper</div><div class="step" id="s2">TextParser</div><div class="step" id="s3">Synthesizer</div>`;
-    } else {
-       steps.innerHTML = `<div class="step active" id="s1">Gatekeeper</div><div class="step" id="s2">Detective</div><div class="step" id="s3">Physicist</div><div class="step" id="s4">Synthesizer</div>`;
-    }
-    document.getElementById('procOverlay').classList.add('active');
-    let i = 1;
-    procInt = setInterval(() => {
-       const curr = document.getElementById('s'+i);
-       if(curr) { curr.classList.remove('active'); curr.classList.add('done'); }
-       i++;
-       const next = document.getElementById('s'+i);
-       if(next) next.classList.add('active');
-    }, 1500);
-  }
-  function stopProcessingUI() { clearInterval(procInt); document.getElementById('procOverlay').classList.remove('active'); }
-
-  let currentDraft = []; let currentScanId = null;
-  function openDraftSheet(data, scanId) {
-    currentDraft = data.items || []; currentScanId = scanId;
-    const list = document.getElementById('draftList');
-    list.innerHTML = '';
-    currentDraft.forEach((item, idx) => {
-       list.innerHTML += `
-         <div class="draft-item">
-           <div class="di-inputs">
-             <input class="di-name" value="${item.name}" onchange="currentDraft[${idx}].name=this.value">
-             <div class="di-row"><input type="number" class="di-weight" value="${item.weight_g}" onchange="currentDraft[${idx}].weight_g=this.value"> г</div>
-           </div>
-         </div>`;
+  if (tg) {
+    tg.onEvent('viewportChanged', ({ isStateStable }) => {
+      setHeight();
     });
-    document.getElementById('draftOverlay').classList.add('visible');
   }
   
-  function closeDraft() { document.getElementById('draftOverlay').classList.remove('visible'); }
-
-  window.confirmDraftToNutritionist = async () => {
-    document.getElementById('btnConfirmDraft').textContent = 'Сохраняю...';
-    try {
-      const res = await API.send('calculate', { data: currentDraft, scanId: currentScanId });
-      closeDraft();
-      addMealToTimeline(res.data); // Render final card
-      haptic('success');
-    } catch(e) { alert(e.message); }
-    finally { document.getElementById('btnConfirmDraft').textContent = 'В дневник'; }
-  };
-
-  // === 6. TIMELINE RENDERER (Final Step) ===
-  function addMealToTimeline(data) {
-    const tl = document.getElementById('timeline');
-    const now = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
-    
-    // Calculate total macros for this meal
-    let tk=0, tp=0, tf=0, tc=0;
-    let itemsHtml = '';
-    
-    data.items.forEach(i => {
-       tk += i.macros.k; tp += i.macros.p; tf += i.macros.f; tc += i.macros.c;
-       itemsHtml += `<div class="prod-item"><div class="pi-name">${i.name}</div><div class="pi-val">${i.weight_g}</div><div class="pi-val">${i.macros.k}</div><div class="pi-val">${i.macros.p}</div><div class="pi-val">${i.macros.f}</div><div class="pi-val">${i.macros.c}</div></div>`;
-    });
-
-    // Update Daily Widgets (Simple Add)
-    document.getElementById('wid-kcal').innerText = parseInt(document.getElementById('wid-kcal').innerText) + tk;
-    document.getElementById('wid-prot').innerText = parseInt(document.getElementById('wid-prot').innerText) + tp;
-    document.getElementById('wid-fat').innerText = parseInt(document.getElementById('wid-fat').innerText) + tf;
-    document.getElementById('wid-carb').innerText = parseInt(document.getElementById('wid-carb').innerText) + tc;
-
-    const card = document.createElement('div');
-    card.className = 'meal-card';
-    card.innerHTML = `
-      <div class="col-headers"><div class="mh-time">${now}</div><div class="pi-val">Вес</div><div class="pi-val">К</div><div class="pi-val">Б</div><div class="pi-val">Ж</div><div class="pi-val">У</div></div>
-      ${itemsHtml}
-    `;
-    tl.prepend(card);
+  window.addEventListener('resize', setHeight);
+  setHeight();
+  
+  const txt = document.getElementById('msgInput');
+  if(txt) {
+      txt.addEventListener('input', () => requestAnimationFrame(setHeight));
   }
+})();
+  
+function isAdmin() { try { return window.Telegram?.WebApp?.initDataUnsafe?.user?.id === 196047220; } catch (_) { return false; } }
+function haptic(type) { if (navigator.vibrate) navigator.vibrate(15); if(window.Telegram?.WebApp?.HapticFeedback) window.Telegram.WebApp.HapticFeedback.impactOccurred(type || 'light'); }
 
-  // === 7. CALENDAR & WATER LOGIC (FROM SCANNER) ===
+  // === INFINITE CALENDAR ===
+  let currentWeekStart = getStartOfWeek(new Date()); let selectedDate = new Date(); let isDragging = false; let startX = 0; let currentTranslate = 0;
+  const area = document.getElementById('swipeArea'); const track = document.getElementById('calTrack'); const prevEl = document.getElementById('weekPrev'); const currEl = document.getElementById('weekCurr'); const nextEl = document.getElementById('weekNext');
+  function getStartOfWeek(date) { const d = new Date(date); const day = d.getDay(); const diff = d.getDate() - day + (day === 0 ? -6 : 1); return new Date(d.setDate(diff)); }
+  function initCalendar() { renderAllWeeks(); area.onpointerdown = handleStart; area.onpointermove = handleMove; area.onpointerup = handleEnd; area.onpointercancel = handleEnd; area.onpointerleave = handleEnd; }
+  function renderWeekData(container, startDate) {
+    container.innerHTML = ''; const weekDays = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс']; const today = new Date();
+    for(let i=0; i<7; i++) {
+      const d = new Date(startDate); d.setDate(d.getDate() + i); const isToday = d.toDateString() === today.toDateString(); const isSelected = d.toDateString() === selectedDate.toDateString();
+      const el = document.createElement('div'); el.className = `day-cell ${isSelected ? 'selected' : ''} ${isToday ? 'is-today' : ''}`; el.innerHTML = `<div class="dc-name">${weekDays[i]}</div><div class="dc-num">${d.getDate()}</div>`;
+      el.onclick = (e) => { if(Math.abs(currentTranslate) > 5) return; document.querySelectorAll('.day-cell').forEach(c => c.classList.remove('selected')); el.classList.add('selected'); selectedDate = new Date(d); haptic('selection'); renderAllWeeks(); }; container.appendChild(el);
+    }
+  }
+  function renderAllWeeks() { renderWeekData(currEl, currentWeekStart); const dPrev = new Date(currentWeekStart); dPrev.setDate(dPrev.getDate() - 7); renderWeekData(prevEl, dPrev); const dNext = new Date(currentWeekStart); dNext.setDate(dNext.getDate() + 7); renderWeekData(nextEl, dNext); const mid = new Date(currentWeekStart); mid.setDate(mid.getDate() + 3); document.getElementById('monthLabel').textContent = mid.toLocaleString('ru', { month: 'long', year: 'numeric' }); }
+  function handleStart(e) { if (e.button !== 0) return; isDragging = true; startX = e.clientX; currentTranslate = 0; track.style.transition = 'none'; area.style.cursor = 'grabbing'; }
+  function handleMove(e) { if (!isDragging) return; currentTranslate = e.clientX - startX; track.style.transform = `translateX(calc(-33.333333% + ${currentTranslate}px))`; }
+  function handleEnd(e) { if (!isDragging) return; isDragging = false; area.style.cursor = 'grab'; const threshold = 60; track.style.transition = 'transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1)'; if (currentTranslate > threshold) { haptic('light'); track.style.transform = `translateX(0%)`; setTimeout(() => shiftWeeks(-1), 300); } else if (currentTranslate < -threshold) { haptic('light'); track.style.transform = `translateX(-66.666666%)`; setTimeout(() => shiftWeeks(1), 300); } else { track.style.transform = `translateX(-33.333333%)`; } }
+  function shiftWeeks(direction) { currentWeekStart.setDate(currentWeekStart.getDate() + (direction * 7)); track.style.transition = 'none'; renderAllWeeks(); track.style.transform = `translateX(-33.333333%)`; }
+
+  // === CAROUSEL ===
+  const carTrack = document.getElementById('track'); const dots = document.querySelectorAll('.dot'); let isDown = false; let startXC; let scrollLeft;
+  carTrack.addEventListener('mousedown', (e) => { isDown=true; carTrack.style.cursor='grabbing'; startXC=e.pageX-carTrack.offsetLeft; scrollLeft=carTrack.scrollLeft; });
+  carTrack.addEventListener('mouseleave', () => { isDown=false; carTrack.style.cursor='grab'; });
+  carTrack.addEventListener('mouseup', () => { isDown=false; carTrack.style.cursor='grab'; });
+  carTrack.addEventListener('mousemove', (e) => { if(!isDown) return; e.preventDefault(); const x=e.pageX-carTrack.offsetLeft; const walk=(x-startXC)*2; carTrack.scrollLeft=scrollLeft-walk; });
+  carTrack.addEventListener('scroll', () => { const idx=Math.round(carTrack.scrollLeft/carTrack.clientWidth); dots.forEach((d,i)=>d.classList.toggle('active', i===idx)); });
+
+  // === WATER LOGIC ===
   let currentMl = 1250; const targetMl = 2500; 
   function updateWater(delta) { haptic('light'); currentMl = Math.max(0, currentMl + delta); renderWater(); }
   function renderWater() {
@@ -606,18 +754,412 @@
     for(let i=1; i<=5; i++) { const el = document.getElementById('c'+i); const th = i*(targetMl/5); const prevTh = (i-1)*(targetMl/5); let pct = 0; if(currentMl >= th) pct=100; else if(currentMl > prevTh) pct = ((currentMl-prevTh)/(targetMl/5))*100; el.style.setProperty('--h', Math.min(100, pct)+'%'); }
   }
 
-  (function initCal(){
-     const days = ['ПН','ВТ','СР','ЧТ','ПТ','СБ','ВС'];
-     const t = document.getElementById('weekCurr');
-     const d = new Date(); d.setDate(d.getDate() - d.getDay() + 1); // Monday
-     for(let i=0; i<7; i++) {
-        t.innerHTML += `<div class="day-cell ${i===new Date().getDay()-1?'selected':''}"><div class="dc-name">${days[i]}</div><div class="dc-num">${d.getDate()}</div></div>`;
-        d.setDate(d.getDate()+1);
-     }
-     document.getElementById('monthLabel').innerText = new Date().toLocaleString('ru', {month:'long'});
-     renderWater();
-  })();
+  // === OMNI BAR LOGIC ===
+  const txt = document.getElementById('msgInput'); const btn = document.getElementById('actionBtn'); const iCam = document.getElementById('iconCam'); const iSend = document.getElementById('iconSend');
+  txt.addEventListener('input', () => { txt.style.height = 'auto'; txt.style.height = Math.min(txt.scrollHeight, 100) + 'px'; const hasText = txt.value.trim().length > 0; if(hasText) { btn.classList.replace('mode-cam','mode-send'); iCam.style.display='none'; iSend.style.display='block'; } else { btn.classList.replace('mode-send','mode-cam'); iCam.style.display='block'; iSend.style.display='none'; } });
+  
+// === UPDATED HANDLER ===
+  function handleAction() { 
+    haptic('light'); 
+    const txt = document.getElementById('msgInput');
+    
+    if(txt.value.trim().length > 0) { 
+      console.log('Text Mode');
+      startProcessingFlow(null, txt.value);
+      txt.value=''; txt.blur();
+      // Reset UI
+      document.getElementById('actionBtn').classList.replace('mode-send','mode-cam'); 
+      document.getElementById('iconCam').style.display='block'; 
+      document.getElementById('iconSend').style.display='none'; 
+    } else { 
+      openCameraOverlay();
+    } 
+  }
 
+  // === UPDATED AI FLOW (REAL API) ===
+  async function startProcessingFlow(photoBlob, userText) {
+    haptic('heavy');
+    document.getElementById('procOverlay').classList.add('active');
+    
+    // UI Animation loop
+    let step = 1;
+    updateStep(1, 'active');
+    const timer = setInterval(() => {
+      updateStep(step, 'done');
+      step++;
+      if(step <= 5) updateStep(step, 'active');
+    }, 1500);
+
+    try {
+      let payload = { userText: userText || '' };
+      if(photoBlob) {
+        payload.image = await API.blobToBase64(photoBlob);
+      }
+      
+      const result = await API.send('scan', payload);
+      
+      clearInterval(timer); 
+      closeProcessing();
+      
+      if(result.ok) {
+        // Pass real data to Draft Sheet
+        openDraftSheet(result.data, result.scanId); 
+      } else {
+        alert("Ошибка AI: " + result.error);
+      }
+      
+    } catch(e) {
+      clearInterval(timer);
+      closeProcessing();
+      alert("Сбой: " + e.message);
+    }
+  }
+
+  function toggleSheet() { haptic('light'); document.getElementById('sheet').classList.toggle('visible'); }
+
+  // === FORMAT LOCAL TIME ===
+  function formatLocalTimes() {
+    const timeElements = document.querySelectorAll('.mh-time'); const now = new Date();
+    timeElements.forEach(el => { const h = parseInt(el.getAttribute('data-h')); const m = parseInt(el.getAttribute('data-m')); if (!isNaN(h) && !isNaN(m)) { const d = new Date(now); d.setHours(h, m, 0, 0); el.textContent = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }); } });
+  }
+  
+  initCalendar(); renderWater(); formatLocalTimes();
+
+/* ==============================================
+   LOGIC: SCANNER -> BOT FLOW -> DRAFT -> FEED
+   ============================================== */
+
+// 1. Запуск процесса (симуляция нажатия "Готово" в камере)
+function startProcessingFlow() {
+  haptic('heavy');
+  document.getElementById('procOverlay').classList.add('active');
+  
+  // Симуляция этапов (Army of Bots)
+  // Step 1: Gatekeeper
+  updateStep(1, 'active');
+  setTimeout(() => {
+    updateStep(1, 'done');
+    updateStep(2, 'active'); // Detective
+  }, 1500);
+
+  setTimeout(() => {
+    updateStep(2, 'done');
+    updateStep(3, 'active'); // Physicist
+  }, 3000);
+
+  setTimeout(() => {
+    updateStep(3, 'done');
+    updateStep(4, 'active'); // Technologist
+  }, 4500);
+  
+  setTimeout(() => {
+    updateStep(4, 'done');
+    updateStep(5, 'active'); // Synthesizer
+  }, 5500);
+
+  // Готово - открываем Draft Sheet
+  setTimeout(() => {
+    closeProcessing();
+    openDraftSheet();
+  }, 7000);
+}
+
+function updateStep(num, status) {
+  const el = document.getElementById('step-'+num);
+  if(el) {
+    el.classList.remove('pending', 'active', 'done');
+    el.classList.add(status);
+  }
+}
+
+function closeProcessing() {
+  document.getElementById('procOverlay').classList.remove('active');
+  // Reset steps for next time
+  setTimeout(() => {
+     for(let i=1; i<=5; i++) {
+        const el = document.getElementById('step-'+i);
+        el.className = 'step pending';
+     }
+  }, 500);
+}
+
+// 2. Draft Sheet Logic (Synthesizer Output) [cite: 73]
+// Здесь мы рендерим "Сырой JSON" без КБЖУ, который вернул Synthesizer
+function openDraftSheet(realData, scanId) {
+    // ВАЖНО: Присваиваем глобальный scanId для последующего сохранения
+    // (Убедись, что переменная объявлена: let currentScanId = null; в блоке переменных выше)
+    window.currentScanId = scanId; 
+    
+    const container = document.getElementById('draftList');
+    // Используем реальные данные с сервера
+    const items = realData?.items || [];
+    
+    // ... далее старый код рендера (перебор items) ...
+    // ВАЖНО: Убедись, что items перебираются через items.forEach, а не mockData.forEach
+    let html = '';
+    items.forEach((item, index) => {
+       // ... твой код генерации HTML ...
+       // (скопируй логику иконок из cam1 если нужно, или оставь простую)
+       html += `<div class="draft-item">...</div>`; // Генерация
+    });
+    container.innerHTML = html;
+    document.getElementById('draftOverlay').classList.add('visible');
+    haptic('success');
+  }
+
+function closeDraft() {
+  document.getElementById('draftOverlay').classList.remove('visible');
+}
+
+// 3. Confirm & Send to Nutritionist 
+// Пользователь нажал "В дневник". Данные летят к Нутрициологу для расчета КБЖУ.
+function confirmDraftToNutritionist() {
+  closeDraft();
+  haptic('heavy');
+  
+  // Имитация задержки расчета КБЖУ (быстрее, чем первый этап)
+  // Можно показать мини-лоадер, но для скорости просто добавим в ленту
+  setTimeout(() => {
+    addMealToTimeline();
+  }, 600);
+}
+
+function addMealToTimeline() {
+  const container = document.querySelector('.timeline');
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+  
+  // HTML новой карточки (Nutritionist Output)
+  const newCard = `
+  <div class="meal-card" style="animation: slideIn 0.4s ease">
+    <div class="col-headers"><div class="mh-time">${timeStr}</div><div class="ch-item">Вес</div><div class="ch-item">К</div><div class="ch-item">Б</div><div class="ch-item">Ж</div><div class="ch-item">У</div></div>
+    <div class="prod-item"><div class="pi-name">Куриная грудка гриль</div><div class="pi-val pi-w">145</div><div class="pi-val pi-k">239</div><div class="pi-val pi-p">45</div><div class="pi-val pi-f">5</div><div class="pi-val pi-c">0</div></div>
+    <div class="prod-item"><div class="pi-name">Рис белый</div><div class="pi-val pi-w">200</div><div class="pi-val pi-k">260</div><div class="pi-val pi-p">5</div><div class="pi-val pi-f">0</div><div class="pi-val pi-c">56</div></div>
+    <div class="prod-item"><div class="pi-name">Соус сливочный</div><div class="pi-val pi-w">30</div><div class="pi-val pi-k">95</div><div class="pi-val pi-p">1</div><div class="pi-val pi-f">9</div><div class="pi-val pi-c">2</div></div>
+  </div>
+  `;
+  
+  // Вставляем сразу после первого элемента (сверху)
+  container.insertAdjacentHTML('afterbegin', newCard);
+}
+
+// --- Интеграция с твоим кодом ---
+// Замени вызов handleAction, чтобы тестировать этот флоу
+const oldHandle = handleAction;
+handleAction = function() {
+  const txt = document.getElementById('msgInput');
+  if(txt.value.trim() === '') {
+     // Если пустой ввод -> запускаем симуляцию фото-сканирования
+     startProcessingFlow();
+  } else {
+     // Если текст -> старая логика
+     oldHandle();
+  }
+}
+
+/* ============================================================
+ * BLOCK: CAMERA MODULE LOGIC (PORTED)
+ * ============================================================ */
+const camState = { stream: null, track: null, torch: false, devices: [], devIdx: 0, sensor: false, angleX: 0, angleY: 0, lvlOK: false, blob: null };
+const CamDOM = {
+  wrap: document.getElementById('cameraModule'),
+  vid: document.getElementById('camVideo'),
+  canvas: document.getElementById('uiCanvas'),
+  ctx: document.getElementById('uiCanvas').getContext('2d'),
+  preview: document.getElementById('camPreview'),
+  img: document.getElementById('finalPhoto'),
+  comment: document.getElementById('camComment'),
+  perm: document.getElementById('permReq'),
+  toast: document.getElementById('camToast'),
+  spinner: document.getElementById('camSpinner')
+};
+
+async function openCameraOverlay() {
+  haptic('medium');
+  CamDOM.wrap.classList.add('active');
+  await initCameraStream();
+}
+
+function closeCameraModule() {
+  stopStream();
+  CamDOM.wrap.classList.remove('active');
+  retakePhoto(); 
+}
+
+async function initCameraStream() {
+  resizeCamCanvas();
+  window.addEventListener('resize', resizeCamCanvas);
+  
+  if(!camState.stream) {
+    try {
+      CamDOM.spinner.classList.add('active');
+      await startStream();
+      const devs = await navigator.mediaDevices.enumerateDevices();
+      camState.devices = devs.filter(d => d.kind === 'videoinput');
+      
+      // Скрываем кнопку переключения, если камера одна
+      document.getElementById('btnSwitch').style.display = camState.devices.length > 1 ? 'flex' : 'none';
+      
+      requestAnimationFrame(camLoop);
+      
+      // Check iOS Permissions
+      if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+         CamDOM.perm.classList.add('active');
+      } else {
+         window.addEventListener('deviceorientation', handleGyro);
+      }
+    } catch(e) { 
+      alert("Ошибка камеры: " + e.message); closeCameraModule(); 
+    } finally {
+      CamDOM.spinner.classList.remove('active');
+    }
+  }
+}
+
+async function startStream(devId) {
+  if(camState.stream) stopStream();
+  const constr = { 
+     video: { 
+       deviceId: devId ? {exact: devId} : undefined, 
+       facingMode: devId ? undefined : 'environment',
+       width: { ideal: 1920 }, height: { ideal: 1920 } 
+     } 
+  };
+  const stream = await navigator.mediaDevices.getUserMedia(constr);
+  camState.stream = stream;
+  camState.track = stream.getVideoTracks()[0];
+  CamDOM.vid.srcObject = stream;
+  CamDOM.vid.classList.add('active');
+}
+
+function stopStream() {
+  if(camState.stream) camState.stream.getTracks().forEach(t => t.stop());
+  camState.stream = null; camState.track = null; camState.torch = false;
+  CamDOM.vid.classList.remove('active');
+}
+
+function resizeCamCanvas() { CamDOM.canvas.width = window.innerWidth; CamDOM.canvas.height = window.innerHeight; }
+
+function handleGyro(e) {
+  camState.sensor = true; camState.angleX = e.beta; camState.angleY = e.gamma;
+}
+
+function requestSensors() {
+  DeviceOrientationEvent.requestPermission().then(r => {
+    if(r==='granted') window.addEventListener('deviceorientation', handleGyro);
+    CamDOM.perm.classList.remove('active');
+  }).catch(() => CamDOM.perm.classList.remove('active'));
+}
+
+async function switchCamera() {
+  if(camState.devices.length < 2) return;
+  haptic('light');
+  CamDOM.spinner.classList.add('active');
+  camState.devIdx = (camState.devIdx + 1) % camState.devices.length;
+  try {
+      await startStream(camState.devices[camState.devIdx].deviceId);
+  } catch(e) { showCamToast("Ошибка переключения"); }
+  CamDOM.spinner.classList.remove('active');
+}
+
+function toggleTorch() {
+  if(!camState.track) return;
+  const caps = camState.track.getCapabilities();
+  if(!caps.torch) { showCamToast("Вспышка недоступна"); haptic('error'); return; }
+
+  camState.torch = !camState.torch;
+  camState.track.applyConstraints({ advanced: [{ torch: camState.torch }] }).catch(()=>{});
+  haptic('light');
+  document.getElementById('btnTorch').classList.toggle('active', camState.torch);
+}
+
+// === RENDER LOOP ===
+function camLoop() {
+  if(!CamDOM.wrap.classList.contains('active')) return;
+  const ctx = CamDOM.ctx; const w = CamDOM.canvas.width; const h = CamDOM.canvas.height;
+  const cx = w/2; const cy = h/2;
+  
+  ctx.clearRect(0,0,w,h);
+  
+  // Gyro Visualization
+  if(camState.sensor) {
+     const maxOff = 60;
+     const dx = (Math.max(-20, Math.min(20, camState.angleY || 0)) / 20) * maxOff;
+     const dy = (Math.max(-20, Math.min(20, camState.angleX || 0)) / 20) * maxOff;
+     const dist = Math.hypot(dx, dy);
+     const isLevel = dist < 20;
+     
+     if(camState.lvlOK !== isLevel) { camState.lvlOK = isLevel; updateLvlUI(isLevel); }
+     
+     ctx.beginPath(); ctx.arc(cx, cy, 22, 0, Math.PI*2);
+     ctx.strokeStyle = isLevel ? '#30d158' : 'rgba(255,255,255,0.6)'; ctx.lineWidth = 3; ctx.stroke();
+     ctx.beginPath(); ctx.arc(cx+dx, cy+dy, 16, 0, Math.PI*2);
+     ctx.fillStyle = isLevel ? '#30d158' : 'rgba(255,255,255,0.6)'; ctx.fill();
+  } else {
+     ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth=2;
+     ctx.beginPath(); ctx.moveTo(cx-15, cy); ctx.lineTo(cx+15, cy); ctx.stroke();
+     ctx.beginPath(); ctx.moveTo(cx, cy-15); ctx.lineTo(cx, cy+15); ctx.stroke();
+  }
+  requestAnimationFrame(camLoop);
+}
+
+function updateLvlUI(isOk) {
+  const dot = document.getElementById('lvlDot');
+  const txt = document.getElementById('lvlText');
+  const sht = document.getElementById('shutterBtn');
+  if(isOk) {
+    dot.className = 'status-dot ok'; txt.textContent = "Ровно";
+    sht.classList.remove('disabled');
+    if(camState.sensor) haptic('medium');
+  } else {
+    dot.className = 'status-dot'; txt.textContent = "Выровняйте";
+    sht.classList.add('disabled');
+  }
+}
+
+let toastTimer;
+function showCamToast(msg) {
+  CamDOM.toast.textContent = msg;
+  CamDOM.toast.classList.add('visible');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => CamDOM.toast.classList.remove('visible'), 2000);
+}
+
+// === CAPTURE ===
+async function takePhoto() {
+  if(camState.sensor && !camState.lvlOK) { haptic('error'); showCamToast('Выровняйте телефон'); return; }
+  haptic('heavy');
+  
+  const v = CamDOM.vid;
+  const w = v.videoWidth; const h = v.videoHeight;
+  const can = document.createElement('canvas');
+  // Resize to max 1024
+  const MAX = 1024;
+  let nw = w, nh = h;
+  if(w>h) { if(w>MAX) { nh=h*(MAX/w); nw=MAX; } } else { if(h>MAX) { nw=w*(MAX/h); nh=MAX; } }
+  
+  can.width = nw; can.height = nh;
+  can.getContext('2d').drawImage(v,0,0,nw,nh);
+  
+  camState.blob = await new Promise(r => can.toBlob(r, 'image/jpeg', 0.7));
+  CamDOM.img.src = URL.createObjectURL(camState.blob);
+  CamDOM.preview.style.display = 'flex';
+}
+
+function retakePhoto() {
+  CamDOM.preview.style.display = 'none';
+  CamDOM.comment.value = '';
+  camState.blob = null;
+}
+
+async function sendPhotoToAI() {
+  if(!camState.blob) return;
+  CamDOM.preview.style.display = 'none';
+  closeCameraModule();
+  // Start Flow
+  startProcessingFlow(camState.blob, CamDOM.comment.value);
+}
+  
 </script>
 </body>
 </html>
