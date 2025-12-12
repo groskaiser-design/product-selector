@@ -710,7 +710,7 @@
      haptic('medium');
      
      try {
-       startProcessingUI(); // Показываем лоадер
+       startProcessingUI('text');
        
        const result = await API.send('scan', { image: null, userText: text });
        
@@ -964,7 +964,7 @@ DOM.shutter.addEventListener('click', async () => {
         if (!state.photoBlob) throw new Error("Нет фото");
         
         // 1. Запускаем анимацию "Думаю..."
-        startProcessingUI();
+        startProcessingUI('photo');
         
         // 2. Подготовка данных
         const base64 = await API.blobToBase64(state.photoBlob);
@@ -1006,28 +1006,48 @@ DOM.shutter.addEventListener('click', async () => {
     }
   }
 
-  // === UI ЛОГИКА: АНИМАЦИЯ ПРОЦЕССА (Fake Progress) ===
+  // === UI ЛОГИКА: АНИМАЦИЯ ПРОЦЕССА (Smart Routing) ===
   let procInterval;
   
-  function startProcessingUI() {
-    document.getElementById('procOverlay').classList.add('active');
+  function startProcessingUI(mode) {
+    const container = document.getElementById('procSteps');
+    const overlay = document.getElementById('procOverlay');
     
-    // Сброс шагов
-    for(let i=1; i<=5; i++) {
-        const el = document.getElementById('step-'+i);
-        if(el) el.className = 'step pending';
+    // 1. Генерируем правильный список шагов в зависимости от режима
+    if (mode === 'text') {
+        // --- TEXT ROUTE ---
+        container.innerHTML = `
+            <div class="step pending" id="step-1"><div class="s-icon">🛡️</div><div class="s-lbl">Gatekeeper: Анализ запроса...</div></div>
+            <div class="step pending" id="step-2"><div class="s-icon">🧠</div><div class="s-lbl">TextParser: Поиск в базе USDA...</div></div>
+            <div class="step pending" id="step-3"><div class="s-icon">📝</div><div class="s-lbl">Synthesizer: Формирование ответа...</div></div>
+        `;
+    } else {
+        // --- PHOTO ROUTE (Default Plate Flow) ---
+        // Мы показываем полный путь "Тарелки", так как это самый красивый сценарий.
+        // Если это окажется Упаковка (Librarian), сервер ответит раньше, и мы просто закроем окно, что тоже ок.
+        container.innerHTML = `
+            <div class="step pending" id="step-1"><div class="s-icon">🛡️</div><div class="s-lbl">Gatekeeper: Проверка контента...</div></div>
+            <div class="step pending" id="step-2"><div class="s-icon">🕵️</div><div class="s-lbl">Detective: Поиск ингредиентов...</div></div>
+            <div class="step pending" id="step-3"><div class="s-icon">📐</div><div class="s-lbl">Physicist: Расчет веса (3D)...</div></div>
+            <div class="step pending" id="step-4"><div class="s-icon">🍳</div><div class="s-lbl">Technologist: Анализ жирности...</div></div>
+            <div class="step pending" id="step-5"><div class="s-icon">📝</div><div class="s-lbl">Synthesizer: Сборка отчета...</div></div>
+        `;
     }
+
+    overlay.classList.add('active');
     
+    // 2. Запускаем анимацию переключения шагов
     let step = 1;
+    const maxSteps = mode === 'text' ? 3 : 5;
+    
     updateStep(1, 'active');
 
-    // Каждые 2.5 секунды переключаем шаг, чтобы юзер не скучал
     procInterval = setInterval(() => {
        updateStep(step, 'done');
        step++;
-       if(step > 5) step = 5; // Не уходим дальше синтезатора
+       if(step > maxSteps) step = maxSteps; 
        updateStep(step, 'active');
-    }, 2500);
+    }, 2000); // Чуть быстрее переключаем для динамики
   }
 
   function updateStep(num, status) {
@@ -1044,7 +1064,6 @@ DOM.shutter.addEventListener('click', async () => {
   }
 
   function cancelProcessing() {
-    // Тут можно добавить abort controller для fetch, но пока просто закроем UI
     stopProcessingUI();
     retake();
   }
