@@ -24,50 +24,48 @@
 
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; outline: none; }
 
-  /* === 1. ГЛАВНАЯ ФИКСАЦИЯ (DEAD FIX) === */
+/* === 1. DEAD FIX: ПОЛНАЯ ЗАМОРОЗКА СКРОЛЛА === */
+/* === 1. BODY IS STATIC (DEAD FIX) === */
 html, body {
   background-color: var(--bg-core);
-  margin: 0; padding: 0;
-  /* В scanner0.html body зафиксирован намертво: */
+  margin: 0; padding: 0; 
+  width: 100%; height: 100vh;
+  overflow: hidden; 
+  position: fixed; top: 0; left: 0; /* Dead fix */
+  -webkit-font-smoothing: antialiased; 
+}
+
+/* === 2. FX LAYER (фон не прыгает) === */
+.fx-layer { 
   position: fixed; 
-  top: 0; left: 0;
-  width: 100%; height: 100%; 
-  overflow: hidden;
-  touch-action: none; 
-}
-
-/* === 2. ФОН (ОТДЕЛЕН) === */
-.fx-layer {
-  position: fixed;
-  top: 0; left: 0; width: 100%;
-  /* Высота 100vh, JS ее зафиксирует один раз при старте */
+  top: 0; left: 0; width: 100%; 
+  /* Высота будет задана жестко через JS, чтобы не прыгала */
   height: 100vh; 
-  z-index: 0;
-  pointer-events: none;
+  z-index: 0; 
+  pointer-events: none; 
 }
 
-/* === 3. КОНТЕЙНЕР ПРИЛОЖЕНИЯ (РЕЗИНОВЫЙ) === */
+/* === 3. APP CONTAINER (он ресайзится) === */
 .app-layout {
-  position: relative;
-  z-index: 1;
+  position: relative; 
+  z-index: 1; 
+  top: 0; left: 0; right: 0;
+  height: 100%; /* Задается через JS */
   width: 100%;
-  /* Высоту этого блока будет менять JS (как в scanner0) */
-  height: 100%; 
-  display: flex;
-  flex-direction: column;
   overflow: hidden;
+  display: flex; 
+  flex-direction: column;
 }
 
-/* === 4. OMNI BAR (ВНУТРИ КОНТЕЙНЕРА) === */
-.omni-bar {
-  /* В scanner0.html это absolute, прижатый к низу .app-layout */
-  position: absolute; 
-  bottom: 0; left: 0; right: 0;
-  z-index: 100;
-  /* Твой дизайн сохраняем: */
-  background: linear-gradient(to top, rgba(0,0,0,0.6) 0%, transparent 100%);
-  padding: 10px 12px calc(10px + env(safe-area-inset-bottom)) 12px;
-  display: flex; align-items: flex-end; gap: 10px;
+/* === 4. OMNI-BAR (ABSOLUTE) === */
+.omni-bar { 
+  position: absolute; /* ВАЖНО: Absolute, а не Fixed! */
+  bottom: 0; left: 0; right: 0; 
+  /* Стили оформления оставляем твои, главное позиционирование */
+  background: linear-gradient(to top, rgba(0,0,0,0.6) 0%, transparent 100%); 
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom)) 12px; 
+  z-index: 100; 
+  display: flex; align-items: flex-end; gap: 10px; 
   transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
@@ -77,20 +75,6 @@ html, body {
     width: 24px; height: 24px;
     fill: currentColor;
     display: block;
-  }
-
-/* === VIEWPORT (ИСПРАВЛЕНИЕ: ЖЕСТКАЯ ФИКСАЦИЯ) === */
-.cam-viewport {
-    position: fixed; /* Было relative. Ставим fixed, чтобы он не зависел от других блоков */
-    top: 0; left: 0;
-    width: 100%; height: 100%;
-    z-index: 1; /* Уровень 1. Календарь (уровень 90) будет лежать ПОВЕРХ камеры */
-    
-    overflow: hidden;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: transparent; 
   }
 
   video {
@@ -612,6 +596,8 @@ html, body {
   </div>
   <!-- КОНЕЦ ФОНА -->
 
+  <div class="app-layout" id="appLayout">
+
   <!-- КАЛЕНДАРЬ -->
  <div class="calendar-block" id="calendarBlock">
     <div class="calendar-header">
@@ -693,7 +679,7 @@ html, body {
     </div>
 
   </div>
-
+</div>
   <div id="permReq" class="perm-overlay hidden">
     <div style="font-size:48px; margin-bottom:10px">📐</div>
     <h2 style="margin:0">Настройка</h2>
@@ -750,52 +736,50 @@ html, body {
   </div>
 
 <script>
-// === STABLE LAYOUT ENGINE (FIXED) ===
+
+// FIX FROM SCANNER0.HTML: STABLE LAYOUT ENGINE
 (function initStableLayout() {
   const app = document.getElementById('appLayout'); 
+  const omniBar = document.getElementById('omniBar');
   const fxLayer = document.getElementById('fxLayer');
   
-  // 1. Фиксируем фон один раз при загрузке
+  // 1. LOCK BACKGROUND HEIGHT ONCE
+  // Это предотвращает "прыжки" фона при открытии клавиатуры
   if (fxLayer) {
     fxLayer.style.height = window.innerHeight + 'px';
   }
 
   function setHeight() {
     const tg = window.Telegram?.WebApp;
-    // Берем "чистую" высоту видимой области из API Telegram
+    // Берем viewportHeight из Telegram API (самый точный источник)
     const h = (tg && tg.viewportHeight) ? tg.viewportHeight : window.innerHeight;
     
-    // Применяем высоту к контейнеру .app-layout
+    // Resize only the main app container, NOT the background
     if (app) app.style.height = `${h}px`;
+    
+    // В scanner0.html тут еще был паддинг для списка, 
+    // но в камере у нас cam-viewport flex:1, так что это не обязательно,
+    // однако высоту самого контейнера мы обязаны менять.
   }
 
   const tg = window.Telegram?.WebApp;
   if (tg) {
     tg.onEvent('viewportChanged', ({ isStateStable }) => {
-      setHeight(); 
+      // isStateStable - ждем конца анимации клавиатуры
+      setHeight();
     });
     tg.expand();
   }
   
-  // Фолбэки
   window.addEventListener('resize', setHeight);
+  setHeight(); // Первичный вызов
   
-  // Хак для надежности при фокусе
-  const inputs = document.querySelectorAll('input, textarea');
-  inputs.forEach(el => {
-      el.addEventListener('focus', () => setTimeout(setHeight, 100));
-      el.addEventListener('blur', () => setTimeout(setHeight, 100));
-  });
-
-  // Дополнительный триггер при вводе (возвращаем его внутрь функции)
+  // Дополнительный триггер при вводе (из scanner0.html)
   const txt = document.querySelector('.omni-input');
   if(txt) {
       txt.addEventListener('input', () => requestAnimationFrame(setHeight));
-      txt.addEventListener('focus', () => setTimeout(setHeight, 100)); 
+      txt.addEventListener('focus', () => setTimeout(setHeight, 100)); // Страховка
   }
-  
-  // Первичный запуск
-  setHeight();
 })();
 
   // === CONFIG ===
