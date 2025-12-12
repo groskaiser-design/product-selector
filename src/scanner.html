@@ -624,672 +624,532 @@
     </div>
   </div>
   
-<script>
 /* ============================================================
- * BLOCK 0: TMA boot (FIXED & SAFE)
+ * ULTIMA FINAL MONOLITH SCRIPT
+ * Содержит: Календарь, Виджеты, Камеру, AI, Бэкэнд
  * ============================================================ */
-(function initTMA() {
-  try {
-    const tg = window.Telegram?.WebApp;
-    if (!tg) return; 
+
+// 1. CONFIG
+const API_URL = "https://script.google.com/macros/s/AKfycbx0fUaaCH-JwnG5R_3TFgU5FSibsEuhuS0ZZZfyxPNVPQ1ZpCfUIaa5aE8vjgqitac/exec"; // Твой URL
+
+// 2. TELEGRAM & LAYOUT SETUP
+const tg = window.Telegram?.WebApp;
+
+function initSystem() {
+  if (tg) {
     tg.ready();
     tg.expand();
-    try { tg.setHeaderColor('#050505'); if (tg.setBackgroundColor) tg.setBackgroundColor('#050505'); } catch (e) {}
-    try { if (tg.BackButton) { tg.BackButton.show(); tg.BackButton.offClick(); tg.BackButton.onClick(function() { window.location.href = 'router.html'; }); } } catch (e) {}
-    try { if (tg.disableVerticalSwipes) tg.disableVerticalSwipes(); } catch (e) {}
-  } catch (globalErr) { console.error('Critical TMA Error:', globalErr); }
-})();
-
-// FIX FROM AI.HTML: STABLE LAYOUT ENGINE
-(function initStableLayout() {
-  const app = document.getElementById('appLayout'); 
-  const omniBar = document.getElementById('omniBar');
-  const scrollContainer = document.getElementById('scrollContainer');
-  const fxLayer = document.getElementById('fxLayer');
+    tg.setHeaderColor('#050505');
+    if (tg.disableVerticalSwipes) tg.disableVerticalSwipes();
+  }
   
-  // 1. LOCK BACKGROUND HEIGHT ONCE
-  // Это предотвращает "прыжки" фона при открытии клавиатуры
-  if (fxLayer) {
-    fxLayer.style.height = window.innerHeight + 'px';
-  }
-
+  // Fix Layout Height (iOS Keyboard fix)
+  const app = document.getElementById('appLayout'); 
+  const fx = document.getElementById('fxLayer');
+  
   function setHeight() {
-    const tg = window.Telegram?.WebApp;
-    const h = (tg && tg.viewportHeight) ? tg.viewportHeight : window.innerHeight;
-    
-    // Resize only the main app container, NOT the background
-    app.style.height = `${h}px`;
-    
-    // Dynamic padding for scroll container so content isn't hidden behind omni bar
-    if (omniBar && scrollContainer) {
-        const barHeight = omniBar.offsetHeight;
-        scrollContainer.style.paddingBottom = `${barHeight + 20}px`;
-    }
-  }
-
-  const tg = window.Telegram?.WebApp;
-  if (tg) {
-    tg.onEvent('viewportChanged', ({ isStateStable }) => {
-      setHeight();
-    });
+    const h = tg?.viewportHeight || window.innerHeight;
+    app.style.height = h + 'px';
+    if(fx) fx.style.height = window.innerHeight + 'px'; // Background static
   }
   
   window.addEventListener('resize', setHeight);
+  if(tg) tg.onEvent('viewportChanged', setHeight);
   setHeight();
-  
-  const txt = document.getElementById('msgInput');
-  if(txt) {
-      txt.addEventListener('input', () => requestAnimationFrame(setHeight));
-  }
-})();
-  
-function isAdmin() { try { return window.Telegram?.WebApp?.initDataUnsafe?.user?.id === 196047220; } catch (_) { return false; } }
-function haptic(type) { if (navigator.vibrate) navigator.vibrate(15); if(window.Telegram?.WebApp?.HapticFeedback) window.Telegram.WebApp.HapticFeedback.impactOccurred(type || 'light'); }
+}
 
-  // === INFINITE CALENDAR ===
-  let currentWeekStart = getStartOfWeek(new Date()); let selectedDate = new Date(); let isDragging = false; let startX = 0; let currentTranslate = 0;
-  const area = document.getElementById('swipeArea'); const track = document.getElementById('calTrack'); const prevEl = document.getElementById('weekPrev'); const currEl = document.getElementById('weekCurr'); const nextEl = document.getElementById('weekNext');
-  function getStartOfWeek(date) { const d = new Date(date); const day = d.getDay(); const diff = d.getDate() - day + (day === 0 ? -6 : 1); return new Date(d.setDate(diff)); }
-  function initCalendar() { renderAllWeeks(); area.onpointerdown = handleStart; area.onpointermove = handleMove; area.onpointerup = handleEnd; area.onpointercancel = handleEnd; area.onpointerleave = handleEnd; }
-  function renderWeekData(container, startDate) {
-    container.innerHTML = ''; const weekDays = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс']; const today = new Date();
+function haptic(style) {
+  if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred(style || 'light');
+}
+
+// 3. CALENDAR LOGIC (SWIPES)
+const Calendar = {
+  weekStart: new Date(),
+  selected: new Date(),
+  
+  init: () => {
+    // Вычисляем понедельник текущей недели
+    const d = new Date();
+    const day = d.getDay();
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+    Calendar.weekStart = new Date(d.setDate(diff));
+    
+    Calendar.render();
+    Calendar.bindEvents();
+  },
+
+  render: () => {
+    Calendar.renderWeek(document.getElementById('weekCurr'), Calendar.weekStart);
+    
+    // Prev Week
+    const prev = new Date(Calendar.weekStart); prev.setDate(prev.getDate() - 7);
+    Calendar.renderWeek(document.getElementById('weekPrev'), prev);
+    
+    // Next Week
+    const next = new Date(Calendar.weekStart); next.setDate(next.getDate() + 7);
+    Calendar.renderWeek(document.getElementById('weekNext'), next);
+    
+    // Month Label
+    const mid = new Date(Calendar.weekStart); mid.setDate(mid.getDate() + 3);
+    document.getElementById('monthLabel').innerText = mid.toLocaleString('ru', { month: 'long', year: 'numeric' }).toUpperCase();
+  },
+
+  renderWeek: (el, startDate) => {
+    el.innerHTML = '';
+    const days = ['ПН','ВТ','СР','ЧТ','ПТ','СБ','ВС'];
+    const todayStr = new Date().toDateString();
+    const selStr = Calendar.selected.toDateString();
+    
     for(let i=0; i<7; i++) {
-      const d = new Date(startDate); d.setDate(d.getDate() + i); const isToday = d.toDateString() === today.toDateString(); const isSelected = d.toDateString() === selectedDate.toDateString();
-      const el = document.createElement('div'); el.className = `day-cell ${isSelected ? 'selected' : ''} ${isToday ? 'is-today' : ''}`; el.innerHTML = `<div class="dc-name">${weekDays[i]}</div><div class="dc-num">${d.getDate()}</div>`;
-      el.onclick = (e) => { if(Math.abs(currentTranslate) > 5) return; document.querySelectorAll('.day-cell').forEach(c => c.classList.remove('selected')); el.classList.add('selected'); selectedDate = new Date(d); haptic('selection'); renderAllWeeks(); }; container.appendChild(el);
-    }
-  }
-  function renderAllWeeks() { renderWeekData(currEl, currentWeekStart); const dPrev = new Date(currentWeekStart); dPrev.setDate(dPrev.getDate() - 7); renderWeekData(prevEl, dPrev); const dNext = new Date(currentWeekStart); dNext.setDate(dNext.getDate() + 7); renderWeekData(nextEl, dNext); const mid = new Date(currentWeekStart); mid.setDate(mid.getDate() + 3); document.getElementById('monthLabel').textContent = mid.toLocaleString('ru', { month: 'long', year: 'numeric' }); }
-  function handleStart(e) { if (e.button !== 0) return; isDragging = true; startX = e.clientX; currentTranslate = 0; track.style.transition = 'none'; area.style.cursor = 'grabbing'; }
-  function handleMove(e) { if (!isDragging) return; currentTranslate = e.clientX - startX; track.style.transform = `translateX(calc(-33.333333% + ${currentTranslate}px))`; }
-  function handleEnd(e) { if (!isDragging) return; isDragging = false; area.style.cursor = 'grab'; const threshold = 60; track.style.transition = 'transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1)'; if (currentTranslate > threshold) { haptic('light'); track.style.transform = `translateX(0%)`; setTimeout(() => shiftWeeks(-1), 300); } else if (currentTranslate < -threshold) { haptic('light'); track.style.transform = `translateX(-66.666666%)`; setTimeout(() => shiftWeeks(1), 300); } else { track.style.transform = `translateX(-33.333333%)`; } }
-  function shiftWeeks(direction) { currentWeekStart.setDate(currentWeekStart.getDate() + (direction * 7)); track.style.transition = 'none'; renderAllWeeks(); track.style.transform = `translateX(-33.333333%)`; }
-
-  // === CAROUSEL ===
-  const carTrack = document.getElementById('track'); const dots = document.querySelectorAll('.dot'); let isDown = false; let startXC; let scrollLeft;
-  carTrack.addEventListener('mousedown', (e) => { isDown=true; carTrack.style.cursor='grabbing'; startXC=e.pageX-carTrack.offsetLeft; scrollLeft=carTrack.scrollLeft; });
-  carTrack.addEventListener('mouseleave', () => { isDown=false; carTrack.style.cursor='grab'; });
-  carTrack.addEventListener('mouseup', () => { isDown=false; carTrack.style.cursor='grab'; });
-  carTrack.addEventListener('mousemove', (e) => { if(!isDown) return; e.preventDefault(); const x=e.pageX-carTrack.offsetLeft; const walk=(x-startXC)*2; carTrack.scrollLeft=scrollLeft-walk; });
-  carTrack.addEventListener('scroll', () => { const idx=Math.round(carTrack.scrollLeft/carTrack.clientWidth); dots.forEach((d,i)=>d.classList.toggle('active', i===idx)); });
-
-    /* ============================================================
-    * BLOCK: WIDGETS LOGIC (RINGS & WATER)
-    * ============================================================ */
-
-    const WidgetManager = {
-      // Цели пользователя (потом будем брать из профиля)
-      targets: { k: 2100, p: 160, f: 70, c: 250, water: 2500 },
+      const d = new Date(startDate);
+      d.setDate(d.getDate() + i);
+      const isToday = d.toDateString() === todayStr;
+      const isSel = d.toDateString() === selStr;
       
-      // Текущее состояние воды (для локального учета)
-      currentWater: 0, 
+      const div = document.createElement('div');
+      div.className = `day-cell ${isSel ? 'selected' : ''} ${isToday ? 'is-today' : ''}`;
+      div.innerHTML = `<div class="dc-name">${days[i]}</div><div class="dc-num">${d.getDate()}</div>`;
+      
+      div.onclick = () => {
+        // Simple click (if not dragging)
+        document.querySelectorAll('.day-cell').forEach(c => c.classList.remove('selected'));
+        div.classList.add('selected');
+        Calendar.selected = new Date(d);
+        haptic('selection');
+        Backend.loadAndRender(); // Перезагружаем данные для новой даты
+      };
+      el.appendChild(div);
+    }
+  },
 
-      // 1. Обновление ВСЕХ виджетов разом
-      render(stats) {
-        // stats = { k: 1200, p: 90, f: 40, c: 110, water: 1500 }
-        
-        // А. Обновляем Кольца (Макросы)
-        this.animateRing('k', stats.k, this.targets.k);
-        this.animateRing('p', stats.p, this.targets.p);
-        this.animateRing('f', stats.f, this.targets.f);
-        this.animateRing('c', stats.c, this.targets.c);
+  bindEvents: () => {
+    const area = document.getElementById('swipeArea');
+    const track = document.getElementById('calTrack');
+    let startX = 0, currentX = 0, isDragging = false;
 
-        // Б. Обновляем Воду
-        this.currentWater = stats.water || 0;
-        this.renderWaterUI();
-      },
-
-      // 2. Логика кольца (SVG Dashoffset)
-      animateRing(type, val, target) {
-        const elRing = document.getElementById(`ring-${type}`);
-        const elText = document.getElementById(`val-${type}`);
-        if (!elRing || !elText) return;
-
-        // Ограничиваем, чтобы не сломать график (не больше 100%)
-        const pct = Math.min(1, Math.max(0, val / target));
-        
-        // Математика SVG: 
-        // Длина окружности (2 * pi * r) при r=24 равна ~151px.
-        // Offset 151 = пусто, Offset 0 = полно.
-        const circumference = 151; 
-        const offset = circumference - (pct * circumference);
-
-        // Применяем стили
-        elRing.style.strokeDashoffset = offset;
-        elText.innerHTML = `${Math.round(val)}<span>/${target}</span>`;
-      },
-
-      // 3. Логика Воды (UI)
-      renderWaterUI() {
-        const val = this.currentWater;
-        const target = this.targets.water;
-        
-        document.getElementById('lbl-fact').innerText = val;
-        document.getElementById('lbl-target').innerText = target;
-        
-        const pctGlobal = Math.round((val / target) * 100);
-        document.getElementById('lbl-pct').innerText = pctGlobal + '%';
-
-        // Эффект перегрузки (если выпили больше нормы)
-        const card = document.getElementById('waterCard');
-        if (val > target) card.classList.add('is-overload'); 
-        else card.classList.remove('is-overload');
-
-        // Распределение по 5 стаканам
-        for (let i = 1; i <= 5; i++) {
-          const el = document.getElementById('c' + i);
-          const segmentSize = target / 5; // 500мл в одном стакане
-          const threshold = i * segmentSize;     // Верхняя граница стакана
-          const prevThreshold = (i - 1) * segmentSize; // Нижняя граница
-          
-          let fillPct = 0;
-          if (val >= threshold) {
-            fillPct = 100; // Стакан полон
-          } else if (val > prevThreshold) {
-            // Стакан наполнен частично
-            fillPct = ((val - prevThreshold) / segmentSize) * 100;
-          }
-          
-          el.style.height = `${fillPct}%`;
-        }
-      },
-
-      // 4. Действие пользователя (Добавить/Убавить воду)
-      async add(amount) {
-        haptic('light');
-        
-        // Оптимистичное обновление (сразу меняем UI)
-        const oldVal = this.currentWater;
-        this.currentWater = Math.max(0, this.currentWater + amount);
-        this.renderWaterUI();
-
-        // Тут будет отправка в базу
-        console.log(`Sending water update: ${this.currentWater}ml`);
-        
-        // TODO: Раскомментировать, когда подключим API
-        /*
-        try {
-          await API.send('update_water', { amount: this.currentWater });
-        } catch (e) {
-          // Ошибка? Откатываем UI назад
-          this.currentWater = oldVal;
-          this.renderWaterUI();
-          alert('Ошибка соединения');
-        }
-        */
-      }
+    area.onpointerdown = (e) => {
+      isDragging = true;
+      startX = e.clientX;
+      track.style.transition = 'none';
     };
 
-  // === FORMAT LOCAL TIME ===
-  function formatLocalTimes() {
-    const timeElements = document.querySelectorAll('.mh-time'); const now = new Date();
-    timeElements.forEach(el => { const h = parseInt(el.getAttribute('data-h')); const m = parseInt(el.getAttribute('data-m')); if (!isNaN(h) && !isNaN(m)) { const d = new Date(now); d.setHours(h, m, 0, 0); el.textContent = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }); } });
-  }
-  
-  initCalendar(); formatLocalTimes();
+    area.onpointermove = (e) => {
+      if(!isDragging) return;
+      currentX = e.clientX - startX;
+      track.style.transform = `translateX(calc(-33.33% + ${currentX}px))`;
+    };
 
-
- /* ============================================================
- * BLOCK: DATA CORE (REAL DATA INTEGRATION)
- * ============================================================ */
-
-const API_CONFIG = {
-  // Твой URL GAS скрипта
-  URL: "https://script.google.com/macros/s/ТВОЙ_ID_СКРИПТА/exec" 
-};
-
-// 1. API CLIENT
-const Backend = {
-  async getDayLog(dateObj = new Date()) {
-    // Форматируем дату для запроса
-    // В будущем здесь будет реальный fetch. Пока имитируем ответ сервера,
-    // чтобы проверить работу рендера на "боевой" структуре данных.
-    
-    // Имитация задержки сети
-    // await new Promise(r => setTimeout(r, 800)); 
-    
-    // Эту структуру данных нам будет присылать GAS (функция doGet)
-    return [
-      {
-        time: "09:00",
-        items: [
-          { name: "Овсяная каша на молоке", weight: 250, k: 220, p: 8, f: 6, c: 32 },
-          { name: "Масло сливочное", weight: 10, k: 75, p: 0, f: 8, c: 0 },
-          { name: "Кофе с молоком", weight: 250, k: 125, p: 3, f: 3, c: 5 }
-        ]
-      },
-      {
-        time: "11:30",
-        items: [
-          { name: "Творог 5%", weight: 150, k: 120, p: 24, f: 7, c: 3 },
-          { name: "Яблоко зеленое", weight: 120, k: 60, p: 0, f: 0, c: 14 }
-        ]
+    const endSwipe = () => {
+      if(!isDragging) return;
+      isDragging = false;
+      track.style.transition = 'transform 0.3s ease';
+      
+      if(currentX > 60) { // Swipe Right (Prev)
+        track.style.transform = `translateX(0%)`;
+        setTimeout(() => {
+          Calendar.weekStart.setDate(Calendar.weekStart.getDate() - 7);
+          Calendar.render();
+          track.style.transition = 'none';
+          track.style.transform = `translateX(-33.33%)`;
+        }, 300);
+      } else if (currentX < -60) { // Swipe Left (Next)
+        track.style.transform = `translateX(-66.66%)`;
+        setTimeout(() => {
+          Calendar.weekStart.setDate(Calendar.weekStart.getDate() + 7);
+          Calendar.render();
+          track.style.transition = 'none';
+          track.style.transform = `translateX(-33.33%)`;
+        }, 300);
+      } else {
+        track.style.transform = `translateX(-33.33%)`;
       }
-      // ... данные будут приходить сюда
-    ];
-  },
+      currentX = 0;
+    };
 
-  async loadAndRender() {
-    const container = document.getElementById('timelineFeed');
-    // Показываем лоадер (опционально)
-    container.innerHTML = '<div style="padding:20px; text-align:center; color:#555">Загрузка данных...</div>';
+    area.onpointerup = endSwipe;
+    area.onpointercancel = endSwipe;
+    area.onpointerleave = endSwipe;
+  }
+};
+
+// 4. WIDGETS LOGIC (CAROUSEL)
+const Widgets = {
+  init: () => {
+    const track = document.getElementById('track');
+    const dots = document.querySelectorAll('.dot');
     
-    try {
-      const data = await this.getDayLog();
-      renderDailyLog(data);
-      updateDashboardStats(data); // Обновим и кружочки (след. этап)
-    } catch (e) {
-      container.innerHTML = `<div style="color:var(--acc-red); padding:20px">Ошибка: ${e.message}</div>`;
+    // Native scroll snap handling
+    track.addEventListener('scroll', () => {
+      const idx = Math.round(track.scrollLeft / track.clientWidth);
+      dots.forEach((d, i) => d.classList.toggle('active', i === idx));
+    });
+  },
+  
+  update: (stats) => {
+    // Update Rings
+    const updateRing = (id, val, max) => {
+      const el = document.getElementById(id);
+      const txt = document.getElementById('val-' + id.split('-')[1]);
+      if(el && txt) {
+        const pct = Math.min(val / max, 1);
+        el.style.strokeDashoffset = 151 - (pct * 151);
+        txt.innerHTML = `${Math.round(val)}<span>/${max}</span>`;
+      }
+    };
+    
+    // Targets
+    const T = { k:2100, p:160, f:70, c:250, w:2500 };
+    updateRing('ring-k', stats.k, T.k);
+    updateRing('ring-p', stats.p, T.p);
+    updateRing('ring-f', stats.f, T.f);
+    updateRing('ring-c', stats.c, T.c);
+    
+    // Update Water
+    document.getElementById('lbl-fact').innerText = stats.water;
+    document.getElementById('lbl-pct').innerText = Math.round((stats.water/T.w)*100) + '%';
+    
+    for(let i=1; i<=5; i++) {
+        const tube = document.getElementById('c'+i);
+        const limit = i * 500;
+        let h = 0;
+        if (stats.water >= limit) h = 100;
+        else if (stats.water > (limit - 500)) h = ((stats.water - (limit-500))/500)*100;
+        tube.style.height = h + '%';
     }
-  }
-};
-
-// 2. ГЕНЕРАТОР HTML (Строго сохраняем стили!)
-function renderDailyLog(logData) {
-  const container = document.getElementById('timelineFeed');
-  container.innerHTML = ''; // Очистка
-
-  if (!logData || logData.length === 0) {
-    container.innerHTML = '<div style="text-align:center; padding:40px; opacity:0.4">Дневник пуст</div>';
-    return;
-  }
-
-  // Проходим по каждому приему пищи
-  logData.forEach((meal, index) => {
-    // Создаем карточку
-    const card = document.createElement('div');
-    card.className = 'meal-card';
-    card.style.animation = `slideIn 0.4s ease ${index * 0.1}s backwards`; // Каскадная анимация появления
-
-    // Генерируем строки продуктов
-    let itemsHtml = '';
-    meal.items.forEach(prod => {
-      itemsHtml += `
-        <div class="prod-item">
-          <div class="pi-name">${prod.name}</div>
-          <div class="pi-val pi-w">${prod.weight}</div>
-          <div class="pi-val pi-k">${prod.k}</div>
-          <div class="pi-val pi-p">${prod.p}</div>
-          <div class="pi-val pi-f">${prod.f}</div>
-          <div class="pi-val pi-c">${prod.c}</div>
-        </div>
-      `;
-    });
-
-    // Собираем HTML карточки (Шапка + Тело)
-    card.innerHTML = `
-      <div class="col-headers">
-        <div class="mh-time">${meal.time}</div>
-        <div class="ch-item">Вес</div>
-        <div class="ch-item">К</div>
-        <div class="ch-item">Б</div>
-        <div class="ch-item">Ж</div>
-        <div class="ch-item">У</div>
-      </div>
-      ${itemsHtml}
-    `;
-
-    container.appendChild(card);
-  });
-}
-
-// Внутри Backend.loadAndRender или где у тебя updateDashboardStats
-function updateDashboardStats(logData) {
-  let total = { k:0, p:0, f:0, c:0, water: 0 }; // Добавили water
-  
-  // Считаем еду из ленты
-  logData.forEach(meal => {
-    meal.items.forEach(i => {
-      total.k += i.k;
-      total.p += i.p;
-      total.f += i.f;
-      total.c += i.c;
-    });
-  });
-
-  // Воду пока берем фиктивную (позже она придет из API getDayLog)
-  total.water = 1250; // <--- Временно, чтобы проверить работу стаканов
-
-  // Отрисовываем
-  WidgetManager.render(total);
-}
-
-// === ЗАПУСК ===
-// Вызываем загрузку при старте
-// === ЗАПУСК ===
-document.addEventListener('DOMContentLoaded', () => {
-  // 1. Инициализация UI
-  Omni.init();
-  CameraApp.init();
-  
-  // 2. Обработка кнопки назад (Telegram)
-  if (window.Telegram?.WebApp?.BackButton) {
-      window.Telegram.WebApp.BackButton.onClick(() => {
-          if (App.mode === 'camera') App.closeCamera();
-          else if (document.getElementById('draftOverlay').classList.contains('visible')) DraftManager.close();
-      });
-  }
-
-  // 3. Загрузка данных ленты
-  Backend.loadAndRender();
-});
-
-
-/* ============================================================
- * НОВЫЙ БЛОК: CAMERA & AI ENGINE
- * Вставляем ПОСЛЕ WidgetManager, но ПЕРЕД ЗАПУСКОМ
- * ============================================================ */
-
-// ⚠️ ВСТАВЬ СЮДА СВОЙ ГУГЛ СКРИПТ URL !!!
-const REAL_API_URL = "https://script.google.com/macros/s/AKfycbx0fUaaCH-JwnG5R_3TFgU5FSibsEuhuS0ZZZfyxPNVPQ1ZpCfUIaa5aE8vjgqitac/exec";
-
-// 1. API CLIENT (Связь с GAS)
-const API = {
-  blobToBase64: (blob) => {
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result);
-      reader.readAsDataURL(blob);
-    });
   },
   
-  send: async (action, payload) => {
-    const user = window.Telegram?.WebApp?.initDataUnsafe?.user || { id: 0, first_name: 'Test', username: 'test' };
-    const body = { action, user, initData: window.Telegram?.WebApp?.initData || '', ...payload };
-    
-    // Используем text/plain для обхода CORS
-    const res = await fetch(REAL_API_URL, {
-      method: "POST",
-      headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify(body)
-    });
-    
-    const json = await res.json();
-    if (!json.ok) throw new Error(json.error || 'Server Error');
-    return json;
+  addWater: (amount) => {
+    haptic('light');
+    // Here we can optimize locally or send to API
+    alert('Water add: ' + amount);
   }
 };
+// Global helper for onclick
+window.WidgetManager = { add: Widgets.addWater }; 
 
-// 2. APP STATE (Переключение режимов)
+
+// 5. CAMERA & AI APP
 const App = {
-  mode: 'feed', // feed | camera
+  mode: 'feed',
   
-  openCamera: async () => {
+  openCam: async () => {
     App.mode = 'camera';
     document.getElementById('camLayer').classList.add('active');
-    document.getElementById('omniBar').style.display = 'none'; 
-    if (window.Telegram?.WebApp?.BackButton) window.Telegram.WebApp.BackButton.show();
-    await CameraApp.start();
+    document.getElementById('omniBar').style.display = 'none';
+    if(tg?.BackButton) tg.BackButton.show();
+    await Camera.start();
   },
   
-  closeCamera: () => {
+  closeCam: () => {
     App.mode = 'feed';
     document.getElementById('camLayer').classList.remove('active');
     document.getElementById('previewLayer').style.display = 'none';
     document.getElementById('omniBar').style.display = 'flex';
-    if (window.Telegram?.WebApp?.BackButton) window.Telegram.WebApp.BackButton.hide();
-    CameraApp.stop();
+    if(tg?.BackButton) tg.BackButton.hide();
+    Camera.stop();
   }
 };
 
-// 3. CAMERA LOGIC
-const CameraApp = {
-  stream: null, track: null,
-  devices: [], devIdx: 0,
-  isLevel: false, photoBlob: null,
+const Camera = {
+  stream: null, devices: [], idx: 0,
   
   init: () => {
-    document.getElementById('btnShutter').onclick = CameraApp.snap;
-    document.getElementById('btnSwitchCam').onclick = CameraApp.switchCam;
-    document.getElementById('btnCloseCam').onclick = App.closeCamera;
-    document.getElementById('btnTorch').onclick = CameraApp.toggleTorch;
+    document.getElementById('btnShutter').onclick = Camera.snap;
+    document.getElementById('btnSwitchCam').onclick = Camera.switch;
+    document.getElementById('btnCloseCam').onclick = App.closeCam;
+    document.getElementById('btnTorch').onclick = Camera.torch;
     
-    // Гироскоп
+    // Gyro
     if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
-        document.getElementById('permReq').classList.add('active'); 
+        document.getElementById('permReq').classList.add('active');
     } else {
-        window.addEventListener('deviceorientation', CameraApp.handleOrient);
+        window.addEventListener('deviceorientation', Camera.gyro);
     }
   },
-
-  requestSensors: async () => {
-    try {
-        const resp = await DeviceOrientationEvent.requestPermission();
-        if (resp === 'granted') window.addEventListener('deviceorientation', CameraApp.handleOrient);
-    } catch(e){}
-    document.getElementById('permReq').classList.remove('active');
-  },
-
-  handleOrient: (e) => {
-    const x = e.beta; const y = e.gamma; 
-    if (x === null) return;
-    const isOk = Math.abs(x) < 10 && Math.abs(y) < 10;
-    if (CameraApp.isLevel !== isOk) {
-        CameraApp.isLevel = isOk;
-        const dot = document.getElementById('lvlDot');
-        const txt = document.getElementById('lvlText');
-        if (isOk) { dot.classList.add('ok'); txt.innerText = "OK"; haptic('medium'); }
-        else { dot.classList.remove('ok'); txt.innerText = "LEVEL"; }
-    }
-    CameraApp.drawLevel(x, y);
-  },
-
-  drawLevel: (x, y) => {
+  
+  gyro: (e) => {
+    // Gyro Visuals
     const cvs = document.getElementById('uiCanvas');
     const ctx = cvs.getContext('2d');
-    const w = cvs.width = window.innerWidth; 
+    const w = cvs.width = window.innerWidth;
     const h = cvs.height = window.innerHeight;
     const cx = w/2, cy = h/2;
     
     ctx.clearRect(0,0,w,h);
-    
+    // Crosshair
     ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth=2;
     ctx.beginPath(); ctx.moveTo(cx-10,cy); ctx.lineTo(cx+10,cy); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(cx,cy-10); ctx.lineTo(cx,cy+10); ctx.stroke();
     
-    if (x!=null) {
-        const dx = Math.max(-30, Math.min(30, y || 0)) * 3;
-        const dy = Math.max(-30, Math.min(30, x || 0)) * 3;
-        ctx.beginPath(); 
-        ctx.arc(cx+dx, cy+dy, 10, 0, Math.PI*2);
-        ctx.fillStyle = CameraApp.isLevel ? '#30d158' : '#ff453a';
-        ctx.fill();
+    // Bubble
+    const x = e.beta, y = e.gamma;
+    if(x!=null) {
+        const isOk = Math.abs(x)<10 && Math.abs(y)<10;
+        const color = isOk ? '#30d158' : '#ff453a';
+        
+        // Update UI Text
+        const dot = document.getElementById('lvlDot');
+        if(isOk) { dot.classList.add('ok'); document.getElementById('lvlText').innerText="OK"; }
+        else { dot.classList.remove('ok'); document.getElementById('lvlText').innerText="LEVEL"; }
+        
+        const dx = Math.max(-30, Math.min(30, y||0)) * 3;
+        const dy = Math.max(-30, Math.min(30, x||0)) * 3;
+        
+        ctx.beginPath(); ctx.arc(cx+dx, cy+dy, 10, 0, Math.PI*2);
+        ctx.fillStyle = color; ctx.fill();
     }
   },
-
-  start: async () => {
-    try {
-      if (CameraApp.stream) CameraApp.stop();
-      const devs = await navigator.mediaDevices.enumerateDevices();
-      CameraApp.devices = devs.filter(d => d.kind === 'videoinput');
-      const constraints = { 
-        video: { 
-            deviceId: CameraApp.devices[CameraApp.devIdx]?.deviceId,
-            facingMode: 'environment',
-            width: { ideal: 1280 }, height: { ideal: 1920 } 
-        }, audio: false 
-      };
-      CameraApp.stream = await navigator.mediaDevices.getUserMedia(constraints);
-      const video = document.getElementById('video');
-      video.srcObject = CameraApp.stream;
-      video.classList.add('active');
-      CameraApp.track = CameraApp.stream.getVideoTracks()[0];
-      const caps = CameraApp.track.getCapabilities();
-      if(caps.torch) document.getElementById('btnTorch').style.opacity = 1;
-    } catch(e) { alert("Cam Error: "+e.message); }
-  },
-
-  stop: () => {
-    if (CameraApp.stream) CameraApp.stream.getTracks().forEach(t => t.stop());
-    CameraApp.stream = null;
-    document.getElementById('video').classList.remove('active');
-  },
-
-  switchCam: () => {
-    CameraApp.devIdx = (CameraApp.devIdx + 1) % CameraApp.devices.length;
-    CameraApp.start();
-  },
-
-  toggleTorch: () => {
-    if(!CameraApp.track) return;
-    const on = document.getElementById('btnTorch').classList.toggle('active');
-    CameraApp.track.applyConstraints({ advanced: [{ torch: on }] }).catch(()=>{});
-  },
-
-  snap: async () => {
-    haptic('heavy');
-    const vid = document.getElementById('video');
-    const canvas = document.createElement('canvas');
-    let w = vid.videoWidth, h = vid.videoHeight;
-    const MAX = 1024;
-    if (w > h && w > MAX) { h *= MAX/w; w = MAX; }
-    else if (h > w && h > MAX) { w *= MAX/h; h = MAX; }
-    canvas.width = w; canvas.height = h;
-    canvas.getContext('2d').drawImage(vid, 0, 0, w, h);
-    CameraApp.photoBlob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.7));
-    document.getElementById('finalImg').src = URL.createObjectURL(CameraApp.photoBlob);
-    document.getElementById('previewLayer').style.display = 'flex';
-  },
-
-  retake: () => {
-    document.getElementById('previewLayer').style.display = 'none';
-    CameraApp.photoBlob = null;
+  
+  reqPerms: async () => {
+      try { await DeviceOrientationEvent.requestPermission(); window.addEventListener('deviceorientation', Camera.gyro); } catch(e){}
+      document.getElementById('permReq').classList.remove('active');
   },
   
-  cancel: () => {
-      ProcessingUI.stop();
-      if (App.mode === 'camera') document.getElementById('previewLayer').style.display = 'flex';
-  },
-
-  send: async () => {
-    const btn = document.getElementById('btnSendPhoto');
-    if(btn.style.opacity === '0.5') return;
+  start: async () => {
     try {
-        btn.style.opacity = '0.5';
-        document.getElementById('previewLayer').style.display = 'none'; 
-        ProcessingUI.start('photo');
-        const b64 = await API.blobToBase64(CameraApp.photoBlob);
-        const txt = document.getElementById('commentInput').value;
-        const res = await API.send('scan', { image: b64, userText: txt });
-        ProcessingUI.stop();
-        if (res.ok) { DraftManager.open(res.data, res.scanId); } 
-        else { alert("AI: " + (res.userMessage || res.error)); document.getElementById('previewLayer').style.display = 'flex'; }
-    } catch(e) {
-        ProcessingUI.stop();
-        alert("Err: " + e.message);
-        document.getElementById('previewLayer').style.display = 'flex';
-    } finally { btn.style.opacity = '1'; }
+        if(Camera.stream) Camera.stop();
+        const devs = await navigator.mediaDevices.enumerateDevices();
+        Camera.devices = devs.filter(d => d.kind === 'videoinput');
+        
+        const constraints = {
+            video: { 
+                deviceId: Camera.devices[Camera.idx]?.deviceId,
+                facingMode: 'environment',
+                width: {ideal: 1280}, height: {ideal: 1920}
+            }, audio: false
+        };
+        Camera.stream = await navigator.mediaDevices.getUserMedia(constraints);
+        const vid = document.getElementById('video');
+        vid.srcObject = Camera.stream;
+        vid.classList.add('active');
+        
+        // Torch check
+        const track = Camera.stream.getVideoTracks()[0];
+        const caps = track.getCapabilities();
+        if(caps.torch) document.getElementById('btnTorch').style.opacity = 1;
+        
+    } catch(e) { alert(e.message); }
+  },
+  
+  stop: () => {
+      if(Camera.stream) Camera.stream.getTracks().forEach(t=>t.stop());
+      document.getElementById('video').classList.remove('active');
+  },
+  
+  switch: () => {
+      Camera.idx = (Camera.idx + 1) % Camera.devices.length;
+      Camera.start();
+  },
+  
+  torch: () => {
+      const track = Camera.stream?.getVideoTracks()[0];
+      if(track) {
+          const on = document.getElementById('btnTorch').classList.toggle('active');
+          track.applyConstraints({advanced:[{torch:on}]}).catch(()=>{});
+      }
+  },
+  
+  snap: async () => {
+      haptic('heavy');
+      const vid = document.getElementById('video');
+      const cvs = document.createElement('canvas');
+      // Compress logic
+      let w = vid.videoWidth, h = vid.videoHeight;
+      const MAX = 1024;
+      if(w>h && w>MAX) { h*=MAX/w; w=MAX; } else if(h>w && h>MAX) { w*=MAX/h; h=MAX; }
+      cvs.width=w; cvs.height=h;
+      cvs.getContext('2d').drawImage(vid,0,0,w,h);
+      
+      Camera.blob = await new Promise(r=>cvs.toBlob(r,'image/jpeg',0.7));
+      document.getElementById('finalImg').src = URL.createObjectURL(Camera.blob);
+      document.getElementById('previewLayer').style.display = 'flex';
+  },
+  
+  retake: () => {
+      document.getElementById('previewLayer').style.display = 'none';
+      Camera.blob = null;
+  },
+  
+  send: async () => {
+      const btn = document.getElementById('btnSendPhoto');
+      if(btn.style.opacity === '0.5') return;
+      btn.style.opacity = '0.5';
+      
+      document.getElementById('previewLayer').style.display = 'none';
+      ProcessingUI.start('photo');
+      
+      try {
+          const b64 = await API.blobToB64(Camera.blob);
+          const txt = document.getElementById('commentInput').value;
+          const res = await API.post('scan', { image: b64, userText: txt });
+          
+          ProcessingUI.stop();
+          if(res.ok) DraftManager.open(res.data, res.scanId);
+          else throw new Error(res.error);
+      } catch(e) {
+          ProcessingUI.stop();
+          alert(e.message);
+          document.getElementById('previewLayer').style.display = 'flex';
+      } finally { btn.style.opacity = '1'; }
   }
 };
 
-// 4. UI MANAGERS
-const ProcessingUI = {
-  interval: null,
-  start: (mode) => {
-    const el = document.getElementById('procOverlay');
-    const steps = document.getElementById('procSteps');
-    el.classList.add('active');
-    
-    if (mode === 'text') {
-        steps.innerHTML = `<div class="step pending" id="s1">🛡️ Gatekeeper</div><div class="step pending" id="s2">🧠 TextParser</div><div class="step pending" id="s3">📝 Synthesizer</div>`;
-    } else {
-        steps.innerHTML = `<div class="step pending" id="s1">🛡️ Gatekeeper</div><div class="step pending" id="s2">🕵️ Detective</div><div class="step pending" id="s3">📐 Physicist</div><div class="step pending" id="s4">📝 Synthesizer</div>`;
+// 6. API & HELPERS
+const API = {
+    blobToB64: (blob) => {
+        return new Promise(r => {
+            const reader = new FileReader();
+            reader.onloadend = () => r(reader.result);
+            reader.readAsDataURL(blob);
+        });
+    },
+    post: async (action, data) => {
+        const body = { action, user: tg?.initDataUnsafe?.user, ...data };
+        const res = await fetch(API_URL, {
+            method: 'POST',
+            headers: {'Content-Type': 'text/plain;charset=utf-8'},
+            body: JSON.stringify(body)
+        });
+        return await res.json();
     }
-    let i = 1;
-    document.getElementById('s1').className = 'step active';
-    ProcessingUI.interval = setInterval(() => {
-        if(document.getElementById('s'+i)) document.getElementById('s'+i).className = 'step done';
-        i++;
-        if(document.getElementById('s'+i)) document.getElementById('s'+i).className = 'step active';
-    }, 1500);
-  },
-  stop: () => {
-    clearInterval(ProcessingUI.interval);
-    document.getElementById('procOverlay').classList.remove('active');
-  }
+};
+
+// 7. UI OVERLAYS
+const ProcessingUI = {
+    timer: null,
+    start: (mode) => {
+        document.getElementById('procOverlay').classList.add('active');
+        const box = document.getElementById('procSteps');
+        if(mode==='text') box.innerHTML = `<div class="step active">AI Анализ текста...</div>`;
+        else box.innerHTML = `<div class="step active">1. Gatekeeper...</div><div class="step">2. Vision AI...</div>`;
+    },
+    stop: () => {
+        document.getElementById('procOverlay').classList.remove('active');
+    }
 };
 
 const DraftManager = {
-  data: [], scanId: null,
-  open: (data, scanId) => {
-    if (!data || !data.items) { alert("Пусто"); return; }
-    DraftManager.data = data.items;
-    DraftManager.scanId = scanId;
-    DraftManager.render();
-    document.getElementById('draftOverlay').classList.add('visible');
-  },
-  render: () => {
-    const box = document.getElementById('draftList');
-    box.innerHTML = '';
-    DraftManager.data.forEach((item, idx) => {
-       box.innerHTML += `
-         <div class="draft-item">
-           <div class="di-icon">🍽️</div>
-           <div class="di-inputs">
-             <input class="di-name" value="${item.name}" onchange="DraftManager.update(${idx}, 'name', this.value)">
-             <div class="di-row">
-                <input type="number" class="di-weight" value="${item.weight_g}" onchange="DraftManager.update(${idx}, 'weight_g', this.value)">
-                <div class="di-unit">г</div>
-             </div>
-           </div>
-           <div class="di-del" onclick="DraftManager.remove(${idx})">✕</div>
-         </div>`;
-    });
-  },
-  update: (idx, field, val) => { DraftManager.data[idx][field] = (field==='weight_g' ? Number(val) : val); },
-  remove: (idx) => { DraftManager.data.splice(idx, 1); DraftManager.render(); },
-  close: () => {
-    document.getElementById('draftOverlay').classList.remove('visible');
-    if (App.mode === 'camera') document.getElementById('previewLayer').style.display = 'flex';
-  },
-  confirm: async () => {
-    const btn = document.getElementById('btnConfirmDraft');
-    btn.innerText = 'Сохраняю...';
-    try {
-        const res = await API.send('calculate', { data: { items: DraftManager.data }, scanId: DraftManager.scanId });
-        if (res.ok && res.data) {
-           await API.send('save_meal', { meal_data: { meal_type: 'Snack', items: res.data.items } });
-           haptic('success');
-           document.getElementById('draftOverlay').classList.remove('visible');
-           App.closeCamera(); 
-           Backend.loadAndRender(); // Обновляем ленту!
-           alert("Добавлено!");
-        }
-    } catch(e) { alert("Err: " + e.message); } finally { btn.innerText = 'В дневник'; }
-  }
+    data: [], scanId: null,
+    open: (data, id) => {
+        if(!data?.items) { alert("Не распознано"); return; }
+        DraftManager.data = data.items;
+        DraftManager.scanId = id;
+        DraftManager.render();
+        document.getElementById('draftOverlay').classList.add('visible');
+    },
+    render: () => {
+        const el = document.getElementById('draftList');
+        el.innerHTML = '';
+        DraftManager.data.forEach((item, i) => {
+            el.innerHTML += `
+            <div class="draft-item">
+               <div class="di-icon">🍽️</div>
+               <div class="di-inputs">
+                 <input class="di-name" value="${item.name}" onchange="DraftManager.upd(${i},'name',this.value)">
+                 <div class="di-row"><input type="number" class="di-weight" value="${item.weight_g}" onchange="DraftManager.upd(${i},'weight_g',this.value)"><div class="di-unit">г</div></div>
+               </div>
+               <div class="di-del" onclick="DraftManager.del(${i})">✕</div>
+            </div>`;
+        });
+    },
+    upd: (i, k, v) => { DraftManager.data[i][k] = k==='weight_g'? Number(v):v; },
+    del: (i) => { DraftManager.data.splice(i,1); DraftManager.render(); },
+    close: () => { 
+        document.getElementById('draftOverlay').classList.remove('visible'); 
+        if(App.mode === 'camera') document.getElementById('previewLayer').style.display = 'flex';
+    },
+    confirm: async () => {
+        const btn = document.getElementById('btnConfirmDraft');
+        btn.innerText = 'Сохраняю...';
+        try {
+            const res = await API.post('calculate', { data: {items: DraftManager.data}, scanId: DraftManager.scanId });
+            if(res.ok) {
+                await API.post('save_meal', { meal_data: { meal_type: 'Snack', items: res.data.items } });
+                DraftManager.close();
+                App.closeCam();
+                Backend.loadAndRender(); // Обновляем ленту
+                haptic('success');
+            }
+        } catch(e) { alert(e.message); } finally { btn.innerText = 'В дневник'; }
+    }
 };
 
+// 8. OMNI BAR
 const Omni = {
-  init: () => {
-    const input = document.getElementById('omniInput');
-    const btn = document.getElementById('btnOmniAction');
-    const icoCam = document.getElementById('icoCam');
-    const icoSend = document.getElementById('icoSend');
-    
-    input.addEventListener('input', () => {
-        const hasText = input.value.trim().length > 0;
-        input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 80) + 'px';
-        if (hasText) { btn.classList.add('mode-send'); icoCam.style.display = 'none'; icoSend.style.display = 'block'; } 
-        else { btn.classList.remove('mode-send'); icoCam.style.display = 'block'; icoSend.style.display = 'none'; }
-    });
-    
-    btn.onclick = async () => {
-        const txt = input.value.trim();
-        if (txt.length > 0) {
-            haptic('medium'); input.value = '';
-            ProcessingUI.start('text');
-            try {
-                const res = await API.send('scan', { userText: txt, image: null });
-                ProcessingUI.stop();
-                if(res.ok) DraftManager.open(res.data, res.scanId);
-            } catch(e) { ProcessingUI.stop(); alert(e.message); }
-        } else {
-            haptic('light'); App.openCamera();
-        }
-    };
-  }
+    init: () => {
+        const inp = document.getElementById('omniInput');
+        const btn = document.getElementById('btnOmniAction');
+        const iCam = document.getElementById('icoCam');
+        const iSend = document.getElementById('icoSend');
+        
+        inp.oninput = () => {
+            const hasText = inp.value.trim().length > 0;
+            inp.style.height = 'auto'; inp.style.height = Math.min(inp.scrollHeight, 80) + 'px';
+            if(hasText) { btn.classList.add('mode-send'); iCam.style.display='none'; iSend.style.display='block'; }
+            else { btn.classList.remove('mode-send'); iCam.style.display='block'; iSend.style.display='none'; }
+        };
+        
+        btn.onclick = async () => {
+            const txt = inp.value.trim();
+            if(txt) {
+                haptic('medium'); inp.value = '';
+                ProcessingUI.start('text');
+                try {
+                    const res = await API.post('scan', { userText: txt });
+                    ProcessingUI.stop();
+                    if(res.ok) DraftManager.open(res.data, res.scanId);
+                } catch(e) { ProcessingUI.stop(); alert(e.message); }
+            } else {
+                haptic('light'); App.openCam();
+            }
+        };
+    }
 };
 
+// 9. BACKEND FEED (MOCK + REAL)
+const Backend = {
+    loadAndRender: async () => {
+        // Здесь можно сделать реальный запрос: const data = await API.post('get_day_log');
+        
+        // MOCK DATA для примера, чтобы виджеты ожили
+        const mockLog = [
+            { time: "09:00", items: [{name:"Овсянка", weight:200, k:180, p:6, f:4, c:30}] }
+        ];
+        
+        Backend.renderFeed(mockLog);
+        Widgets.update({ k:180, p:6, f:4, c:30, water: 1250 });
+    },
+    
+    renderFeed: (log) => {
+        const el = document.getElementById('timelineFeed');
+        el.innerHTML = '';
+        log.forEach((meal, i) => {
+            let html = `<div class="meal-card" style="animation: slideIn 0.3s ease ${i*0.1}s backwards">
+              <div class="col-headers"><div class="mh-time">${meal.time}</div><div class="ch-item">Вес</div><div class="ch-item">К</div><div class="ch-item">Б</div><div class="ch-item">Ж</div><div class="ch-item">У</div></div>`;
+            meal.items.forEach(it => {
+                html += `<div class="prod-item"><div class="pi-name">${it.name}</div><div class="pi-val pi-w">${it.weight}</div><div class="pi-val">${it.k}</div><div class="pi-val">${it.p}</div><div class="pi-val">${it.f}</div><div class="pi-val">${it.c}</div></div>`;
+            });
+            html += `</div>`;
+            el.innerHTML += html;
+        });
+    }
+};
+
+// === GLOBAL INIT ===
+document.addEventListener('DOMContentLoaded', () => {
+    initSystem();
+    Calendar.init(); // Запуск календаря
+    Widgets.init();  // Запуск виджетов
+    Camera.init();   // Подготовка камеры
+    Omni.init();     // Подготовка бара
+    Backend.loadAndRender(); // Загрузка данных
+    
+    // Back Button
+    if(tg?.BackButton) tg.BackButton.onClick(() => {
+        if(App.mode === 'camera') App.closeCam();
+        else if(document.getElementById('draftOverlay').classList.contains('visible')) DraftManager.close();
+    });
+});
 
 </script>
 </body>
