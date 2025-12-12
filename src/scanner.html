@@ -624,519 +624,489 @@
     </div>
   </div>
   
-<script>
-  /* ============================================================
- * ULTIMA FINAL SCRIPT (FIXED)
+/* ============================================================
+ * ULTIMA HYBRID SCRIPT
+ * 1. Original Logic (Calendar/Widgets/Layout) - RESTORED
+ * 2. New Logic (Camera/AI/Omni) - APPENDED
  * ============================================================ */
 
-// 1. CONFIGURATION
+// --- CONFIG ---
 const API_URL = "https://script.google.com/macros/s/AKfycbx0fUaaCH-JwnG5R_3TFgU5FSibsEuhuS0ZZZfyxPNVPQ1ZpCfUIaa5aE8vjgqitac/exec";
 
-// 2. CORE SYSTEM & LAYOUT
-const tg = window.Telegram?.WebApp;
+// --- PART 1: ORIGINAL CORE (DO NOT TOUCH) ---
 
-function initSystem() {
-  if (tg) {
-    tg.ready();
-    tg.expand();
-    tg.setHeaderColor('#050505');
-    if (tg.disableVerticalSwipes) tg.disableVerticalSwipes();
-  }
-  
-  // Layout Fix for iOS Keyboard
+(function initTMA() {
+  try {
+    const tg = window.Telegram?.WebApp;
+    if (!tg) return; 
+    tg.ready(); tg.expand();
+    try { tg.setHeaderColor('#050505'); if (tg.setBackgroundColor) tg.setBackgroundColor('#050505'); } catch (e) {}
+    try { if (tg.disableVerticalSwipes) tg.disableVerticalSwipes(); } catch (e) {}
+  } catch (globalErr) { console.error('Critical TMA Error:', globalErr); }
+})();
+
+(function initStableLayout() {
   const app = document.getElementById('appLayout'); 
-  const fx = document.getElementById('fxLayer');
-  
+  const omniBar = document.getElementById('omniBar');
+  const scrollContainer = document.getElementById('scrollContainer');
+  const fxLayer = document.getElementById('fxLayer');
+  if (fxLayer) fxLayer.style.height = window.innerHeight + 'px';
+
   function setHeight() {
-    const h = tg?.viewportHeight || window.innerHeight;
-    app.style.height = h + 'px';
-    if(fx) fx.style.height = window.innerHeight + 'px';
+    const tg = window.Telegram?.WebApp;
+    const h = (tg && tg.viewportHeight) ? tg.viewportHeight : window.innerHeight;
+    app.style.height = `${h}px`;
+    if (omniBar && scrollContainer) {
+        const barHeight = omniBar.offsetHeight;
+        scrollContainer.style.paddingBottom = `${barHeight + 20}px`;
+    }
   }
-  
+  const tg = window.Telegram?.WebApp;
+  if (tg) tg.onEvent('viewportChanged', ({ isStateStable }) => setHeight());
   window.addEventListener('resize', setHeight);
-  if(tg) tg.onEvent('viewportChanged', setHeight);
   setHeight();
-}
-
-function haptic(style) {
-  if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred(style || 'light');
-}
-
-// 3. CALENDAR ENGINE (With Physics)
-const Calendar = {
-  weekStart: new Date(),
-  selected: new Date(),
+})();
   
-  init: () => {
-    // Calculate Monday
-    const d = new Date();
-    const day = d.getDay();
-    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-    Calendar.weekStart = new Date(d.setDate(diff));
-    
-    Calendar.render();
-    Calendar.bindEvents();
-  },
+function haptic(type) { if (navigator.vibrate) navigator.vibrate(15); if(window.Telegram?.WebApp?.HapticFeedback) window.Telegram.WebApp.HapticFeedback.impactOccurred(type || 'light'); }
 
-  render: () => {
-    Calendar.renderWeek(document.getElementById('weekCurr'), Calendar.weekStart);
-    
-    // Prev Week
-    const prev = new Date(Calendar.weekStart); prev.setDate(prev.getDate() - 7);
-    Calendar.renderWeek(document.getElementById('weekPrev'), prev);
-    
-    // Next Week
-    const next = new Date(Calendar.weekStart); next.setDate(next.getDate() + 7);
-    Calendar.renderWeek(document.getElementById('weekNext'), next);
-    
-    // Month Label
-    const mid = new Date(Calendar.weekStart); mid.setDate(mid.getDate() + 3);
-    document.getElementById('monthLabel').innerText = mid.toLocaleString('ru', { month: 'long', year: 'numeric' }).toUpperCase();
-  },
+// === RESTORED CALENDAR LOGIC (SWIPES) ===
+let currentWeekStart = getStartOfWeek(new Date()); 
+let selectedDate = new Date(); 
+let isDragging = false; 
+let startX = 0; 
+let currentTranslate = 0;
 
-  renderWeek: (el, startDate) => {
-    el.innerHTML = '';
-    const days = ['ПН','ВТ','СР','ЧТ','ПТ','СБ','ВС'];
-    const todayStr = new Date().toDateString();
-    const selStr = Calendar.selected.toDateString();
-    
+const area = document.getElementById('swipeArea'); 
+const track = document.getElementById('calTrack'); 
+const prevEl = document.getElementById('weekPrev'); 
+const currEl = document.getElementById('weekCurr'); 
+const nextEl = document.getElementById('weekNext');
+
+function getStartOfWeek(date) { const d = new Date(date); const day = d.getDay(); const diff = d.getDate() - day + (day === 0 ? -6 : 1); return new Date(d.setDate(diff)); }
+
+function initCalendar() { 
+    renderAllWeeks(); 
+    area.onpointerdown = handleStart; 
+    area.onpointermove = handleMove; 
+    area.onpointerup = handleEnd; 
+    area.onpointercancel = handleEnd; 
+    area.onpointerleave = handleEnd; 
+}
+
+function renderWeekData(container, startDate) {
+    container.innerHTML = ''; 
+    const weekDays = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс']; 
+    const today = new Date();
     for(let i=0; i<7; i++) {
-      const d = new Date(startDate);
-      d.setDate(d.getDate() + i);
-      const isToday = d.toDateString() === todayStr;
-      const isSel = d.toDateString() === selStr;
-      
-      const div = document.createElement('div');
-      div.className = `day-cell ${isSel ? 'selected' : ''} ${isToday ? 'is-today' : ''}`;
-      div.innerHTML = `<div class="dc-name">${days[i]}</div><div class="dc-num">${d.getDate()}</div>`;
-      
-      div.onclick = () => {
-        document.querySelectorAll('.day-cell').forEach(c => c.classList.remove('selected'));
-        div.classList.add('selected');
-        Calendar.selected = new Date(d);
-        haptic('selection');
-        // Logic to load data for specific date goes here
-      };
-      el.appendChild(div);
+      const d = new Date(startDate); d.setDate(d.getDate() + i); 
+      const isToday = d.toDateString() === today.toDateString(); 
+      const isSelected = d.toDateString() === selectedDate.toDateString();
+      const el = document.createElement('div'); 
+      el.className = `day-cell ${isSelected ? 'selected' : ''} ${isToday ? 'is-today' : ''}`; 
+      el.innerHTML = `<div class="dc-name">${weekDays[i]}</div><div class="dc-num">${d.getDate()}</div>`;
+      el.onclick = (e) => { 
+          if(Math.abs(currentTranslate) > 5) return; 
+          document.querySelectorAll('.day-cell').forEach(c => c.classList.remove('selected')); 
+          el.classList.add('selected'); 
+          selectedDate = new Date(d); 
+          haptic('selection'); 
+          renderAllWeeks(); 
+          // Тут можно добавить загрузку данных за дату
+      }; 
+      container.appendChild(el);
+    }
+}
+
+function renderAllWeeks() { 
+    renderWeekData(currEl, currentWeekStart); 
+    const dPrev = new Date(currentWeekStart); dPrev.setDate(dPrev.getDate() - 7); renderWeekData(prevEl, dPrev); 
+    const dNext = new Date(currentWeekStart); dNext.setDate(dNext.getDate() + 7); renderWeekData(nextEl, dNext); 
+    const mid = new Date(currentWeekStart); mid.setDate(mid.getDate() + 3); 
+    document.getElementById('monthLabel').textContent = mid.toLocaleString('ru', { month: 'long', year: 'numeric' }); 
+}
+
+function handleStart(e) { if (e.button !== 0) return; isDragging = true; startX = e.clientX; currentTranslate = 0; track.style.transition = 'none'; area.style.cursor = 'grabbing'; }
+function handleMove(e) { if (!isDragging) return; currentTranslate = e.clientX - startX; track.style.transform = `translateX(calc(-33.333333% + ${currentTranslate}px))`; }
+function handleEnd(e) { 
+    if (!isDragging) return; isDragging = false; area.style.cursor = 'grab'; const threshold = 60; 
+    track.style.transition = 'transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1)'; 
+    if (currentTranslate > threshold) { haptic('light'); track.style.transform = `translateX(0%)`; setTimeout(() => shiftWeeks(-1), 300); } 
+    else if (currentTranslate < -threshold) { haptic('light'); track.style.transform = `translateX(-66.666666%)`; setTimeout(() => shiftWeeks(1), 300); } 
+    else { track.style.transform = `translateX(-33.333333%)`; } 
+}
+function shiftWeeks(direction) { currentWeekStart.setDate(currentWeekStart.getDate() + (direction * 7)); track.style.transition = 'none'; renderAllWeeks(); track.style.transform = `translateX(-33.333333%)`; }
+
+// === RESTORED CAROUSEL LOGIC ===
+const carTrack = document.getElementById('track'); 
+const dots = document.querySelectorAll('.dot'); 
+let isDown = false; let startXC; let scrollLeft;
+carTrack.addEventListener('mousedown', (e) => { isDown=true; carTrack.style.cursor='grabbing'; startXC=e.pageX-carTrack.offsetLeft; scrollLeft=carTrack.scrollLeft; });
+carTrack.addEventListener('mouseleave', () => { isDown=false; carTrack.style.cursor='grab'; });
+carTrack.addEventListener('mouseup', () => { isDown=false; carTrack.style.cursor='grab'; });
+carTrack.addEventListener('mousemove', (e) => { if(!isDown) return; e.preventDefault(); const x=e.pageX-carTrack.offsetLeft; const walk=(x-startXC)*2; carTrack.scrollLeft=scrollLeft-walk; });
+carTrack.addEventListener('scroll', () => { const idx=Math.round(carTrack.scrollLeft/carTrack.clientWidth); dots.forEach((d,i)=>d.classList.toggle('active', i===idx)); });
+
+// === RESTORED WIDGET MANAGER ===
+const WidgetManager = {
+  targets: { k: 2100, p: 160, f: 70, c: 250, water: 2500 },
+  currentWater: 0, 
+  render(stats) {
+    this.animateRing('k', stats.k, this.targets.k);
+    this.animateRing('p', stats.p, this.targets.p);
+    this.animateRing('f', stats.f, this.targets.f);
+    this.animateRing('c', stats.c, this.targets.c);
+    this.currentWater = stats.water || 0;
+    this.renderWaterUI();
+  },
+  animateRing(type, val, target) {
+    const elRing = document.getElementById(`ring-${type}`);
+    const elText = document.getElementById(`val-${type}`);
+    if (!elRing || !elText) return;
+    const pct = Math.min(1, Math.max(0, val / target));
+    elRing.style.strokeDashoffset = 151 - (pct * 151);
+    elText.innerHTML = `${Math.round(val)}<span>/${target}</span>`;
+  },
+  renderWaterUI() {
+    const val = this.currentWater;
+    const target = this.targets.water;
+    document.getElementById('lbl-fact').innerText = val;
+    document.getElementById('lbl-target').innerText = target;
+    document.getElementById('lbl-pct').innerText = Math.round((val / target) * 100) + '%';
+    const card = document.getElementById('waterCard');
+    if (val > target) card.classList.add('is-overload'); else card.classList.remove('is-overload');
+    for (let i = 1; i <= 5; i++) {
+      const el = document.getElementById('c' + i);
+      const segmentSize = target / 5; 
+      const threshold = i * segmentSize;     
+      const prevThreshold = (i - 1) * segmentSize; 
+      let fillPct = 0;
+      if (val >= threshold) fillPct = 100; else if (val > prevThreshold) fillPct = ((val - prevThreshold) / segmentSize) * 100;
+      el.style.height = `${fillPct}%`;
     }
   },
-
-  bindEvents: () => {
-    const area = document.getElementById('swipeArea');
-    const track = document.getElementById('calTrack');
-    let startX = 0, currentX = 0, isDragging = false;
-
-    area.onpointerdown = (e) => {
-      isDragging = true;
-      startX = e.clientX;
-      track.style.transition = 'none';
-    };
-
-    area.onpointermove = (e) => {
-      if(!isDragging) return;
-      currentX = e.clientX - startX;
-      track.style.transform = `translateX(calc(-33.33% + ${currentX}px))`;
-    };
-
-    const endSwipe = () => {
-      if(!isDragging) return;
-      isDragging = false;
-      track.style.transition = 'transform 0.3s ease';
-      
-      if(currentX > 60) { // Swipe Right
-        track.style.transform = `translateX(0%)`;
-        setTimeout(() => {
-          Calendar.weekStart.setDate(Calendar.weekStart.getDate() - 7);
-          Calendar.render();
-          track.style.transition = 'none';
-          track.style.transform = `translateX(-33.33%)`;
-        }, 300);
-      } else if (currentX < -60) { // Swipe Left
-        track.style.transform = `translateX(-66.66%)`;
-        setTimeout(() => {
-          Calendar.weekStart.setDate(Calendar.weekStart.getDate() + 7);
-          Calendar.render();
-          track.style.transition = 'none';
-          track.style.transform = `translateX(-33.33%)`;
-        }, 300);
-      } else {
-        track.style.transform = `translateX(-33.33%)`;
-      }
-      currentX = 0;
-    };
-
-    area.onpointerup = endSwipe;
-    area.onpointercancel = endSwipe;
-    area.onpointerleave = endSwipe;
+  async add(amount) {
+    haptic('light');
+    this.currentWater = Math.max(0, this.currentWater + amount);
+    this.renderWaterUI();
   }
 };
 
-// 4. WIDGETS ENGINE
-const Widgets = {
-  init: () => {
-    const track = document.getElementById('track');
-    const dots = document.querySelectorAll('.dot');
-    
-    track.addEventListener('scroll', () => {
-      const idx = Math.round(track.scrollLeft / track.clientWidth);
-      dots.forEach((d, i) => d.classList.toggle('active', i === idx));
+// === PART 2: NEW CAMERA & AI MODULES (APPENDED) ===
+
+// 1. API Client
+const API = {
+  blobToBase64: (blob) => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.readAsDataURL(blob);
     });
   },
-  
-  update: (stats) => {
-    const updateRing = (id, val, max) => {
-      const el = document.getElementById(id);
-      const txt = document.getElementById('val-' + id.split('-')[1]);
-      if(el && txt) {
-        const pct = Math.min(val / max, 1);
-        el.style.strokeDashoffset = 151 - (pct * 151);
-        txt.innerHTML = `${Math.round(val)}<span>/${max}</span>`;
-      }
-    };
-    
-    const T = { k:2100, p:160, f:70, c:250, w:2500 };
-    updateRing('ring-k', stats.k, T.k);
-    updateRing('ring-p', stats.p, T.p);
-    updateRing('ring-f', stats.f, T.f);
-    updateRing('ring-c', stats.c, T.c);
-    
-    // Water
-    if(document.getElementById('lbl-fact')) {
-        document.getElementById('lbl-fact').innerText = stats.water;
-        document.getElementById('lbl-pct').innerText = Math.round((stats.water/T.w)*100) + '%';
-        
-        for(let i=1; i<=5; i++) {
-            const tube = document.getElementById('c'+i);
-            const limit = i * 500;
-            let h = 0;
-            if (stats.water >= limit) h = 100;
-            else if (stats.water > (limit - 500)) h = ((stats.water - (limit-500))/500)*100;
-            tube.style.height = h + '%';
-        }
-    }
-  },
-  
-  addWater: (amount) => {
-    haptic('light');
-    // Local update simulation
-    alert('Water + ' + amount);
+  send: async (action, payload) => {
+    const user = window.Telegram?.WebApp?.initDataUnsafe?.user || { id: 0, first_name: 'Test' };
+    const body = { action, user, initData: window.Telegram?.WebApp?.initData || '', ...payload };
+    const res = await fetch(API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify(body)
+    });
+    const json = await res.json();
+    if (!json.ok) throw new Error(json.error || 'Server Error');
+    return json;
   }
 };
-window.WidgetManager = { add: Widgets.addWater };
 
-// 5. CAMERA & AI APP
+// 2. App State Controller
 const App = {
   mode: 'feed',
-  
-  openCam: async () => {
+  openCamera: async () => {
     App.mode = 'camera';
     document.getElementById('camLayer').classList.add('active');
-    document.getElementById('omniBar').style.display = 'none';
-    if(tg?.BackButton) tg.BackButton.show();
-    await Camera.start();
+    document.getElementById('omniBar').style.display = 'none'; 
+    if (window.Telegram?.WebApp?.BackButton) window.Telegram.WebApp.BackButton.show();
+    await CameraApp.start();
   },
-  
-  closeCam: () => {
+  closeCamera: () => {
     App.mode = 'feed';
     document.getElementById('camLayer').classList.remove('active');
     document.getElementById('previewLayer').style.display = 'none';
     document.getElementById('omniBar').style.display = 'flex';
-    if(tg?.BackButton) tg.BackButton.hide();
-    Camera.stop();
+    if (window.Telegram?.WebApp?.BackButton) window.Telegram.WebApp.BackButton.hide();
+    CameraApp.stop();
   }
 };
 
-const Camera = {
-  stream: null, devices: [], idx: 0, blob: null,
+// 3. Camera Logic
+const CameraApp = {
+  stream: null, track: null, devices: [], devIdx: 0, isLevel: false, photoBlob: null,
   
   init: () => {
-    document.getElementById('btnShutter').onclick = Camera.snap;
-    document.getElementById('btnSwitchCam').onclick = Camera.switch;
-    document.getElementById('btnCloseCam').onclick = App.closeCam;
-    document.getElementById('btnTorch').onclick = Camera.torch;
-    
+    document.getElementById('btnShutter').onclick = CameraApp.snap;
+    document.getElementById('btnSwitchCam').onclick = CameraApp.switchCam;
+    document.getElementById('btnCloseCam').onclick = App.closeCamera;
+    document.getElementById('btnTorch').onclick = CameraApp.toggleTorch;
     if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
-        document.getElementById('permReq').classList.add('active');
+        document.getElementById('permReq').classList.add('active'); 
     } else {
-        window.addEventListener('deviceorientation', Camera.gyro);
+        window.addEventListener('deviceorientation', CameraApp.handleOrient);
     }
   },
-  
-  gyro: (e) => {
+  requestSensors: async () => {
+    try {
+        const resp = await DeviceOrientationEvent.requestPermission();
+        if (resp === 'granted') window.addEventListener('deviceorientation', CameraApp.handleOrient);
+    } catch(e){}
+    document.getElementById('permReq').classList.remove('active');
+  },
+  handleOrient: (e) => {
+    const x = e.beta; const y = e.gamma; 
+    if (x === null) return;
+    const isOk = Math.abs(x) < 10 && Math.abs(y) < 10;
+    if (CameraApp.isLevel !== isOk) {
+        CameraApp.isLevel = isOk;
+        const dot = document.getElementById('lvlDot');
+        const txt = document.getElementById('lvlText');
+        if (isOk) { dot.classList.add('ok'); txt.innerText = "OK"; haptic('medium'); }
+        else { dot.classList.remove('ok'); txt.innerText = "LEVEL"; }
+    }
+    CameraApp.drawLevel(x, y);
+  },
+  drawLevel: (x, y) => {
     const cvs = document.getElementById('uiCanvas');
     const ctx = cvs.getContext('2d');
-    const w = cvs.width = window.innerWidth;
+    const w = cvs.width = window.innerWidth; 
     const h = cvs.height = window.innerHeight;
     const cx = w/2, cy = h/2;
-    
     ctx.clearRect(0,0,w,h);
-    // Crosshair
     ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth=2;
     ctx.beginPath(); ctx.moveTo(cx-10,cy); ctx.lineTo(cx+10,cy); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(cx,cy-10); ctx.lineTo(cx,cy+10); ctx.stroke();
-    
-    const x = e.beta, y = e.gamma;
-    if(x!=null) {
-        const isOk = Math.abs(x)<10 && Math.abs(y)<10;
-        const color = isOk ? '#30d158' : '#ff453a';
-        
-        const dot = document.getElementById('lvlDot');
-        if(isOk) { dot.classList.add('ok'); document.getElementById('lvlText').innerText="OK"; }
-        else { dot.classList.remove('ok'); document.getElementById('lvlText').innerText="LEVEL"; }
-        
-        const dx = Math.max(-30, Math.min(30, y||0)) * 3;
-        const dy = Math.max(-30, Math.min(30, x||0)) * 3;
-        
+    if (x!=null) {
+        const dx = Math.max(-30, Math.min(30, y || 0)) * 3;
+        const dy = Math.max(-30, Math.min(30, x || 0)) * 3;
         ctx.beginPath(); ctx.arc(cx+dx, cy+dy, 10, 0, Math.PI*2);
-        ctx.fillStyle = color; ctx.fill();
+        ctx.fillStyle = CameraApp.isLevel ? '#30d158' : '#ff453a';
+        ctx.fill();
     }
   },
-  
-  reqPerms: async () => {
-      try { await DeviceOrientationEvent.requestPermission(); window.addEventListener('deviceorientation', Camera.gyro); } catch(e){}
-      document.getElementById('permReq').classList.remove('active');
-  },
-  
   start: async () => {
     try {
-        if(Camera.stream) Camera.stop();
-        const devs = await navigator.mediaDevices.enumerateDevices();
-        Camera.devices = devs.filter(d => d.kind === 'videoinput');
-        
-        const constraints = {
-            video: { 
-                deviceId: Camera.devices[Camera.idx]?.deviceId,
-                facingMode: 'environment',
-                width: {ideal: 1280}, height: {ideal: 1920}
-            }, audio: false
-        };
-        Camera.stream = await navigator.mediaDevices.getUserMedia(constraints);
-        const vid = document.getElementById('video');
-        vid.srcObject = Camera.stream;
-        vid.classList.add('active');
-        
-        // Torch check
-        const track = Camera.stream.getVideoTracks()[0];
-        const caps = track.getCapabilities();
-        if(caps.torch) document.getElementById('btnTorch').style.opacity = 1;
-        
-    } catch(e) { alert(e.message); }
+      if (CameraApp.stream) CameraApp.stop();
+      const devs = await navigator.mediaDevices.enumerateDevices();
+      CameraApp.devices = devs.filter(d => d.kind === 'videoinput');
+      const constraints = { video: { deviceId: CameraApp.devices[CameraApp.devIdx]?.deviceId, facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 1920 } }, audio: false };
+      CameraApp.stream = await navigator.mediaDevices.getUserMedia(constraints);
+      const video = document.getElementById('video');
+      video.srcObject = CameraApp.stream;
+      video.classList.add('active');
+      CameraApp.track = CameraApp.stream.getVideoTracks()[0];
+      const caps = CameraApp.track.getCapabilities();
+      if(caps.torch) document.getElementById('btnTorch').style.opacity = 1;
+    } catch(e) { alert("Cam Error: "+e.message); }
   },
-  
   stop: () => {
-      if(Camera.stream) Camera.stream.getTracks().forEach(t=>t.stop());
-      document.getElementById('video').classList.remove('active');
+    if (CameraApp.stream) CameraApp.stream.getTracks().forEach(t => t.stop());
+    CameraApp.stream = null;
+    document.getElementById('video').classList.remove('active');
   },
-  
-  switch: () => {
-      Camera.idx = (Camera.idx + 1) % Camera.devices.length;
-      Camera.start();
+  switchCam: () => { CameraApp.devIdx = (CameraApp.devIdx + 1) % CameraApp.devices.length; CameraApp.start(); },
+  toggleTorch: () => {
+    if(!CameraApp.track) return;
+    const on = document.getElementById('btnTorch').classList.toggle('active');
+    CameraApp.track.applyConstraints({ advanced: [{ torch: on }] }).catch(()=>{});
   },
-  
-  torch: () => {
-      const track = Camera.stream?.getVideoTracks()[0];
-      if(track) {
-          const on = document.getElementById('btnTorch').classList.toggle('active');
-          track.applyConstraints({advanced:[{torch:on}]}).catch(()=>{});
-      }
-  },
-  
   snap: async () => {
-      haptic('heavy');
-      const vid = document.getElementById('video');
-      const cvs = document.createElement('canvas');
-      let w = vid.videoWidth, h = vid.videoHeight;
-      const MAX = 1024;
-      if(w>h && w>MAX) { h*=MAX/w; w=MAX; } else if(h>w && h>MAX) { w*=MAX/h; h=MAX; }
-      cvs.width=w; cvs.height=h;
-      cvs.getContext('2d').drawImage(vid,0,0,w,h);
-      
-      Camera.blob = await new Promise(r=>cvs.toBlob(r,'image/jpeg',0.7));
-      document.getElementById('finalImg').src = URL.createObjectURL(Camera.blob);
-      document.getElementById('previewLayer').style.display = 'flex';
+    haptic('heavy');
+    const vid = document.getElementById('video');
+    const canvas = document.createElement('canvas');
+    let w = vid.videoWidth, h = vid.videoHeight;
+    const MAX = 1024;
+    if (w > h && w > MAX) { h *= MAX/w; w = MAX; } else if (h > w && h > MAX) { w *= MAX/h; h = MAX; }
+    canvas.width = w; canvas.height = h;
+    canvas.getContext('2d').drawImage(vid, 0, 0, w, h);
+    CameraApp.photoBlob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.7));
+    document.getElementById('finalImg').src = URL.createObjectURL(CameraApp.photoBlob);
+    document.getElementById('previewLayer').style.display = 'flex';
   },
-  
-  retake: () => {
-      document.getElementById('previewLayer').style.display = 'none';
-      Camera.blob = null;
-  },
-  
+  retake: () => { document.getElementById('previewLayer').style.display = 'none'; CameraApp.photoBlob = null; },
+  cancel: () => { ProcessingUI.stop(); if (App.mode === 'camera') document.getElementById('previewLayer').style.display = 'flex'; },
   send: async () => {
-      const btn = document.getElementById('btnSendPhoto');
-      if(btn.style.opacity === '0.5') return;
-      btn.style.opacity = '0.5';
-      
-      document.getElementById('previewLayer').style.display = 'none';
-      ProcessingUI.start('photo');
-      
-      try {
-          const b64 = await API.blobToB64(Camera.blob);
-          const txt = document.getElementById('commentInput').value;
-          const res = await API.post('scan', { image: b64, userText: txt });
-          
-          ProcessingUI.stop();
-          if(res.ok) DraftManager.open(res.data, res.scanId);
-          else throw new Error(res.error);
-      } catch(e) {
-          ProcessingUI.stop();
-          alert(e.message);
-          document.getElementById('previewLayer').style.display = 'flex';
-      } finally { btn.style.opacity = '1'; }
+    const btn = document.getElementById('btnSendPhoto');
+    if(btn.style.opacity === '0.5') return;
+    try {
+        btn.style.opacity = '0.5';
+        document.getElementById('previewLayer').style.display = 'none'; 
+        ProcessingUI.start('photo');
+        const b64 = await API.blobToBase64(CameraApp.photoBlob);
+        const txt = document.getElementById('commentInput').value;
+        const res = await API.send('scan', { image: b64, userText: txt });
+        ProcessingUI.stop();
+        if (res.ok) { DraftManager.open(res.data, res.scanId); } 
+        else { alert("AI: " + (res.userMessage || res.error)); document.getElementById('previewLayer').style.display = 'flex'; }
+    } catch(e) {
+        ProcessingUI.stop();
+        alert("Err: " + e.message);
+        document.getElementById('previewLayer').style.display = 'flex';
+    } finally { btn.style.opacity = '1'; }
   }
 };
 
-// 6. API CLIENT (Fixed Object Syntax)
-const API = {
-    blobToB64: (blob) => {
-        return new Promise(r => {
-            const reader = new FileReader();
-            reader.onloadend = () => r(reader.result);
-            reader.readAsDataURL(blob);
-        });
-    },
-    
-    post: async (action, data) => {
-        const body = { action, user: tg?.initDataUnsafe?.user || {id:0, first_name:'Test'}, ...data };
-        const res = await fetch(API_URL, {
-            method: 'POST',
-            headers: {'Content-Type': 'text/plain;charset=utf-8'},
-            body: JSON.stringify(body)
-        });
-        return await res.json();
-    }
-};
-
-// 7. UI OVERLAYS
+// 4. UI Helpers
 const ProcessingUI = {
-    start: (mode) => {
-        document.getElementById('procOverlay').classList.add('active');
-        const box = document.getElementById('procSteps');
-        if(mode==='text') box.innerHTML = `<div class="step active">AI Анализ текста...</div>`;
-        else box.innerHTML = `<div class="step active">1. Gatekeeper...</div><div class="step">2. Vision AI...</div>`;
-    },
-    stop: () => {
-        document.getElementById('procOverlay').classList.remove('active');
+  interval: null,
+  start: (mode) => {
+    const el = document.getElementById('procOverlay');
+    const steps = document.getElementById('procSteps');
+    el.classList.add('active');
+    if (mode === 'text') {
+        steps.innerHTML = `<div class="step pending" id="s1">🛡️ Gatekeeper</div><div class="step pending" id="s2">🧠 TextParser</div><div class="step pending" id="s3">📝 Synthesizer</div>`;
+    } else {
+        steps.innerHTML = `<div class="step pending" id="s1">🛡️ Gatekeeper</div><div class="step pending" id="s2">🕵️ Detective</div><div class="step pending" id="s3">📐 Physicist</div><div class="step pending" id="s4">📝 Synthesizer</div>`;
     }
+    let i = 1;
+    document.getElementById('s1').className = 'step active';
+    ProcessingUI.interval = setInterval(() => {
+        if(document.getElementById('s'+i)) document.getElementById('s'+i).className = 'step done';
+        i++;
+        if(document.getElementById('s'+i)) document.getElementById('s'+i).className = 'step active';
+    }, 1500);
+  },
+  stop: () => {
+    clearInterval(ProcessingUI.interval);
+    document.getElementById('procOverlay').classList.remove('active');
+  }
 };
 
 const DraftManager = {
-    data: [], scanId: null,
-    open: (data, id) => {
-        if(!data?.items) { alert("Не распознано"); return; }
-        DraftManager.data = data.items;
-        DraftManager.scanId = id;
-        DraftManager.render();
-        document.getElementById('draftOverlay').classList.add('visible');
-    },
-    render: () => {
-        const el = document.getElementById('draftList');
-        el.innerHTML = '';
-        DraftManager.data.forEach((item, i) => {
-            el.innerHTML += `
-            <div class="draft-item">
-               <div class="di-icon">🍽️</div>
-               <div class="di-inputs">
-                 <input class="di-name" value="${item.name}" onchange="DraftManager.upd(${i},'name',this.value)">
-                 <div class="di-row"><input type="number" class="di-weight" value="${item.weight_g}" onchange="DraftManager.upd(${i},'weight_g',this.value)"><div class="di-unit">г</div></div>
-               </div>
-               <div class="di-del" onclick="DraftManager.del(${i})">✕</div>
-            </div>`;
-        });
-    },
-    upd: (i, k, v) => { DraftManager.data[i][k] = k==='weight_g'? Number(v):v; },
-    del: (i) => { DraftManager.data.splice(i,1); DraftManager.render(); },
-    close: () => { 
-        document.getElementById('draftOverlay').classList.remove('visible'); 
-        if(App.mode === 'camera') document.getElementById('previewLayer').style.display = 'flex';
-    },
-    confirm: async () => {
-        const btn = document.getElementById('btnConfirmDraft');
-        btn.innerText = 'Сохраняю...';
-        try {
-            const res = await API.post('calculate', { data: {items: DraftManager.data}, scanId: DraftManager.scanId });
-            if(res.ok) {
-                await API.post('save_meal', { meal_data: { meal_type: 'Snack', items: res.data.items } });
-                DraftManager.close();
-                App.closeCam();
-                Backend.loadAndRender(); 
-                haptic('success');
-            }
-        } catch(e) { alert(e.message); } finally { btn.innerText = 'В дневник'; }
-    }
-};
-
-// 8. OMNI BAR
-const Omni = {
-    init: () => {
-        const inp = document.getElementById('omniInput');
-        const btn = document.getElementById('btnOmniAction');
-        const iCam = document.getElementById('icoCam');
-        const iSend = document.getElementById('icoSend');
-        
-        inp.oninput = () => {
-            const hasText = inp.value.trim().length > 0;
-            inp.style.height = 'auto'; inp.style.height = Math.min(inp.scrollHeight, 80) + 'px';
-            if(hasText) { btn.classList.add('mode-send'); iCam.style.display='none'; iSend.style.display='block'; }
-            else { btn.classList.remove('mode-send'); iCam.style.display='block'; iSend.style.display='none'; }
-        };
-        
-        btn.onclick = async () => {
-            const txt = inp.value.trim();
-            if(txt) {
-                haptic('medium'); inp.value = '';
-                ProcessingUI.start('text');
-                try {
-                    const res = await API.post('scan', { userText: txt });
-                    ProcessingUI.stop();
-                    if(res.ok) DraftManager.open(res.data, res.scanId);
-                } catch(e) { ProcessingUI.stop(); alert(e.message); }
-            } else {
-                haptic('light'); App.openCam();
-            }
-        };
-    }
-};
-
-// 9. BACKEND FEED
-const Backend = {
-    loadAndRender: async () => {
-        // Mock Data for immediate UI response
-        const mockLog = [
-            { time: "09:00", items: [{name:"Овсянка (Пример)", weight:200, k:180, p:6, f:4, c:30}] }
-        ];
-        Backend.renderFeed(mockLog);
-        Widgets.update({ k:180, p:6, f:4, c:30, water: 1250 });
-    },
-    
-    renderFeed: (log) => {
-        const el = document.getElementById('timelineFeed');
-        el.innerHTML = '';
-        log.forEach((meal, i) => {
-            let html = `<div class="meal-card" style="animation: slideIn 0.3s ease ${i*0.1}s backwards">
-              <div class="col-headers"><div class="mh-time">${meal.time}</div><div class="ch-item">Вес</div><div class="ch-item">К</div><div class="ch-item">Б</div><div class="ch-item">Ж</div><div class="ch-item">У</div></div>`;
-            meal.items.forEach(it => {
-                html += `<div class="prod-item"><div class="pi-name">${it.name}</div><div class="pi-val pi-w">${it.weight}</div><div class="pi-val">${it.k}</div><div class="pi-val">${it.p}</div><div class="pi-val">${it.f}</div><div class="pi-val">${it.c}</div></div>`;
-            });
-            html += `</div>`;
-            el.innerHTML += html;
-        });
-    }
-};
-
-// === GLOBAL INITIALIZATION ===
-document.addEventListener('DOMContentLoaded', () => {
-    initSystem();
-    Calendar.init(); 
-    Widgets.init();
-    Camera.init();
-    Omni.init();
-    Backend.loadAndRender();
-    
-    if(tg?.BackButton) tg.BackButton.onClick(() => {
-        if(App.mode === 'camera') App.closeCam();
-        else if(document.getElementById('draftOverlay').classList.contains('visible')) DraftManager.close();
+  data: [], scanId: null,
+  open: (data, scanId) => {
+    if (!data || !data.items) { alert("Пусто"); return; }
+    DraftManager.data = data.items;
+    DraftManager.scanId = scanId;
+    DraftManager.render();
+    document.getElementById('draftOverlay').classList.add('visible');
+  },
+  render: () => {
+    const box = document.getElementById('draftList');
+    box.innerHTML = '';
+    DraftManager.data.forEach((item, idx) => {
+       box.innerHTML += `
+         <div class="draft-item">
+           <div class="di-icon">🍽️</div>
+           <div class="di-inputs">
+             <input class="di-name" value="${item.name}" onchange="DraftManager.update(${idx}, 'name', this.value)">
+             <div class="di-row">
+                <input type="number" class="di-weight" value="${item.weight_g}" onchange="DraftManager.update(${idx}, 'weight_g', this.value)">
+                <div class="di-unit">г</div>
+             </div>
+           </div>
+           <div class="di-del" onclick="DraftManager.remove(${idx})">✕</div>
+         </div>`;
     });
+  },
+  update: (idx, field, val) => { DraftManager.data[idx][field] = (field==='weight_g' ? Number(val) : val); },
+  remove: (idx) => { DraftManager.data.splice(idx, 1); DraftManager.render(); },
+  close: () => {
+    document.getElementById('draftOverlay').classList.remove('visible');
+    if (App.mode === 'camera') document.getElementById('previewLayer').style.display = 'flex';
+  },
+  confirm: async () => {
+    const btn = document.getElementById('btnConfirmDraft');
+    btn.innerText = 'Сохраняю...';
+    try {
+        const res = await API.send('calculate', { data: { items: DraftManager.data }, scanId: DraftManager.scanId });
+        if (res.ok && res.data) {
+           await API.send('save_meal', { meal_data: { meal_type: 'Snack', items: res.data.items } });
+           haptic('success');
+           document.getElementById('draftOverlay').classList.remove('visible');
+           App.closeCamera(); 
+           Backend.loadAndRender(); // Обновляем ленту!
+           alert("Добавлено!");
+        }
+    } catch(e) { alert("Err: " + e.message); } finally { btn.innerText = 'В дневник'; }
+  }
+};
+
+const Omni = {
+  init: () => {
+    const input = document.getElementById('omniInput');
+    const btn = document.getElementById('btnOmniAction');
+    const icoCam = document.getElementById('icoCam');
+    const icoSend = document.getElementById('icoSend');
+    
+    input.addEventListener('input', () => {
+        const hasText = input.value.trim().length > 0;
+        input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 80) + 'px';
+        if (hasText) { btn.classList.add('mode-send'); icoCam.style.display = 'none'; icoSend.style.display = 'block'; } 
+        else { btn.classList.remove('mode-send'); icoCam.style.display = 'block'; icoSend.style.display = 'none'; }
+    });
+    
+    btn.onclick = async () => {
+        const txt = input.value.trim();
+        if (txt.length > 0) {
+            haptic('medium'); input.value = '';
+            ProcessingUI.start('text');
+            try {
+                const res = await API.send('scan', { userText: txt, image: null });
+                ProcessingUI.stop();
+                if(res.ok) DraftManager.open(res.data, res.scanId);
+            } catch(e) { ProcessingUI.stop(); alert(e.message); }
+        } else {
+            haptic('light'); App.openCamera();
+        }
+    };
+  }
+};
+
+// 5. BACKEND (ORIGINAL + MOCK)
+const Backend = {
+  async getDayLog() {
+    // В будущем: return await API.send('get_day_log');
+    return [
+      { time: "09:00", items: [{ name: "Овсяная каша на молоке", weight: 250, k: 220, p: 8, f: 6, c: 32 }, { name: "Масло сливочное", weight: 10, k: 75, p: 0, f: 8, c: 0 }] }
+    ];
+  },
+  async loadAndRender() {
+    try {
+      const data = await this.getDayLog();
+      renderDailyLog(data);
+      // Mock stats update
+      WidgetManager.render({ k: 1200, p: 90, f: 40, c: 110, water: 1500 });
+    } catch (e) { console.error(e); }
+  }
+};
+
+function renderDailyLog(logData) {
+  const container = document.getElementById('timelineFeed');
+  container.innerHTML = '';
+  logData.forEach((meal, index) => {
+    const card = document.createElement('div');
+    card.className = 'meal-card';
+    card.style.animation = `slideIn 0.4s ease ${index * 0.1}s backwards`;
+    let itemsHtml = '';
+    meal.items.forEach(prod => {
+      itemsHtml += `<div class="prod-item"><div class="pi-name">${prod.name}</div><div class="pi-val pi-w">${prod.weight}</div><div class="pi-val">${prod.k}</div><div class="pi-val">${prod.p}</div><div class="pi-val">${prod.f}</div><div class="pi-val">${prod.c}</div></div>`;
+    });
+    card.innerHTML = `<div class="col-headers"><div class="mh-time">${meal.time}</div><div class="ch-item">Вес</div><div class="ch-item">К</div><div class="ch-item">Б</div><div class="ch-item">Ж</div><div class="ch-item">У</div></div>${itemsHtml}`;
+    container.appendChild(card);
+  });
+}
+
+// === FINAL INIT ===
+document.addEventListener('DOMContentLoaded', () => {
+  initCalendar();
+  Omni.init();
+  CameraApp.init();
+  Backend.loadAndRender();
+  
+  if (window.Telegram?.WebApp?.BackButton) {
+      window.Telegram.WebApp.BackButton.onClick(() => {
+          if (App.mode === 'camera') App.closeCamera();
+          else if (document.getElementById('draftOverlay').classList.contains('visible')) DraftManager.close();
+      });
+  }
 });
+
 </script>
 
 </body>
