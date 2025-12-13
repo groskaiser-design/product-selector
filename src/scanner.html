@@ -954,6 +954,30 @@ html, body {
 /* Чтобы кнопки управления камерой не перекрывали виджеты */
 .top-bar { margin-top: 180px !important; } /* Сдвигаем крестик и уровень ниже виджетов */
 
+/* === ЛОГИКА СКРЫТИЯ ИНТЕРФЕЙСА === */
+
+/* 1. Класс для скрытия Шапки (уезжает вверх) */
+.fixed-header-group {
+  transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.3s;
+}
+
+.fixed-header-group.hidden {
+  transform: translateY(-120%); /* Полностью убираем вверх */
+  opacity: 0;
+  pointer-events: none; /* Чтобы нельзя было случайно нажать */
+}
+
+/* 2. Класс для скрытия OmniBar (нижней панели ввода) */
+/* Она нам не нужна во время съемки, там будут свои кнопки */
+.omni-bar {
+  transition: transform 0.3s ease;
+}
+
+.omni-bar.hidden {
+  transform: translateY(150%); /* Уезжает вниз */
+  pointer-events: none;
+}
+
 </style>
 </head>
 <body>
@@ -1339,26 +1363,32 @@ html, body {
   });
 
   // 2. Умный обработчик клика
-    DOM.btnStartCam.onclick = async () => {
-    const text = DOM.omniInput.value.trim();
+    // === ЗАПУСК КАМЕРЫ ===
+DOM.btnStartCam.onclick = async () => {
+  const text = DOM.omniInput.value.trim();
+  
+  if (text.length > 0) {
+    // Если есть текст — отправляем как сообщение
+    await sendTextOnly(text);
+  } else {
+    // Если текста нет — ВКЛЮЧАЕМ КАМЕРУ
+    state.uiMode = 'camera';
     
-    if (text.length > 0) {
-      await sendTextOnly(text);
-    } else {
-      state.uiMode = 'camera';
-      
-      // ВОТ ГЛАВНОЕ ИСПРАВЛЕНИЕ:
-      // Используем правильный ID 'calendarBlock' и уводим его вверх
-      const cal = document.getElementById('calendarBlock');
-      if(cal) cal.style.transform = 'translateY(-150%)'; 
-
-      DOM.omniBar.classList.add('hidden');
-      DOM.camUI.classList.remove('idle');
-      DOM.camUI.style.pointerEvents = 'auto'; 
-      if(tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
-      await initCamera(); 
-    }
-  };
+    // 1. Скрываем шапку (Календарь + Виджеты)
+    document.querySelector('.fixed-header-group').classList.add('hidden');
+    
+    // 2. Скрываем нижнюю панель ввода
+    DOM.omniBar.classList.add('hidden');
+    
+    // 3. Показываем кнопки управления камерой (Затвор, Вспышка)
+    DOM.camUI.classList.remove('idle');
+    DOM.camUI.style.pointerEvents = 'auto'; 
+    
+    // Вибрация и запуск
+    if(tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+    await initCamera(); 
+  }
+};
 
   // 3. Функция отправки чистого текста
   // Для текстового режима (из Omni Bar) тоже нужно обновить логику
@@ -1388,19 +1418,22 @@ html, body {
      }
   }
 
-    DOM.btnClose.onclick = () => {
-    state.uiMode = 'menu';
-    DOM.camUI.classList.add('idle');
-    DOM.camUI.style.pointerEvents = 'none';
-    DOM.omniBar.classList.remove('hidden');
-    
-    // ВОТ ГЛАВНОЕ ИСПРАВЛЕНИЕ:
-    // Возвращаем календарь на место (0)
-    const cal = document.getElementById('calendarBlock');
-    if(cal) cal.style.transform = 'translateY(0)';
+  // === ЗАКРЫТИЕ КАМЕРЫ (Крестик) ===
+DOM.btnClose.onclick = () => {
+  state.uiMode = 'menu';
+  
+  // 1. Прячем кнопки камеры
+  DOM.camUI.classList.add('idle');
+  DOM.camUI.style.pointerEvents = 'none';
+  
+  // 2. Возвращаем нижнюю панель ввода
+  DOM.omniBar.classList.remove('hidden');
+  
+  // 3. ВОЗВРАЩАЕМ ШАПКУ (Календарь + Виджеты)
+  document.querySelector('.fixed-header-group').classList.remove('hidden');
 
-    stopStream(); 
-  };
+  stopStream(); // Выключаем камеру
+};
 
   let toastTimer;
   function showToast(msg) {
