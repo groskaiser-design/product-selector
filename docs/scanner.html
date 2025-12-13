@@ -299,6 +299,96 @@ html, body {
   -webkit-mask-size: contain;
   mask-size: contain;
 }
+
+/* === НОВЫЙ ДИЗАЙН КАРТОЧЕК (ТОЧНАЯ КОПИЯ SCANNER0) === */
+
+/* Контейнер для ленты (чтобы скроллилось) */
+.timeline-container {
+  width: 100%;
+  padding: 10px 12px 120px 12px; /* Отступы как в виджетах + место снизу */
+  pointer-events: auto; /* ВАЖНО: Разрешаем клики и скролл только здесь */
+}
+
+/* Сама карточка приема пищи */
+.meal-card { 
+  background: rgba(28, 28, 30, 0.65); /* Твой surface-glass */
+  border: 1px solid rgba(255, 255, 255, 0.1); 
+  border-radius: 22px; /* radius-l из исходника */
+  padding: 14px; 
+  backdrop-filter: blur(12px); 
+  -webkit-backdrop-filter: blur(12px);
+  margin-bottom: 12px;
+  animation: slideIn 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* Сетка колонок: Имя | Вес | К | Б | Ж | У */
+/* Скопировано из scanner0.html на 100% */
+.col-headers, .prod-item { 
+  display: grid; 
+  grid-template-columns: minmax(0, 1fr) 34px 30px 22px 22px 22px; 
+  gap: 5px; 
+  align-items: center; 
+}
+
+/* Заголовки (Время и буквы КБЖУ) */
+.col-headers { 
+  margin-bottom: 8px; 
+  padding-bottom: 6px; 
+  border-bottom: 1px solid rgba(255,255,255,0.08); 
+}
+
+/* Время приема пищи */
+.mh-time { 
+  text-align: left; 
+  font-weight: 700; 
+  color: #fff; 
+  font-size: 13px;
+}
+
+/* Текстовые стили ячеек */
+.ch-item, .pi-name, .pi-val { 
+  font-size: 13px; 
+  font-weight: 400; 
+  color: #fff; 
+  font-feature-settings: "tnum"; /* Моноширинные цифры */
+  white-space: nowrap; 
+}
+
+/* Название продукта (обрезаем если длинное) */
+.pi-name { 
+  overflow: hidden; 
+  text-overflow: ellipsis; 
+  text-align: left;
+}
+
+/* Выравнивание цифр вправо */
+.ch-item, .pi-val { text-align: right; }
+
+/* Заголовки столбцов (Вес, К, Б...) */
+.ch-item { 
+  opacity: 0.6; 
+  font-size: 11px; 
+  text-transform: uppercase; 
+  font-weight: 600; 
+}
+
+/* Анимация появления */
+@keyframes slideIn {
+  from { opacity: 0; transform: translateY(20px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Разрешаем скролл для слоя с виджетами и лентой */
+.dashboard-layer {
+  overflow-y: auto; 
+  overflow-x: hidden;
+  pointer-events: none; /* Сам слой прозрачный для кликов... */
+}
+/* ...но контент внутри должен быть кликабельным */
+.carousel-wrap, .timeline-container {
+  pointer-events: auto;
+}
+
 </style>
 </head>
 <body>
@@ -371,6 +461,7 @@ html, body {
         </div>
         <div class="dots"><div class="dot active"></div><div class="dot"></div></div>
       </div>
+      <div class="timeline-container" id="mealTimeline"></div>
     </div>
     <canvas id="uiCanvas"></canvas>
     <div id="camToast" class="cam-toast">Camera Name</div>
@@ -1241,37 +1332,86 @@ DOM.shutter.addEventListener('click', async () => {
   };
 
   // === ФИНАЛ: ОТПРАВКА НУТРИЦИОЛОГУ ===
+  // === ФИНАЛ: СОЗДАНИЕ КАРТОЧКИ (100% Design Copy) ===
   window.confirmDraftToNutritionist = async () => {
     const btn = document.getElementById('btnConfirmDraft');
     btn.textContent = 'Сохранение...';
     btn.disabled = true;
     
     try {
-      // Отправляем action: 'calculate' на бэкэнд
-      // Бэкэнд запустит Nutritionist бота для точного расчета КБЖУ по этим весам
-      const result = await API.send('calculate', { 
-        data: currentDraftItems, 
-        scanId: currentScanId 
+      // 1. Расчет КБЖУ (Эмуляция для демо)
+      // В реальности тут await API.send(...)
+      const calculatedItems = currentDraftItems.map(item => {
+        // Примерная математика:
+        const k = Math.round(item.weight_g * 1.2); 
+        return {
+           name: item.name,
+           w: item.weight_g,
+           k: k,
+           p: Math.round(item.weight_g * 0.15), 
+           f: Math.round(item.weight_g * 0.02),
+           c: Math.round(item.weight_g * 0.10) 
+        };
       });
-      
-      // Далее мы должны сохранить это в дневник (action: save_meal)
-      // Или показать итог. Пока просто алерт и закрытие.
-      
+
       haptic('success');
+      
+      // Скрываем черновик
       document.getElementById('draftOverlay').classList.remove('visible');
       
-      // Тут в будущем будет переход на главную или анимация добавления в ленту
-      alert("Сохранено в дневник! \n" + JSON.stringify(result.data?.total_nutrition || {}));
+      // 2. Добавляем карточку в ленту
+      addMealToTimeline(calculatedItems);
       
-      retake(); // Полный сброс
+      // Полный сброс камеры для нового снимка
+      retake(); 
 
     } catch (e) {
-      alert("Ошибка сохранения: " + e.message);
+      alert("Ошибка: " + e.message);
     } finally {
       btn.textContent = 'В дневник';
       btn.disabled = false;
     }
   };
+
+  // Функция рендера (Копия разметки из scanner0.html)
+  function addMealToTimeline(items) {
+    const container = document.getElementById('mealTimeline');
+    const now = new Date();
+    // Время (например 14:30)
+    const timeStr = now.toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit'});
+    
+    // Генерируем строки продуктов
+    let rowsHTML = '';
+    items.forEach(item => {
+        rowsHTML += `
+        <div class="prod-item">
+            <div class="pi-name">${item.name}</div>
+            <div class="pi-val pi-w">${item.w}</div>
+            <div class="pi-val pi-k">${item.k}</div>
+            <div class="pi-val pi-p">${item.p}</div>
+            <div class="pi-val pi-f">${item.f}</div>
+            <div class="pi-val pi-c">${item.c}</div>
+        </div>`;
+    });
+
+    // Собираем карточку целиком (Заголовок + Строки)
+    const cardHTML = `
+      <div class="meal-card">
+        <div class="col-headers">
+            <div class="mh-time">${timeStr}</div>
+            <div class="ch-item">Вес</div>
+            <div class="ch-item">К</div>
+            <div class="ch-item">Б</div>
+            <div class="ch-item">Ж</div>
+            <div class="ch-item">У</div>
+        </div>
+        ${rowsHTML}
+      </div>
+    `;
+
+    // Вставляем новую карточку В НАЧАЛО списка (сверху)
+    container.insertAdjacentHTML('afterbegin', cardHTML);
+  }
 
 
 // === INFINITE CALENDAR LOGIC (Exact Copy from v2.20) ===
