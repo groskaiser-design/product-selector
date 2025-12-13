@@ -1,2059 +1,476 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-<script src="version-control.js?t=1"></script>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
+  <title>AI Чат</title>
 
-<title>Ultima FoodCam</title>
-<script src="https://telegram.org/js/telegram-web-app.js"></script>
-<style>
- :root {
-  --bg-core: #050505; /* Новый глубокий цвет */
-  --orb-purple: rgba(108, 92, 231, 0.8); /* Цвет сферы 1 */
-  --acc-blue: #0a84ff; /* Цвет сферы 2 (уже был, но убедись) */
-  
-  /* ... остальные переменные оставляем как были */
-  --surface-glass: rgba(28, 28, 30, 0.65);
-  --acc-green: #30d158;
-  --acc-red: #ff453a;
-  --acc-orange: #ff9f0a;
-  --text-main: #ffffff;
-  --text-muted: rgba(255, 255, 255, 0.55);
-  --font-stack: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Roboto', sans-serif;
-  --safe-bottom: calc(12px + env(safe-area-inset-bottom));
-}
+  <script>
+  window.__pageLoadTime = (window.performance && performance.now) ? performance.now() : Date.now();
+  const APP_HTML_VERSION = 'v2025-0013'; // Версия +1
 
-  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; outline: none; }
-
-/* === 1. BODY IS STATIC (DEAD FIX) === */
-/* === FUSED STABLE LAYOUT === */
-html {
-  /* Важно: задаем черный фон подложке, чтобы при ресайзе не мелькало белым */
-  background-color: #000; 
-}
-
-body {
-  /* Твои переменные (сохраняем дизайн) */
-  background-color: var(--bg-core);
-  font-family: var(--font-stack);
-
-  /* Обязательные настройки для фиксации */
-  margin: 0; padding: 0;
-  width: 100%; height: 100vh;
-  
-  /* Запрет скролла самого body */
-  overflow: hidden; 
-  
-  /* Мертвая хватка (Dead Fix) */
-  position: fixed; top: 0; left: 0; 
-  
-  -webkit-font-smoothing: antialiased;
-}
-
-/* === 2. FX LAYER (фон не прыгает) === */
-.fx-layer { 
-  position: fixed; 
-  top: 0; left: 0; width: 100%; 
-  /* Высота будет задана жестко через JS, чтобы не прыгала */
-  height: 100vh; 
-  z-index: 0; 
-  pointer-events: none; 
-}
-
-/* === 3. APP CONTAINER (он ресайзится) === */
-.app-layout {
-  position: relative; 
-  z-index: 1; 
-  top: 0; left: 0; right: 0;
-  height: 100%; /* Задается через JS */
-  width: 100%;
-  overflow: hidden;
-  display: flex; 
-  flex-direction: column;
-}
-
-/* === 4. OMNI-BAR (ABSOLUTE) === */
-.omni-bar { 
-  position: absolute; /* ВАЖНО: Absolute, а не Fixed! */
-  bottom: 0; left: 0; right: 0; 
-  /* Стили оформления оставляем твои, главное позиционирование */
-  background: linear-gradient(to top, rgba(0,0,0,0.6) 0%, transparent 100%); 
-  padding: 10px 12px calc(10px + env(safe-area-inset-bottom)) 12px; 
-  z-index: 100; 
-  display: flex; align-items: flex-end; gap: 10px; 
-  transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
-
-  /* === ICONS (SVG) === */
-  .icon-svg {
-    width: 24px; height: 24px;
-    fill: currentColor;
-    display: block;
+  if (!window.__vc_done) {
+    window.__vc_done = true;
+    (function smartVersionOnce(){
+      try {
+        const url = new URL(location.href);
+        const v = url.searchParams.get('v');
+        if (v !== APP_HTML_VERSION) {
+          url.searchParams.set('v', APP_HTML_VERSION);
+          history.replaceState(null, '', url.href);
+        }
+      } catch (_) {}
+    })();
+    window.addEventListener('pageshow', () => {
+      try {
+        const url = new URL(location.href);
+        if (url.searchParams.get('v') !== APP_HTML_VERSION) {
+          url.searchParams.set('v', APP_HTML_VERSION);
+          history.replaceState(null, '', url.href);
+        }
+      } catch (_) {}
+    }, { once: true });
   }
-
-  video {
-    position: absolute;
-    width: 100%; height: 100%;
-    object-fit: cover; 
-    z-index: 1;
-    opacity: 0; /* Скрыто по умолчанию */
-    transition: opacity 0.3s;
-  }
-  video.active { opacity: 1; }
-
-  /* === PRELOADER (SPINNER) === */
-  .cam-loader {
-    position: absolute;
-    top: 50%; left: 50%;
-    transform: translate(-50%, -50%);
-    z-index: 5;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    pointer-events: none;
-  }
-  .spinner {
-    width: 40px; height: 40px;
-    border: 4px solid rgba(255,255,255,0.3);
-    border-top: 4px solid #fff;
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
-  }
-  @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-
-  #uiCanvas {
-    position: absolute; inset: 0;
-    width: 100%; height: 100%;
-    z-index: 10; pointer-events: none;
-  }
-
-  .ui-layer {
-    position: absolute; inset: 0; z-index: 20;
-    display: flex; flex-direction: column;
-    justify-content: space-between;
-    padding: calc(16px + env(safe-area-inset-top)) 16px calc(32px + env(safe-area-inset-bottom)) 16px;
-    pointer-events: none;
-    transition: opacity 0.3s ease;
-  }
-  
-  /* Скрываем слой управления камерой, когда активно меню */
-  .ui-layer.idle { opacity: 0; pointer-events: none; }
-
-  /* === TOP BAR === */
-  .top-bar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center; 
-    pointer-events: auto;
-    height: 48px;
-  }
-
-  .btn-close {
-    width: 40px; height: 40px;
-    border-radius: 50%;
-    background: rgba(0,0,0,0.4);
-    backdrop-filter: blur(10px);
-    display: flex; align-items: center; justify-content: center;
-    color: #fff; cursor: pointer;
-    border: 1px solid rgba(255,255,255,0.1);
-  }
-
-  .status-chip {
-    background: rgba(0,0,0,0.4);
-    border: 1px solid rgba(255,255,255,0.1);
-    backdrop-filter: blur(10px);
-    padding: 8px 16px;
-    border-radius: 20px;
-    display: flex; align-items: center; gap: 8px;
-    font-size: 13px; font-weight: 600;
-  }
-  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--acc-orange); box-shadow: 0 0 8px var(--acc-orange); transition: 0.3s; }
-  .status-dot.ok { background: var(--acc-green); box-shadow: 0 0 8px var(--acc-green); }
-
-  .spacer { width: 40px; }
-
-  /* === BOTTOM GRID CONTROLS === */
-  .controls-grid {
-    display: grid;
-    grid-template-columns: 1fr auto 1fr;
-    align-items: center;
-    pointer-events: auto;
-    width: 100%;
-    margin-bottom: 10px;
-  }
-
-  .grid-cell-left { display: flex; justify-content: flex-start; }
-  .grid-cell-center { display: flex; justify-content: center; }
-  .grid-cell-right { display: flex; justify-content: flex-end; }
-
-  .action-btn {
-    width: 56px; height: 56px;
-    border-radius: 50%;
-    background: rgba(30,30,30,0.6);
-    backdrop-filter: blur(12px);
-    display: flex; align-items: center; justify-content: center;
-    color: #fff;
-    border: 1px solid rgba(255,255,255,0.15);
-    cursor: pointer;
-    transition: transform 0.15s, background 0.2s;
-  }
-  .action-btn:active { transform: scale(0.92); background: rgba(60,60,60,0.8); }
-  .action-btn.hidden { opacity: 0; pointer-events: none; }
-  .action-btn.disabled { opacity: 0.5; pointer-events: none; }
-
-  .shutter-outer {
-    width: 80px; height: 80px;
-    border-radius: 50%;
-    border: 4px solid rgba(255,255,255,0.8);
-    display:flex; align-items:center; justify-content:center;
-    transition: 0.3s;
-    background: transparent;
-  }
-  .shutter-inner {
-    width: 62px; height: 62px;
-    border-radius: 50%;
-    background: #fff;
-    transition: 0.3s;
-    cursor: pointer;
-  }
-  .shutter-outer.disabled { border-color: rgba(255, 69, 58, 0.5); }
-  .shutter-outer.disabled .shutter-inner { background: var(--acc-red); transform: scale(0.4); opacity: 0.8; }
-  .shutter-outer.active { border-color: var(--acc-green); transform: scale(1.05); }
-  .shutter-outer:active:not(.disabled) .shutter-inner { transform: scale(0.9); }
-
-  /* === TOAST === */
-  .cam-toast {
-    position: absolute;
-    top: 100px; left: 50%;
-    transform: translateX(-50%);
-    background: rgba(0,0,0,0.7);
-    color: #fff;
-    padding: 8px 16px;
-    border-radius: 20px;
-    font-size: 13px;
-    font-weight: 500;
-    pointer-events: none;
-    opacity: 0;
-    transition: opacity 0.3s;
-    z-index: 50;
-    backdrop-filter: blur(4px);
-  }
-  .cam-toast.visible { opacity: 1; }
-
- /* === OMNI BAR (СТИЛЬ TELEGRAM) === */
-.omni-bar { 
-  position: absolute; 
-  bottom: 0; left: 0; right: 0; 
-  /* Вместо черной заливки — мягкий градиент снизу, чтобы текст не терялся */
-  background: linear-gradient(to top, rgba(0,0,0,0.6) 0%, transparent 100%); 
-  /* Убираем border-top, он тут не нужен */
-  border-top: none; 
-  padding: 10px 12px calc(10px + env(safe-area-inset-bottom)) 12px; 
-  z-index: 100; 
-  display: flex; align-items: flex-end; gap: 10px; 
-  transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-.omni-bar.hidden { transform: translateY(100%); }
-
-/* Кнопка скрепки (слева) */
-.omni-icon-btn { 
-  width: 44px; height: 44px; 
-  display: flex; align-items: center; justify-content: center; 
-  color: #fff; cursor: pointer; 
-  /* Добавляем легкий фон при нажатии */
-  border-radius: 50%;
-  transition: background 0.2s;
-}
-.omni-icon-btn:active { background: rgba(255,255,255,0.1); }
-
-/* Поле ввода (Стеклянная капсула) */
-.input-wrap { 
-  flex: 1; min-height: 44px; 
-  /* Темное стекло */
-  background: rgba(20, 20, 20, 0.5); 
-  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 22px; /* Более круглое, как в Telegram */
-  padding: 2px 16px; 
-  display: flex; align-items: center; 
-  transition: border-color 0.2s;
-}
-/* Подсветка поля при вводе */
-.input-wrap:focus-within {
-  border-color: rgba(255, 255, 255, 0.3);
-  background: rgba(20, 20, 20, 0.7); 
-}
-
-.omni-input { 
-  width: 100%; 
-  background: transparent; border: none; 
-  color: #fff; font-size: 16px; 
-  resize: none; padding: 11px 0; margin: 0; 
-  max-height: 100px; 
-  font-family: inherit;
-  line-height: 20px;
-}
-.omni-input::placeholder { color: rgba(255,255,255,0.5); }
-
-/* Кнопка камеры/отправки (справа) */
-.cam-trigger-btn { 
-  width: 44px; height: 44px; 
-  border-radius: 50%;
-  display: flex; align-items: center; justify-content: center; 
-  color: #fff; cursor: pointer; 
-  transition: 0.2s;
-  background: rgba(255, 255, 255, 0.1); /* Легкий фон для кнопки */
-  backdrop-filter: blur(10px);
-}
-.cam-trigger-btn:active { transform: scale(0.92); opacity: 0.8; }
-
-.cam-trigger-btn.mode-send { 
-  background-color: var(--acc-blue); 
-  box-shadow: 0 4px 12px rgba(10, 132, 255, 0.4);
-  color: #fff;
-}
-  
-  /* Скрываем ненужную иконку */
-  .icon-hidden { display: none !important; }
-  
-  /* Стили для SVG иконок внутри кнопки */
-.omni-btn-icon {
-    width: 24px; height: 24px;
-    stroke: currentColor;
-    stroke-width: 2;
-    fill: none;
-    stroke-linecap: round; 
-    stroke-linejoin: round;
-  }
-  /* 🔥 ДОБАВЬ ЭТОТ БЛОК ДЛЯ ВЫРАВНИВАНИЯ САМОЛЕТИКА */
-  #icoSend {
-    /* Оптическая коррекция: */
-    margin-right: 2px; /* Сдвигаем влево */
-    margin-top: 2px;   /* Сдвигаем вниз */
-  }
-
-  /* === PERMISSION & PREVIEW === */
-  .perm-overlay {
-    position: absolute; inset: 0; z-index: 100;
-    background: rgba(0,0,0,0.9);
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    text-align: center; padding: 32px; gap: 24px;
-  }
-  .perm-btn {
-    background: var(--acc-blue); color: #fff;
-    border: none; padding: 14px 28px;
-    border-radius: 14px; font-size: 16px; font-weight: 600; cursor: pointer;
-  }
-
-  .preview-overlay {
-    position: absolute; inset: 0; z-index: 200;
-    background: #000; 
-    display: none; 
-    flex-direction: column;
-    height: 100%; 
-    overflow: hidden; 
-  }
-  .preview-img { 
-    flex: 1; 
-    width: 100%; 
-    object-fit: contain; 
-    background: #111; 
-    margin-bottom: 12px;
-    min-height: 0; 
-  }
-  .comment-wrap { 
-    flex-shrink: 0;
-    padding: 0 24px 16px 24px; 
-    width: 100%; 
-  }
-  .comment-label { 
-    display: block; 
-    color: rgba(255,255,255,0.6); 
-    font-size: 13px; 
-    margin-bottom: 8px; 
-    margin-left: 4px; 
-  }
-  .comment-input {
-    width: 100%; height: 80px;
-    background: rgba(255,255,255,0.12);
-    border: 1px solid rgba(255,255,255,0.1);
-    border-radius: 16px; padding: 12px 16px;
-    color: #fff; font-size: 16px; font-family: var(--font-stack);
-    resize: none; outline: none; transition: 0.2s;
-  }
-  .comment-input:focus { background: rgba(255,255,255,0.18); border-color: var(--acc-blue); }
-  .preview-controls { 
-    flex-shrink: 0;
-    padding: 0 24px 34px 24px; 
-    display: flex; 
-    gap: 16px; 
-    background: #000; 
-  }
-  .btn {
-    flex: 1; padding: 14px; border-radius: 14px;
-    font-weight: 600; font-size: 16px;
-    border: 1px solid rgba(255,255,255,0.1);
-    background: rgba(255,255,255,0.1);
-    color: #fff; cursor: pointer; text-align: center;
-  }
-  .btn.primary { background: var(--acc-blue); border-color: transparent; }
-  .hidden { display: none !important; }
-
-
-/* === UI ОБНОВЛЕНИЕ: PROCESSING & DRAFT (из scanner.html) === */
-  
-  /* Переопределяем цвета для соответствия scanner.html */
-  :root {
-    --bg-core: #050505; /* Более глубокий черный */
-    --surface-glass: rgba(255, 255, 255, 0.07);
-    --surface-border: rgba(255, 255, 255, 0.1);
-    --text-muted: rgba(255, 255, 255, 0.55);
-  }
-
-  /* --- PROCESSING OVERLAY --- */
-  .processing-overlay {
-    position: fixed; inset: 0; z-index: 1000;
-    background: rgba(5, 5, 5, 0.6);
-    backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px);
-    display: flex; align-items: center; justify-content: center;
-    opacity: 0; pointer-events: none; transition: 0.4s ease;
-  }
-  .processing-overlay.active { opacity: 1; pointer-events: auto; }
-
-  .proc-card {
-    width: 90%; max-width: 320px;
-    background: rgba(30, 30, 30, 0.6);
-    border: 1px solid rgba(255,255,255,0.1);
-    border-radius: 24px; padding: 30px 20px;
-    display: flex; flex-direction: column; align-items: center;
-    box-shadow: 0 20px 50px rgba(0,0,0,0.5);
-  }
-
-  .proc-visual { position: relative; width: 60px; height: 60px; margin-bottom: 20px; }
-  .proc-orb {
-    position: absolute; inset: 0; border-radius: 50%;
-    background: radial-gradient(circle, #0a84ff 0%, transparent 70%);
-    animation: pulse-ai 2s infinite;
-  }
-  .proc-ring {
-    position: absolute; inset: -10px; border-radius: 50%;
-    border: 2px solid rgba(10, 132, 255, 0.3);
-    border-top-color: #0a84ff;
-    animation: spin-ai 1.5s infinite linear;
-  }
-  @keyframes pulse-ai { 0% { opacity: 0.5; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1.1); } 100% { opacity: 0.5; transform: scale(0.8); } }
-  @keyframes spin-ai { 100% { transform: rotate(360deg); } }
-
-  .proc-title { font-size: 17px; font-weight: 700; color: #fff; margin-bottom: 20px; letter-spacing: 0.5px; }
-
-  .proc-steps { width: 100%; display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px; }
-  .step { display: flex; align-items: center; gap: 10px; opacity: 0.4; transition: 0.3s; transform: translateX(-10px); }
-  .step.active { opacity: 1; transform: translateX(0); font-weight: 600; }
-  .step.done { opacity: 0.5; transform: translateX(0); color: var(--acc-green); }
-  .s-icon { font-size: 14px; width: 20px; text-align: center; }
-  .s-lbl { font-size: 13px; color: #fff; }
-
-  .proc-close { margin-top: 10px; font-size: 13px; color: rgba(255,255,255,0.4); text-decoration: underline; cursor: pointer; }
-
-  /* --- DRAFT SHEET (VALIDATION) --- */
-  .draft-overlay {
-    position: fixed; inset: 0; z-index: 1100;
-    background: rgba(0,0,0,0.5);
-    display: flex; flex-direction: column; justify-content: flex-end;
-    opacity: 0; pointer-events: none; transition: 0.3s;
-  }
-  .draft-overlay.visible { opacity: 1; pointer-events: auto; }
-
-  .draft-sheet {
-    background: #1c1c1e;
-    border-radius: 24px 24px 0 0;
-    border-top: 1px solid rgba(255,255,255,0.15);
-    padding: 24px 20px calc(20px + env(safe-area-inset-bottom)) 20px;
-    transform: translateY(100%); transition: transform 0.3s cubic-bezier(0.1, 0.8, 0.2, 1);
-    max-height: 80vh; overflow-y: auto;
-  }
-  .draft-overlay.visible .draft-sheet { transform: translateY(0); }
-
-  .ds-header { margin-bottom: 20px; }
-  .ds-title { font-size: 20px; font-weight: 800; margin-bottom: 4px; }
-  .ds-subtitle { font-size: 13px; color: var(--text-muted); line-height: 1.4; }
-
-  /* Элемент списка черновика */
-  .draft-item {
-    display: flex; align-items: center; gap: 10px;
-    background: rgba(255,255,255,0.06);
-    padding: 12px; border-radius: 16px; margin-bottom: 10px;
-  }
-  .di-icon { font-size: 20px; }
-  .di-inputs { flex: 1; display: flex; flex-direction: column; gap: 6px; }
-  .di-name { background: transparent; border: none; color: #fff; font-size: 15px; font-weight: 600; width: 100%; padding: 0; margin: 0; font-family: inherit;}
-  .di-row { display: flex; align-items: center; gap: 8px; }
-  .di-weight { background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; color: var(--acc-blue); font-weight: 700; width: 60px; text-align: center; padding: 6px; font-size: 15px; -moz-appearance: textfield; }
-  .di-weight::-webkit-inner-spin-button { -webkit-appearance: none; }
-  .di-unit { font-size: 13px; color: var(--text-muted); }
-  .di-del { width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; color: var(--acc-red); opacity: 0.7; cursor: pointer; }
-
-  .ds-actions { display: flex; gap: 12px; margin-top: 20px; }
-  .ds-btn { flex: 1; height: 48px; border-radius: 14px; border: none; font-size: 16px; font-weight: 600; cursor: pointer; }
-  .ds-btn.sec { background: rgba(255,255,255,0.1); color: #fff; }
-  .ds-btn.prim { background: var(--acc-blue); color: #fff; box-shadow: 0 4px 12px rgba(10,132,255,0.3); }
-
-/* === НОВЫЙ ФОН (ОБЯЗАТЕЛЬНО ВСТАВИТЬ) === */
-.fx-layer { 
-  position: fixed; 
-  top: 0; left: 0; 
-  width: 100%; height: 100%; 
-  background-color: var(--bg-core);
-  z-index: -1; /* Фон лежит под всем */
-  pointer-events: none; 
-  overflow: hidden;
-}
-
-.orb { 
-  position: absolute; 
-  border-radius: 50%; 
-  will-change: transform; 
-  filter: blur(80px); /* Сильное размытие для мягкости */
-}
-
-/* Верхняя сфера */
-.orb-1 { 
-  width: 90vw; height: 90vw; 
-  opacity: 0.3; 
-  background: radial-gradient(circle, var(--orb-purple) 0%, transparent 70%); 
-  top: -30%; left: -20%; 
-  animation: float 30s infinite linear; 
-}
-
-/* Нижняя сфера */
-.orb-2 { 
-  width: 300px; height: 300px; 
-  opacity: 0.4; 
-  background: radial-gradient(circle, var(--acc-blue) 0%, transparent 70%); 
-  bottom: -50px; right: -50px; 
-  animation: breathe 8s infinite ease-in-out; 
-}
-
-/* Шум */
-.noise { 
-  position: fixed; inset: 0; 
-  opacity: 0.05; 
-  background: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); 
-  pointer-events: none; 
-}
-
-@keyframes float { 
-  0% { transform: rotate(0deg); } 
-  100% { transform: rotate(360deg); } 
-}
-@keyframes breathe { 
-  0%, 100% { transform: scale(1); opacity: 0.3; } 
-  50% { transform: scale(1.2); opacity: 0.5; } 
-}
-
-/* === INFINITE CALENDAR (Точная копия из Scanner 2.20) === */
-
-/* === HEADER (Absolute inside App Layout) === */
-  .fixed-header-group {
-    position: absolute; 
-    top: 0; left: 0; right: 0;
-    z-index: 50;
-    background: rgba(10, 10, 10, 0.5) !important;
-    backdrop-filter: blur(30px) !important;
-    background-image: none !important;
-    border-bottom: 1px solid rgba(255,255,255,0.08);
-    -webkit-backdrop-filter: blur(30px) !important;
-    padding-bottom: 0px; 
-    overscroll-behavior: none;
-  }
-
-
-/* === 2. INFINITE CALENDAR (Исправленный отступ) === */
-.calendar-block {
-  padding-top: calc(12px + env(safe-area-inset-top));
-  padding-bottom: 8px;
-  user-select: none;
-  overflow: hidden;
-  border-bottom: none; 
-  transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
-  background: transparent !important;
-
-}
-
-.calendar-header { display: flex; align-items: center; justify-content: space-between; padding: 0 16px 8px 16px; }
-
-
-.month-label { 
-  font-size: 11px; 
-  font-weight: 800; 
-  color: var(--text-muted); 
-  text-transform: uppercase; 
-  letter-spacing: 1.5px; /* Разрядка букв */
-  opacity: 0.9; 
-}
-
-.calendar-swipe-area { width: 100%; height: 52px; overflow: hidden; position: relative; touch-action: pan-y; cursor: grab; }
-.calendar-track { display: flex; width: 300%; height: 100%; transform: translateX(-33.333333%); will-change: transform; }
-.calendar-week { flex: 1; display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; height: 100%; padding: 0 10px; }
-
-.day-cell { height: 52px; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 12px; background: transparent; transition: background 0.2s, transform 0.1s; position: relative; cursor: pointer; user-select: none; }
-.day-cell:active { transform: scale(0.92); }
-
-.dc-name { 
-  font-size: 9px; 
-  font-weight: 600; 
-  color: var(--text-muted); 
-  text-transform: uppercase; 
-  margin-bottom: 3px; 
-}
-.dc-num { 
-  font-size: 17px; 
-  font-weight: 600; 
-  color: var(--text-main); 
-  
-  /* 🔥 Ключевое свойство: Табличные цифры */
-  /* Заставляет цифры занимать одинаковую ширину, чтобы ряд не прыгал */
-  font-variant-numeric: tabular-nums; 
-  font-feature-settings: "tnum";
-}
-.day-cell.selected { background: linear-gradient(135deg, rgba(255,255,255,0.15), rgba(255,255,255,0.05)); border: 1px solid rgba(255,255,255,0.2); box-shadow: 0 4px 12px rgba(0,0,0,0.2); transform: scale(1); }
-
-.day-cell.selected .dc-name { 
-  color: #fff; 
-  opacity: 0.8; 
-}
-.day-cell.selected .dc-num { 
-  color: #fff; 
-  font-weight: 700; /* Жирнее при выборе */
-}
-
-.day-cell.is-today::after { content: ''; position: absolute; bottom: 5px; width: 4px; height: 4px; border-radius: 50%; background: #0a84ff; box-shadow: 0 0 6px #0a84ff; }
-
-/* === ИСПРАВЛЕНИЕ СПЛЮСНУТОЙ КАМЕРЫ === */
-
-/* 1. Главный фикс пропорций */
-#video {
-  /* cover заставляет видео заполнять блок, обрезая края, 
-     но сохраняя правильные пропорции (круг останется кругом) */
-  object-fit: cover !important; 
-  
-  width: 100% !important;
-  height: 100% !important;
-  position: absolute !important;
-  top: 0; left: 0;
-  z-index: 0;
-}
-
-/* 2. Растягиваем контейнер камеры на весь экран */
-/* Это уберет черную полосу сверху и даст видео место */
-.cam-viewport {
-  flex: 1 !important;    /* Занять ВСЁ свободное место */
-  display: flex !important;
-  position: relative !important;
-  overflow: hidden !important;
-  min-height: 0 !important; /* Важный хак для Flexbox */
-}
-
-/* 3. Гарантируем, что основной слой растянут */
-.app-layout {
-  display: flex !important;
-  flex-direction: column !important;
-  height: 100% !important;
-}
-
-/* Календарь: Занимает ровно столько места, сколько ему нужно */
-.calendar-block {
-  flex: 0 0 auto !important; /* Не сжиматься и не растягиваться */
-  position: relative !important;
-  z-index: 50 !important;
-  background: transparent !important;
-}
-
-
-/* 2. БЕЛЫЙ ТЕКСТ В КАМЕРЕ (Исправление серого цвета) */
-.status-chip, 
-.status-chip span, 
-#lvlText {
-  color: #ffffff !important; /* Принудительно белый */
-  font-weight: 600 !important;
-  text-shadow: 0 1px 3px rgba(0,0,0,0.5); /* Тень для читаемости */
-}
-
-/* Убедимся, что иконка "Закрыть" тоже белая */
-.btn-close {
-  color: #ffffff !important;
-  border-color: rgba(255,255,255,0.3) !important;
-}
-
-/* === БАЛАНС КНОПОК (ФИНАЛ) === */
-
-/* 1. Делаем ОБЕ кнопки одинаковыми (размер + стекло) */
-.omni-icon-btn, .cam-trigger-btn {
-  width: 44px !important;
-  height: 44px !important;
-  border-radius: 50% !important;
-  background: rgba(255, 255, 255, 0.1) !important; /* Единый стиль фона */
-  backdrop-filter: blur(10px);
-}
-
-/* 2. Убираем "синеву" у кнопки отправки (перебиваем старый стиль) */
-.cam-trigger-btn.mode-send {
-  background-color: rgba(255, 255, 255, 0.1) !important; /* Возвращаем прозрачность */
-  box-shadow: none !important; /* Убираем свечение */
-  transition: background 0.2s, transform 0.1s;
-}
-
-/* 3. Эффект нажатия для отправки */
-.cam-trigger-btn.mode-send:active {
-  background-color: rgba(255, 255, 255, 0.2) !important;
-  transform: scale(0.92);
-}
-
-/* === 🚑 FIX: ВОЗВРАЩЕНИЕ ОРБА === */
-
-/* 1. Поднимаем слой с орбами на уровень видимости */
-.fx-layer {
-  z-index: 0 !important; /* Было -1, поэтому он прятался за body */
-}
-
-/* 2. Делаем верхний орб ярче и чуть смещаем */
-/* Сейчас он слишком тусклый, чтобы пробиться через размытое стекло шапки */
-.orb-1 {
-  opacity: 0.8 !important; /* Увеличили яркость (было 0.3) */
-  top: -20% !important;    /* Чуть опустили ниже, чтобы он попал в календарь */
-  left: -10% !important;
-  width: 100vw !important; /* Гарантируем размер */
-  height: 100vw !important;
-}
-
-/* 3. Убедимся, что главный контейнер не перекрывает фон черным цветом */
-.app-layout {
-  background: transparent !important; 
-}
-
-/* === 📸 ФИНАЛЬНЫЙ ФИКС: КАМЕРА НА ВЕСЬ ЭКРАН === */
-
-/* 1. Вынимаем календарь из потока, чтобы он "парил" сверху */
-.calendar-block {
-  position: absolute !important;
-  top: 0;
-  left: 0;
-  width: 100%;
-  z-index: 50 !important; /* Лежит поверх видео */
-  /* Фон уже прозрачный из прошлых шагов, так что видео будет видно под ним */
-}
-
-/* 2. Камеру жестко растягиваем на весь экран (под календарь) */
-.cam-viewport {
-  position: absolute !important;
-  top: 0; 
-  left: 0;
-  width: 100% !important;
-  height: 100% !important;
-  z-index: 0 !important; /* Уровень ниже календаря */
-  margin: 0 !important;
-  padding: 0 !important;
-}
-
-/* 3. Убедимся, что видео внутри тоже на весь экран */
-#video {
-  height: 100% !important;
-  width: 100% !important;
-  object-fit: cover !important;
-}
-
-/* === ✨ ОБНОВЛЕНИЕ ОКНА ПРОВЕРКИ (DRAFT SHEET) === */
-
-/* 1. БЛЮР ВСЕГО ЭКРАНА */
-.draft-overlay {
-  /* Делаем фон чуть темнее + сильное размытие */
-  background: rgba(0, 0, 0, 0.6) !important; 
-  backdrop-filter: blur(20px) !important;
-  -webkit-backdrop-filter: blur(20px) !important;
-}
-
-/* 2. ОТСТУПЫ (Превращаем в парящую карточку) */
-.draft-sheet {
-  /* Отлепляем от краев экрана:
-     0 - сверху
-     12px - справа
-     12px + safe-area - снизу
-     12px - слева */
-  margin: 0 12px calc(12px + env(safe-area-inset-bottom)) 12px !important;
-  
-  /* Закругляем ВСЕ углы, а не только верхние */
-  border-radius: 24px !important; 
-  
-  /* Добавляем тонкую обводку для красоты */
-  border: 1px solid rgba(255, 255, 255, 0.1) !important;
-  
-  /* Чуть корректируем внутренние отступы */
-  padding-bottom: 20px !important; 
-}
-
-/* === ✏️ ИСПРАВЛЕНИЕ ШРИФТОВ (DRAFT SHEET) === */
-
-/* 1. Заголовок "Проверь данные" */
-.ds-title {
-  color: #ffffff !important;        /* 🔥 Принудительно белый */
-  font-size: 22px !important;       /* Чуть крупнее */
-  font-weight: 800 !important;      /* Жирный (Heavy) */
-  letter-spacing: 0.3px !important; /* Микро-разрядка */
-  margin-bottom: 8px !important;
-}
-
-/* 2. Подзаголовок "AI определил..." */
-.ds-subtitle {
-  color: rgba(255, 255, 255, 0.6) !important; /* Читаемый серый */
-  font-size: 13px !important;
-  font-weight: 400 !important;
-  line-height: 1.5 !important;
-}
-
-/* 3. Названия продуктов в списке 
-.di-name {
-  color: #ffffff !important;
-  font-size: 16px !important;
-  font-weight: 600 !important;
-}*/
-
-/* === ПОЛЕ ВВОДА ПРОДУКТА (СТИЛЬ IOS INPUT) === */
-.di-name {
-  /* Делаем явным полем ввода */
-  background: rgba(255, 255, 255, 0.05) !important; /* Еле заметный фон */
-  border: 1px solid rgba(255, 255, 255, 0.15) !important; /* Тонкая рамка */
-  border-radius: 10px !important; /* Скругление */
-  
-  /* Отступы, чтобы текст не прилипал к краям */
-  padding: 8px 12px !important;
-  margin-bottom: 4px !important;
-  
-  /* Текст */
-  color: #ffffff !important;
-  font-size: 16px !important;
-  font-weight: 600 !important;
-  width: 100%;
-  
-  /* Плавность при нажатии */
-  transition: border-color 0.2s, background 0.2s;
-}
-
-/* Эффект при нажатии (Фокус) */
-.di-name:focus {
-  background: rgba(255, 255, 255, 0.1) !important;
-  border-color: #0a84ff !important; /* Синяя рамка при вводе */
-}
-
-
-/* 4. Цифры веса */
-.di-weight {
-  color: #0a84ff !important; /* Синий акцент для цифр */
-  font-weight: 700 !important;
-}
-
-
-/* === WIDGETS DASHBOARD (EXACT COPY FROM SCANNER0) === */
-.dashboard-layer {
-  position: absolute;
-  top: 0; left: 0; 
-  width: 100%; height: 100%; 
-  z-index: 15; 
-  
-  /* Высота календаря в оригинале ~90-100px. 
-     Ставим отступ, чтобы начало слоя совпало с низом календаря.
-     Дальше отступ задаст padding внутри carousel-track (30px), как в оригинале. */
-  padding-top: calc(90px + env(safe-area-inset-top)); 
-  
-  transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.3s;
-  pointer-events: none;
-}
-
-.dashboard-layer.hidden-mode {
-  transform: translateY(-30px);
-  opacity: 0;
-  pointer-events: none !important;
-}
-
-.carousel-wrap {
-  pointer-events: auto; 
-  /* padding: 0; — убрал, так как в scanner0 он 0, это дефолт */
-}
-
-.carousel-track { 
-  display: flex; gap: 12px; 
-  
-  /* 🔥 ОРИГИНАЛ ИЗ SCANNER0:
-     30px сверху (отступ от календаря)
-     40px снизу (место для точек) */
-  padding: 30px 16px 40px 16px; 
-  
-  overflow-x: auto; 
-  scroll-snap-type: x mandatory; 
-  scrollbar-width: none;
-  cursor: grab;
-}
-.carousel-track::-webkit-scrollbar { display: none; }
-
-.widget { 
-  flex: 0 0 calc(100% - 16px); /* 100% - 16px (margin-right 16px в оригинале логика паддингов) */
-  scroll-snap-align: center; 
-  
-  /* 🔥 ОРИГИНАЛ: Высота ровно 160px */
-  height: 160px; 
-  
-  border-radius: 28px; /* В оригинале radius-xl: 28px */
-  
-  /* Фон и эффекты оригинала */
-  background: rgba(20, 20, 20, 0.75); /* Чуть темнее для читаемости на камере */
-  border: 1px solid rgba(255, 255, 255, 0.1); 
-  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); 
-  
-  position: relative; overflow: hidden; 
-  padding: 16px 12px; 
-  transition: 0.3s ease; 
-}
-
-/* Макросы (Кольца) */
-.macros-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; height: 100%; align-items: center; }
-.macro-item { display: flex; flex-direction: column; align-items: center; justify-content: center; }
-.donut-box { width: 100%; max-width: 74px; aspect-ratio: 1; position: relative; display: flex; align-items: center; justify-content: center; margin-bottom: 8px; }
-.mini-donut { width: 100%; height: 100%; transform: rotate(-90deg); filter: drop-shadow(0 4px 8px rgba(0,0,0,0.25)); }
-.md-bg { fill: none; stroke: rgba(255,255,255,0.05); stroke-width: 7; }
-.md-val { fill: none; stroke-width: 7; stroke-linecap: round; stroke-dasharray: 151; transition: stroke-dashoffset 1s ease; }
-.m-icon { position: absolute; font-size: 20px; }
-.m-data { display: flex; flex-direction: column; align-items: center; }
-.m-nums { font-size: 13px; font-weight: 800; color: #fff; font-variant-numeric: tabular-nums; }
-.m-nums span { color: rgba(255,255,255,0.45); font-size: 11px; margin-left: 1px; }
-.m-lbl { font-size: 9px; font-weight: 700; text-transform: uppercase; color: rgba(255,255,255,0.5); margin-top: 2px; }
-
-/* Градиенты */
-.stroke-kcal { stroke: url(#grad-kcal); }
-.stroke-prot { stroke: url(#grad-prot); }
-.stroke-fats { stroke: url(#grad-fats); }
-.stroke-carb { stroke: url(#grad-carb); }
-
-/* Водный виджет */
-.widget.water-widget { display: flex; flex-direction: column; padding: 16px 20px; justify-content: space-between; }
-.water-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
-.water-title { font-size: 11px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-muted); opacity: 0.8; }
-.water-percent { font-size: 12px; font-weight: 700; color: var(--acc-blue); transition: color 0.3s; }
-.widget.is-overload .water-percent { color: #00f2ea; text-shadow: 0 0 8px rgba(0, 242, 234, 0.6); }
-
-.water-cols { display: flex; justify-content: space-between; align-items: flex-end; height: 50px; gap: 6px; margin: 8px 0; }
-.water-tube { flex: 1; height: 100%; background: rgba(0,0,0,0.4); border-radius: 6px; border: 1px solid rgba(255,255,255,0.06); position: relative; overflow: hidden; }
-.water-fill { position: absolute; bottom: 0; left: 0; right: 0; height: var(--h, 0%); background: var(--acc-blue); transition: height 0.3s cubic-bezier(0.25, 1, 0.5, 1), background-color 0.3s; box-shadow: 0 0 12px rgba(10, 132, 255, 0.5); }
-.water-fill::after { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: rgba(255,255,255,0.6); opacity: 0.8; }
-.widget.is-overload .water-fill { background: #00f2ea; box-shadow: 0 0 15px rgba(0, 242, 234, 0.6); }
-
-.water-footer { display: flex; justify-content: space-between; align-items: flex-end; }
-.water-info { display: flex; flex-direction: column; gap: 2px; }
-.wf-row { display: flex; align-items: baseline; gap: 4px; }
-.wf-fact { font-size: 28px; font-weight: 800; color: #fff; line-height: 1; letter-spacing: -0.5px; }
-.wf-unit { font-size: 12px; font-weight: 600; color: var(--text-muted); }
-.wf-plan { font-size: 11px; font-weight: 500; color: var(--text-muted); opacity: 0.7; }
-.water-controls { display: flex; gap: 24px; }
-.water-btn { width: 54px; height: 44px; border-radius: 14px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); color: #fff; font-size: 22px; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: 0.2s; }
-.water-btn:active { background: var(--acc-blue); transform: scale(0.92); }
-
-/* Точки пагинации (ОРИГИНАЛ) */
-.dots { 
-  display: flex; justify-content: center; gap: 6px; 
-  margin-top: 0px; 
-  pointer-events: none; 
-  
-  /* 🔥 ОРИГИНАЛ: transform поднимает точки внутрь паддинга трека */
-  transform: translateY(-20px); 
-}
-
-.dot { width: 6px; height: 6px; border-radius: 10px; background: rgba(255,255,255,0.2); transition: 0.3s; }
-.dot.active { width: 20px; background: #fff; }
-
-</style>
+  </script>
+
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+  <style>
+    /* === СБРОС === */
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+    :root {
+      --bg: linear-gradient(135deg,#667eea 0%,#764ba2 100%);
+      --userBubble: rgba(251,191,36,.25);
+      --userBorder: rgba(251,191,36,.4);
+      --aiBubble: rgba(255,255,255,.18);
+      --aiBorder: rgba(255,255,255,.28);
+      --shadow: 0 8px 28px rgba(0,0,0,.18);
+      --okA:#fbbf24; --okB:#f59e0b;
+      --maxw: 560px;
+      /* Высота инпут-бара (примерная), нужна для отступа в чате */
+      --input-bar-height: 80px; 
+    }
+
+    html { background-color: #000; }
+
+    body {
+      margin: 0; padding: 0; width: 100%; height: 100vh;
+      overflow: hidden; background: transparent; color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+      position: fixed; top: 0; left: 0; /* Фиксация от прыжков */
+    }
+
+    body::before {
+      content:""; position:fixed; inset:0; background:var(--bg);
+      z-index:-1; pointer-events:none;
+    }
+
+    /* Главный контейнер */
+    .container {
+      position: absolute; top: 0; left: 0; right: 0;
+      height: 100%; 
+      max-width: var(--maxw); margin: 0 auto;
+      display: flex; flex-direction: column;
+      overflow: hidden;
+      position: relative; /* Важно для абсолютного позиционирования инпута */
+    }
+
+    /* === ШАПКА (Overlay эффект) === */
+    .header {
+      position: absolute; top: 0; left: 0; right: 0; /* Висит поверх чата */
+      height: 56px;
+      display: flex; align-items: center; justify-content: center;
+      /* Легкий блюр для шапки тоже */
+      background: rgba(255,255,255,0.05); 
+      backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+      border-bottom: 1px solid rgba(255,255,255,0.15);
+      z-index: 20;
+    }
+    .header h4 { font-size: 18px; font-weight: 900; letter-spacing: .3px; text-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+    
+    .clear-btn {
+      position: absolute; right: 16px; padding: 6px 12px; border: 0; border-radius: 10px;
+      background: rgba(239,68,68,.25); border: 1px solid rgba(239,68,68,.4);
+      color: #fff; font-weight: 700; font-size: 13px; cursor: pointer;
+    }
+
+    /* === ЧАТ (На всю высоту) === */
+    .chat-area {
+      flex-grow: 1;
+      height: 100%; /* Занимает всю высоту контейнера */
+      overflow-y: auto; overflow-x: hidden;
+      padding: 16px 14px;
+      
+      /* ВАЖНО: Отступы, чтобы контент не перекрывался шапкой и футером */
+      padding-top: 70px; /* 56px шапка + отступ */
+      padding-bottom: calc(var(--input-bar-height) + 20px); 
+      
+      display: flex; flex-direction: column; gap: 12px;
+      -webkit-overflow-scrolling: touch;
+    }
+    .chat-area::-webkit-scrollbar { width: 0px; display: none; }
+
+    .message { display: flex; flex-direction: column; max-width: 85%; animation: slideIn .3s ease; position: relative; }
+    @keyframes slideIn { from{opacity:0; transform:translateY(10px);} to{opacity:1; transform:translateY(0);} }
+    .message.user { align-self: flex-end; align-items: flex-end; }
+    .message.ai { align-self: flex-start; align-items: flex-start; }
+
+    .message-bubble {
+      padding: 12px 16px; border-radius: 18px; 
+      backdrop-filter: blur(12px); box-shadow: 0 4px 15px rgba(0,0,0,.1);
+      font-size: 16px; line-height: 1.5; word-wrap: break-word;
+    }
+    .message.user .message-bubble {
+      background: rgba(251,191,36,.2); border: 1px solid rgba(251,191,36,.4); border-bottom-right-radius: 4px;
+    }
+    .message.ai .message-bubble {
+      background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.25); border-bottom-left-radius: 4px;
+    }
+    .message-time { font-size: 11px; opacity: .7; margin-top: 4px; padding: 0 4px; }
+
+    /* === ИНПУТ (Плавающий снизу) === */
+    .input-area {
+      position: absolute; bottom: 0; left: 0; right: 0; /* Висит поверх чата */
+      
+      /* Эффект стекла */
+      background: transparent; 
+      backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); */
+      border-top: none;
+      
+      padding: 12px 14px; 
+      /* Учитываем "челку" снизу айфона */
+      padding-bottom: max(12px, env(safe-area-inset-bottom)); 
+      
+      z-index: 30;
+      display: flex; gap: 10px; align-items: flex-end;
+      transition: transform 0.1s; /* Для плавности при ресайзе */
+    }
+
+    .input-field {
+      flex: 1; min-height: 44px; max-height: 120px; padding: 11px 16px;
+      border: 1px solid rgba(255,255,255,.2); border-radius: 22px;
+      background: rgba(255,255,255,.1); 
+      color: #fff; font-size: 16px; font-family: inherit; resize: none; outline: none;
+    }
+    .input-field::placeholder { color: rgba(255,255,255,0.5); }
+    .input-field:focus { border-color: var(--okA); background: rgba(255,255,255,.15); }
+    
+    .send-btn {
+      width: 44px; height: 44px; border: 0; border-radius: 50%; flex-shrink: 0;
+      background: linear-gradient(135deg,#fbbf24,#f59e0b);
+      color: #fff; display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 4px 12px rgba(0,0,0,.2);
+    }
+    .send-btn:disabled { opacity: .5; box-shadow: none; }
+
+    .empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; opacity: .7; text-align: center; margin-top: 20%; }
+    .empty-state-icon { font-size: 64px; margin-bottom: 16px; }
+    
+    /* Модалка и кнопки удаления */
+    .delete-btn { position: absolute; top: 50%; transform: translateY(-50%); width: 32px; height: 32px; border-radius: 50%; background: #ef4444; color: #fff; display: none; align-items: center; justify-content: center; z-index: 10; box-shadow:0 4px 10px rgba(0,0,0,.3); }
+    .message.user .delete-btn { left: -45px; } .message.ai .delete-btn { right: -45px; }
+    .message.show-delete .delete-btn { display: flex; }
+    
+    .modal { position: fixed; inset: 0; background: rgba(0,0,0,.7); display: none; align-items: center; justify-content: center; z-index: 1000; padding: 20px; backdrop-filter: blur(5px); }
+    .modal.show { display: flex; }
+    .modal-content { background: rgba(30,30,30,0.9); border: 1px solid rgba(255,255,255,.2); border-radius: 20px; padding: 24px; width: 100%; max-width: 320px; text-align: center; box-shadow:0 20px 50px rgba(0,0,0,.5); }
+    .modal-buttons { display: flex; gap: 10px; margin-top: 20px; }
+    .modal-btn { flex: 1; padding: 12px; border-radius: 12px; border: 0; font-weight: 700; cursor: pointer; }
+    .modal-btn.cancel { background: rgba(255,255,255,.15); color: #fff; }
+    .modal-btn.confirm { background: linear-gradient(135deg,#fbbf24,#f59e0b); color: #fff; }
+    
+    .typing-indicator { display: flex; gap: 4px; padding: 12px 16px; }
+    .typing-dot { width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,.7); animation: typing 1.4s infinite; }
+    .typing-dot:nth-child(2){ animation-delay:.2s; } .typing-dot:nth-child(3){ animation-delay:.4s; }
+    @keyframes typing{ 0%,60%,100%{transform:translateY(0);opacity:.7} 30%{transform:translateY(-10px);opacity:1} }
+  </style>
 </head>
 <body>
-  <!-- ФОН С ОРБАМИ -->
-  <div class="fx-layer" id="fxLayer">
-    <div class="orb orb-1"></div>
-    <div class="orb orb-2"></div>
-    <div class="noise"></div>
-  </div>
-  <!-- КОНЕЦ ФОНА -->
 
-  <div class="app-layout" id="appLayout">
-
-  <!-- КАЛЕНДАРЬ -->
- <div class="calendar-block" id="calendarBlock">
-    <div class="calendar-header">
-      <div class="month-label" id="monthLabel">...</div>
+  <div class="container">
+    <div class="header">
+      <h4>Ai-Коуч</h4>
+      <button class="clear-btn" id="clearBtn">Очистить</button>
     </div>
-    <div class="calendar-swipe-area" id="swipeArea">
-      <div class="calendar-track" id="calTrack">
-        <div class="calendar-week" id="weekPrev"></div>
-        <div class="calendar-week" id="weekCurr"></div>
-        <div class="calendar-week" id="weekNext"></div>
+
+    <div class="chat-area" id="chatArea">
+      <div class="empty-state" id="emptyState">
+        <div class="empty-state-icon">💬</div>
+        <h2>Начните диалог</h2>
+        <p>Задайте любой вопрос ИИ-ассистенту</p>
+      </div>
+    </div>
+
+    <div class="input-area" id="inputArea">
+      <div class="input-wrapper" style="display:flex; width:100%; gap:10px; align-items:flex-end;">
+        <textarea class="input-field" id="messageInput" placeholder="Задайте вопрос..." rows="1"></textarea>
+        <button class="send-btn" id="sendBtn" disabled>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+            <line x1="22" y1="2" x2="11" y2="13"></line>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+          </svg>
+        </button>
       </div>
     </div>
   </div>
-   <!-- КОНЕЦ КАЛЕНДАРЯ -->
 
-  <div class="cam-viewport">
-    <video id="video" autoplay playsinline muted></video>
-    
-    <div id="loader" class="cam-loader hidden">
-      <div class="spinner"></div>
+  <div class="modal" id="confirmModal">
+    <div class="modal-content">
+      <h3 id="modalTitle">Подтверждение</h3>
+      <p id="modalText">Вы уверены?</p>
+      <div class="modal-buttons">
+        <button class="modal-btn cancel" id="modalCancel">Отмена</button>
+        <button class="modal-btn confirm" id="modalConfirm">Удалить</button>
+      </div>
     </div>
-    <!-- ВИДЖЕТЫ НАЧАЛО -->
- 
-  
-  <div id="loader" class="cam-loader hidden">
-    <div class="spinner"></div>
   </div>
 
-  <svg width="0" height="0" style="position:absolute">
-    <defs>
-      <linearGradient id="grad-kcal"><stop offset="0%" stop-color="#ff9f0a"/><stop offset="100%" stop-color="#ff453a"/></linearGradient>
-      <linearGradient id="grad-prot"><stop offset="0%" stop-color="#48bfe3"/><stop offset="100%" stop-color="#5e60ce"/></linearGradient>
-      <linearGradient id="grad-fats"><stop offset="0%" stop-color="#f1c40f"/><stop offset="100%" stop-color="#e67e22"/></linearGradient>
-      <linearGradient id="grad-carb"><stop offset="0%" stop-color="#2ecc71"/><stop offset="100%" stop-color="#1abc9c"/></linearGradient>
-    </defs>
-  </svg>
+  <script>
+    /* ==================================================================
+       1. STABLE VIEWPORT (OFFICIAL API)
+       ================================================================== */
+    (function initStableLayout() {
+      const app = document.querySelector('.container');
+      const inputArea = document.getElementById('inputArea');
+      const chatArea = document.getElementById('chatArea');
+      const input = document.getElementById('messageInput');
+      const tg = window.Telegram?.WebApp;
 
-  <div class="dashboard-layer" id="dashboardLayer">
-    <div class="carousel-wrap">
-      <div class="carousel-track" id="widgetTrack">
+      if (!app) return;
+
+      function setHeight() {
+        // Получаем высоту. Если есть tg.viewportHeight, используем её
+        const h = (tg && tg.viewportHeight) ? tg.viewportHeight : window.innerHeight;
+        app.style.height = `${h}px`;
         
-        <div class="widget">
-          <div class="macros-grid">
-            <div class="macro-item"><div class="donut-box"><svg class="mini-donut" viewBox="0 0 60 60"><circle class="md-bg" cx="30" cy="30" r="24"/><circle class="md-val stroke-kcal" cx="30" cy="30" r="24" style="stroke-dashoffset: 45px"/></svg><div class="m-icon">🔥</div></div><div class="m-data"><div class="m-nums">1450<span>/2100</span></div><div class="m-lbl">ККАЛ</div></div></div>
-            <div class="macro-item"><div class="donut-box"><svg class="mini-donut" viewBox="0 0 60 60"><circle class="md-bg" cx="30" cy="30" r="24"/><circle class="md-val stroke-prot" cx="30" cy="30" r="24" style="stroke-dashoffset: 100px"/></svg><div class="m-icon">🐓</div></div><div class="m-data"><div class="m-nums">110<span>/160</span></div><div class="m-lbl">БЕЛКИ</div></div></div>
-            <div class="macro-item"><div class="donut-box"><svg class="mini-donut" viewBox="0 0 60 60"><circle class="md-bg" cx="30" cy="30" r="24"/><circle class="md-val stroke-fats" cx="30" cy="30" r="24" style="stroke-dashoffset: 110px"/></svg><div class="m-icon">🥑</div></div><div class="m-data"><div class="m-nums">45<span>/70</span></div><div class="m-lbl">ЖИРЫ</div></div></div>
-            <div class="macro-item"><div class="donut-box"><svg class="mini-donut" viewBox="0 0 60 60"><circle class="md-bg" cx="30" cy="30" r="24"/><circle class="md-val stroke-carb" cx="30" cy="30" r="24" style="stroke-dashoffset: 60px"/></svg><div class="m-icon">🌾</div></div><div class="m-data"><div class="m-nums">180<span>/250</span></div><div class="m-lbl">УГЛИ</div></div></div>
-          </div>
-        </div>
+        // Обновляем отступ снизу у чата, чтобы текст не прятался за инпутом
+        if(inputArea) {
+           const inputH = inputArea.offsetHeight;
+           // +20px для красоты
+           chatArea.style.paddingBottom = `${inputH + 20}px`;
+        }
+      }
 
-        <div class="widget water-widget" id="waterCard">
-          <div class="water-header"><div class="water-title">Водный баланс</div><div class="water-percent" id="lbl-pct">0%</div></div>
-          <div class="water-cols">
-            <div class="water-tube"><div class="water-fill" id="c1"></div></div>
-            <div class="water-tube"><div class="water-fill" id="c2"></div></div>
-            <div class="water-tube"><div class="water-fill" id="c3"></div></div>
-            <div class="water-tube"><div class="water-fill" id="c4"></div></div>
-            <div class="water-tube"><div class="water-fill" id="c5"></div></div>
-          </div>
-          <div class="water-footer">
-            <div class="water-info"><div class="wf-row"><div class="wf-fact" id="lbl-fact">0</div><div class="wf-unit">мл</div></div><div class="wf-plan">Цель: 2500</div></div>
-            <div class="water-controls">
-              <div class="water-btn" onclick="updateWater(-250)">−</div>
-              <div class="water-btn" onclick="updateWater(250)">+</div>
-            </div>
-          </div>
-        </div>
+      if (tg) {
+        try {
+          tg.ready();
+          tg.expand();
+          tg.setHeaderColor?.('secondary_bg_color'); // Или transparent если поддерживается
+          if (tg.isVersionAtLeast?.('6.1')) tg.disableVerticalSwipes?.();
+          tg.disableClosingConfirmation?.();
+          
+          const HOME = './router.html';
+          tg.BackButton?.offClick?.();
+          tg.BackButton?.show?.();
+          tg.BackButton?.onClick?.(()=>{ location.href = HOME; });
 
-      </div>
-      <div class="dots"><div class="dot active"></div><div class="dot"></div></div>
-    </div>
-  </div>
-    <!-- ВИДЖЕТЫ КОНЕЦ --> 
+          // При изменении размера (клава)
+          tg.onEvent('viewportChanged', ({ isStateStable }) => {
+            setHeight();
+            if (isStateStable) {
+               requestAnimationFrame(() => { chatArea.scrollTop = chatArea.scrollHeight; });
+            }
+          });
+        } catch (e) {}
+        setHeight();
+      } else {
+        window.addEventListener('resize', setHeight);
+        setHeight();
+      }
 
-    <canvas id="uiCanvas"></canvas>
-    <div id="camToast" class="cam-toast">Camera Name</div>
+      // Пересчитываем отступ при вводе текста (так как инпут растет)
+      if (input) {
+        input.addEventListener('input', () => {
+           requestAnimationFrame(setHeight);
+        });
+        input.addEventListener('focus', () => {
+          setTimeout(() => { chatArea.scrollTop = chatArea.scrollHeight; }, 300);
+        });
+      }
+    })();
 
-    <div class="ui-layer idle" id="camUI">
-      <div class="top-bar">
-        <div class="btn-close" id="btnClose">
-          <svg class="icon-svg" viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
-        </div>
+    /* ==================================================================
+       2. LOGIC
+       ================================================================== */
+    const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbzvlDKUH6qsON-A6iSHYvMU_6XWtReZc5oXnnZOMTgETfvZqMMh2zUbdQJF-iOanMBc/exec';
+    const REQUEST_TIMEOUT_MS = 45000;
 
-        <div class="status-chip" id="lvlChip">
-          <div class="status-dot" id="lvlDot"></div>
-          <span id="lvlText">Уровень</span>
-        </div>
+    let messages = [];
+    let isTyping = false;
 
-        <div class="spacer"></div>
-      </div>
-
-      <div class="controls-grid">
-        <div class="grid-cell-left">
-          <div class="action-btn" id="btnTorch">
-            <svg class="icon-svg" viewBox="0 0 24 24"><path d="M7 2v11h3v9l7-12h-4l4-8z"/></svg>
-          </div>
-        </div>
-
-        <div class="grid-cell-center">
-          <div class="shutter-outer disabled" id="shutterBtn">
-            <div class="shutter-inner"></div>
-          </div>
-        </div>
-
-        <div class="grid-cell-right">
-          <div class="action-btn hidden" id="btnSwitch">
-            <svg class="icon-svg" viewBox="0 0 24 24"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
-          </div>
-        </div>
-      </div>
-    </div>
+    const chatArea = document.getElementById('chatArea');
+    const emptyState = document.getElementById('emptyState');
+    const messageInput = document.getElementById('messageInput');
+    const sendBtn = document.getElementById('sendBtn');
+    const clearBtn = document.getElementById('clearBtn');
     
-    <div class="omni-bar" id="omniBar">
-      <div class="omni-icon-btn">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
-      </div>
-      <div class="input-wrap">
-        <textarea class="omni-input" rows="1" placeholder="Яблоко 200г, кофе..."></textarea>
-      </div>
-      <div class="cam-trigger-btn" id="btnStartCam">
-        <svg id="icoCam" class="omni-btn-icon" viewBox="0 0 24 24">
-          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
-          <circle cx="12" cy="13" r="4"></circle>
-        </svg>
-        
-        <svg id="icoSend" class="omni-btn-icon icon-hidden" viewBox="0 0 24 24">
-          <line x1="22" y1="2" x2="11" y2="13"></line>
-          <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-        </svg>
-      </div>
-    </div>
+    const modal = document.getElementById('confirmModal');
+    const mTitle = document.getElementById('modalTitle');
+    const mText = document.getElementById('modalText');
+    let modalCallback = null;
 
-  </div>
-</div>
-  <div id="permReq" class="perm-overlay hidden">
-    <div style="font-size:48px; margin-bottom:10px">📐</div>
-    <h2 style="margin:0">Настройка</h2>
-    <p style="color:var(--text-muted)">Разрешите доступ к датчикам для работы уровня.</p>
-    <button class="perm-btn" onclick="requestSensors()">Разрешить</button>
-  </div>
+    async function callBackend(action, payload) {
+      const u = window.Telegram?.WebApp?.initDataUnsafe?.user || {};
+      const uid = u.id || localStorage.getItem('debug_uid') || 'd-'+Math.floor(Math.random()*1e9);
+      if(!u.id) localStorage.setItem('debug_uid', uid);
 
-  <div id="previewScreen" class="preview-overlay">
-    <img id="finalPhoto" class="preview-img">
-    <div class="comment-wrap">
-      <label class="comment-label">Комментарий (необязательно)</label>
-      <textarea id="commentInput" class="comment-input" placeholder="Можете указать продукты, это повысит точность модели. Например: рис 200, треска 150"></textarea>
-    </div>
-    <div class="preview-controls">
-      <button class="btn" onclick="retake()">Переснять</button>
-      <button class="btn primary" id="btnSend" onclick="sendPhoto()">Готово</button>
-    </div>
-  </div>
-
-<div class="processing-overlay" id="procOverlay">
-    <div class="proc-card">
-      <div class="proc-visual">
-        <div class="proc-orb"></div>
-        <div class="proc-ring"></div>
-      </div>
-      <div class="proc-title">Анализ снимка</div>
-      
-      <div class="proc-steps" id="procSteps">
-        <div class="step pending" id="step-1"><div class="s-icon">🛡️</div><div class="s-lbl">Gatekeeper: Проверка контента...</div></div>
-        <div class="step pending" id="step-2"><div class="s-icon">📦</div><div class="s-lbl">Librarian: Поиск упаковок...</div></div>
-        <div class="step pending" id="step-3"><div class="s-icon">🕵️</div><div class="s-lbl">Detective: Поиск ингредиентов...</div></div>
-        <div class="step pending" id="step-4"><div class="s-icon">📐</div><div class="s-lbl">Physicist: Расчет веса...</div></div>
-        <div class="step pending" id="step-5"><div class="s-icon">📝</div><div class="s-lbl">Synthesizer: Сборка отчета...</div></div>
-      </div>
-
-      <div class="proc-close" onclick="cancelProcessing()">Отмена</div>
-    </div>
-  </div>
-
-  <div class="draft-overlay" id="draftOverlay">
-    <div class="draft-sheet">
-      <div class="ds-header">
-        <div class="ds-title">Проверь данные</div>
-        <div class="ds-subtitle">AI определил состав и вес. Исправь при необходимости перед записью в дневник.</div>
-      </div>
-      
-      <div class="ds-list" id="draftList"></div>
-
-      <div class="ds-actions">
-        <button class="ds-btn sec" onclick="closeDraft()">Отмена</button>
-        <button class="ds-btn prim" id="btnConfirmDraft" onclick="confirmDraftToNutritionist()">В дневник</button>
-      </div>
-    </div>
-  </div>
-
-<script>
-/* ==================================================================
-   STABLE LAYOUT ENGINE (ADAPTED FROM AI CHAT)
-   ================================================================== */
-(function initStableLayout() {
-  const app = document.getElementById('appLayout'); // Твой главный контейнер
-  const omniBar = document.getElementById('omniBar'); // Твой бар ввода
-  const tg = window.Telegram?.WebApp;
-
-  if (!app) return;
-
-  function setHeight() {
-    // 1. Берем высоту напрямую у Telegram (самый надежный способ)
-    // Если API недоступно, берем window.innerHeight
-    const h = (tg && tg.viewportHeight) ? tg.viewportHeight : window.innerHeight;
-    
-    // 2. Жестко задаем высоту главному блоку
-    app.style.height = `${h}px`;
-    
-    // 3. (Опционально) Если нужно сдвигать контент, когда открыта клава
-    // В сканере у нас position: absolute, поэтому это может не понадобиться, 
-    // но если список продуктов перекрывается — можно добавить padding
-    // const barHeight = omniBar ? omniBar.offsetHeight : 0;
-    // const scrollContainer = document.getElementById('scrollContainer'); // Если есть скролл
-    // if (scrollContainer) scrollContainer.style.paddingBottom = `${barHeight + 10}px`;
-  }
-
-  if (tg) {
-    // Инициализация Telegram
-    tg.ready();
-    tg.expand(); // Растягиваем на весь экран
-    try {
-        if (tg.disableVerticalSwipes) tg.disableVerticalSwipes(); // Блокируем свайп закрытия (важно!)
-    } catch(e) {}
-
-    // Слушаем изменение размера (выезд клавиатуры)
-    tg.onEvent('viewportChanged', ({ isStateStable }) => {
-      setHeight(); // Мгновенный пересчет высоты
-      
-      // Если нужно проскроллить вниз при открытии клавиатуры:
-      // if (isStateStable) window.scrollTo(0, 0); 
-    });
-  }
-  
-  // Страховка для обычного браузера
-  window.addEventListener('resize', setHeight);
-  
-  // Первый запуск
-  setHeight();
-})();
-
-
-
-  // === CONFIG ===
-  const API_URL = "https://script.google.com/macros/s/AKfycbx0fUaaCH-JwnG5R_3TFgU5FSibsEuhuS0ZZZfyxPNVPQ1ZpCfUIaa5aE8vjgqitac/exec"; // ⚠️ ВСТАВЬ СЮДА СВОЙ URL!
-
-  // === TELEGRAM INIT ===
-  const tg = window.Telegram?.WebApp;
-  if(tg) {
-    tg.ready(); tg.expand();
-    tg.setHeaderColor('#000000');
-    if(tg.disableVerticalSwipes) tg.disableVerticalSwipes();
-  }
-
- 
-  // === API HELPER (CORS HACK FIX) ===
-  const API = {
-    // 1. Исправленная конвертация: возвращаем ПОЛНЫЙ Data URL
-    blobToBase64: (blob) => {
-      return new Promise((resolve, _) => {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-           // НЕ ОБРЕЗАЕМ! Отправляем как есть: "data:image/jpeg;base64,..."
-           resolve(reader.result);
-        };
-        reader.readAsDataURL(blob);
-      });
-    },
-
-    // 2. Исправленная отправка: text/plain
-    send: async (action, payload) => {
-      const user = tg?.initDataUnsafe?.user || { id: 0, first_name: 'BrowserTest' };
       const body = {
-        action: action,
-        user: user,
-        initData: tg?.initData || '',
+        action, user_id: uid,
+        user_data: { first_name: u.first_name, username: u.username },
+        init_data: window.Telegram?.WebApp?.initData || '',
         ...payload
       };
-      
-      // 🔥 MAGIC FIX: Используем text/plain, чтобы избежать CORS Preflight
-      const response = await fetch(API_URL, {
-        method: "POST",
-        headers: { "Content-Type": "text/plain;charset=utf-8" }, 
-        body: JSON.stringify(body)
-      });
 
-      const json = await response.json();
-      if (!json.ok) throw new Error(json.error || 'Server Error');
-      return json;
-    }
-  };
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-  // === STATE & DOM ===
-  const state = {
-    stream: null,
-    track: null,
-    levelOK: false,
-    angleX: 0, angleY: 0,
-    photoBlob: null,
-    isCapturing: false,
-    isSwitching: false,
-    devices: [],      
-    currentDevIdx: 0, 
-    torchOn: false,
-    sensorActive: false,
-    uiMode: 'menu' 
-  };
-
-  const DOM = {
-    video: document.getElementById('video'),
-    canvas: document.getElementById('uiCanvas'),
-    ctx: document.getElementById('uiCanvas').getContext('2d'),
-    shutter: document.getElementById('shutterBtn'),
-    lvlDot: document.getElementById('lvlDot'),
-    lvlText: document.getElementById('lvlText'),
-    permReq: document.getElementById('permReq'),
-    preview: document.getElementById('previewScreen'),
-    finalImg: document.getElementById('finalPhoto'),
-    btnSend: document.getElementById('btnSend'),
-    commentInput: document.getElementById('commentInput'),
-    btnTorch: document.getElementById('btnTorch'),
-    btnSwitch: document.getElementById('btnSwitch'),
-    toast: document.getElementById('camToast'),
-    loader: document.getElementById('loader'),
-    
-    omniBar: document.getElementById('omniBar'),
-    camUI: document.getElementById('camUI'),
-
-    omniInput: document.querySelector('.omni-input'), // Текстовое поле
-    icoCam: document.getElementById('icoCam'),
-    icoSend: document.getElementById('icoSend'),
-
-    btnStartCam: document.getElementById('btnStartCam'),
-    btnClose: document.getElementById('btnClose')
-  };
-
-  // === LOGIC ===
-// === OMNI BAR LOGIC (TEXT vs CAMERA) ===
-  
-  // 1. Слушаем ввод текста
-  DOM.omniInput.addEventListener('input', () => {
-    const hasText = DOM.omniInput.value.trim().length > 0;
-    
-    // Авто-высота поля (как в scanner.html)
-    DOM.omniInput.style.height = 'auto'; 
-    DOM.omniInput.style.height = Math.min(DOM.omniInput.scrollHeight, 80) + 'px';
-
-    if (hasText) {
-      // Режим ОТПРАВКИ
-      DOM.btnStartCam.classList.add('mode-send');
-      DOM.icoCam.classList.add('icon-hidden');
-      DOM.icoSend.classList.remove('icon-hidden');
-    } else {
-      // Режим КАМЕРЫ
-      DOM.btnStartCam.classList.remove('mode-send');
-      DOM.icoCam.classList.remove('icon-hidden');
-      DOM.icoSend.classList.add('icon-hidden');
-    }
-  });
-
-  // 2. Умный обработчик клика
-    DOM.btnStartCam.onclick = async () => {
-    const text = DOM.omniInput.value.trim();
-    
-    if (text.length > 0) {
-      await sendTextOnly(text);
-    } else {
-      state.uiMode = 'camera';
-      
-      // ВОТ ГЛАВНОЕ ИСПРАВЛЕНИЕ:
-      // Используем правильный ID 'calendarBlock' и уводим его вверх
-      const cal = document.getElementById('calendarBlock');
-      if(cal) cal.style.transform = 'translateY(-150%)'; 
-
-      DOM.omniBar.classList.add('hidden');
-      DOM.camUI.classList.remove('idle');
-      DOM.camUI.style.pointerEvents = 'auto'; 
-      if(tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
-      await initCamera(); 
-    }
-  };
-
-  // 3. Функция отправки чистого текста
-  // Для текстового режима (из Omni Bar) тоже нужно обновить логику
-  async function sendTextOnly(text) {
-     const btn = DOM.btnStartCam;
-     btn.style.opacity = '0.5';
-     haptic('medium');
-     
-     try {
-       startProcessingUI('text');
-       
-       const result = await API.send('scan', { image: null, userText: text });
-       
-       stopProcessingUI();
-       DOM.omniInput.value = ''; // Чистим поле
-       
-       if (result.ok) {
-         openDraftSheet(result.data, result.scanId);
-       } else {
-         throw new Error(result.error);
-       }
-     } catch(e) {
-       stopProcessingUI();
-       alert("Ошибка: " + e.message);
-     } finally {
-       btn.style.opacity = '1';
-     }
-  }
-
-    DOM.btnClose.onclick = () => {
-    state.uiMode = 'menu';
-    DOM.camUI.classList.add('idle');
-    DOM.camUI.style.pointerEvents = 'none';
-    DOM.omniBar.classList.remove('hidden');
-    
-    // ВОТ ГЛАВНОЕ ИСПРАВЛЕНИЕ:
-    // Возвращаем календарь на место (0)
-    const cal = document.getElementById('calendarBlock');
-    if(cal) cal.style.transform = 'translateY(0)';
-
-    stopStream(); 
-  };
-
-  let toastTimer;
-  function showToast(msg) {
-    DOM.toast.textContent = msg;
-    DOM.toast.classList.add('visible');
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { DOM.toast.classList.remove('visible'); }, 2000);
-  }
-
-  function stopStream() {
-    if (state.stream) { state.stream.getTracks().forEach(t => t.stop()); state.stream = null; }
-    state.track = null; state.torchOn = false; 
-    updateTorchUI();
-    DOM.video.srcObject = null;
-    DOM.video.classList.remove('active');
-  }
-
-  async function startStream(deviceId) {
-    if (state.stream) stopStream();
-    const constraints = { audio: false, video: { deviceId: deviceId ? { exact: deviceId } : undefined, facingMode: deviceId ? undefined : 'environment', width: { ideal: 1920 }, height: { ideal: 2560 } } };
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      state.stream = stream; state.track = stream.getVideoTracks()[0];
-      DOM.video.srcObject = stream; DOM.video.classList.add('active');
-      const settings = state.track.getSettings();
-      if (settings.deviceId) localStorage.setItem('ultima_cam_id', settings.deviceId);
-      
-      let label = state.track.label || "Камера";
-      label = label.replace(/\(.*\)/, '').replace(/camera2/i, '').replace(/facing/i, '').trim();
-      if(label.length < 2) label = "Камера " + (state.currentDevIdx + 1);
-      if(state.devices.length > 1) showToast(label);
-
-      const caps = state.track.getCapabilities();
-      if (caps.focusMode?.includes('continuous')) { try { await state.track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch(e){} }
-    } catch (e) {
-      if (deviceId) { localStorage.removeItem('ultima_cam_id'); await startStream(null); } 
-      else { alert("Ошибка камеры: " + e.message); }
-    }
-  }
-
-  DOM.btnSwitch.onclick = async () => {
-    if (state.devices.length < 2 || state.isSwitching) return;
-    state.isSwitching = true; haptic('medium');
-    DOM.loader.classList.remove('hidden');
-    DOM.btnSwitch.classList.add('disabled'); DOM.btnTorch.classList.add('disabled'); DOM.shutter.classList.add('disabled');
-    const svg = DOM.btnSwitch.querySelector('svg'); svg.style.transition = 'transform 0.4s'; svg.style.transform = 'rotate(180deg)';
-    if (state.stream) state.stream.getTracks().forEach(t => t.stop());
-    await new Promise(r => setTimeout(r, 500));
-    let nextIdx = state.currentDevIdx + 1;
-    if (nextIdx >= state.devices.length) nextIdx = 0;
-    state.currentDevIdx = nextIdx;
-    await startStream(state.devices[nextIdx].deviceId);
-    DOM.loader.classList.add('hidden');
-    DOM.btnSwitch.classList.remove('disabled'); DOM.btnTorch.classList.remove('disabled'); DOM.shutter.classList.remove('disabled');
-    state.isSwitching = false; setTimeout(() => svg.style.transform = '', 400);
-  };
-
-  DOM.btnTorch.onclick = async () => {
-    if(!state.track) return;
-    const caps = state.track.getCapabilities();
-    if (!caps.torch) { showToast("Вспышка недоступна"); haptic('error'); return; }
-    const newState = !state.torchOn;
-    try { await state.track.applyConstraints({ advanced: [{ torch: newState }] }); state.torchOn = newState; updateTorchUI(); haptic('light'); } 
-    catch(e) { showToast("Ошибка вспышки"); }
-  };
-
-  function updateTorchUI() {
-    if (state.torchOn) { DOM.btnTorch.style.backgroundColor = 'var(--acc-orange)'; DOM.btnTorch.style.color = '#000'; } 
-    else { DOM.btnTorch.style.backgroundColor = ''; DOM.btnTorch.style.color = '#fff'; }
-  }
-
-  function checkSensorPerms() {
-    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') { DOM.permReq.classList.remove('hidden'); } 
-    else { window.addEventListener('deviceorientation', handleOrientation); }
-  }
-  async function requestSensors() {
-    try { const resp = await DeviceOrientationEvent.requestPermission(); if (resp === 'granted') { window.addEventListener('deviceorientation', handleOrientation); } } 
-    catch (e) {} finally { DOM.permReq.classList.add('hidden'); }
-  }
-  function handleOrientation(e) {
-    let x = e.beta; let y = e.gamma; 
-    if (x === null || y === null) return;
-    state.sensorActive = true; state.angleX = x; state.angleY = y;
-  }
-  function updateUI() {
-    if (state.uiMode === 'menu') return;
-    if (state.isCapturing || state.isSwitching) return;
-    if (!state.sensorActive) { DOM.lvlDot.classList.remove('ok'); DOM.lvlText.textContent = "Камера"; DOM.shutter.classList.remove('disabled'); DOM.shutter.classList.add('active'); return; }
-    if (state.levelOK) { DOM.lvlDot.classList.add('ok'); DOM.lvlText.textContent = "Ровно"; DOM.shutter.classList.remove('disabled'); DOM.shutter.classList.add('active'); } 
-    else { DOM.lvlDot.classList.remove('ok'); DOM.lvlText.textContent = "Выровняйте"; DOM.shutter.classList.add('disabled'); DOM.shutter.classList.remove('active'); }
-  }
-  function resizeCanvas() { const w = window.innerWidth; const h = window.innerHeight; if (DOM.canvas.width !== w || DOM.canvas.height !== h) { DOM.canvas.width = w; DOM.canvas.height = h; } }
-
-  async function initCamera() {
-    try { const savedId = localStorage.getItem('ultima_cam_id'); await startStream(savedId); await updateDeviceList(); resizeCanvas(); window.addEventListener('resize', resizeCanvas); requestAnimationFrame(drawLoop); checkSensorPerms(); } 
-    catch (e) { console.warn("Init Error:", e); }
-  }
-  async function updateDeviceList() {
-    try {
-      const allDevices = await navigator.mediaDevices.enumerateDevices();
-      state.devices = allDevices.filter(d => d.kind === 'videoinput');
-      if (state.devices.length > 1) { DOM.btnSwitch.classList.remove('hidden'); } else { DOM.btnSwitch.classList.add('hidden'); }
-      if (state.track) {
-        const currentId = state.track.getSettings().deviceId;
-        state.currentDevIdx = state.devices.findIndex(d => d.deviceId === currentId);
-        if(state.currentDevIdx === -1) state.currentDevIdx = 0;
+      try {
+        const res = await fetch(BACKEND_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain' },
+          body: JSON.stringify(body),
+          signal: controller.signal
+        });
+        clearTimeout(id);
+        return await res.json();
+      } catch (e) {
+        return { success:false, error: String(e) };
       }
-    } catch(e) {}
-  }
-
-  function drawLoop() {
-    const ctx = DOM.ctx; const w = DOM.canvas.width; const h = DOM.canvas.height;
-    ctx.clearRect(0, 0, w, h);
-    if (state.uiMode === 'menu') { requestAnimationFrame(drawLoop); return; }
-    
-    const cx = w / 2; const cy = h / 2;
-    const cardRatio = 1.586; const cardW = w * 0.22; const cardH = cardW * cardRatio;
-    const cardX = cx + 80; const cardY = cy - cardH / 2; const r = 8; 
-    ctx.beginPath(); ctx.moveTo(cardX + r, cardY); ctx.lineTo(cardX + cardW - r, cardY); ctx.quadraticCurveTo(cardX + cardW, cardY, cardX + cardW, cardY + r); ctx.lineTo(cardX + cardW, cardY + cardH - r); ctx.quadraticCurveTo(cardX + cardW, cardY + cardH, cardX + cardW - r, cardY + cardH); ctx.lineTo(cardX + r, cardY + cardH); ctx.quadraticCurveTo(cardX, cardY + cardH, cardX, cardY + cardH - r); ctx.lineTo(cardX, cardY + r); ctx.quadraticCurveTo(cardX, cardY, cardX + r, cardY);
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)'; ctx.fill(); 
-    ctx.save(); ctx.translate(cardX + cardW / 2, cardY + cardH / 2); ctx.rotate(-Math.PI / 2); ctx.fillStyle = '#ffffff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = 'bold 12px sans-serif'; ctx.fillText("CREDIT CARD", 0, -10); ctx.font = '10px sans-serif'; ctx.fillText("(необязательно)", 0, 10); ctx.restore(); 
-
-    if (state.sensorActive) {
-        const rBubble = 14; const rTarget = 18; const maxOffset = 60; 
-        const rawX = (isNaN(state.angleY) || state.angleY === null) ? 0 : state.angleY;
-        const rawY = (isNaN(state.angleX) || state.angleX === null) ? 0 : state.angleX;
-        const clamp = (val) => Math.max(-20, Math.min(20, val));
-        const dx = (clamp(rawX) / 20) * maxOffset; const dy = (clamp(rawY) / 20) * maxOffset;
-        const dist = Math.hypot(dx, dy);
-        const isInside = (dist + rBubble) <= rTarget;
-        if (state.levelOK !== isInside && !state.isCapturing && !state.isSwitching) { state.levelOK = isInside; updateUI(); if(isInside) haptic('medium'); }
-        ctx.shadowBlur = 4; ctx.shadowColor = 'rgba(0,0,0,0.5)';
-        ctx.beginPath(); ctx.arc(cx, cy, rTarget, 0, Math.PI * 2); 
-        const color = (state.levelOK || state.isCapturing) ? '#30d158' : 'rgba(255,255,255,0.85)';
-        ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.stroke();
-        ctx.beginPath(); ctx.arc(cx + dx, cy + dy, rBubble, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill(); ctx.shadowBlur = 0;
-    } else {
-        ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.moveTo(cx-10, cy); ctx.lineTo(cx+10, cy); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(cx, cy-10); ctx.lineTo(cx, cy+10); ctx.stroke();
-    }
-    requestAnimationFrame(drawLoop);
-  }
-
-DOM.shutter.addEventListener('click', async () => {
-    if (state.isCapturing || state.isSwitching) return; 
-    
-    // Проверка уровня
-    if (state.sensorActive && !state.levelOK) { 
-        haptic('error'); 
-        showToast("Выровняйте телефон"); 
-        return; 
-    }
-    
-    try {
-        state.isCapturing = true; 
-        haptic('heavy');
-        DOM.shutter.style.transform = 'scale(0.8)'; 
-        DOM.shutter.style.opacity = '0.5';
-        
-        await new Promise(r => setTimeout(r, 50));
-        const vid = DOM.video;
-        
-        if (vid.readyState < 2 || vid.videoWidth === 0) throw new Error("Камера не готова");
-
-        // === ВАЖНОЕ ИСПРАВЛЕНИЕ: СЖАТИЕ ФОТО ===
-        const MAX_SIDE = 1024; // Ограничиваем размер до 1024px (этого достаточно для ИИ)
-        let w = vid.videoWidth;
-        let h = vid.videoHeight;
-        
-        // Считаем новые размеры, сохраняя пропорции
-        if (w > h) {
-          if (w > MAX_SIDE) { h *= MAX_SIDE / w; w = MAX_SIDE; }
-        } else {
-          if (h > MAX_SIDE) { w *= MAX_SIDE / h; h = MAX_SIDE; }
-        }
-
-        // Рисуем уменьшенную картинку на виртуальном холсте
-        const c = document.createElement('canvas'); 
-        c.width = w; 
-        c.height = h;
-        const ctx = c.getContext('2d');
-        ctx.drawImage(vid, 0, 0, w, h);
-        
-        // Конвертируем в Base64 с качеством 0.7 (сильно экономит место)
-        const blob = await new Promise(resolve => c.toBlob(resolve, 'image/jpeg', 0.7)); 
-        // === КОНЕЦ ИСПРАВЛЕНИЯ ===
-
-        if (!blob) throw new Error("Пустой кадр");
-        showPreview(blob);
-
-    } catch(err) {
-        console.error(err); 
-        haptic('error'); 
-        showToast("Ошибка: " + err.message);
-        state.isCapturing = false; 
-        updateUI();
-    } finally {
-        DOM.shutter.style.transform = ''; 
-        DOM.shutter.style.opacity = ''; 
-        state.isCapturing = false;
-    }
-  });
-
-  function showPreview(blob) {
-    if(!blob) return; state.photoBlob = blob;
-    DOM.finalImg.src = URL.createObjectURL(blob); DOM.preview.style.display = 'flex';
-  }
-  function retake() {
-    DOM.preview.style.display = 'none';
-    if(DOM.finalImg.src) URL.revokeObjectURL(DOM.finalImg.src);
-    DOM.finalImg.src = ''; state.photoBlob = null; DOM.commentInput.value = ''; 
-  }
-
-  // --- 🔥 ОТПРАВКА НА БЭК (ИСПРАВЛЕНО ДЛЯ CORS) ---
-  async function sendPhoto() {
-    const btn = DOM.btnSend;
-    if (btn.disabled) return; 
-    
-    // Закрываем превью
-    DOM.preview.style.display = 'none'; 
-    haptic('heavy');
-
-    try {
-        if (!state.photoBlob) throw new Error("Нет фото");
-        
-        // 1. Запускаем анимацию "Думаю..."
-        startProcessingUI('photo');
-        
-        // 2. Подготовка данных
-        const base64 = await API.blobToBase64(state.photoBlob);
-        const userText = DOM.commentInput.value;
-        
-        // 3. Реальный запрос к API (это займет 10-20 сек)
-        // В это время крутится анимация
-        const result = await API.send('scan', { image: base64, userText: userText });
-        
-        // 4. Если успех - показываем результат в Draft Sheet
-        stopProcessingUI(); // Останавливаем анимацию
-        
-        if (result.ok) {
-           openDraftSheet(result.data, result.scanId);
-        } else {
-           throw new Error(result.error || "Ошибка сервера");
-        }
-
-    } catch (e) {
-        stopProcessingUI();
-        console.error(e);
-        haptic('error');
-        alert("Ошибка: " + e.message);
-        // Возвращаем UI камеры
-        DOM.preview.style.display = 'flex'; 
-        btn.disabled = false;
-    }
-  }
-
-  function haptic(style) { 
-    if (!tg || !tg.HapticFeedback) return;
-    
-    // Разделяем типы вибрации согласно документации Telegram
-    if (['error', 'success', 'warning'].includes(style)) {
-      tg.HapticFeedback.notificationOccurred(style);
-    } else {
-      // light, medium, heavy, rigid, soft
-      tg.HapticFeedback.impactOccurred(style);
-    }
-  }
-
-  // === UI ЛОГИКА: АНИМАЦИЯ ПРОЦЕССА (Smart Routing) ===
-  let procInterval;
-  
-  function startProcessingUI(mode) {
-    const container = document.getElementById('procSteps');
-    const overlay = document.getElementById('procOverlay');
-    
-    // 1. Генерируем правильный список шагов в зависимости от режима
-    if (mode === 'text') {
-        // --- TEXT ROUTE ---
-        container.innerHTML = `
-            <div class="step pending" id="step-1"><div class="s-icon">🛡️</div><div class="s-lbl">Gatekeeper: Анализ запроса...</div></div>
-            <div class="step pending" id="step-2"><div class="s-icon">🧠</div><div class="s-lbl">TextParser: Поиск в базе USDA...</div></div>
-            <div class="step pending" id="step-3"><div class="s-icon">📝</div><div class="s-lbl">Synthesizer: Формирование ответа...</div></div>
-        `;
-    } else {
-        // --- PHOTO ROUTE (Default Plate Flow) ---
-        // Мы показываем полный путь "Тарелки", так как это самый красивый сценарий.
-        // Если это окажется Упаковка (Librarian), сервер ответит раньше, и мы просто закроем окно, что тоже ок.
-        container.innerHTML = `
-            <div class="step pending" id="step-1"><div class="s-icon">🛡️</div><div class="s-lbl">Gatekeeper: Проверка контента...</div></div>
-            <div class="step pending" id="step-2"><div class="s-icon">🕵️</div><div class="s-lbl">Detective: Поиск ингредиентов...</div></div>
-            <div class="step pending" id="step-3"><div class="s-icon">📐</div><div class="s-lbl">Physicist: Расчет веса (3D)...</div></div>
-            <div class="step pending" id="step-4"><div class="s-icon">🍳</div><div class="s-lbl">Technologist: Анализ жирности...</div></div>
-            <div class="step pending" id="step-5"><div class="s-icon">📝</div><div class="s-lbl">Synthesizer: Сборка отчета...</div></div>
-        `;
     }
 
-    overlay.classList.add('active');
-    
-    // 2. Запускаем анимацию переключения шагов
-    let step = 1;
-    const maxSteps = mode === 'text' ? 3 : 5;
-    
-    updateStep(1, 'active');
-
-    procInterval = setInterval(() => {
-       updateStep(step, 'done');
-       step++;
-       if(step > maxSteps) step = maxSteps; 
-       updateStep(step, 'active');
-    }, 2000); // Чуть быстрее переключаем для динамики
-  }
-
-  function updateStep(num, status) {
-    const el = document.getElementById('step-'+num);
-    if(el) {
-      el.classList.remove('pending', 'active', 'done');
-      el.classList.add(status);
-    }
-  }
-
-  function stopProcessingUI() {
-    clearInterval(procInterval);
-    document.getElementById('procOverlay').classList.remove('active');
-  }
-
-  function cancelProcessing() {
-    stopProcessingUI();
-    retake();
-  }
-
-  // === UI ЛОГИКА: DRAFT SHEET (ВАЛИДАЦИЯ) ===
-  let currentDraftItems = []; // Здесь храним то, что редактирует юзер
-  let currentScanId = null;
-
-  function openDraftSheet(data, scanId) {
-    currentScanId = scanId;
-    // Если данных нет или пустой массив
-    if (!data || !data.items) {
-       alert("Ничего не найдено. Попробуйте снова.");
-       return;
-    }
-    
-    currentDraftItems = data.items; // Сохраняем в память
-    renderDraftList();
-    
-    document.getElementById('draftOverlay').classList.add('visible');
-    haptic('success');
-  }
-
-  function renderDraftList() {
-    const container = document.getElementById('draftList');
-    container.innerHTML = '';
-    
-    if (currentDraftItems.length === 0) {
-      container.innerHTML = '<div style="text-align:center; opacity:0.5; padding:20px">Список пуст</div>';
-      return;
+    function formatTime(ts) {
+      const d = new Date(ts);
+      return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
     }
 
-    currentDraftItems.forEach((item, index) => {
-      // Определяем иконку по типу (можно улучшить логику)
-      let icon = "🍽️";
-      if (item.cooking_method === 'Raw') icon = "🍎";
-      if (item.fat_modifier === 'High Oil') icon = "🍳";
-      
+    function createMessageElement(m, idx) {
       const div = document.createElement('div');
-      div.className = 'draft-item';
-      div.innerHTML = `
-        <div class="di-icon">${icon}</div>
-        <div class="di-inputs">
-          <input type="text" class="di-name" value="${item.name}" onchange="updateDraftItem(${index}, 'name', this.value)">
-          <div class="di-row">
-            <input type="number" class="di-weight" value="${item.weight_g || ''}" placeholder="0" onchange="updateDraftItem(${index}, 'weight_g', this.value)">
-            <div class="di-unit">г</div>
-          </div>
-        </div>
-        <div class="di-del" onclick="removeDraftItem(${index})">✕</div>
-      `;
-      container.appendChild(div);
+      div.className = `message ${m.role}`;
+      
+      const bubble = document.createElement('div');
+      bubble.className = 'message-bubble';
+      bubble.textContent = m.content;
+      
+      const delBtn = document.createElement('div');
+      delBtn.className = 'delete-btn';
+      delBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2M10 11v6M14 11v6"/></svg>';
+      delBtn.onclick = (e) => { e.stopPropagation(); confirmDelete(idx); };
+
+      let timer;
+      bubble.addEventListener('touchstart', () => timer = setTimeout(() => {
+         div.classList.add('show-delete');
+         if(window.Telegram?.WebApp?.HapticFeedback) window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+      }, 500));
+      bubble.addEventListener('touchend', () => clearTimeout(timer));
+
+      const time = document.createElement('div');
+      time.className = 'message-time';
+      time.textContent = formatTime(m.timestamp);
+
+      div.appendChild(delBtn);
+      div.appendChild(bubble);
+      div.appendChild(time);
+      return div;
+    }
+
+    function createTypingIndicator() {
+      const div = document.createElement('div');
+      div.className = 'message ai'; div.id = 'typingIndicator';
+      div.innerHTML = `<div class="message-bubble"><div class="typing-indicator"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div></div>`;
+      return div;
+    }
+
+    function renderMessages() {
+      Array.from(chatArea.children).forEach(c => { if(c.id!=='emptyState') c.remove(); });
+      if(messages.length > 0) {
+        emptyState.style.display = 'none';
+        messages.forEach((m,i) => chatArea.appendChild(createMessageElement(m,i)));
+      } else {
+        emptyState.style.display = 'flex';
+      }
+      requestAnimationFrame(() => chatArea.scrollTop = chatArea.scrollHeight);
+    }
+
+    function autoResizeTextarea(){
+        messageInput.style.height='auto';
+        messageInput.style.height = Math.min(messageInput.scrollHeight,120)+'px';
+    }
+
+    function updateSendButton(){ const t=messageInput.value.trim(); sendBtn.disabled = !t || isTyping; }
+
+    async function sendMessage() {
+      const text = messageInput.value.trim();
+      if(!text || isTyping) return;
+      if(window.Telegram?.WebApp?.HapticFeedback) window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+
+      messages.push({ role:'user', content:text, timestamp:Date.now() });
+      localStorage.setItem('ai_chat_messages', JSON.stringify(messages));
+      renderMessages();
+
+      messageInput.value = ''; autoResizeTextarea(); updateSendButton();
+      isTyping = true;
+
+      chatArea.appendChild(createTypingIndicator());
+      chatArea.scrollTop = chatArea.scrollHeight;
+
+      const res = await callBackend('send_message', { message: text });
+      isTyping = false;
+      const typ = document.getElementById('typingIndicator');
+      if(typ) typ.remove();
+
+      let aiContent = 'Ошибка сети';
+      if(res.success) {
+         aiContent = res.text || 'Пустой ответ';
+         if(window.Telegram?.WebApp?.HapticFeedback) window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
+      } else {
+         aiContent = res.error || 'Ошибка сервера';
+         if(window.Telegram?.WebApp?.HapticFeedback) window.Telegram.WebApp.HapticFeedback.notificationOccurred('error');
+      }
+
+      messages.push({ role:'ai', content:aiContent, timestamp:Date.now() });
+      localStorage.setItem('ai_chat_messages', JSON.stringify(messages));
+      renderMessages();
+    }
+
+    function confirmDelete(i) {
+      mTitle.textContent = 'Удалить сообщение?';
+      mText.textContent = 'Действие необратимо.';
+      modalCallback = () => {
+         messages.splice(i,1);
+         localStorage.setItem('ai_chat_messages', JSON.stringify(messages));
+         renderMessages();
+      };
+      modal.classList.add('show');
+    }
+
+    clearBtn.onclick = () => {
+      if(!messages.length) return;
+      mTitle.textContent = 'Очистить историю?';
+      mText.textContent = 'Начнется новый диалог.';
+      modalCallback = async () => {
+         messages = [];
+         localStorage.removeItem('ai_chat_messages');
+         renderMessages();
+         callBackend('clear_history', {});
+      };
+      modal.classList.add('show');
+    };
+
+    document.getElementById('modalCancel').onclick = () => modal.classList.remove('show');
+    document.getElementById('modalConfirm').onclick = () => { if(modalCallback) modalCallback(); modal.classList.remove('show'); };
+    
+    messageInput.addEventListener('input', ()=>{ updateSendButton(); autoResizeTextarea(); });
+    messageInput.addEventListener('keydown', (e) => { if(e.key==='Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
+    sendBtn.onclick = sendMessage;
+
+    document.addEventListener('click', (e) => {
+       document.querySelectorAll('.message.show-delete').forEach(el => { if(!el.contains(e.target)) el.classList.remove('show-delete'); });
     });
-  }
 
-  // Обновление локального стейта при вводе
-  window.updateDraftItem = (index, field, value) => {
-    if (field === 'weight_g') value = parseInt(value) || 0;
-    currentDraftItems[index][field] = value;
-  };
-
-  window.removeDraftItem = (index) => {
-    currentDraftItems.splice(index, 1);
-    renderDraftList();
-  };
-
-  window.closeDraft = () => {
-    document.getElementById('draftOverlay').classList.remove('visible');
-    retake(); // Сбрасываем камеру
-  };
-
-  // === ФИНАЛ: ОТПРАВКА НУТРИЦИОЛОГУ ===
-  window.confirmDraftToNutritionist = async () => {
-    const btn = document.getElementById('btnConfirmDraft');
-    btn.textContent = 'Сохранение...';
-    btn.disabled = true;
-    
-    try {
-      // Отправляем action: 'calculate' на бэкэнд
-      // Бэкэнд запустит Nutritionist бота для точного расчета КБЖУ по этим весам
-      const result = await API.send('calculate', { 
-        data: currentDraftItems, 
-        scanId: currentScanId 
-      });
-      
-      // Далее мы должны сохранить это в дневник (action: save_meal)
-      // Или показать итог. Пока просто алерт и закрытие.
-      
-      haptic('success');
-      document.getElementById('draftOverlay').classList.remove('visible');
-      
-      // Тут в будущем будет переход на главную или анимация добавления в ленту
-      alert("Сохранено в дневник! \n" + JSON.stringify(result.data?.total_nutrition || {}));
-      
-      retake(); // Полный сброс
-
-    } catch (e) {
-      alert("Ошибка сохранения: " + e.message);
-    } finally {
-      btn.textContent = 'В дневник';
-      btn.disabled = false;
-    }
-  };
-
-
-// === INFINITE CALENDAR LOGIC (Exact Copy from v2.20) ===
-  let currentWeekStart = getStartOfWeek(new Date()); 
-  let selectedDate = new Date(); 
-  let isDragging = false; 
-  let startX = 0; 
-  let currentTranslate = 0;
-  
-  const area = document.getElementById('swipeArea'); 
-  const track = document.getElementById('calTrack'); 
-  const prevEl = document.getElementById('weekPrev'); 
-  const currEl = document.getElementById('weekCurr'); 
-  const nextEl = document.getElementById('weekNext');
-
-  function getStartOfWeek(date) { 
-    const d = new Date(date); 
-    const day = d.getDay(); 
-    const diff = d.getDate() - day + (day === 0 ? -6 : 1); 
-    return new Date(d.setDate(diff)); 
-  }
-
-  function initCalendar() { 
-    renderAllWeeks(); 
-    // Подписываемся на события мыши и тача для свайпа
-    area.onpointerdown = handleStart; 
-    area.onpointermove = handleMove; 
-    area.onpointerup = handleEnd; 
-    area.onpointercancel = handleEnd; 
-    area.onpointerleave = handleEnd; 
-  }
-
-  function renderWeekData(container, startDate) {
-    container.innerHTML = ''; 
-    const weekDays = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс']; 
-    const today = new Date();
-    
-    for(let i=0; i<7; i++) {
-      const d = new Date(startDate); 
-      d.setDate(d.getDate() + i); 
-      
-      const isToday = d.toDateString() === today.toDateString(); 
-      const isSelected = d.toDateString() === selectedDate.toDateString();
-      
-      const el = document.createElement('div'); 
-      el.className = `day-cell ${isSelected ? 'selected' : ''} ${isToday ? 'is-today' : ''}`; 
-      el.innerHTML = `<div class="dc-name">${weekDays[i]}</div><div class="dc-num">${d.getDate()}</div>`;
-      
-      el.onclick = (e) => { 
-        if(Math.abs(currentTranslate) > 5) return; // Защита от клика при свайпе
-        document.querySelectorAll('.day-cell').forEach(c => c.classList.remove('selected')); 
-        el.classList.add('selected'); 
-        selectedDate = new Date(d); 
-        if(window.haptic) window.haptic('selection'); 
-        renderAllWeeks(); 
-      }; 
-      container.appendChild(el);
-    }
-  }
-
-  function renderAllWeeks() { 
-    renderWeekData(currEl, currentWeekStart); 
-    
-    const dPrev = new Date(currentWeekStart); 
-    dPrev.setDate(dPrev.getDate() - 7); 
-    renderWeekData(prevEl, dPrev); 
-    
-    const dNext = new Date(currentWeekStart); 
-    dNext.setDate(dNext.getDate() + 7); 
-    renderWeekData(nextEl, dNext); 
-    
-    // Обновляем заголовок месяца (берем среду как середину недели)
-    const mid = new Date(currentWeekStart); 
-    mid.setDate(mid.getDate() + 3); 
-    document.getElementById('monthLabel').textContent = mid.toLocaleString('ru', { month: 'long', year: 'numeric' }); 
-  }
-
-  // === SWIPE LOGIC ===
-  function handleStart(e) { 
-    if (e.button !== 0) return; 
-    isDragging = true; 
-    startX = e.clientX; 
-    currentTranslate = 0; 
-    track.style.transition = 'none'; 
-    area.style.cursor = 'grabbing'; 
-  }
-
-  function handleMove(e) { 
-    if (!isDragging) return; 
-    currentTranslate = e.clientX - startX; 
-    // Сдвигаем трек вслед за пальцем
-    track.style.transform = `translateX(calc(-33.333333% + ${currentTranslate}px))`; 
-  }
-
-  function handleEnd(e) { 
-    if (!isDragging) return; 
-    isDragging = false; 
-    area.style.cursor = 'grab'; 
-    const threshold = 60; // Насколько сильно нужно свайпнуть
-    
-    track.style.transition = 'transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1)'; 
-    
-    if (currentTranslate > threshold) { 
-      // Свайп вправо -> Прошлая неделя
-      if(window.haptic) window.haptic('light'); 
-      track.style.transform = `translateX(0%)`; 
-      setTimeout(() => shiftWeeks(-1), 300); 
-    } else if (currentTranslate < -threshold) { 
-      // Свайп влево -> Следующая неделя
-      if(window.haptic) window.haptic('light'); 
-      track.style.transform = `translateX(-66.666666%)`; 
-      setTimeout(() => shiftWeeks(1), 300); 
-    } else { 
-      // Возврат на место
-      track.style.transform = `translateX(-33.333333%)`; 
-    } 
-  }
-
-  function shiftWeeks(direction) { 
-    currentWeekStart.setDate(currentWeekStart.getDate() + (direction * 7)); 
-    track.style.transition = 'none'; 
-    renderAllWeeks(); 
-    track.style.transform = `translateX(-33.333333%)`; 
-  }
-
-  // Запуск календаря
-  initCalendar();
-
-
-// === WIDGETS LOGIC ===
-  let currentMl = 1250; 
-  const targetMl = 2500; 
-
-  window.updateWater = function(delta) { 
-    if(window.haptic) window.haptic('light'); // Безопасный вызов хаптика
-    else if(tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
-
-    currentMl = Math.max(0, currentMl + delta); 
-    renderWater(); 
-  };
-
-  function renderWater() {
-    document.getElementById('lbl-fact').innerText = currentMl; 
-    document.getElementById('lbl-pct').innerText = Math.round((currentMl/targetMl)*100) + '%';
-    
-    const card = document.getElementById('waterCard'); 
-    if(currentMl > targetMl) card.classList.add('is-overload'); 
-    else card.classList.remove('is-overload');
-    
-    for(let i=1; i<=5; i++) { 
-      const el = document.getElementById('c'+i); 
-      const th = i*(targetMl/5); 
-      const prevTh = (i-1)*(targetMl/5); 
-      let pct = 0; 
-      if(currentMl >= th) pct=100; 
-      else if(currentMl > prevTh) pct = ((currentMl-prevTh)/(targetMl/5))*100; 
-      el.style.setProperty('--h', Math.min(100, pct)+'%'); 
-    }
-  }
-
-  // Dots Logic
-  const wTrack = document.getElementById('widgetTrack');
-  const dots = document.querySelectorAll('.dot');
-  if(wTrack) {
-    wTrack.addEventListener('scroll', () => { 
-      const idx = Math.round(wTrack.scrollLeft / wTrack.clientWidth); 
-      dots.forEach((d,i) => d.classList.toggle('active', i===idx)); 
-    });
-  }
-  
-  // Init
-  renderWater();
-
-  // === ОБНОВЛЕННЫЕ КНОПКИ (С КОРРЕКТНЫМ СКРЫТИЕМ) ===
-
-  // 1. ОТКРЫТИЕ КАМЕРЫ (Скрыть виджеты)
-  DOM.btnStartCam.onclick = async () => {
-    const text = DOM.omniInput.value.trim();
-    
-    if (text.length > 0) {
-      await sendTextOnly(text);
-    } else {
-      state.uiMode = 'camera';
-      
-      // Сдвигаем Календарь
-      const cal = document.getElementById('calendarBlock');
-      if(cal) cal.style.transform = 'translateY(-150%)'; 
-
-      // Скрываем Виджеты
-      const dash = document.getElementById('dashboardLayer');
-      if(dash) dash.classList.add('hidden-mode');
-
-      // Показываем UI камеры
-      DOM.omniBar.classList.add('hidden');
-      DOM.camUI.classList.remove('idle');
-      DOM.camUI.style.pointerEvents = 'auto'; 
-
-      if(tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
-      await initCamera(); 
-    }
-  };
-
-  // 2. ЗАКРЫТИЕ КАМЕРЫ (Вернуть виджеты)
-  DOM.btnClose.onclick = () => {
-    state.uiMode = 'menu';
-    DOM.camUI.classList.add('idle');
-    DOM.camUI.style.pointerEvents = 'none';
-    DOM.omniBar.classList.remove('hidden');
-    
-    // Возвращаем Календарь
-    const cal = document.getElementById('calendarBlock');
-    if(cal) cal.style.transform = 'translateY(0)';
-
-    // Возвращаем Виджеты
-    const dash = document.getElementById('dashboardLayer');
-    if(dash) dash.classList.remove('hidden-mode');
-
-    stopStream(); 
-  };
-</script>
+    const saved = localStorage.getItem('ai_chat_messages');
+    if(saved) { try { messages = JSON.parse(saved); renderMessages(); } catch(e){} }
+    updateSendButton();
+  </script>
 </body>
 </html>
