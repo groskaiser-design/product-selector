@@ -1331,18 +1331,20 @@ DOM.shutter.addEventListener('click', async () => {
     retake(); // Сбрасываем камеру
   };
 
-  // === ФИНАЛ: ОТПРАВКА НУТРИЦИОЛОГУ ===
+  
   // === ФИНАЛ: СОЗДАНИЕ КАРТОЧКИ (100% Design Copy) ===
+ // === 1. КОНФИГУРАЦИЯ ХРАНИЛИЩА ===
+  const STORAGE_KEY = 'ultima_diary_v1';
+
+  // === 2. ФИНАЛ: СОХРАНЕНИЕ И РЕНДЕР ===
   window.confirmDraftToNutritionist = async () => {
     const btn = document.getElementById('btnConfirmDraft');
     btn.textContent = 'Сохранение...';
     btn.disabled = true;
     
     try {
-      // 1. Расчет КБЖУ (Эмуляция для демо)
-      // В реальности тут await API.send(...)
+      // 1. Расчет КБЖУ (Эмуляция)
       const calculatedItems = currentDraftItems.map(item => {
-        // Примерная математика:
         const k = Math.round(item.weight_g * 1.2); 
         return {
            name: item.name,
@@ -1354,15 +1356,23 @@ DOM.shutter.addEventListener('click', async () => {
         };
       });
 
+      // 2. Формируем объект записи для истории
+      const now = new Date();
+      const mealEntry = {
+          id: Date.now(), // Уникальный ID
+          time: now.toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit'}),
+          items: calculatedItems
+      };
+
+      // 3. Сохраняем в память телефона
+      saveToStorage(mealEntry);
+
       haptic('success');
-      
-      // Скрываем черновик
       document.getElementById('draftOverlay').classList.remove('visible');
       
-      // 2. Добавляем карточку в ленту
-      addMealToTimeline(calculatedItems);
+      // 4. Добавляем карточку в ленту
+      addMealToTimeline(mealEntry);
       
-      // Полный сброс камеры для нового снимка
       retake(); 
 
     } catch (e) {
@@ -1373,16 +1383,14 @@ DOM.shutter.addEventListener('click', async () => {
     }
   };
 
-  // Функция рендера (Копия разметки из scanner0.html)
-  function addMealToTimeline(items) {
+  // === 3. ФУНКЦИЯ РЕНДЕРА (Принимает готовый объект) ===
+  function addMealToTimeline(mealEntry) {
     const container = document.getElementById('mealTimeline');
-    const now = new Date();
-    // Время (например 14:30)
-    const timeStr = now.toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit'});
-    
+    if (!container) return;
+
     // Генерируем строки продуктов
     let rowsHTML = '';
-    items.forEach(item => {
+    mealEntry.items.forEach(item => {
         rowsHTML += `
         <div class="prod-item">
             <div class="pi-name">${item.name}</div>
@@ -1394,11 +1402,11 @@ DOM.shutter.addEventListener('click', async () => {
         </div>`;
     });
 
-    // Собираем карточку целиком (Заголовок + Строки)
+    // Собираем карточку целиком
     const cardHTML = `
-      <div class="meal-card">
+      <div class="meal-card" id="card-${mealEntry.id}">
         <div class="col-headers">
-            <div class="mh-time">${timeStr}</div>
+            <div class="mh-time">${mealEntry.time}</div>
             <div class="ch-item">Вес</div>
             <div class="ch-item">К</div>
             <div class="ch-item">Б</div>
@@ -1409,9 +1417,51 @@ DOM.shutter.addEventListener('click', async () => {
       </div>
     `;
 
-    // Вставляем новую карточку В НАЧАЛО списка (сверху)
+    // Вставляем В НАЧАЛО (новые сверху)
     container.insertAdjacentHTML('afterbegin', cardHTML);
   }
+
+  // === 4. ЛОГИКА ХРАНЕНИЯ (LocalStorage) ===
+  
+  function saveToStorage(mealEntry) {
+      try {
+          // Получаем старую историю или пустой массив
+          const raw = localStorage.getItem(STORAGE_KEY);
+          const history = raw ? JSON.parse(raw) : [];
+          
+          // Добавляем новую запись в конец массива данных
+          history.push(mealEntry);
+          
+          // Сохраняем обратно
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+      } catch(e) {
+          console.error("Save error:", e);
+      }
+  }
+
+  function loadFromStorage() {
+      try {
+          const raw = localStorage.getItem(STORAGE_KEY);
+          if (!raw) return;
+          
+          const history = JSON.parse(raw);
+          
+          // Проходимся по истории и рисуем карточки
+          // Важно: history.forEach идет от старых к новым.
+          // addMealToTimeline делает 'afterbegin' (вставляет сверху).
+          // Значит, первый элемент массива окажется внизу, последний — вверху.
+          // Это правильно для ленты: самое свежее наверху.
+          history.forEach(meal => {
+              addMealToTimeline(meal);
+          });
+      } catch(e) {
+          console.error("Load error:", e);
+      }
+  }
+
+  // === 5. ЗАПУСК ПРИ СТАРТЕ ===
+  // Загружаем сохраненные карточки при обновлении страницы
+  loadFromStorage();
 
 
 // === INFINITE CALENDAR LOGIC (Exact Copy from v2.20) ===
