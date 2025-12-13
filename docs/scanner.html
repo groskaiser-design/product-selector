@@ -473,40 +473,67 @@ html, body {
 
 <script>
 
-// === 1. ГЛАВНЫЙ JS ФИКС (VISUAL VIEWPORT) ===
+// === БЕЗУПРЕЧНЫЙ РЕСАЙЗ (VISUAL VIEWPORT + FIXED BACKGROUND) ===
 (function initStableLayout() {
   const app = document.getElementById('appLayout'); 
   const fxLayer = document.getElementById('fxLayer');
   
-  function handleResize() {
-    // Получаем реальную высоту за вычетом клавиатуры
-    const vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
-    const fullH = window.innerHeight; // Полная высота для фона
+  // Запоминаем исходные размеры при старте
+  let fixedHeight = window.innerHeight;
+  let lastWidth = window.innerWidth;
 
-    // 1. Контент ресайзим под клаву
+  // Сразу фиксируем фон, чтобы он был размером с весь экран
+  if (fxLayer) {
+      fxLayer.style.height = `${fixedHeight}px`;
+  }
+  
+  function handleResize() {
+    // 1. Размеры для интерфейса (он должен сжиматься под клавиатуру)
+    const vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+    
+    // 2. Текущие размеры окна
+    const currentW = window.innerWidth;
+    const currentH = window.innerHeight;
+
+    // 3. Управляем интерфейсом (всегда подгоняем под видимую часть)
     if (app) {
         app.style.height = `${vh}px`;
-    }
-    // 2. Фон всегда держим полным
-    if (fxLayer) {
-        fxLayer.style.height = `${fullH}px`;
+        // Принудительный скролл в начало, чтобы iOS не сдвигал body
+        window.scrollTo(0, 0);
     }
 
-    // 3. Скроллим в 0, чтобы iOS не сдвигал body вверх
-    window.scrollTo(0, 0);
+    // 4. Управляем ФОНОМ (ХИТРОСТЬ!)
+    // Если ширина изменилась (поворот экрана) — обновляем высоту фона.
+    // Если ширина НЕ изменилась (это клавиатура или адресная строка) — НЕ трогаем фон.
+    if (Math.abs(currentW - lastWidth) > 50) { 
+        fixedHeight = currentH; // Обновляем базу
+        lastWidth = currentW;
+        if (fxLayer) fxLayer.style.height = `${fixedHeight}px`;
+    }
+    // В противном случае фон остается старой высоты (fixedHeight) и орбы не прыгают.
   }
 
+  // Слушатели
   if (window.visualViewport) {
     window.visualViewport.addEventListener('resize', handleResize);
     window.visualViewport.addEventListener('scroll', handleResize);
   }
   window.addEventListener('resize', handleResize);
 
-  // Хак для пересчета при фокусе в инпут
+  // Хак для полей ввода (чтобы точно пересчиталось при фокусе)
   document.querySelectorAll('input, textarea').forEach(el => {
       el.addEventListener('focus', () => setTimeout(handleResize, 100));
       el.addEventListener('blur', () => setTimeout(handleResize, 100));
   });
+
+  // Инициализация Telegram
+  const tg = window.Telegram?.WebApp;
+  if(tg) {
+    tg.ready(); tg.expand();
+    tg.setHeaderColor('#000000');
+    if(tg.disableVerticalSwipes) tg.disableVerticalSwipes();
+    tg.onEvent('viewportChanged', handleResize);
+  }
 
   // Запуск
   handleResize();
