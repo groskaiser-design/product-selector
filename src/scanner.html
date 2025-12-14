@@ -107,13 +107,14 @@ html, body {
   transition: opacity 0.3s;
   
   /* 🔥 ГРАДИЕНТНАЯ МАСКА (ТУМАН) */
+  /* Контент растворяется при скролле вверх под виджеты */
   -webkit-mask-image: linear-gradient(to bottom, transparent 0px, transparent 280px, black 340px, black 100%);
   mask-image: linear-gradient(to bottom, transparent 0px, transparent 280px, black 340px, black 100%);
 }
 
 .timeline-container {
   width: 100%;
-  padding: 0 12px;
+  padding: 0 16px; /* Вернул 16px как в оригинале */
 }
 
 /* Скрываем при камере */
@@ -387,14 +388,14 @@ html, body {
   <div id="permReq" class="perm-overlay hidden">
     <div style="font-size:48px; margin-bottom:10px">📐</div>
     <h2 style="margin:0">Настройка</h2>
-    <p style="color:var(--text-muted)">Разрешите доступ к датчикам.</p>
+    <p style="color:var(--text-muted)">Разрешите доступ к датчикам для работы уровня.</p>
     <button class="perm-btn" onclick="requestSensors()">Разрешить</button>
   </div>
   <div id="previewScreen" class="preview-overlay">
     <img id="finalPhoto" class="preview-img">
     <div class="comment-wrap">
-      <label class="comment-label">Комментарий</label>
-      <textarea id="commentInput" class="comment-input" placeholder="Например: рис 200, треска 150"></textarea>
+      <label class="comment-label">Комментарий (необязательно)</label>
+      <textarea id="commentInput" class="comment-input" placeholder="Можете указать продукты, это повысит точность модели. Например: рис 200, треска 150"></textarea>
     </div>
     <div class="preview-controls">
       <button class="btn" onclick="retake()">Переснять</button>
@@ -405,13 +406,19 @@ html, body {
     <div class="proc-card">
       <div class="proc-visual"><div class="proc-orb"></div><div class="proc-ring"></div></div>
       <div class="proc-title">Думаю</div>
-      <div class="proc-steps" id="procSteps"></div>
+      <div class="proc-steps" id="procSteps">
+        <div class="step pending" id="step-1"><div class="s-icon">🛡️</div><div class="s-lbl">Gatekeeper: Проверяю...</div></div>
+        <div class="step pending" id="step-2"><div class="s-icon">📦</div><div class="s-lbl">Librarian: Ищу в базе...</div></div>
+        <div class="step pending" id="step-3"><div class="s-icon">🕵️</div><div class="s-lbl">Detective: Ищу ингредиенты...</div></div>
+        <div class="step pending" id="step-4"><div class="s-icon">📐</div><div class="s-lbl">Physicist: Определяю вес...</div></div>
+        <div class="step pending" id="step-5"><div class="s-icon">📝</div><div class="s-lbl">Synthesizer: Готовлю ответ...</div></div>
+      </div>
       <div class="proc-close" onclick="cancelProcessing()">Отмена</div>
     </div>
   </div>
   <div class="draft-overlay" id="draftOverlay">
     <div class="draft-sheet">
-      <div class="ds-header"><div class="ds-title">Проверка</div><div class="ds-subtitle">Подтвердите данные</div></div>
+      <div class="ds-header"><div class="ds-title">Проверьте данные</div><div class="ds-subtitle">Если необходимо, внесите правки перед записью в дневник</div></div>
       <div class="ds-list" id="draftList"></div>
       <div class="ds-actions">
         <button class="ds-btn sec" onclick="closeDraft()">Отмена</button>
@@ -421,54 +428,869 @@ html, body {
   </div>
 
 <script>
-(function initTMA(){try{const t=window.Telegram?.WebApp;if(!t)return;t.ready();t.expand();try{t.setHeaderColor('#050505');if(t.setBackgroundColor)t.setBackgroundColor('#050505')}catch(e){}try{if(t.BackButton){t.BackButton.show();t.BackButton.offClick();t.BackButton.onClick(function(){window.location.href='router.html'})}}catch(e){}try{if(t.disableVerticalSwipes)t.disableVerticalSwipes()}catch(e){}}catch(e){}})();
-function isAdmin(){try{return 196047220===Number(window.Telegram?.WebApp?.initDataUnsafe?.user?.id)}catch(_){return!1}}
-(function initStableLayout(){const a=document.getElementById('appLayout'),f=document.getElementById('fxLayer');let h=window.innerHeight,w=window.innerWidth;if(f)f.style.height=`${h}px`;function r(){const v=window.visualViewport?window.visualViewport.height:window.innerHeight,cw=window.innerWidth,ch=window.innerHeight;if(a){a.style.height=`${v}px`;window.scrollTo(0,0)}if(Math.abs(cw-w)>50){h=ch;w=cw;if(f)f.style.height=`${h}px`}}if(window.visualViewport){window.visualViewport.addEventListener('resize',r);window.visualViewport.addEventListener('scroll',r)}window.addEventListener('resize',r);document.querySelectorAll('input,textarea').forEach(e=>{e.addEventListener('focus',()=>setTimeout(r,100));e.addEventListener('blur',()=>setTimeout(r,100))});r()})();
-const API_URL="https://script.google.com/macros/s/AKfycbx0fUaaCH-JwnG5R_3TFgU5FSibsEuhuS0ZZZfyxPNVPQ1ZpCfUIaa5aE8vjgqitac/exec";
-const tg=window.Telegram?.WebApp;if(tg){tg.ready();tg.expand();tg.setHeaderColor('#000000');if(tg.disableVerticalSwipes)tg.disableVerticalSwipes()}
-const API={blobToBase64:b=>new Promise(r=>{const a=new FileReader;a.onloadend=()=>r(a.result);a.readAsDataURL(b)}),send:async(a,p)=>{const b={action:a,user:tg?.initDataUnsafe?.user||{id:0,first_name:'Test'},initData:tg?.initData||'',...p},r=await fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(b)}),j=await r.json();if(!j.ok)throw new Error(j.error||'Error');return j}};
-const state={stream:null,track:null,levelOK:!1,angleX:0,angleY:0,photoBlob:null,isCapturing:!1,isSwitching:!1,devices:[],currentDevIdx:0,torchOn:!1,sensorActive:!1,uiMode:'menu'};
-const DOM={video:document.getElementById('video'),canvas:document.getElementById('uiCanvas'),ctx:document.getElementById('uiCanvas').getContext('2d'),shutter:document.getElementById('shutterBtn'),lvlDot:document.getElementById('lvlDot'),lvlText:document.getElementById('lvlText'),permReq:document.getElementById('permReq'),preview:document.getElementById('previewScreen'),finalImg:document.getElementById('finalPhoto'),btnSend:document.getElementById('btnSend'),commentInput:document.getElementById('commentInput'),btnTorch:document.getElementById('btnTorch'),btnSwitch:document.getElementById('btnSwitch'),toast:document.getElementById('camToast'),loader:document.getElementById('loader'),omniBar:document.getElementById('omniBar'),camUI:document.getElementById('camUI'),omniInput:document.querySelector('.omni-input'),icoCam:document.getElementById('icoCam'),icoSend:document.getElementById('icoSend'),btnStartCam:document.getElementById('btnStartCam'),btnClose:document.getElementById('btnClose')};
+/* ============================================================
+ * BLOCK 0: TMA boot (FIXED & SAFE)
+ * ============================================================ */
+(function initTMA() {
+  try {
+    const tg = window.Telegram?.WebApp;
+    if (!tg) return; 
 
-DOM.omniInput.addEventListener('input',()=>{const h=DOM.omniInput.value.trim().length>0;DOM.omniInput.style.height='auto';DOM.omniInput.style.height=Math.min(DOM.omniInput.scrollHeight,80)+'px';if(h){DOM.btnStartCam.classList.add('mode-send');DOM.icoCam.classList.add('icon-hidden');DOM.icoSend.classList.remove('icon-hidden')}else{DOM.btnStartCam.classList.remove('mode-send');DOM.icoCam.classList.remove('icon-hidden');DOM.icoSend.classList.add('icon-hidden')}});
-DOM.btnStartCam.onclick=async()=>{DOM.omniInput.blur();const t=DOM.omniInput.value.trim();if(t.length>0){await sendTextOnly(t)}else{state.uiMode='camera';document.getElementById('headerGroup').style.transform='translateY(-100%)';document.getElementById('feedScroll').style.opacity='0';document.getElementById('feedScroll').classList.add('hidden');DOM.omniBar.classList.add('hidden');DOM.camUI.classList.remove('idle');DOM.camUI.style.pointerEvents='auto';if(tg?.HapticFeedback)tg.HapticFeedback.impactOccurred('light');await initCamera()}};
-async function sendTextOnly(t){const b=DOM.btnStartCam;b.style.opacity='0.5';haptic('medium');try{startProcessingUI('text');const r=await API.send('scan',{image:null,userText:t});stopProcessingUI();DOM.omniInput.value='';if(r.ok)openDraftSheet(r.data,r.scanId);else throw new Error(r.error)}catch(e){stopProcessingUI();alert(e.message)}finally{b.style.opacity='1'}}
-DOM.btnClose.onclick=()=>{DOM.omniInput.blur();if(DOM.commentInput)DOM.commentInput.blur();window.scrollTo(0,0);state.uiMode='menu';DOM.camUI.classList.add('idle');DOM.camUI.style.pointerEvents='none';DOM.omniBar.classList.remove('hidden');document.getElementById('headerGroup').style.transform='translateY(0)';document.getElementById('feedScroll').style.opacity='1';document.getElementById('feedScroll').classList.remove('hidden');stopStream();setTimeout(()=>{const a=document.getElementById('appLayout');if(a){a.style.height=window.innerHeight+'px';window.scrollTo(0,0)}},100)};
+    tg.ready();
+    tg.expand();
 
-let toastTimer;function showToast(m){DOM.toast.textContent=m;DOM.toast.classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>{DOM.toast.classList.remove('visible')},2000)}
-function stopStream(){if(state.stream){state.stream.getTracks().forEach(t=>t.stop());state.stream=null}state.track=null;state.torchOn=!1;updateTorchUI();DOM.video.srcObject=null;DOM.video.classList.remove('active')}
-async function startStream(id){if(state.stream)stopStream();const c={audio:!1,video:{deviceId:id?{exact:id}:undefined,facingMode:id?undefined:'environment',width:{ideal:1920},height:{ideal:2560}}};try{const s=await navigator.mediaDevices.getUserMedia(c);state.stream=s;state.track=s.getVideoTracks()[0];DOM.video.srcObject=s;DOM.video.classList.add('active');const set=state.track.getSettings();if(set.deviceId)localStorage.setItem('ultima_cam_id',set.deviceId);let l=state.track.label||"Cam";if(state.devices.length>1)showToast(l);const cap=state.track.getCapabilities();if(cap.focusMode?.includes('continuous'))try{await state.track.applyConstraints({advanced:[{focusMode:'continuous'}]})}catch(e){}}catch(e){if(id){localStorage.removeItem('ultima_cam_id');await startStream(null)}else alert(e.message)}}
-DOM.btnSwitch.onclick=async()=>{if(state.devices.length<2||state.isSwitching)return;state.isSwitching=!0;haptic('medium');DOM.loader.classList.remove('hidden');DOM.btnSwitch.classList.add('disabled');DOM.btnTorch.classList.add('disabled');DOM.shutter.classList.add('disabled');if(state.stream)state.stream.getTracks().forEach(t=>t.stop());await new Promise(r=>setTimeout(r,500));let n=state.currentDevIdx+1;if(n>=state.devices.length)n=0;state.currentDevIdx=n;await startStream(state.devices[n].deviceId);DOM.loader.classList.add('hidden');DOM.btnSwitch.classList.remove('disabled');DOM.btnTorch.classList.remove('disabled');DOM.shutter.classList.remove('disabled');state.isSwitching=!1};
-DOM.btnTorch.onclick=async()=>{if(!state.track)return;const c=state.track.getCapabilities();if(!c.torch){showToast("Нет вспышки");return}const n=!state.torchOn;try{await state.track.applyConstraints({advanced:[{torch:n}]});state.torchOn=n;updateTorchUI();haptic('light')}catch(e){}};
-function updateTorchUI(){DOM.btnTorch.style.backgroundColor=state.torchOn?'var(--acc-orange)':'';DOM.btnTorch.style.color=state.torchOn?'#000':'#fff'}
-function checkSensorPerms(){if(typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission==='function')DOM.permReq.classList.remove('hidden');else window.addEventListener('deviceorientation',handleOrientation)}
-async function requestSensors(){try{if(await DeviceOrientationEvent.requestPermission()==='granted')window.addEventListener('deviceorientation',handleOrientation)}catch(e){}DOM.permReq.classList.add('hidden')}
-function handleOrientation(e){let x=e.beta,y=e.gamma;if(x===null||y===null)return;state.sensorActive=!0;state.angleX=x;state.angleY=y}
-function updateUI(){if(state.uiMode==='menu'||state.isCapturing)return;if(!state.sensorActive){DOM.lvlDot.classList.remove('ok');DOM.lvlText.textContent="Камера";DOM.shutter.classList.add('active');return}if(state.levelOK){DOM.lvlDot.classList.add('ok');DOM.lvlText.textContent="Ровно";DOM.shutter.classList.add('active')}else{DOM.lvlDot.classList.remove('ok');DOM.lvlText.textContent="Выровняйте";DOM.shutter.classList.remove('active')}}
-function resizeCanvas(){const w=window.innerWidth,h=window.innerHeight;if(DOM.canvas.width!==w)DOM.canvas.width=w;if(DOM.canvas.height!==h)DOM.canvas.height=h}
-async function initCamera(){try{const i=localStorage.getItem('ultima_cam_id');await startStream(i);await updateDeviceList();resizeCanvas();window.addEventListener('resize',resizeCanvas);requestAnimationFrame(drawLoop);checkSensorPerms()}catch(e){}}
-async function updateDeviceList(){try{const d=await navigator.mediaDevices.enumerateDevices();state.devices=d.filter(v=>v.kind==='videoinput');DOM.btnSwitch.classList.toggle('hidden',state.devices.length<2)}catch(e){}}
-function drawLoop(){const ctx=DOM.ctx,w=DOM.canvas.width,h=DOM.canvas.height;ctx.clearRect(0,0,w,h);if(state.uiMode==='menu'){requestAnimationFrame(drawLoop);return}const cx=w/2,cy=h/2,cr=1.586,cw=w*0.22,ch=cw*cr,cx0=cx+80,cy0=cy-ch/2,r=8;ctx.beginPath();ctx.moveTo(cx0+r,cy0);ctx.lineTo(cx0+cw-r,cy0);ctx.quadraticCurveTo(cx0+cw,cy0,cx0+cw,cy0+r);ctx.lineTo(cx0+cw,cy0+ch-r);ctx.quadraticCurveTo(cx0+cw,cy0+ch,cx0+cw-r,cy0+ch);ctx.lineTo(cx0+r,cy0+ch);ctx.quadraticCurveTo(cx0,cy0+ch,cx0,cy0+ch-r);ctx.lineTo(cx0,cy0+r);ctx.quadraticCurveTo(cx0,cy0,cx0+r,cy0);ctx.fillStyle='rgba(255,255,255,0.2)';ctx.fill();ctx.save();ctx.translate(cx0+cw/2,cy0+ch/2);ctx.rotate(-Math.PI/2);ctx.fillStyle='#ffffff';ctx.textAlign='center';ctx.textBaseline='middle';ctx.font='bold 12px sans-serif';ctx.fillText("CREDIT CARD",0,-10);ctx.font='10px sans-serif';ctx.fillText("(опция)",0,10);ctx.restore();if(state.sensorActive){const rb=14,rt=18,mo=60,rx=state.angleY||0,ry=state.angleX||0,cl=v=>Math.max(-20,Math.min(20,v)),dx=(cl(rx)/20)*mo,dy=(cl(ry)/20)*mo,dist=Math.hypot(dx,dy),inS=(dist+rb)<=rt;if(state.levelOK!==inS&&!state.isCapturing){state.levelOK=inS;updateUI();if(inS)haptic('medium')}ctx.shadowBlur=4;ctx.shadowColor='rgba(0,0,0,0.5)';ctx.beginPath();ctx.arc(cx,cy,rt,0,Math.PI*2);const c=(state.levelOK||state.isCapturing)?'#30d158':'rgba(255,255,255,0.85)';ctx.strokeStyle=c;ctx.lineWidth=3;ctx.stroke();ctx.beginPath();ctx.arc(cx+dx,cy+dy,rb,0,Math.PI*2);ctx.fillStyle=c;ctx.fill();ctx.shadowBlur=0}else{ctx.strokeStyle='rgba(255,255,255,0.5)';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(cx-10,cy);ctx.lineTo(cx+10,cy);ctx.stroke();ctx.beginPath();ctx.moveTo(cx,cy-10);ctx.lineTo(cx,cy+10);ctx.stroke()}requestAnimationFrame(drawLoop)}
+    try {
+      tg.setHeaderColor('#050505'); 
+      if (tg.setBackgroundColor) {
+        tg.setBackgroundColor('#050505');
+      }
+    } catch (e) {
+      console.log('Error setting color:', e);
+    }
 
-DOM.shutter.addEventListener('click',async()=>{if(state.isCapturing||state.isSwitching)return;if(state.sensorActive&&!state.levelOK){haptic('error');showToast("Выровняйте");return}try{state.isCapturing=!0;haptic('heavy');DOM.shutter.style.transform='scale(0.8)';DOM.shutter.style.opacity='0.5';await new Promise(r=>setTimeout(r,50));const v=DOM.video;if(v.readyState<2)throw new Error("Wait");const MAX=1024;let w=v.videoWidth,h=v.videoHeight;if(w>h){if(w>MAX){h*=MAX/w;w=MAX}}else{if(h>MAX){w*=MAX/h;h=MAX}}const c=document.createElement('canvas');c.width=w;c.height=h;c.getContext('2d').drawImage(v,0,0,w,h);const b=await new Promise(r=>c.toBlob(r,'image/jpeg',0.7));if(!b)throw new Error("Empty");showPreview(b)}catch(e){haptic('error');state.isCapturing=!1;updateUI()}finally{DOM.shutter.style.transform='';DOM.shutter.style.opacity='';state.isCapturing=!1}});
-function showPreview(b){state.photoBlob=b;DOM.finalImg.src=URL.createObjectURL(b);DOM.preview.style.display='flex'}
-function retake(){DOM.preview.style.display='none';if(DOM.finalImg.src)URL.revokeObjectURL(DOM.finalImg.src);DOM.finalImg.src='';state.photoBlob=null;DOM.commentInput.value=''}
-async function sendPhoto(){const b=DOM.btnSend;if(b.disabled)return;DOM.preview.style.display='none';haptic('heavy');try{if(!state.photoBlob)throw new Error("No photo");startProcessingUI('photo');const d=await API.blobToBase64(state.photoBlob),t=DOM.commentInput.value,r=await API.send('scan',{image:d,userText:t});stopProcessingUI();if(r.ok)openDraftSheet(r.data,r.scanId);else throw new Error(r.error)}catch(e){stopProcessingUI();haptic('error');alert(e.message);DOM.preview.style.display='flex';b.disabled=!1}}
-function haptic(s){if(!tg||!tg.HapticFeedback)return;['error','success','warning'].includes(s)?tg.HapticFeedback.notificationOccurred(s):tg.HapticFeedback.impactOccurred(s)}
-let procInterval;function startProcessingUI(m){const c=document.getElementById('procSteps'),o=document.getElementById('procOverlay');if(m==='text')c.innerHTML=`<div class="step pending" id="step-1"><div class="s-icon">🛡️</div><div class="s-lbl">Check...</div></div><div class="step pending" id="step-2"><div class="s-icon">🧠</div><div class="s-lbl">Search...</div></div><div class="step pending" id="step-3"><div class="s-icon">📝</div><div class="s-lbl">Synth...</div></div>`;else c.innerHTML=`<div class="step pending" id="step-1"><div class="s-icon">🛡️</div><div class="s-lbl">Check...</div></div><div class="step pending" id="step-2"><div class="s-icon">🕵️</div><div class="s-lbl">Detect...</div></div><div class="step pending" id="step-3"><div class="s-icon">📐</div><div class="s-lbl">Calc...</div></div><div class="step pending" id="step-4"><div class="s-icon">🍳</div><div class="s-lbl">Analyze...</div></div><div class="step pending" id="step-5"><div class="s-icon">📝</div><div class="s-lbl">Synth...</div></div>`;o.classList.add('active');let s=1,max=m==='text'?3:5;updateStep(1,'active');procInterval=setInterval(()=>{updateStep(s,'done');s++;if(s>max)s=max;updateStep(s,'active')},2000)}
-function updateStep(n,s){const e=document.getElementById('step-'+n);if(e){e.classList.remove('pending','active','done');e.classList.add(s)}}
-function stopProcessingUI(){clearInterval(procInterval);document.getElementById('procOverlay').classList.remove('active')}
-function cancelProcessing(){stopProcessingUI();retake()}
-let currentDraftItems=[],currentScanId=null;function openDraftSheet(d,id){currentScanId=id;if(!d||!d.items){alert("Empty");return}currentDraftItems=d.items;renderDraftList();document.getElementById('draftOverlay').classList.add('visible');haptic('success')}
-function renderDraftList(){const c=document.getElementById('draftList');c.innerHTML='';if(currentDraftItems.length===0){c.innerHTML='Empty';return}currentDraftItems.forEach((i,x)=>{let ic="🍽️";const d=document.createElement('div');d.className='draft-item';d.innerHTML=`<div class="di-icon">${ic}</div><div class="di-inputs"><input type="text" class="di-name" value="${i.name}" onchange="updateDraftItem(${x},'name',this.value)"><div class="di-row"><input type="number" class="di-weight" value="${i.weight_g||''}" placeholder="0" onchange="updateDraftItem(${x},'weight_g',this.value)"><div class="di-unit">г</div></div></div><div class="di-del" onclick="removeDraftItem(${x})">✕</div>`;c.appendChild(d)})}
-window.updateDraftItem=(i,f,v)=>{if(f==='weight_g')v=parseInt(v)||0;currentDraftItems[i][f]=v};window.removeDraftItem=i=>{currentDraftItems.splice(i,1);renderDraftList()};window.closeDraft=()=>{document.getElementById('draftOverlay').classList.remove('visible');retake()};
-const STORAGE_KEY='ultima_diary_v1';window.confirmDraftToNutritionist=async()=>{const b=document.getElementById('btnConfirmDraft');b.textContent='Save...';b.disabled=!0;try{const c=currentDraftItems.map(i=>{const k=Math.round(i.weight_g*1.2);return{name:i.name,w:i.weight_g,k:k,p:Math.round(i.weight_g*0.15),f:Math.round(i.weight_g*0.02),c:Math.round(i.weight_g*0.10)}}),n=new Date(),e={id:Date.now(),time:n.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}),items:c};saveToStorage(e);haptic('success');document.getElementById('draftOverlay').classList.remove('visible');addMealToTimeline(e);retake()}catch(e){alert(e.message)}finally{b.textContent='В дневник';b.disabled=!1}};
-function addMealToTimeline(e){const c=document.getElementById('mealTimeline');if(!c)return;let r='';e.items.forEach(i=>{r+=`<div class="prod-item"><div class="pi-name">${i.name}</div><div class="pi-val pi-w">${i.w}</div><div class="pi-val pi-k">${i.k}</div><div class="pi-val pi-p">${i.p}</div><div class="pi-val pi-f">${i.f}</div><div class="pi-val pi-c">${i.c}</div></div>`});const h=`<div class="meal-card" id="card-${e.id}"><div class="col-headers"><div class="mh-time">${e.time}</div><div class="ch-item">Вес</div><div class="ch-item">К</div><div class="ch-item">Б</div><div class="ch-item">Ж</div><div class="ch-item">У</div></div>${r}</div>`;c.insertAdjacentHTML('afterbegin',h)}
-function saveToStorage(e){try{const r=localStorage.getItem(STORAGE_KEY),h=r?JSON.parse(r):[];h.push(e);localStorage.setItem(STORAGE_KEY,JSON.stringify(h))}catch(e){}}
-function loadFromStorage(){try{const r=localStorage.getItem(STORAGE_KEY);if(!r)return;JSON.parse(r).forEach(m=>addMealToTimeline(m))}catch(e){}}loadFromStorage();
-let cw=getStartOfWeek(new Date()),sd=new Date(),idr=!1,sx=0,ctr=0;const area=document.getElementById('swipeArea'),track=document.getElementById('calTrack'),pre=document.getElementById('weekPrev'),cur=document.getElementById('weekCurr'),nex=document.getElementById('weekNext');function getStartOfWeek(d){const x=new Date(d),y=x.getDay(),z=x.getDate()-y+(y===0?-6:1);return new Date(x.setDate(z))}function initCalendar(){renderAllWeeks();area.onpointerdown=hs;area.onpointermove=hm;area.onpointerup=he;area.onpointercancel=he;area.onpointerleave=he}function renderWeekData(c,s){c.innerHTML='';const w=['Пн','Вт','Ср','Чт','Пт','Сб','Вс'],t=new Date();for(let i=0;i<7;i++){const d=new Date(s);d.setDate(d.getDate()+i);const it=d.toDateString()===t.toDateString(),is=d.toDateString()===sd.toDateString(),e=document.createElement('div');e.className=`day-cell ${is?'selected':''} ${it?'is-today':''}`;e.innerHTML=`<div class="dc-name">${w[i]}</div><div class="dc-num">${d.getDate()}</div>`;e.onclick=()=>{if(Math.abs(ctr)>5)return;document.querySelectorAll('.day-cell').forEach(x=>x.classList.remove('selected'));e.classList.add('selected');sd=new Date(d);if(window.haptic)window.haptic('selection');renderAllWeeks()};c.appendChild(e)}}function renderAllWeeks(){renderWeekData(cur,cw);const p=new Date(cw);p.setDate(p.getDate()-7);renderWeekData(pre,p);const n=new Date(cw);n.setDate(n.getDate()+7);renderWeekData(nex,n);const m=new Date(cw);m.setDate(m.getDate()+3);document.getElementById('monthLabel').textContent=m.toLocaleString('ru',{month:'long',year:'numeric'})}function hs(e){if(e.button!==0)return;idr=!0;sx=e.clientX;ctr=0;track.style.transition='none';area.style.cursor='grabbing'}function hm(e){if(!idr)return;ctr=e.clientX-sx;track.style.transform=`translateX(calc(-33.333333% + ${ctr}px))`}function he(e){if(!idr)return;idr=!1;area.style.cursor='grab';track.style.transition='transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1)';if(ctr>60){track.style.transform=`translateX(0%)`;setTimeout(()=>sh(-1),300)}else if(ctr<-60){track.style.transform=`translateX(-66.666666%)`;setTimeout(()=>sh(1),300)}else{track.style.transform=`translateX(-33.333333%)`}}function sh(d){cw.setDate(cw.getDate()+(d*7));track.style.transition='none';renderAllWeeks();track.style.transform=`translateX(-33.333333%)`}initCalendar();
-let cMl=1250,tMl=2500;window.updateWater=d=>{if(window.haptic)window.haptic('light');cMl=Math.max(0,cMl+d);rW()};function rW(){document.getElementById('lbl-fact').innerText=cMl;document.getElementById('lbl-pct').innerText=Math.round((cMl/tMl)*100)+'%';const c=document.getElementById('waterCard');if(cMl>tMl)c.classList.add('is-overload');else c.classList.remove('is-overload');for(let i=1;i<=5;i++){const e=document.getElementById('c'+i),th=i*(tMl/5),p=(i-1)*(tMl/5);let v=0;if(cMl>=th)v=100;else if(cMl>p)v=((cMl-p)/(tMl/5))*100;e.style.setProperty('--h',Math.min(100,v)+'%')}}const wt=document.getElementById('widgetTrack'),ds=document.querySelectorAll('.dot');if(wt)wt.addEventListener('scroll',()=>{const i=Math.round(wt.scrollLeft/wt.clientWidth);ds.forEach((d,x)=>d.classList.toggle('active',x===i))});rW();
-document.addEventListener('click',e=>{const a=document.activeElement,isI=a&&(a.tagName==='INPUT'||a.tagName==='TEXTAREA');if(isI&&e.target!==a)a.blur()});
+    try {
+      if (tg.BackButton) {
+        tg.BackButton.show();
+        tg.BackButton.offClick(); 
+        tg.BackButton.onClick(function() {
+          window.location.href = 'router.html';
+        });
+      }
+    } catch (e) {}
+
+    try {
+      if (tg.disableVerticalSwipes) tg.disableVerticalSwipes();
+    } catch (e) {}
+
+  } catch (globalErr) {
+    console.error('Critical TMA Error:', globalErr);
+  }
+})();
+  
+function isAdmin() {
+  try {
+    const userId = Number(window.Telegram?.WebApp?.initDataUnsafe?.user?.id);
+    return userId === 196047220;
+  } catch (_) {
+    return false;
+  }
+}
+
+// === БЕЗУПРЕЧНЫЙ РЕСАЙЗ ===
+(function initStableLayout() {
+  const app = document.getElementById('appLayout'); 
+  const fxLayer = document.getElementById('fxLayer');
+  
+  let fixedHeight = window.innerHeight;
+  let lastWidth = window.innerWidth;
+
+  if (fxLayer) {
+      fxLayer.style.height = `${fixedHeight}px`;
+  }
+  
+  function handleResize() {
+    const vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+    const currentW = window.innerWidth;
+    const currentH = window.innerHeight;
+
+    if (app) {
+        app.style.height = `${vh}px`;
+        window.scrollTo(0, 0);
+    }
+
+    if (Math.abs(currentW - lastWidth) > 50) { 
+        fixedHeight = currentH; 
+        lastWidth = currentW;
+        if (fxLayer) fxLayer.style.height = `${fixedHeight}px`;
+    }
+  }
+
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', handleResize);
+    window.visualViewport.addEventListener('scroll', handleResize);
+  }
+  window.addEventListener('resize', handleResize);
+
+  document.querySelectorAll('input, textarea').forEach(el => {
+      el.addEventListener('focus', () => setTimeout(handleResize, 100));
+      el.addEventListener('blur', () => setTimeout(handleResize, 100));
+  });
+
+  const tg = window.Telegram?.WebApp;
+  if(tg) {
+    tg.ready(); tg.expand();
+    tg.setHeaderColor('#000000');
+    if(tg.disableVerticalSwipes) tg.disableVerticalSwipes();
+    tg.onEvent('viewportChanged', handleResize);
+  }
+  handleResize();
+})();
+
+  const API_URL = "https://script.google.com/macros/s/AKfycbx0fUaaCH-JwnG5R_3TFgU5FSibsEuhuS0ZZZfyxPNVPQ1ZpCfUIaa5aE8vjgqitac/exec"; 
+
+  const tg = window.Telegram?.WebApp;
+  if(tg) {
+    tg.ready(); tg.expand();
+    tg.setHeaderColor('#000000');
+    if(tg.disableVerticalSwipes) tg.disableVerticalSwipes();
+  }
+
+  const API = {
+    blobToBase64: (blob) => {
+      return new Promise((resolve, _) => {
+        const reader = new FileReader();
+        reader.onloadend = () => { resolve(reader.result); };
+        reader.readAsDataURL(blob);
+      });
+    },
+    send: async (action, payload) => {
+      const user = tg?.initDataUnsafe?.user || { id: 0, first_name: 'BrowserTest' };
+      const body = { action: action, user: user, initData: tg?.initData || '', ...payload };
+      
+      const response = await fetch(API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" }, 
+        body: JSON.stringify(body)
+      });
+      const json = await response.json();
+      if (!json.ok) throw new Error(json.error || 'Server Error');
+      return json;
+    }
+  };
+
+  const state = {
+    stream: null, track: null, levelOK: false, angleX: 0, angleY: 0, photoBlob: null,
+    isCapturing: false, isSwitching: false, devices: [], currentDevIdx: 0, 
+    torchOn: false, sensorActive: false, uiMode: 'menu' 
+  };
+
+  const DOM = {
+    video: document.getElementById('video'),
+    canvas: document.getElementById('uiCanvas'),
+    ctx: document.getElementById('uiCanvas').getContext('2d'),
+    shutter: document.getElementById('shutterBtn'),
+    lvlDot: document.getElementById('lvlDot'),
+    lvlText: document.getElementById('lvlText'),
+    permReq: document.getElementById('permReq'),
+    preview: document.getElementById('previewScreen'),
+    finalImg: document.getElementById('finalPhoto'),
+    btnSend: document.getElementById('btnSend'),
+    commentInput: document.getElementById('commentInput'),
+    btnTorch: document.getElementById('btnTorch'),
+    btnSwitch: document.getElementById('btnSwitch'),
+    toast: document.getElementById('camToast'),
+    loader: document.getElementById('loader'),
+    
+    omniBar: document.getElementById('omniBar'),
+    camUI: document.getElementById('camUI'),
+    omniInput: document.querySelector('.omni-input'),
+    icoCam: document.getElementById('icoCam'),
+    icoSend: document.getElementById('icoSend'),
+    btnStartCam: document.getElementById('btnStartCam'),
+    btnClose: document.getElementById('btnClose')
+  };
+
+  DOM.omniInput.addEventListener('input', () => {
+    const hasText = DOM.omniInput.value.trim().length > 0;
+    DOM.omniInput.style.height = 'auto'; 
+    DOM.omniInput.style.height = Math.min(DOM.omniInput.scrollHeight, 80) + 'px';
+
+    if (hasText) {
+      DOM.btnStartCam.classList.add('mode-send');
+      DOM.icoCam.classList.add('icon-hidden');
+      DOM.icoSend.classList.remove('icon-hidden');
+    } else {
+      DOM.btnStartCam.classList.remove('mode-send');
+      DOM.icoCam.classList.remove('icon-hidden');
+      DOM.icoSend.classList.add('icon-hidden');
+    }
+  });
+
+  DOM.btnStartCam.onclick = async () => {
+    DOM.omniInput.blur();
+    const text = DOM.omniInput.value.trim();
+    
+    if (text.length > 0) {
+      await sendTextOnly(text);
+    } else {
+      state.uiMode = 'camera';
+      
+      // === НОВАЯ ЛОГИКА ===
+      document.getElementById('headerGroup').style.transform = 'translateY(-100%)';
+      document.getElementById('feedScroll').style.opacity = '0';
+      document.getElementById('feedScroll').classList.add('hidden');
+
+      DOM.omniBar.classList.add('hidden');
+      DOM.camUI.classList.remove('idle');
+      DOM.camUI.style.pointerEvents = 'auto'; 
+      if(tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+      await initCamera(); 
+    }
+  };
+
+  async function sendTextOnly(text) {
+     const btn = DOM.btnStartCam;
+     btn.style.opacity = '0.5';
+     haptic('medium');
+     try {
+       startProcessingUI('text');
+       const result = await API.send('scan', { image: null, userText: text });
+       stopProcessingUI();
+       DOM.omniInput.value = ''; 
+       if (result.ok) {
+         openDraftSheet(result.data, result.scanId);
+       } else {
+         throw new Error(result.error);
+       }
+     } catch(e) {
+       stopProcessingUI();
+       alert("Ошибка: " + e.message);
+     } finally {
+       btn.style.opacity = '1';
+     }
+  }
+
+  DOM.btnClose.onclick = () => {
+    DOM.omniInput.blur();
+    if(DOM.commentInput) DOM.commentInput.blur();
+    window.scrollTo(0, 0);
+
+    state.uiMode = 'menu';
+    DOM.camUI.classList.add('idle');
+    DOM.camUI.style.pointerEvents = 'none';
+    DOM.omniBar.classList.remove('hidden');
+    
+    document.getElementById('headerGroup').style.transform = 'translateY(0)';
+    document.getElementById('feedScroll').style.opacity = '1';
+    document.getElementById('feedScroll').classList.remove('hidden');
+
+    stopStream(); 
+
+    setTimeout(() => {
+        const app = document.getElementById('appLayout');
+        if (app) {
+             app.style.height = window.innerHeight + 'px';
+             window.scrollTo(0, 0);
+        }
+    }, 100);
+  };
+
+  let toastTimer;
+  function showToast(msg) {
+    DOM.toast.textContent = msg;
+    DOM.toast.classList.add('visible');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { DOM.toast.classList.remove('visible'); }, 2000);
+  }
+
+  function stopStream() {
+    if (state.stream) { state.stream.getTracks().forEach(t => t.stop()); state.stream = null; }
+    state.track = null; state.torchOn = false; 
+    updateTorchUI();
+    DOM.video.srcObject = null;
+    DOM.video.classList.remove('active');
+  }
+
+  async function startStream(deviceId) {
+    if (state.stream) stopStream();
+    const constraints = { audio: false, video: { deviceId: deviceId ? { exact: deviceId } : undefined, facingMode: deviceId ? undefined : 'environment', width: { ideal: 1920 }, height: { ideal: 2560 } } };
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      state.stream = stream; state.track = stream.getVideoTracks()[0];
+      DOM.video.srcObject = stream; DOM.video.classList.add('active');
+      const settings = state.track.getSettings();
+      if (settings.deviceId) localStorage.setItem('ultima_cam_id', settings.deviceId);
+      
+      let label = state.track.label || "Камера";
+      label = label.replace(/\(.*\)/, '').replace(/camera2/i, '').replace(/facing/i, '').trim();
+      if(label.length < 2) label = "Камера " + (state.currentDevIdx + 1);
+      if(state.devices.length > 1) showToast(label);
+
+      const caps = state.track.getCapabilities();
+      if (caps.focusMode?.includes('continuous')) { try { await state.track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch(e){} }
+    } catch (e) {
+      if (deviceId) { localStorage.removeItem('ultima_cam_id'); await startStream(null); } 
+      else { alert("Ошибка камеры: " + e.message); }
+    }
+  }
+
+  DOM.btnSwitch.onclick = async () => {
+    if (state.devices.length < 2 || state.isSwitching) return;
+    state.isSwitching = true; haptic('medium');
+    
+    DOM.loader.classList.remove('hidden');
+    DOM.btnSwitch.classList.add('disabled'); 
+    DOM.btnTorch.classList.add('disabled'); 
+    DOM.shutter.classList.add('disabled');
+
+    const icon = DOM.btnSwitch.querySelector('.gh-icon'); 
+    if (icon) { icon.style.transition = 'transform 0.4s'; icon.style.transform = 'rotate(180deg)'; }
+
+    if (state.stream) state.stream.getTracks().forEach(t => t.stop());
+    await new Promise(r => setTimeout(r, 500));
+    
+    let nextIdx = state.currentDevIdx + 1;
+    if (nextIdx >= state.devices.length) nextIdx = 0;
+    state.currentDevIdx = nextIdx;
+    
+    await startStream(state.devices[nextIdx].deviceId);
+    
+    DOM.loader.classList.add('hidden');
+    DOM.btnSwitch.classList.remove('disabled'); 
+    DOM.btnTorch.classList.remove('disabled'); 
+    DOM.shutter.classList.remove('disabled');
+    
+    state.isSwitching = false; 
+    if (icon) setTimeout(() => icon.style.transform = '', 400);
+  };
+
+  DOM.btnTorch.onclick = async () => {
+    if(!state.track) return;
+    const caps = state.track.getCapabilities();
+    if (!caps.torch) { showToast("Вспышка недоступна"); haptic('error'); return; }
+    const newState = !state.torchOn;
+    try { await state.track.applyConstraints({ advanced: [{ torch: newState }] }); state.torchOn = newState; updateTorchUI(); haptic('light'); } 
+    catch(e) { showToast("Ошибка вспышки"); }
+  };
+
+  function updateTorchUI() {
+    if (state.torchOn) { DOM.btnTorch.style.backgroundColor = 'var(--acc-orange)'; DOM.btnTorch.style.color = '#000'; } 
+    else { DOM.btnTorch.style.backgroundColor = ''; DOM.btnTorch.style.color = '#fff'; }
+  }
+
+  function checkSensorPerms() {
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') { DOM.permReq.classList.remove('hidden'); } 
+    else { window.addEventListener('deviceorientation', handleOrientation); }
+  }
+  async function requestSensors() {
+    try { const resp = await DeviceOrientationEvent.requestPermission(); if (resp === 'granted') { window.addEventListener('deviceorientation', handleOrientation); } } 
+    catch (e) {} finally { DOM.permReq.classList.add('hidden'); }
+  }
+  function handleOrientation(e) {
+    let x = e.beta; let y = e.gamma; 
+    if (x === null || y === null) return;
+    state.sensorActive = true; state.angleX = x; state.angleY = y;
+  }
+  function updateUI() {
+    if (state.uiMode === 'menu') return;
+    if (state.isCapturing || state.isSwitching) return;
+    if (!state.sensorActive) { DOM.lvlDot.classList.remove('ok'); DOM.lvlText.textContent = "Камера"; DOM.shutter.classList.remove('disabled'); DOM.shutter.classList.add('active'); return; }
+    if (state.levelOK) { DOM.lvlDot.classList.add('ok'); DOM.lvlText.textContent = "Ровно"; DOM.shutter.classList.remove('disabled'); DOM.shutter.classList.add('active'); } 
+    else { DOM.lvlDot.classList.remove('ok'); DOM.lvlText.textContent = "Выровняйте"; DOM.shutter.classList.add('disabled'); DOM.shutter.classList.remove('active'); }
+  }
+  function resizeCanvas() { const w = window.innerWidth; const h = window.innerHeight; if (DOM.canvas.width !== w || DOM.canvas.height !== h) { DOM.canvas.width = w; DOM.canvas.height = h; } }
+
+  async function initCamera() {
+    try { const savedId = localStorage.getItem('ultima_cam_id'); await startStream(savedId); await updateDeviceList(); resizeCanvas(); window.addEventListener('resize', resizeCanvas); requestAnimationFrame(drawLoop); checkSensorPerms(); } 
+    catch (e) { console.warn("Init Error:", e); }
+  }
+  async function updateDeviceList() {
+    try {
+      const allDevices = await navigator.mediaDevices.enumerateDevices();
+      state.devices = allDevices.filter(d => d.kind === 'videoinput');
+      if (state.devices.length > 1) { DOM.btnSwitch.classList.remove('hidden'); } else { DOM.btnSwitch.classList.add('hidden'); }
+      if (state.track) {
+        const currentId = state.track.getSettings().deviceId;
+        state.currentDevIdx = state.devices.findIndex(d => d.deviceId === currentId);
+        if(state.currentDevIdx === -1) state.currentDevIdx = 0;
+      }
+    } catch(e) {}
+  }
+
+  function drawLoop() {
+    const ctx = DOM.ctx; const w = DOM.canvas.width; const h = DOM.canvas.height;
+    ctx.clearRect(0, 0, w, h);
+    if (state.uiMode === 'menu') { requestAnimationFrame(drawLoop); return; }
+    
+    const cx = w / 2; const cy = h / 2;
+    const cardRatio = 1.586; const cardW = w * 0.22; const cardH = cardW * cardRatio;
+    const cardX = cx + 80; const cardY = cy - cardH / 2; const r = 8; 
+    ctx.beginPath(); ctx.moveTo(cardX + r, cardY); ctx.lineTo(cardX + cardW - r, cardY); ctx.quadraticCurveTo(cardX + cardW, cardY, cardX + cardW, cardY + r); ctx.lineTo(cardX + cardW, cardY + cardH - r); ctx.quadraticCurveTo(cardX + cardW, cardY + cardH, cardX + cardW - r, cardY + cardH); ctx.lineTo(cardX + r, cardY + cardH); ctx.quadraticCurveTo(cardX, cardY + cardH, cardX, cardY + cardH - r); ctx.lineTo(cardX, cardY + r); ctx.quadraticCurveTo(cardX, cardY, cardX + r, cardY);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)'; ctx.fill(); 
+    ctx.save(); ctx.translate(cardX + cardW / 2, cardY + cardH / 2); ctx.rotate(-Math.PI / 2); ctx.fillStyle = '#ffffff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = 'bold 12px sans-serif'; ctx.fillText("CREDIT CARD", 0, -10); ctx.font = '10px sans-serif'; ctx.fillText("(необязательно)", 0, 10); ctx.restore(); 
+
+    if (state.sensorActive) {
+        const rBubble = 14; const rTarget = 18; const maxOffset = 60; 
+        const rawX = (isNaN(state.angleY) || state.angleY === null) ? 0 : state.angleY;
+        const rawY = (isNaN(state.angleX) || state.angleX === null) ? 0 : state.angleX;
+        const clamp = (val) => Math.max(-20, Math.min(20, val));
+        const dx = (clamp(rawX) / 20) * maxOffset; const dy = (clamp(rawY) / 20) * maxOffset;
+        const dist = Math.hypot(dx, dy);
+        const isInside = (dist + rBubble) <= rTarget;
+        if (state.levelOK !== isInside && !state.isCapturing && !state.isSwitching) { state.levelOK = isInside; updateUI(); if(isInside) haptic('medium'); }
+        ctx.shadowBlur = 4; ctx.shadowColor = 'rgba(0,0,0,0.5)';
+        ctx.beginPath(); ctx.arc(cx, cy, rTarget, 0, Math.PI * 2); 
+        const color = (state.levelOK || state.isCapturing) ? '#30d158' : 'rgba(255,255,255,0.85)';
+        ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.stroke();
+        ctx.beginPath(); ctx.arc(cx + dx, cy + dy, rBubble, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill(); ctx.shadowBlur = 0;
+    } else {
+        ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(cx-10, cy); ctx.lineTo(cx+10, cy); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(cx, cy-10); ctx.lineTo(cx, cy+10); ctx.stroke();
+    }
+    requestAnimationFrame(drawLoop);
+  }
+
+DOM.shutter.addEventListener('click', async () => {
+    if (state.isCapturing || state.isSwitching) return; 
+    
+    if (state.sensorActive && !state.levelOK) { 
+        haptic('error'); 
+        showToast("Выровняйте телефон"); 
+        return; 
+    }
+    
+    try {
+        state.isCapturing = true; 
+        haptic('heavy');
+        DOM.shutter.style.transform = 'scale(0.8)'; 
+        DOM.shutter.style.opacity = '0.5';
+        
+        await new Promise(r => setTimeout(r, 50));
+        const vid = DOM.video;
+        if (vid.readyState < 2 || vid.videoWidth === 0) throw new Error("Камера не готова");
+
+        const MAX_SIDE = 1024; 
+        let w = vid.videoWidth;
+        let h = vid.videoHeight;
+        if (w > h) { if (w > MAX_SIDE) { h *= MAX_SIDE / w; w = MAX_SIDE; } } else { if (h > MAX_SIDE) { w *= MAX_SIDE / h; h = MAX_SIDE; } }
+
+        const c = document.createElement('canvas'); 
+        c.width = w; c.height = h;
+        const ctx = c.getContext('2d');
+        ctx.drawImage(vid, 0, 0, w, h);
+        
+        const blob = await new Promise(resolve => c.toBlob(resolve, 'image/jpeg', 0.7)); 
+        if (!blob) throw new Error("Пустой кадр");
+        showPreview(blob);
+
+    } catch(err) {
+        console.error(err); 
+        haptic('error'); 
+        showToast("Ошибка: " + err.message);
+        state.isCapturing = false; 
+        updateUI();
+    } finally {
+        DOM.shutter.style.transform = ''; 
+        DOM.shutter.style.opacity = ''; 
+        state.isCapturing = false;
+    }
+  });
+
+  function showPreview(blob) {
+    if(!blob) return; state.photoBlob = blob;
+    DOM.finalImg.src = URL.createObjectURL(blob); DOM.preview.style.display = 'flex';
+  }
+  function retake() {
+    DOM.preview.style.display = 'none';
+    if(DOM.finalImg.src) URL.revokeObjectURL(DOM.finalImg.src);
+    DOM.finalImg.src = ''; state.photoBlob = null; DOM.commentInput.value = ''; 
+  }
+
+  async function sendPhoto() {
+    const btn = DOM.btnSend;
+    if (btn.disabled) return; 
+    
+    DOM.preview.style.display = 'none'; 
+    haptic('heavy');
+
+    try {
+        if (!state.photoBlob) throw new Error("Нет фото");
+        startProcessingUI('photo');
+        
+        const base64 = await API.blobToBase64(state.photoBlob);
+        const userText = DOM.commentInput.value;
+        const result = await API.send('scan', { image: base64, userText: userText });
+        
+        stopProcessingUI(); 
+        
+        if (result.ok) {
+           openDraftSheet(result.data, result.scanId);
+        } else {
+           throw new Error(result.error || "Ошибка сервера");
+        }
+
+    } catch (e) {
+        stopProcessingUI();
+        console.error(e);
+        haptic('error');
+        alert("Ошибка: " + e.message);
+        DOM.preview.style.display = 'flex'; 
+        btn.disabled = false;
+    }
+  }
+
+  function haptic(style) { 
+    if (!tg || !tg.HapticFeedback) return;
+    if (['error', 'success', 'warning'].includes(style)) {
+      tg.HapticFeedback.notificationOccurred(style);
+    } else {
+      tg.HapticFeedback.impactOccurred(style);
+    }
+  }
+
+  let procInterval;
+  function startProcessingUI(mode) {
+    const container = document.getElementById('procSteps');
+    const overlay = document.getElementById('procOverlay');
+    
+    if (mode === 'text') {
+        container.innerHTML = `
+            <div class="step pending" id="step-1"><div class="s-icon">🛡️</div><div class="s-lbl">Gatekeeper: Проверяю...</div></div>
+            <div class="step pending" id="step-2"><div class="s-icon">🧠</div><div class="s-lbl">TextParser: Ищу в базе...</div></div>
+            <div class="step pending" id="step-3"><div class="s-icon">📝</div><div class="s-lbl">Synthesizer: Готовлю ответ...</div></div>
+        `;
+    } else {
+        container.innerHTML = `
+            <div class="step pending" id="step-1"><div class="s-icon">🛡️</div><div class="s-lbl">Gatekeeper: Проверяю...</div></div>
+            <div class="step pending" id="step-2"><div class="s-icon">🕵️</div><div class="s-lbl">Detective: Ищу ингредиенты...</div></div>
+            <div class="step pending" id="step-3"><div class="s-icon">📐</div><div class="s-lbl">Physicist: Определяю вес...</div></div>
+            <div class="step pending" id="step-4"><div class="s-icon">🍳</div><div class="s-lbl">Technologist: Анализирую...</div></div>
+            <div class="step pending" id="step-5"><div class="s-icon">📝</div><div class="s-lbl">Synthesizer: Готовлю ответ...</div></div>
+        `;
+    }
+
+    overlay.classList.add('active');
+    
+    let step = 1;
+    const maxSteps = mode === 'text' ? 3 : 5;
+    updateStep(1, 'active');
+
+    procInterval = setInterval(() => {
+       updateStep(step, 'done');
+       step++;
+       if(step > maxSteps) step = maxSteps; 
+       updateStep(step, 'active');
+    }, 2000); 
+  }
+
+  function updateStep(num, status) {
+    const el = document.getElementById('step-'+num);
+    if(el) {
+      el.classList.remove('pending', 'active', 'done');
+      el.classList.add(status);
+    }
+  }
+
+  function stopProcessingUI() {
+    clearInterval(procInterval);
+    document.getElementById('procOverlay').classList.remove('active');
+  }
+
+  function cancelProcessing() {
+    stopProcessingUI();
+    retake();
+  }
+
+  let currentDraftItems = []; 
+  let currentScanId = null;
+
+  function openDraftSheet(data, scanId) {
+    currentScanId = scanId;
+    if (!data || !data.items) {
+       alert("Ничего не найдено. Попробуйте снова.");
+       return;
+    }
+    currentDraftItems = data.items; 
+    renderDraftList();
+    document.getElementById('draftOverlay').classList.add('visible');
+    haptic('success');
+  }
+
+  function renderDraftList() {
+    const container = document.getElementById('draftList');
+    container.innerHTML = '';
+    
+    if (currentDraftItems.length === 0) {
+      container.innerHTML = '<div style="text-align:center; opacity:0.5; padding:20px">Список пуст</div>';
+      return;
+    }
+
+    currentDraftItems.forEach((item, index) => {
+      let icon = "🍽️";
+      if (item.cooking_method === 'Raw') icon = "🍎";
+      if (item.fat_modifier === 'High Oil') icon = "🍳";
+      
+      const div = document.createElement('div');
+      div.className = 'draft-item';
+      div.innerHTML = `
+        <div class="di-icon">${icon}</div>
+        <div class="di-inputs">
+          <input type="text" class="di-name" value="${item.name}" onchange="updateDraftItem(${index}, 'name', this.value)">
+          <div class="di-row">
+            <input type="number" class="di-weight" value="${item.weight_g || ''}" placeholder="0" onchange="updateDraftItem(${index}, 'weight_g', this.value)">
+            <div class="di-unit">г</div>
+          </div>
+        </div>
+        <div class="di-del" onclick="removeDraftItem(${index})">✕</div>
+      `;
+      container.appendChild(div);
+    });
+  }
+
+  window.updateDraftItem = (index, field, value) => {
+    if (field === 'weight_g') value = parseInt(value) || 0;
+    currentDraftItems[index][field] = value;
+  };
+
+  window.removeDraftItem = (index) => {
+    currentDraftItems.splice(index, 1);
+    renderDraftList();
+  };
+
+  window.closeDraft = () => {
+    document.getElementById('draftOverlay').classList.remove('visible');
+    retake(); 
+  };
+  
+  const STORAGE_KEY = 'ultima_diary_v1';
+
+  window.confirmDraftToNutritionist = async () => {
+    const btn = document.getElementById('btnConfirmDraft');
+    btn.textContent = 'Сохранение...';
+    btn.disabled = true;
+    
+    try {
+      const calculatedItems = currentDraftItems.map(item => {
+        const k = Math.round(item.weight_g * 1.2); 
+        return {
+           name: item.name,
+           w: item.weight_g,
+           k: k,
+           p: Math.round(item.weight_g * 0.15), 
+           f: Math.round(item.weight_g * 0.02),
+           c: Math.round(item.weight_g * 0.10) 
+        };
+      });
+
+      const now = new Date();
+      const mealEntry = {
+          id: Date.now(), 
+          time: now.toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit'}),
+          items: calculatedItems
+      };
+
+      saveToStorage(mealEntry);
+      haptic('success');
+      document.getElementById('draftOverlay').classList.remove('visible');
+      addMealToTimeline(mealEntry);
+      retake(); 
+
+    } catch (e) {
+      alert("Ошибка: " + e.message);
+    } finally {
+      btn.textContent = 'В дневник';
+      btn.disabled = false;
+    }
+  };
+
+  function addMealToTimeline(mealEntry) {
+    const container = document.getElementById('mealTimeline');
+    if (!container) return;
+
+    let rowsHTML = '';
+    mealEntry.items.forEach(item => {
+        rowsHTML += `
+        <div class="prod-item">
+            <div class="pi-name">${item.name}</div>
+            <div class="pi-val pi-w">${item.w}</div>
+            <div class="pi-val pi-k">${item.k}</div>
+            <div class="pi-val pi-p">${item.p}</div>
+            <div class="pi-val pi-f">${item.f}</div>
+            <div class="pi-val pi-c">${item.c}</div>
+        </div>`;
+    });
+
+    const cardHTML = `
+      <div class="meal-card" id="card-${mealEntry.id}">
+        <div class="col-headers">
+            <div class="mh-time">${mealEntry.time}</div>
+            <div class="ch-item">Вес</div>
+            <div class="ch-item">К</div>
+            <div class="ch-item">Б</div>
+            <div class="ch-item">Ж</div>
+            <div class="ch-item">У</div>
+        </div>
+        ${rowsHTML}
+      </div>
+    `;
+    container.insertAdjacentHTML('afterbegin', cardHTML);
+  }
+
+  function saveToStorage(mealEntry) {
+      try {
+          const raw = localStorage.getItem(STORAGE_KEY);
+          const history = raw ? JSON.parse(raw) : [];
+          history.push(mealEntry);
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+      } catch(e) { console.error("Save error:", e); }
+  }
+
+  function loadFromStorage() {
+      try {
+          const raw = localStorage.getItem(STORAGE_KEY);
+          if (!raw) return;
+          const history = JSON.parse(raw);
+          history.forEach(meal => { addMealToTimeline(meal); });
+      } catch(e) { console.error("Load error:", e); }
+  }
+  loadFromStorage();
+
+  let currentWeekStart = getStartOfWeek(new Date()); 
+  let selectedDate = new Date(); 
+  let isDragging = false; 
+  let startX = 0; 
+  let currentTranslate = 0;
+  
+  const area = document.getElementById('swipeArea'); 
+  const track = document.getElementById('calTrack'); 
+  const prevEl = document.getElementById('weekPrev'); 
+  const currEl = document.getElementById('weekCurr'); 
+  const nextEl = document.getElementById('weekNext');
+
+  function getStartOfWeek(date) { 
+    const d = new Date(date); 
+    const day = d.getDay(); 
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1); 
+    return new Date(d.setDate(diff)); 
+  }
+
+  function initCalendar() { 
+    renderAllWeeks(); 
+    area.onpointerdown = handleStart; 
+    area.onpointermove = handleMove; 
+    area.onpointerup = handleEnd; 
+    area.onpointercancel = handleEnd; 
+    area.onpointerleave = handleEnd; 
+  }
+
+  function renderWeekData(container, startDate) {
+    container.innerHTML = ''; 
+    const weekDays = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс']; 
+    const today = new Date();
+    
+    for(let i=0; i<7; i++) {
+      const d = new Date(startDate); 
+      d.setDate(d.getDate() + i); 
+      const isToday = d.toDateString() === today.toDateString(); 
+      const isSelected = d.toDateString() === selectedDate.toDateString();
+      const el = document.createElement('div'); 
+      el.className = `day-cell ${isSelected ? 'selected' : ''} ${isToday ? 'is-today' : ''}`; 
+      el.innerHTML = `<div class="dc-name">${weekDays[i]}</div><div class="dc-num">${d.getDate()}</div>`;
+      el.onclick = (e) => { 
+        if(Math.abs(currentTranslate) > 5) return; 
+        document.querySelectorAll('.day-cell').forEach(c => c.classList.remove('selected')); 
+        el.classList.add('selected'); 
+        selectedDate = new Date(d); 
+        if(window.haptic) window.haptic('selection'); 
+        renderAllWeeks(); 
+      }; 
+      container.appendChild(el);
+    }
+  }
+
+  function renderAllWeeks() { 
+    renderWeekData(currEl, currentWeekStart); 
+    const dPrev = new Date(currentWeekStart); 
+    dPrev.setDate(dPrev.getDate() - 7); 
+    renderWeekData(prevEl, dPrev); 
+    const dNext = new Date(currentWeekStart); 
+    dNext.setDate(dNext.getDate() + 7); 
+    renderWeekData(nextEl, dNext); 
+    const mid = new Date(currentWeekStart); 
+    mid.setDate(mid.getDate() + 3); 
+    document.getElementById('monthLabel').textContent = mid.toLocaleString('ru', { month: 'long', year: 'numeric' }); 
+  }
+
+  function handleStart(e) { 
+    if (e.button !== 0) return; 
+    isDragging = true; 
+    startX = e.clientX; 
+    currentTranslate = 0; 
+    track.style.transition = 'none'; 
+    area.style.cursor = 'grabbing'; 
+  }
+
+  function handleMove(e) { 
+    if (!isDragging) return; 
+    currentTranslate = e.clientX - startX; 
+    track.style.transform = `translateX(calc(-33.333333% + ${currentTranslate}px))`; 
+  }
+
+  function handleEnd(e) { 
+    if (!isDragging) return; 
+    isDragging = false; 
+    area.style.cursor = 'grab'; 
+    const threshold = 60; 
+    track.style.transition = 'transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1)'; 
+    if (currentTranslate > threshold) { 
+      if(window.haptic) window.haptic('light'); 
+      track.style.transform = `translateX(0%)`; 
+      setTimeout(() => shiftWeeks(-1), 300); 
+    } else if (currentTranslate < -threshold) { 
+      if(window.haptic) window.haptic('light'); 
+      track.style.transform = `translateX(-66.666666%)`; 
+      setTimeout(() => shiftWeeks(1), 300); 
+    } else { 
+      track.style.transform = `translateX(-33.333333%)`; 
+    } 
+  }
+
+  function shiftWeeks(direction) { 
+    currentWeekStart.setDate(currentWeekStart.getDate() + (direction * 7)); 
+    track.style.transition = 'none'; 
+    renderAllWeeks(); 
+    track.style.transform = `translateX(-33.333333%)`; 
+  }
+
+  initCalendar();
+
+  let currentMl = 1250; 
+  const targetMl = 2500; 
+
+  window.updateWater = function(delta) { 
+    if(window.haptic) window.haptic('light'); 
+    else if(tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+    currentMl = Math.max(0, currentMl + delta); 
+    renderWater(); 
+  };
+
+  function renderWater() {
+    document.getElementById('lbl-fact').innerText = currentMl; 
+    document.getElementById('lbl-pct').innerText = Math.round((currentMl/targetMl)*100) + '%';
+    const card = document.getElementById('waterCard'); 
+    if(currentMl > targetMl) card.classList.add('is-overload'); 
+    else card.classList.remove('is-overload');
+    for(let i=1; i<=5; i++) { 
+      const el = document.getElementById('c'+i); 
+      const th = i*(targetMl/5); 
+      const prevTh = (i-1)*(targetMl/5); 
+      let pct = 0; 
+      if(currentMl >= th) pct=100; 
+      else if(currentMl > prevTh) pct = ((currentMl-prevTh)/(targetMl/5))*100; 
+      el.style.setProperty('--h', Math.min(100, pct)+'%'); 
+    }
+  }
+
+  const wTrack = document.getElementById('widgetTrack');
+  const dots = document.querySelectorAll('.dot');
+  if(wTrack) {
+    wTrack.addEventListener('scroll', () => { 
+      const idx = Math.round(wTrack.scrollLeft / wTrack.clientWidth); 
+      dots.forEach((d,i) => d.classList.toggle('active', i===idx)); 
+    });
+  }
+  
+  renderWater();
+
+  document.addEventListener('click', (e) => {
+    const active = document.activeElement;
+    const isInputFocused = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA');
+    if (isInputFocused && e.target !== active) {
+      active.blur(); 
+    }
+  });
+
 </script>
 </body>
 </html>
