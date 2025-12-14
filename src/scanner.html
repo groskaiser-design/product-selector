@@ -478,6 +478,23 @@ html, body {
 }
 
 
+/* === FOCUS OVERLAY (ФОКУС РЕЖИМ) === */
+.focus-overlay {
+  position: fixed;
+  top: 0; left: 0; width: 100%; height: 100%;
+  z-index: 90; /* Перекрывает контент (слои 10-50), но ПОД полем ввода (100) */
+  background: rgba(0, 0, 0, 0.6); /* Затемнение */
+  backdrop-filter: blur(8px);      /* Размытие */
+  -webkit-backdrop-filter: blur(8px);
+  opacity: 0;
+  pointer-events: none; /* Пропускает клики, когда скрыт */
+  transition: opacity 0.3s ease;
+}
+
+.focus-overlay.active {
+  opacity: 1;
+  pointer-events: auto; /* Блокирует клики на фон, когда активен */
+}
 
 </style>
 </head>
@@ -592,6 +609,7 @@ html, body {
       </div>
     </div>
     
+    <div class="focus-overlay" id="focusOverlay"></div>
     <div class="omni-bar" id="omniBar">
         <div class="omni-icon-btn">
           <div class="gh-icon" style="-webkit-mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/add.svg'); mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/add.svg');"></div>
@@ -882,8 +900,26 @@ function isAdmin() {
   };
 
   // === LOGIC ===
-// === OMNI BAR LOGIC (TEXT vs CAMERA) ===
-  
+  // === OMNI BAR LOGIC (TEXT vs CAMERA) ===
+  // === ЛОГИКА ФОКУСА (БЛЮР ФОНА) ===
+  const overlay = document.getElementById('focusOverlay');
+
+  // 1. При нажатии на поле ввода -> Включаем фокус
+  DOM.omniInput.addEventListener('focus', () => {
+      overlay.classList.add('active');
+  });
+
+  // 2. При скрытии клавиатуры -> Выключаем, НО только если не открыт Драфт
+  DOM.omniInput.addEventListener('blur', () => {
+      // Небольшая задержка, чтобы успеть понять, открылся ли Драфт
+      setTimeout(() => {
+          if (!document.getElementById('draftOverlay').classList.contains('visible') && 
+              !DOM.btnStartCam.classList.contains('mode-send')) { // Если не отправляем
+              overlay.classList.remove('active');
+          }
+      }, 50);
+  });
+
   // 1. Слушаем ввод текста
   DOM.omniInput.addEventListener('input', () => {
     const hasText = DOM.omniInput.value.trim().length > 0;
@@ -937,7 +973,7 @@ function isAdmin() {
      const btn = DOM.btnStartCam;
      btn.style.opacity = '0.5';
      haptic('medium');
-     
+     document.getElementById('focusOverlay').classList.add('active');
      try {
        startProcessingUI('text');
        
@@ -1366,6 +1402,7 @@ DOM.shutter.addEventListener('click', async () => {
     
     document.getElementById('draftOverlay').classList.add('visible');
     haptic('success');
+    document.getElementById('focusOverlay').classList.add('active');
   }
 
   function renderDraftList() {
@@ -1413,6 +1450,7 @@ DOM.shutter.addEventListener('click', async () => {
 
   window.closeDraft = () => {
     document.getElementById('draftOverlay').classList.remove('visible');
+    document.getElementById('focusOverlay').classList.remove('active');
     retake(); // Сбрасываем камеру
   };
 
@@ -1454,6 +1492,7 @@ DOM.shutter.addEventListener('click', async () => {
 
       haptic('success');
       document.getElementById('draftOverlay').classList.remove('visible');
+      document.getElementById('focusOverlay').classList.remove('active');
       
       // 4. Добавляем карточку в ленту
       addMealToTimeline(mealEntry);
