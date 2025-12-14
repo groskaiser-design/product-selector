@@ -1496,10 +1496,12 @@ DOM.shutter.addEventListener('click', async () => {
         };
       });
 
-      // 4. ФОРМИРУЕМ ЗАПИСЬ ДЛЯ ЛЕНТЫ
+      // 4. ФОРМИРОВАНИЕ ЗАПИСИ
       const now = new Date();
       const mealEntry = {
           id: Date.now(), 
+          // === ВАЖНО: Добавляем дату в формате строки для фильтрации ===
+          date: now.toDateString(), 
           time: now.toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit'}),
           items: calculatedItems
       };
@@ -1584,19 +1586,37 @@ DOM.shutter.addEventListener('click', async () => {
       }
   }
 
-  function loadFromStorage() {
+ // === ЗАГРУЗКА ИСТОРИИ (С ФИЛЬТРОМ) ===
+  function loadFromStorage(targetDate) {
+      const container = document.getElementById('mealTimeline');
+      if (!container) return;
+      
+      // 1. Очищаем ленту, чтобы не дублировать карточки
+      container.innerHTML = '';
+
       try {
           const raw = localStorage.getItem(STORAGE_KEY);
           if (!raw) return;
           
           const history = JSON.parse(raw);
           
-          // Проходимся по истории и рисуем карточки
-          // Важно: history.forEach идет от старых к новым.
-          // addMealToTimeline делает 'afterbegin' (вставляет сверху).
-          // Значит, первый элемент массива окажется внизу, последний — вверху.
-          // Это правильно для ленты: самое свежее наверху.
-          history.forEach(meal => {
+          // 2. Определяем, какую дату ищем (по умолчанию — сегодня)
+          // toDateString() возвращает формат типа "Sun Dec 14 2025" — идеально для сравнения
+          const filterStr = (targetDate || new Date()).toDateString();
+
+          // 3. Фильтруем массив
+          // Важно: идем по массиву, и если у записи нет поля date (старая запись), 
+          // восстанавливаем дату из ID (timestamp)
+          const dailyMeals = history.filter(m => {
+              const entryDate = m.date || new Date(m.id).toDateString();
+              return entryDate === filterStr;
+          });
+
+          // 4. Рисуем только отфильтрованные (самые свежие сверху)
+          // Массив history идет от старых к новым.
+          // addMealToTimeline делает prepend (вставку в начало).
+          // Значит, чтобы утро было внизу, а вечер вверху, просто перебираем как есть.
+          dailyMeals.forEach(meal => {
               addMealToTimeline(meal);
           });
       } catch(e) {
@@ -1606,7 +1626,7 @@ DOM.shutter.addEventListener('click', async () => {
 
   // === 5. ЗАПУСК ПРИ СТАРТЕ ===
   // Загружаем сохраненные карточки при обновлении страницы
-  loadFromStorage();
+  loadFromStorage(new Date());
 
 
 // === INFINITE CALENDAR LOGIC (Exact Copy from v2.20) ===
@@ -1656,13 +1676,22 @@ DOM.shutter.addEventListener('click', async () => {
       el.innerHTML = `<div class="dc-name">${weekDays[i]}</div><div class="dc-num">${d.getDate()}</div>`;
       
       el.onclick = (e) => { 
-        if(Math.abs(currentTranslate) > 5) return; // Защита от клика при свайпе
+        if(Math.abs(currentTranslate) > 5) return; // Защита от свайпа
+        
+        // Визуал выделения
         document.querySelectorAll('.day-cell').forEach(c => c.classList.remove('selected')); 
         el.classList.add('selected'); 
+        
+        // Логика выбора
         selectedDate = new Date(d); 
         if(window.haptic) window.haptic('selection'); 
+        
+        // Обновляем календарь (центрирование)
         renderAllWeeks(); 
-      }; 
+        
+        // === ЗАГРУЖАЕМ ЕДУ ДЛЯ ВЫБРАННОГО ДНЯ ===
+        loadFromStorage(selectedDate);
+      };
       container.appendChild(el);
     }
   }
