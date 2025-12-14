@@ -28,77 +28,101 @@ html, body {
   background-color: #000000;
   margin: 0; padding: 0; 
   width: 100%; 
-  height: 100%; /* iOS любит 100% больше чем 100vh тут */
+  height: 100%; 
   overflow: hidden; 
-  position: fixed; /* Гвоздь программы для iOS */
+  position: fixed; 
   top: 0; left: 0;
   overscroll-behavior: none;
   touch-action: none; 
   font-family: var(--font-stack);
 }
 
-/* === 2. ФОН (ОТДЕЛЬНЫЙ СЛОЙ, НЕ СЖИМАЕТСЯ) === */
+/* === 2. ФОН (ОТДЕЛЬНЫЙ СЛОЙ) === */
 .fx-layer { 
   position: fixed; 
   top: 0; left: 0; 
   width: 100vw; 
-  height: 100vh; /* Фон всегда полный экран */
+  height: 100vh; 
   z-index: 0; 
   pointer-events: none; 
   background-color: var(--bg-core);
 }
 
 .orb { position: absolute; border-radius: 50%; will-change: transform; filter: blur(80px); }
-
-/* Верхняя сфера */
-.orb-1 { 
-  width: 100vw; height: 100vw; opacity: 0.8; 
-  background: radial-gradient(circle, var(--orb-purple) 0%, transparent 70%); 
-  top: -20%; left: -10%; animation: float 30s infinite linear; 
-}
-
-/* Нижняя сфера */
-.orb-2 { 
-  width: 300px; height: 300px; opacity: 0.4; 
-  background: radial-gradient(circle, var(--acc-blue) 0%, transparent 70%); 
-  bottom: -50px; right: -50px; animation: breathe 8s infinite ease-in-out; 
-}
-
-/* Шум */
-.noise { 
-  position: fixed; inset: 0; opacity: 0.05; 
-  background: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); 
-  pointer-events: none; 
-}
-
+.orb-1 { width: 100vw; height: 100vw; opacity: 0.8; background: radial-gradient(circle, var(--orb-purple) 0%, transparent 70%); top: -20%; left: -10%; animation: float 30s infinite linear; }
+.orb-2 { width: 300px; height: 300px; opacity: 0.4; background: radial-gradient(circle, var(--acc-blue) 0%, transparent 70%); bottom: -50px; right: -50px; animation: breathe 8s infinite ease-in-out; }
+.noise { position: fixed; inset: 0; opacity: 0.05; background: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); pointer-events: none; }
 @keyframes float { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 @keyframes breathe { 0%, 100% { transform: scale(1); opacity: 0.3; } 50% { transform: scale(1.2); opacity: 0.5; } }
 
-
-/* === 3. ИНТЕРФЕЙС (МЕНЯЕТ РАЗМЕР ПОД КЛАВУ) === */
+/* === 3. ИНТЕРФЕЙС === */
 .app-layout {
   position: absolute; 
   z-index: 1; 
   top: 0; left: 0; right: 0;
-  /* height будет задан через JS (VisualViewport) */
   overflow: hidden;
   display: flex; 
   flex-direction: column;
 }
 
-/* === КАЛЕНДАРЬ === */
-/* Мы вынесли его из потока (absolute) чтобы он лежал поверх видео */
-.calendar-block {
-  flex: 0 0 auto;
+/* === 4. НОВАЯ АРХИТЕКТУРА СЛОЕВ (SURGEON PACK) === */
+
+/* ГРУППА "ГОЛОВА" (Календарь + Виджеты) */
+.fixed-header-group {
   position: absolute; 
   top: 0; left: 0; right: 0;
-  z-index: 50;
-  background: transparent;
-  padding-top: calc(12px + env(safe-area-inset-top));
-  padding-bottom: 8px;
-  user-select: none;
+  z-index: 50; 
+  background: transparent; /* ПРОЗРАЧНОСТЬ */
+  pointer-events: auto; 
   transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
+
+.calendar-block {
+  position: relative;
+  padding-top: calc(12px + env(safe-area-inset-top));
+  padding-bottom: 8px;
+  background: transparent;
+}
+
+.carousel-wrap {
+  position: relative;
+  padding-top: 0;
+  pointer-events: auto;
+}
+
+/* ГРУППА "ТЕЛО" (Лента событий) */
+.scroll-container {
+  position: absolute; 
+  top: 0; left: 0; width: 100%; height: 100%;
+  z-index: 10; 
+  overflow-y: auto; 
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  pointer-events: auto; 
+  
+  /* ГЕОМЕТРИЯ: */
+  padding-top: 340px; /* Место под виджеты */
+  padding-bottom: 140px; /* Место под OmniBar */
+  
+  transition: opacity 0.3s;
+  
+  /* 🔥 ГРАДИЕНТНАЯ МАСКА (ТУМАН) */
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0px, transparent 280px, black 340px, black 100%);
+  mask-image: linear-gradient(to bottom, transparent 0px, transparent 280px, black 340px, black 100%);
+}
+
+.timeline-container {
+  width: 100%;
+  padding: 0 12px;
+}
+
+/* Скрываем при камере */
+.fixed-header-group.hidden,
+.scroll-container.hidden {
+  pointer-events: none;
+}
+
+/* === КАЛЕНДАРЬ СТИЛИ === */
 .calendar-header { display: flex; align-items: center; justify-content: space-between; padding: 0 16px 8px 16px; }
 .month-label { font-size: 11px; font-weight: 800; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1.5px; opacity: 0.9; }
 .calendar-swipe-area { width: 100%; height: 52px; overflow: hidden; position: relative; touch-action: pan-y; cursor: grab; }
@@ -113,44 +137,10 @@ html, body {
 .day-cell.selected .dc-num { color: #fff; font-weight: 700; }
 .day-cell.is-today::after { content: ''; position: absolute; bottom: 5px; width: 4px; height: 4px; border-radius: 50%; background: #0a84ff; box-shadow: 0 0 6px #0a84ff; }
 
-
-/* === КАМЕРА === */
-.cam-viewport {
-  position: absolute; /* Растягиваем на весь контейнер */
-  top: 0; left: 0; 
-  width: 100%; height: 100%;
-  z-index: 0; 
-  margin: 0; padding: 0;
-  display: flex;
-}
-
-#video {
-  width: 100%; height: 100%;
-  object-fit: cover !important; /* Гарантия от сплющивания */
-  position: absolute; inset: 0;
-}
-
-.cam-loader { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 5; display: flex; align-items: center; justify-content: center; pointer-events: none; }
-.spinner { width: 40px; height: 40px; border: 4px solid rgba(255,255,255,0.3); border-top: 4px solid #fff; border-radius: 50%; animation: spin 1s linear infinite; }
-@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-
-#uiCanvas { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none; }
-
-/* === ВИДЖЕТЫ === */
-.dashboard-layer {
-  position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 15; 
-  padding-top: calc(90px + env(safe-area-inset-top)); 
-  transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.3s;
-  pointer-events: none;
-}
-.dashboard-layer.hidden-mode { transform: translateY(-30px); opacity: 0; pointer-events: none !important; }
-
-.carousel-wrap { pointer-events: auto; }
+/* === ВИДЖЕТЫ СТИЛИ === */
 .carousel-track { display: flex; gap: 12px; padding: 30px 16px 40px 16px; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; cursor: grab; }
 .carousel-track::-webkit-scrollbar { display: none; }
 .widget { flex: 0 0 calc(100% - 16px); scroll-snap-align: center; height: 160px; border-radius: 28px; background: rgba(20, 20, 20, 0.75); border: 1px solid rgba(255, 255, 255, 0.1); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); position: relative; overflow: hidden; padding: 16px 12px; transition: 0.3s ease; }
-
-/* Макросы и вода */
 .macros-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; height: 100%; align-items: center; }
 .macro-item { display: flex; flex-direction: column; align-items: center; justify-content: center; }
 .donut-box { width: 100%; max-width: 74px; aspect-ratio: 1; position: relative; display: flex; align-items: center; justify-content: center; margin-bottom: 8px; }
@@ -163,7 +153,6 @@ html, body {
 .m-nums span { color: rgba(255,255,255,0.45); font-size: 11px; margin-left: 1px; }
 .m-lbl { font-size: 9px; font-weight: 700; text-transform: uppercase; color: rgba(255,255,255,0.5); margin-top: 2px; }
 .stroke-kcal { stroke: url(#grad-kcal); } .stroke-prot { stroke: url(#grad-prot); } .stroke-fats { stroke: url(#grad-fats); } .stroke-carb { stroke: url(#grad-carb); }
-
 .widget.water-widget { display: flex; flex-direction: column; padding: 16px 20px; justify-content: space-between; }
 .water-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
 .water-title { font-size: 11px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-muted); opacity: 0.8; }
@@ -187,7 +176,38 @@ html, body {
 .dot { width: 6px; height: 6px; border-radius: 10px; background: rgba(255,255,255,0.2); transition: 0.3s; }
 .dot.active { width: 20px; background: #fff; }
 
-/* === UI КАМЕРЫ === */
+/* === КАМЕРА И OMNI BAR === */
+.cam-viewport {
+  position: absolute; 
+  top: 0; left: 0; width: 100%; height: 100%;
+  z-index: 0; 
+  margin: 0; padding: 0; display: flex;
+}
+#video { width: 100%; height: 100%; object-fit: cover !important; position: absolute; inset: 0; }
+.cam-loader { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 5; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+.spinner { width: 40px; height: 40px; border: 4px solid rgba(255,255,255,0.3); border-top: 4px solid #fff; border-radius: 50%; animation: spin 1s linear infinite; }
+@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+#uiCanvas { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none; }
+
+.omni-bar { 
+  position: absolute; bottom: 0; left: 0; right: 0; 
+  background: linear-gradient(to top, rgba(0,0,0,0.6) 0%, transparent 100%); 
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom)) 12px; 
+  z-index: 100; display: flex; align-items: flex-end; gap: 10px; 
+  transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.omni-bar.hidden { transform: translateY(100%); }
+.omni-icon-btn { width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; color: #fff; cursor: pointer; border-radius: 50%; transition: background 0.2s; background: rgba(255, 255, 255, 0.1); backdrop-filter: blur(10px); }
+.input-wrap { flex: 1; min-height: 44px; background: rgba(20, 20, 20, 0.5); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 22px; padding: 2px 16px; display: flex; align-items: center; transition: border-color 0.2s; }
+.input-wrap:focus-within { border-color: rgba(255, 255, 255, 0.3); background: rgba(20, 20, 20, 0.7); }
+.omni-input { width: 100%; background: transparent; border: none; color: #fff; font-size: 16px; resize: none; padding: 11px 0; margin: 0; max-height: 100px; font-family: inherit; line-height: 20px; }
+.omni-input::placeholder { color: rgba(255,255,255,0.5); }
+.cam-trigger-btn { width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; cursor: pointer; transition: 0.2s; background: rgba(255, 255, 255, 0.1); backdrop-filter: blur(10px); }
+.cam-trigger-btn.mode-send { background-color: rgba(255, 255, 255, 0.1); box-shadow: none; }
+.icon-hidden { display: none !important; }
+.omni-btn-icon { width: 24px; height: 24px; stroke: currentColor; stroke-width: 2; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+
+/* === UI CONTROLS & OVERLAYS === */
 .ui-layer { position: absolute; inset: 0; z-index: 20; display: flex; flex-direction: column; justify-content: space-between; padding: calc(16px + env(safe-area-inset-top)) 16px calc(32px + env(safe-area-inset-bottom)) 16px; pointer-events: none; transition: opacity 0.3s ease; }
 .ui-layer.idle { opacity: 0; pointer-events: none; }
 .top-bar { display: flex; justify-content: space-between; align-items: center; pointer-events: auto; height: 48px; }
@@ -210,32 +230,7 @@ html, body {
 .cam-toast { position: absolute; top: 100px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.7); color: #fff; padding: 8px 16px; border-radius: 20px; font-size: 13px; font-weight: 500; pointer-events: none; opacity: 0; transition: opacity 0.3s; z-index: 50; backdrop-filter: blur(4px); }
 .cam-toast.visible { opacity: 1; }
 
-/* === OMNI BAR (ВАЖНО: ABSOLUTE ВНУТРИ APP-LAYOUT) === */
-.omni-bar { 
-  position: absolute; 
-  bottom: 0; left: 0; right: 0; 
-  background: linear-gradient(to top, rgba(0,0,0,0.6) 0%, transparent 100%); 
-  border-top: none; 
-  padding: 10px 12px calc(10px + env(safe-area-inset-bottom)) 12px; 
-  z-index: 100; 
-  display: flex; align-items: flex-end; gap: 10px; 
-  transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-.omni-bar.hidden { transform: translateY(100%); }
-.omni-icon-btn { width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; color: #fff; cursor: pointer; border-radius: 50%; transition: background 0.2s; background: rgba(255, 255, 255, 0.1); backdrop-filter: blur(10px); }
-.omni-icon-btn:active { background: rgba(255,255,255,0.2); }
-.input-wrap { flex: 1; min-height: 44px; background: rgba(20, 20, 20, 0.5); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 22px; padding: 2px 16px; display: flex; align-items: center; transition: border-color 0.2s; }
-.input-wrap:focus-within { border-color: rgba(255, 255, 255, 0.3); background: rgba(20, 20, 20, 0.7); }
-.omni-input { width: 100%; background: transparent; border: none; color: #fff; font-size: 16px; resize: none; padding: 11px 0; margin: 0; max-height: 100px; font-family: inherit; line-height: 20px; }
-.omni-input::placeholder { color: rgba(255,255,255,0.5); }
-.cam-trigger-btn { width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; cursor: pointer; transition: 0.2s; background: rgba(255, 255, 255, 0.1); backdrop-filter: blur(10px); }
-.cam-trigger-btn:active { transform: scale(0.92); opacity: 0.8; }
-.cam-trigger-btn.mode-send { background-color: rgba(255, 255, 255, 0.1); box-shadow: none; }
-.icon-hidden { display: none !important; }
-.omni-btn-icon { width: 24px; height: 24px; stroke: currentColor; stroke-width: 2; fill: none; stroke-linecap: round; stroke-linejoin: round; }
-#icoSend { margin-right: 2px; margin-top: 2px; }
-
-/* === OVERLAYS === */
+/* === МОДАЛКИ (Perms, Preview, Processing) === */
 .perm-overlay { position: absolute; inset: 0; z-index: 100; background: rgba(0,0,0,0.9); display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 32px; gap: 24px; }
 .perm-btn { background: var(--acc-blue); color: #fff; border: none; padding: 14px 28px; border-radius: 14px; font-size: 16px; font-weight: 600; cursor: pointer; }
 .preview-overlay { position: absolute; inset: 0; z-index: 200; background: #000; display: none; flex-direction: column; height: 100%; overflow: hidden; }
@@ -247,9 +242,7 @@ html, body {
 .preview-controls { flex-shrink: 0; padding: 0 24px 34px 24px; display: flex; gap: 16px; background: #000; }
 .btn { flex: 1; padding: 14px; border-radius: 14px; font-weight: 600; font-size: 16px; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.1); color: #fff; cursor: pointer; text-align: center; }
 .btn.primary { background: var(--acc-blue); border-color: transparent; }
-.hidden { display: none !important; }
 
-/* PROCESSING & DRAFT */
 .processing-overlay { position: fixed; inset: 0; z-index: 1000; background: rgba(5, 5, 5, 0.6); backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: 0.4s ease; }
 .processing-overlay.active { opacity: 1; pointer-events: auto; }
 .proc-card { width: 90%; max-width: 320px; background: rgba(30, 30, 30, 0.6); border: 1px solid rgba(255,255,255,0.1); border-radius: 24px; padding: 30px 20px; display: flex; flex-direction: column; align-items: center; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
@@ -264,6 +257,8 @@ html, body {
 .step.active { opacity: 1; transform: translateX(0); font-weight: 600; } .step.done { opacity: 0.5; transform: translateX(0); color: var(--acc-green); }
 .s-icon { font-size: 14px; width: 20px; text-align: center; } .s-lbl { font-size: 13px; color: #fff; }
 .proc-close { margin-top: 10px; font-size: 13px; color: rgba(255,255,255,0.4); text-decoration: underline; cursor: pointer; }
+
+/* === DRAFT SHEET === */
 .draft-overlay { position: fixed; inset: 0; z-index: 1100; background: rgba(0,0,0,0.5); display: flex; flex-direction: column; justify-content: flex-end; opacity: 0; pointer-events: none; transition: 0.3s; }
 .draft-overlay.visible { opacity: 1; pointer-events: auto; }
 .draft-sheet { background: #1c1c1e; border-radius: 24px 24px 0 0; border-top: 1px solid rgba(255,255,255,0.15); padding: 24px 20px calc(20px + env(safe-area-inset-bottom)) 20px; transform: translateY(100%); transition: transform 0.3s cubic-bezier(0.1, 0.8, 0.2, 1); max-height: 80vh; overflow-y: auto; margin: 0 12px calc(12px + env(safe-area-inset-bottom)) 12px !important; border-radius: 24px !important; border: 1px solid rgba(255, 255, 255, 0.1) !important; padding-bottom: 20px !important; }
@@ -284,111 +279,17 @@ html, body {
 .ds-btn { flex: 1; height: 48px; border-radius: 14px; border: none; font-size: 16px; font-weight: 600; cursor: pointer; }
 .ds-btn.sec { background: rgba(255,255,255,0.1); color: #fff; } .ds-btn.prim { background: var(--acc-blue); color: #fff; box-shadow: 0 4px 12px rgba(10,132,255,0.3); }
 
-/* === ИКОНКИ С GITHUB (CSS MASK) === */
-.gh-icon {
-  width: 24px; 
-  height: 24px;
-  display: block;
-  background-color: currentColor; /* Цвет берется от родителя */
-  
-  /* Маска вырезает форму иконки */
-  -webkit-mask-position: center;
-  mask-position: center;
-  -webkit-mask-repeat: no-repeat;
-  mask-repeat: no-repeat;
-  -webkit-mask-size: contain;
-  mask-size: contain;
-}
-
-/* === НОВЫЙ ДИЗАЙН КАРТОЧЕК (ТОЧНАЯ КОПИЯ SCANNER0) === */
-
-/* Контейнер для ленты (чтобы скроллилось) */
-.timeline-container {
-  width: 100%;
-  padding: 10px 12px 120px 12px; /* Отступы как в виджетах + место снизу */
-  pointer-events: auto; /* ВАЖНО: Разрешаем клики и скролл только здесь */
-}
-
-/* Сама карточка приема пищи */
-.meal-card { 
-  background: rgba(28, 28, 30, 0.65); /* Твой surface-glass */
-  border: 1px solid rgba(255, 255, 255, 0.1); 
-  border-radius: 22px; /* radius-l из исходника */
-  padding: 14px; 
-  backdrop-filter: blur(12px); 
-  -webkit-backdrop-filter: blur(12px);
-  margin-bottom: 12px;
-  animation: slideIn 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
-/* Сетка колонок: Имя | Вес | К | Б | Ж | У */
-/* Скопировано из scanner0.html на 100% */
-.col-headers, .prod-item { 
-  display: grid; 
-  grid-template-columns: minmax(0, 1fr) 34px 30px 22px 22px 22px; 
-  gap: 5px; 
-  align-items: center; 
-}
-
-/* Заголовки (Время и буквы КБЖУ) */
-.col-headers { 
-  margin-bottom: 8px; 
-  padding-bottom: 6px; 
-  border-bottom: 1px solid rgba(255,255,255,0.08); 
-}
-
-/* Время приема пищи */
-.mh-time { 
-  text-align: left; 
-  font-weight: 700; 
-  color: #fff; 
-  font-size: 13px;
-}
-
-/* Текстовые стили ячеек */
-.ch-item, .pi-name, .pi-val { 
-  font-size: 13px; 
-  font-weight: 400; 
-  color: #fff; 
-  font-feature-settings: "tnum"; /* Моноширинные цифры */
-  white-space: nowrap; 
-}
-
-/* Название продукта (обрезаем если длинное) */
-.pi-name { 
-  overflow: hidden; 
-  text-overflow: ellipsis; 
-  text-align: left;
-}
-
-/* Выравнивание цифр вправо */
+/* === CARD STYLES === */
+.meal-card { background: rgba(28, 28, 30, 0.65); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 22px; padding: 14px; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); margin-bottom: 12px; animation: slideIn 0.4s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.col-headers, .prod-item { display: grid; grid-template-columns: minmax(0, 1fr) 34px 30px 22px 22px 22px; gap: 5px; align-items: center; }
+.col-headers { margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+.mh-time { text-align: left; font-weight: 700; color: #fff; font-size: 13px; }
+.ch-item, .pi-name, .pi-val { font-size: 13px; font-weight: 400; color: #fff; font-feature-settings: "tnum"; white-space: nowrap; }
+.pi-name { overflow: hidden; text-overflow: ellipsis; text-align: left; }
 .ch-item, .pi-val { text-align: right; }
-
-/* Заголовки столбцов (Вес, К, Б...) */
-.ch-item { 
-  opacity: 0.6; 
-  font-size: 11px; 
-  text-transform: uppercase; 
-  font-weight: 600; 
-}
-
-/* Анимация появления */
-@keyframes slideIn {
-  from { opacity: 0; transform: translateY(20px) scale(0.98); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
-}
-
-/* Разрешаем скролл для слоя с виджетами и лентой */
-.dashboard-layer {
-  overflow-y: auto; 
-  overflow-x: hidden;
-  pointer-events: none; /* Сам слой прозрачный для кликов... */
-}
-/* ...но контент внутри должен быть кликабельным */
-.carousel-wrap, .timeline-container {
-  pointer-events: auto;
-}
-
+.ch-item { opacity: 0.6; font-size: 11px; text-transform: uppercase; font-weight: 600; }
+@keyframes slideIn { from { opacity: 0; transform: translateY(20px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+.gh-icon { width: 24px; height: 24px; display: block; background-color: currentColor; -webkit-mask-position: center; mask-position: center; -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; -webkit-mask-size: contain; mask-size: contain; }
 </style>
 </head>
 <body>
@@ -399,13 +300,9 @@ html, body {
   </div>
 
   <div class="app-layout" id="appLayout">
-
     <div class="fixed-header-group" id="headerGroup">
-      
       <div class="calendar-block" id="calendarBlock">
-        <div class="calendar-header">
-          <div class="month-label" id="monthLabel">...</div>
-        </div>
+        <div class="calendar-header"><div class="month-label" id="monthLabel">...</div></div>
         <div class="calendar-swipe-area" id="swipeArea">
           <div class="calendar-track" id="calTrack">
             <div class="calendar-week" id="weekPrev"></div>
@@ -414,10 +311,8 @@ html, body {
           </div>
         </div>
       </div>
-
       <div class="carousel-wrap">
         <div class="carousel-track" id="widgetTrack">
-          
           <div class="widget">
             <div class="macros-grid">
               <div class="macro-item"><div class="donut-box"><svg class="mini-donut" viewBox="0 0 60 60"><circle class="md-bg" cx="30" cy="30" r="24"/><circle class="md-val stroke-kcal" cx="30" cy="30" r="24" style="stroke-dashoffset: 45px"/></svg><div class="m-icon">🔥</div></div><div class="m-data"><div class="m-nums">1450<span>/2100</span></div><div class="m-lbl">ККАЛ</div></div></div>
@@ -426,7 +321,6 @@ html, body {
               <div class="macro-item"><div class="donut-box"><svg class="mini-donut" viewBox="0 0 60 60"><circle class="md-bg" cx="30" cy="30" r="24"/><circle class="md-val stroke-carb" cx="30" cy="30" r="24" style="stroke-dashoffset: 60px"/></svg><div class="m-icon">🌾</div></div><div class="m-data"><div class="m-nums">180<span>/250</span></div><div class="m-lbl">УГЛИ</div></div></div>
             </div>
           </div>
-
           <div class="widget water-widget" id="waterCard">
             <div class="water-header"><div class="water-title">Водный баланс</div><div class="water-percent" id="lbl-pct">0%</div></div>
             <div class="water-cols">
@@ -444,22 +338,18 @@ html, body {
               </div>
             </div>
           </div>
-
         </div>
         <div class="dots"><div class="dot active"></div><div class="dot"></div></div>
       </div>
     </div>
+
     <div class="scroll-container" id="feedScroll">
        <div class="timeline-container" id="mealTimeline"></div>
     </div>
 
     <div class="cam-viewport">
       <video id="video" autoplay playsinline muted></video>
-      
-      <div id="loader" class="cam-loader hidden">
-        <div class="spinner"></div>
-      </div>
-
+      <div id="loader" class="cam-loader hidden"><div class="spinner"></div></div>
       <svg width="0" height="0" style="position:absolute">
         <defs>
           <linearGradient id="grad-kcal"><stop offset="0%" stop-color="#ff9f0a"/><stop offset="100%" stop-color="#ff453a"/></linearGradient>
@@ -468,101 +358,60 @@ html, body {
           <linearGradient id="grad-carb"><stop offset="0%" stop-color="#2ecc71"/><stop offset="100%" stop-color="#1abc9c"/></linearGradient>
         </defs>
       </svg>
-
       <canvas id="uiCanvas"></canvas>
-      <div id="camToast" class="cam-toast">Camera Name</div>
-
+      <div id="camToast" class="cam-toast">Toast</div>
       <div class="ui-layer idle" id="camUI">
         <div class="top-bar">
-          <div class="btn-close" id="btnClose">
-             <div class="gh-icon" style="-webkit-mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/cross2.svg'); mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/cross2.svg');"></div>
-          </div>
-          <div class="status-chip" id="lvlChip">
-            <div class="status-dot" id="lvlDot"></div>
-            <span id="lvlText">Уровень</span>
-          </div>
+          <div class="btn-close" id="btnClose"><div class="gh-icon" style="-webkit-mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/cross2.svg'); mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/cross2.svg');"></div></div>
+          <div class="status-chip" id="lvlChip"><div class="status-dot" id="lvlDot"></div><span id="lvlText">Уровень</span></div>
           <div class="spacer"></div>
         </div>
-
         <div class="controls-grid">
-          <div class="grid-cell-left">
-              <div class="action-btn" id="btnTorch">
-                <div class="gh-icon" style="-webkit-mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/flash1.svg'); mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/flash1.svg');"></div>
-              </div>
-          </div>
-          <div class="grid-cell-center">
-            <div class="shutter-outer disabled" id="shutterBtn">
-              <div class="shutter-inner"></div>
-            </div>
-          </div>
-          <div class="grid-cell-right">
-            <div class="action-btn hidden" id="btnSwitch">
-              <div class="gh-icon" style="-webkit-mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/rotate.svg'); mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/rotate.svg');"></div>
-            </div>
-          </div>
+          <div class="grid-cell-left"><div class="action-btn" id="btnTorch"><div class="gh-icon" style="-webkit-mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/flash1.svg'); mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/flash1.svg');"></div></div></div>
+          <div class="grid-cell-center"><div class="shutter-outer disabled" id="shutterBtn"><div class="shutter-inner"></div></div></div>
+          <div class="grid-cell-right"><div class="action-btn hidden" id="btnSwitch"><div class="gh-icon" style="-webkit-mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/rotate.svg'); mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/rotate.svg');"></div></div></div>
         </div>
       </div>
     </div>
+    
     <div class="omni-bar" id="omniBar">
-        <div class="omni-icon-btn">
-          <div class="gh-icon" style="-webkit-mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/add.svg'); mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/add.svg');"></div>
-        </div>
-        <div class="input-wrap">
-          <textarea class="omni-input" rows="1" placeholder="Яблоко 200г, кофе..."></textarea>
-        </div>
+        <div class="omni-icon-btn"><div class="gh-icon" style="-webkit-mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/add.svg'); mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/add.svg');"></div></div>
+        <div class="input-wrap"><textarea class="omni-input" rows="1" placeholder="Яблоко 200г, кофе..."></textarea></div>
         <div class="cam-trigger-btn" id="btnStartCam">
-          <div id="icoCam" class="gh-icon omni-btn-icon" 
-              style="-webkit-mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/cam.svg'); mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/cam.svg');">
-          </div>
-          <div id="icoSend" class="gh-icon omni-btn-icon icon-hidden" 
-              style="-webkit-mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/plane.svg'); mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/plane.svg'); margin-left: 2px;">
-          </div>
+          <div id="icoCam" class="gh-icon omni-btn-icon" style="-webkit-mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/cam.svg'); mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/cam.svg');"></div>
+          <div id="icoSend" class="gh-icon omni-btn-icon icon-hidden" style="-webkit-mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/plane.svg'); mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/plane.svg'); margin-left: 2px;"></div>
         </div>
     </div>
+  </div> 
 
-  </div> <div id="permReq" class="perm-overlay hidden">
+  <div id="permReq" class="perm-overlay hidden">
     <div style="font-size:48px; margin-bottom:10px">📐</div>
     <h2 style="margin:0">Настройка</h2>
-    <p style="color:var(--text-muted)">Разрешите доступ к датчикам для работы уровня.</p>
+    <p style="color:var(--text-muted)">Разрешите доступ к датчикам.</p>
     <button class="perm-btn" onclick="requestSensors()">Разрешить</button>
   </div>
-
   <div id="previewScreen" class="preview-overlay">
     <img id="finalPhoto" class="preview-img">
     <div class="comment-wrap">
-      <label class="comment-label">Комментарий (необязательно)</label>
-      <textarea id="commentInput" class="comment-input" placeholder="Можете указать продукты, это повысит точность модели. Например: рис 200, треска 150"></textarea>
+      <label class="comment-label">Комментарий</label>
+      <textarea id="commentInput" class="comment-input" placeholder="Например: рис 200, треска 150"></textarea>
     </div>
     <div class="preview-controls">
       <button class="btn" onclick="retake()">Переснять</button>
       <button class="btn primary" id="btnSend" onclick="sendPhoto()">Готово</button>
     </div>
   </div>
-
   <div class="processing-overlay" id="procOverlay">
     <div class="proc-card">
-      <div class="proc-visual">
-        <div class="proc-orb"></div>
-        <div class="proc-ring"></div>
-      </div>
+      <div class="proc-visual"><div class="proc-orb"></div><div class="proc-ring"></div></div>
       <div class="proc-title">Думаю</div>
-      <div class="proc-steps" id="procSteps">
-        <div class="step pending" id="step-1"><div class="s-icon">🛡️</div><div class="s-lbl">Gatekeeper: Проверяю...</div></div>
-        <div class="step pending" id="step-2"><div class="s-icon">📦</div><div class="s-lbl">Librarian: Ищу в базе...</div></div>
-        <div class="step pending" id="step-3"><div class="s-icon">🕵️</div><div class="s-lbl">Detective: Ищу ингредиенты...</div></div>
-        <div class="step pending" id="step-4"><div class="s-icon">📐</div><div class="s-lbl">Physicist: Определяю вес...</div></div>
-        <div class="step pending" id="step-5"><div class="s-icon">📝</div><div class="s-lbl">Synthesizer: Готовлю ответ...</div></div>
-      </div>
+      <div class="proc-steps" id="procSteps"></div>
       <div class="proc-close" onclick="cancelProcessing()">Отмена</div>
     </div>
   </div>
-
   <div class="draft-overlay" id="draftOverlay">
     <div class="draft-sheet">
-      <div class="ds-header">
-        <div class="ds-title">Проверьте данные</div>
-        <div class="ds-subtitle">Если необходимо, внесите правки перед записью в дневник</div>
-      </div>
+      <div class="ds-header"><div class="ds-title">Проверка</div><div class="ds-subtitle">Подтвердите данные</div></div>
       <div class="ds-list" id="draftList"></div>
       <div class="ds-actions">
         <button class="ds-btn sec" onclick="closeDraft()">Отмена</button>
@@ -571,1078 +420,55 @@ html, body {
     </div>
   </div>
 
-
 <script>
-/* ============================================================
- * BLOCK 0: TMA boot (FIXED & SAFE)
- * ============================================================ */
-(function initTMA() {
-  try {
-    const tg = window.Telegram?.WebApp;
-    if (!tg) return; // Если это не Телеграм, просто выходим, не ломая сайт
-
-    tg.ready();
-    tg.expand();
-
-    // 1. Красим заголовок (обернуто в защиту, чтобы не ломало загрузку)
-    try {
-      tg.setHeaderColor('#050505'); // Черный цвет
-      if (tg.setBackgroundColor) {
-        tg.setBackgroundColor('#050505');
-      }
-    } catch (e) {
-      console.log('Error setting color:', e);
-    }
-
-    // 2. Настраиваем кнопку "Назад"
-    try {
-      if (tg.BackButton) {
-        tg.BackButton.show();
-        // Сначала удаляем старые обработчики, чтобы кнопка не тупила
-        tg.BackButton.offClick(); 
-        // Добавляем переход
-        tg.BackButton.onClick(function() {
-          window.location.href = 'router.html';
-        });
-      }
-    } catch (e) {
-      console.log('Error setting back button:', e);
-    }
-
-    // 3. Отключаем свайпы (если поддерживается)
-    try {
-      if (tg.disableVerticalSwipes) tg.disableVerticalSwipes();
-    } catch (e) {}
-
-  } catch (globalErr) {
-    // Если вообще все упало в TMA, выводим ошибку, но НЕ останавливаем скрипт
-    console.error('Critical TMA Error:', globalErr);
-  }
-})();
-  
-/**
- * Проверка, является ли текущий пользователь админом
- * @returns {boolean} true, если Telegram user.id совпадает с ID администратора
- */
-function isAdmin() {
-  try {
-    const userId = Number(window.Telegram?.WebApp?.initDataUnsafe?.user?.id);
-    return userId === 196047220;
-  } catch (_) {
-    return false;
-  }
-}
-
-// === БЕЗУПРЕЧНЫЙ РЕСАЙЗ (VISUAL VIEWPORT + FIXED BACKGROUND) ===
-(function initStableLayout() {
-  const app = document.getElementById('appLayout'); 
-  const fxLayer = document.getElementById('fxLayer');
-  
-  // Запоминаем исходные размеры при старте
-  let fixedHeight = window.innerHeight;
-  let lastWidth = window.innerWidth;
-
-  // Сразу фиксируем фон, чтобы он был размером с весь экран
-  if (fxLayer) {
-      fxLayer.style.height = `${fixedHeight}px`;
-  }
-  
-  function handleResize() {
-    // 1. Размеры для интерфейса (он должен сжиматься под клавиатуру)
-    const vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
-    
-    // 2. Текущие размеры окна
-    const currentW = window.innerWidth;
-    const currentH = window.innerHeight;
-
-    // 3. Управляем интерфейсом (всегда подгоняем под видимую часть)
-    if (app) {
-        app.style.height = `${vh}px`;
-        // Принудительный скролл в начало, чтобы iOS не сдвигал body
-        window.scrollTo(0, 0);
-    }
-
-    // 4. Управляем ФОНОМ (ХИТРОСТЬ!)
-    // Если ширина изменилась (поворот экрана) — обновляем высоту фона.
-    // Если ширина НЕ изменилась (это клавиатура или адресная строка) — НЕ трогаем фон.
-    if (Math.abs(currentW - lastWidth) > 50) { 
-        fixedHeight = currentH; // Обновляем базу
-        lastWidth = currentW;
-        if (fxLayer) fxLayer.style.height = `${fixedHeight}px`;
-    }
-    // В противном случае фон остается старой высоты (fixedHeight) и орбы не прыгают.
-  }
-
-  // Слушатели
-  if (window.visualViewport) {
-    window.visualViewport.addEventListener('resize', handleResize);
-    window.visualViewport.addEventListener('scroll', handleResize);
-  }
-  window.addEventListener('resize', handleResize);
-
-  // Хак для полей ввода (чтобы точно пересчиталось при фокусе)
-  document.querySelectorAll('input, textarea').forEach(el => {
-      el.addEventListener('focus', () => setTimeout(handleResize, 100));
-      el.addEventListener('blur', () => setTimeout(handleResize, 100));
-  });
-
-  // Инициализация Telegram
-  const tg = window.Telegram?.WebApp;
-  if(tg) {
-    tg.ready(); tg.expand();
-    tg.setHeaderColor('#000000');
-    if(tg.disableVerticalSwipes) tg.disableVerticalSwipes();
-    tg.onEvent('viewportChanged', handleResize);
-  }
-
-  // Запуск
-  handleResize();
-})();
-
-  // === CONFIG ===
-  const API_URL = "https://script.google.com/macros/s/AKfycbx0fUaaCH-JwnG5R_3TFgU5FSibsEuhuS0ZZZfyxPNVPQ1ZpCfUIaa5aE8vjgqitac/exec"; // ⚠️ ВСТАВЬ СЮДА СВОЙ URL!
-
-  // === TELEGRAM INIT ===
-  const tg = window.Telegram?.WebApp;
-  if(tg) {
-    tg.ready(); tg.expand();
-    tg.setHeaderColor('#000000');
-    if(tg.disableVerticalSwipes) tg.disableVerticalSwipes();
-  }
-
- 
-  // === API HELPER (CORS HACK FIX) ===
-  const API = {
-    // 1. Исправленная конвертация: возвращаем ПОЛНЫЙ Data URL
-    blobToBase64: (blob) => {
-      return new Promise((resolve, _) => {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-           // НЕ ОБРЕЗАЕМ! Отправляем как есть: "data:image/jpeg;base64,..."
-           resolve(reader.result);
-        };
-        reader.readAsDataURL(blob);
-      });
-    },
-
-    // 2. Исправленная отправка: text/plain
-    send: async (action, payload) => {
-      const user = tg?.initDataUnsafe?.user || { id: 0, first_name: 'BrowserTest' };
-      const body = {
-        action: action,
-        user: user,
-        initData: tg?.initData || '',
-        ...payload
-      };
-      
-      // 🔥 MAGIC FIX: Используем text/plain, чтобы избежать CORS Preflight
-      const response = await fetch(API_URL, {
-        method: "POST",
-        headers: { "Content-Type": "text/plain;charset=utf-8" }, 
-        body: JSON.stringify(body)
-      });
-
-      const json = await response.json();
-      if (!json.ok) throw new Error(json.error || 'Server Error');
-      return json;
-    }
-  };
-
-  // === STATE & DOM ===
-  const state = {
-    stream: null,
-    track: null,
-    levelOK: false,
-    angleX: 0, angleY: 0,
-    photoBlob: null,
-    isCapturing: false,
-    isSwitching: false,
-    devices: [],      
-    currentDevIdx: 0, 
-    torchOn: false,
-    sensorActive: false,
-    uiMode: 'menu' 
-  };
-
-  const DOM = {
-    video: document.getElementById('video'),
-    canvas: document.getElementById('uiCanvas'),
-    ctx: document.getElementById('uiCanvas').getContext('2d'),
-    shutter: document.getElementById('shutterBtn'),
-    lvlDot: document.getElementById('lvlDot'),
-    lvlText: document.getElementById('lvlText'),
-    permReq: document.getElementById('permReq'),
-    preview: document.getElementById('previewScreen'),
-    finalImg: document.getElementById('finalPhoto'),
-    btnSend: document.getElementById('btnSend'),
-    commentInput: document.getElementById('commentInput'),
-    btnTorch: document.getElementById('btnTorch'),
-    btnSwitch: document.getElementById('btnSwitch'),
-    toast: document.getElementById('camToast'),
-    loader: document.getElementById('loader'),
-    
-    omniBar: document.getElementById('omniBar'),
-    camUI: document.getElementById('camUI'),
-
-    omniInput: document.querySelector('.omni-input'), // Текстовое поле
-    icoCam: document.getElementById('icoCam'),
-    icoSend: document.getElementById('icoSend'),
-
-    btnStartCam: document.getElementById('btnStartCam'),
-    btnClose: document.getElementById('btnClose')
-  };
-
-  // === LOGIC ===
-// === OMNI BAR LOGIC (TEXT vs CAMERA) ===
-  
-  // 1. Слушаем ввод текста
-  DOM.omniInput.addEventListener('input', () => {
-    const hasText = DOM.omniInput.value.trim().length > 0;
-    
-    // Авто-высота поля (как в scanner.html)
-    DOM.omniInput.style.height = 'auto'; 
-    DOM.omniInput.style.height = Math.min(DOM.omniInput.scrollHeight, 80) + 'px';
-
-    if (hasText) {
-      // Режим ОТПРАВКИ
-      DOM.btnStartCam.classList.add('mode-send');
-      DOM.icoCam.classList.add('icon-hidden');
-      DOM.icoSend.classList.remove('icon-hidden');
-    } else {
-      // Режим КАМЕРЫ
-      DOM.btnStartCam.classList.remove('mode-send');
-      DOM.icoCam.classList.remove('icon-hidden');
-      DOM.icoSend.classList.add('icon-hidden');
-    }
-  });
-
-  // 2. Умный обработчик клика
-    DOM.btnStartCam.onclick = async () => {
-      DOM.omniInput.blur();
-    const text = DOM.omniInput.value.trim();
-    
-    if (text.length > 0) {
-      await sendTextOnly(text);
-    } else {
-      state.uiMode = 'camera';
-      
-      // ВОТ ГЛАВНОЕ ИСПРАВЛЕНИЕ:
-      // Используем правильный ID 'calendarBlock' и уводим его вверх
-      const cal = document.getElementById('calendarBlock');
-      if(cal) cal.style.transform = 'translateY(-150%)'; 
-      
-      // Скрываем виджеты тоже, чтобы не мешали
-      const dash = document.getElementById('dashboardLayer');
-      if(dash) dash.classList.add('hidden-mode');
-
-      DOM.omniBar.classList.add('hidden');
-      DOM.camUI.classList.remove('idle');
-      DOM.camUI.style.pointerEvents = 'auto'; 
-      if(tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
-      await initCamera(); 
-    }
-  };
-
-  // 3. Функция отправки чистого текста
-  // Для текстового режима (из Omni Bar) тоже нужно обновить логику
-  async function sendTextOnly(text) {
-     const btn = DOM.btnStartCam;
-     btn.style.opacity = '0.5';
-     haptic('medium');
-     
-     try {
-       startProcessingUI('text');
-       
-       const result = await API.send('scan', { image: null, userText: text });
-       
-       stopProcessingUI();
-       DOM.omniInput.value = ''; // Чистим поле
-       
-       if (result.ok) {
-         openDraftSheet(result.data, result.scanId);
-       } else {
-         throw new Error(result.error);
-       }
-     } catch(e) {
-       stopProcessingUI();
-       alert("Ошибка: " + e.message);
-     } finally {
-       btn.style.opacity = '1';
-     }
-  }
-
-    DOM.btnClose.onclick = () => {
-    // 1. ПРИНУДИТЕЛЬНО УБИРАЕМ КЛАВИАТУРУ
-    DOM.omniInput.blur();
-    if(DOM.commentInput) DOM.commentInput.blur();
-
-    // 2. СБРАСЫВАЕМ СКРОЛЛ В НОЛЬ
-    window.scrollTo(0, 0);
-
-    // 3. Возвращаем интерфейс
-    state.uiMode = 'menu';
-    DOM.camUI.classList.add('idle');
-    DOM.camUI.style.pointerEvents = 'none';
-    DOM.omniBar.classList.remove('hidden');
-    
-    const cal = document.getElementById('calendarBlock');
-    if(cal) cal.style.transform = 'translateY(0)';
-    
-    const dash = document.getElementById('dashboardLayer');
-    if(dash) dash.classList.remove('hidden-mode');
-
-    stopStream(); 
-
-    // 4. КОНТРОЛЬНЫЙ РЕСАЙЗ (Через 0.1с)
-    // Если клавиатура уезжала медленно, это вернет экран на место
-    setTimeout(() => {
-        const app = document.getElementById('appLayout');
-        if (app) {
-             app.style.height = window.innerHeight + 'px';
-             window.scrollTo(0, 0);
-        }
-    }, 100);
-  };
-
-  let toastTimer;
-  function showToast(msg) {
-    DOM.toast.textContent = msg;
-    DOM.toast.classList.add('visible');
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { DOM.toast.classList.remove('visible'); }, 2000);
-  }
-
-  function stopStream() {
-    if (state.stream) { state.stream.getTracks().forEach(t => t.stop()); state.stream = null; }
-    state.track = null; state.torchOn = false; 
-    updateTorchUI();
-    DOM.video.srcObject = null;
-    DOM.video.classList.remove('active');
-  }
-
-  async function startStream(deviceId) {
-    if (state.stream) stopStream();
-    const constraints = { audio: false, video: { deviceId: deviceId ? { exact: deviceId } : undefined, facingMode: deviceId ? undefined : 'environment', width: { ideal: 1920 }, height: { ideal: 2560 } } };
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      state.stream = stream; state.track = stream.getVideoTracks()[0];
-      DOM.video.srcObject = stream; DOM.video.classList.add('active');
-      const settings = state.track.getSettings();
-      if (settings.deviceId) localStorage.setItem('ultima_cam_id', settings.deviceId);
-      
-      let label = state.track.label || "Камера";
-      label = label.replace(/\(.*\)/, '').replace(/camera2/i, '').replace(/facing/i, '').trim();
-      if(label.length < 2) label = "Камера " + (state.currentDevIdx + 1);
-      if(state.devices.length > 1) showToast(label);
-
-      const caps = state.track.getCapabilities();
-      if (caps.focusMode?.includes('continuous')) { try { await state.track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch(e){} }
-    } catch (e) {
-      if (deviceId) { localStorage.removeItem('ultima_cam_id'); await startStream(null); } 
-      else { alert("Ошибка камеры: " + e.message); }
-    }
-  }
-
-  DOM.btnSwitch.onclick = async () => {
-    // 1. Проверки
-    if (state.devices.length < 2 || state.isSwitching) return;
-    
-    state.isSwitching = true; 
-    haptic('medium');
-    
-    // 2. Блокируем интерфейс
-    DOM.loader.classList.remove('hidden');
-    DOM.btnSwitch.classList.add('disabled'); 
-    DOM.btnTorch.classList.add('disabled'); 
-    DOM.shutter.classList.add('disabled');
-
-    // 3. ИЩЕМ ИКОНКУ (ПРАВИЛЬНО)
-    const icon = DOM.btnSwitch.querySelector('.gh-icon'); 
-    if (icon) {
-        icon.style.transition = 'transform 0.4s'; 
-        icon.style.transform = 'rotate(180deg)';
-    }
-
-    // 4. Переключаем
-    if (state.stream) state.stream.getTracks().forEach(t => t.stop());
-    await new Promise(r => setTimeout(r, 500));
-    
-    let nextIdx = state.currentDevIdx + 1;
-    if (nextIdx >= state.devices.length) nextIdx = 0;
-    state.currentDevIdx = nextIdx;
-    
-    await startStream(state.devices[nextIdx].deviceId);
-    
-    // 5. Разблокируем
-    DOM.loader.classList.add('hidden');
-    DOM.btnSwitch.classList.remove('disabled'); 
-    DOM.btnTorch.classList.remove('disabled'); 
-    DOM.shutter.classList.remove('disabled');
-    
-    state.isSwitching = false; 
-    if (icon) setTimeout(() => icon.style.transform = '', 400);
-  };
-
-
-  DOM.btnTorch.onclick = async () => {
-    if(!state.track) return;
-    const caps = state.track.getCapabilities();
-    if (!caps.torch) { showToast("Вспышка недоступна"); haptic('error'); return; }
-    const newState = !state.torchOn;
-    try { await state.track.applyConstraints({ advanced: [{ torch: newState }] }); state.torchOn = newState; updateTorchUI(); haptic('light'); } 
-    catch(e) { showToast("Ошибка вспышки"); }
-  };
-
-  function updateTorchUI() {
-    if (state.torchOn) { DOM.btnTorch.style.backgroundColor = 'var(--acc-orange)'; DOM.btnTorch.style.color = '#000'; } 
-    else { DOM.btnTorch.style.backgroundColor = ''; DOM.btnTorch.style.color = '#fff'; }
-  }
-
-  function checkSensorPerms() {
-    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') { DOM.permReq.classList.remove('hidden'); } 
-    else { window.addEventListener('deviceorientation', handleOrientation); }
-  }
-  async function requestSensors() {
-    try { const resp = await DeviceOrientationEvent.requestPermission(); if (resp === 'granted') { window.addEventListener('deviceorientation', handleOrientation); } } 
-    catch (e) {} finally { DOM.permReq.classList.add('hidden'); }
-  }
-  function handleOrientation(e) {
-    let x = e.beta; let y = e.gamma; 
-    if (x === null || y === null) return;
-    state.sensorActive = true; state.angleX = x; state.angleY = y;
-  }
-  function updateUI() {
-    if (state.uiMode === 'menu') return;
-    if (state.isCapturing || state.isSwitching) return;
-    if (!state.sensorActive) { DOM.lvlDot.classList.remove('ok'); DOM.lvlText.textContent = "Камера"; DOM.shutter.classList.remove('disabled'); DOM.shutter.classList.add('active'); return; }
-    if (state.levelOK) { DOM.lvlDot.classList.add('ok'); DOM.lvlText.textContent = "Ровно"; DOM.shutter.classList.remove('disabled'); DOM.shutter.classList.add('active'); } 
-    else { DOM.lvlDot.classList.remove('ok'); DOM.lvlText.textContent = "Выровняйте"; DOM.shutter.classList.add('disabled'); DOM.shutter.classList.remove('active'); }
-  }
-  function resizeCanvas() { const w = window.innerWidth; const h = window.innerHeight; if (DOM.canvas.width !== w || DOM.canvas.height !== h) { DOM.canvas.width = w; DOM.canvas.height = h; } }
-
-  async function initCamera() {
-    try { const savedId = localStorage.getItem('ultima_cam_id'); await startStream(savedId); await updateDeviceList(); resizeCanvas(); window.addEventListener('resize', resizeCanvas); requestAnimationFrame(drawLoop); checkSensorPerms(); } 
-    catch (e) { console.warn("Init Error:", e); }
-  }
-  async function updateDeviceList() {
-    try {
-      const allDevices = await navigator.mediaDevices.enumerateDevices();
-      state.devices = allDevices.filter(d => d.kind === 'videoinput');
-      if (state.devices.length > 1) { DOM.btnSwitch.classList.remove('hidden'); } else { DOM.btnSwitch.classList.add('hidden'); }
-      if (state.track) {
-        const currentId = state.track.getSettings().deviceId;
-        state.currentDevIdx = state.devices.findIndex(d => d.deviceId === currentId);
-        if(state.currentDevIdx === -1) state.currentDevIdx = 0;
-      }
-    } catch(e) {}
-  }
-
-  function drawLoop() {
-    const ctx = DOM.ctx; const w = DOM.canvas.width; const h = DOM.canvas.height;
-    ctx.clearRect(0, 0, w, h);
-    if (state.uiMode === 'menu') { requestAnimationFrame(drawLoop); return; }
-    
-    const cx = w / 2; const cy = h / 2;
-    const cardRatio = 1.586; const cardW = w * 0.22; const cardH = cardW * cardRatio;
-    const cardX = cx + 80; const cardY = cy - cardH / 2; const r = 8; 
-    ctx.beginPath(); ctx.moveTo(cardX + r, cardY); ctx.lineTo(cardX + cardW - r, cardY); ctx.quadraticCurveTo(cardX + cardW, cardY, cardX + cardW, cardY + r); ctx.lineTo(cardX + cardW, cardY + cardH - r); ctx.quadraticCurveTo(cardX + cardW, cardY + cardH, cardX + cardW - r, cardY + cardH); ctx.lineTo(cardX + r, cardY + cardH); ctx.quadraticCurveTo(cardX, cardY + cardH, cardX, cardY + cardH - r); ctx.lineTo(cardX, cardY + r); ctx.quadraticCurveTo(cardX, cardY, cardX + r, cardY);
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)'; ctx.fill(); 
-    ctx.save(); ctx.translate(cardX + cardW / 2, cardY + cardH / 2); ctx.rotate(-Math.PI / 2); ctx.fillStyle = '#ffffff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = 'bold 12px sans-serif'; ctx.fillText("CREDIT CARD", 0, -10); ctx.font = '10px sans-serif'; ctx.fillText("(необязательно)", 0, 10); ctx.restore(); 
-
-    if (state.sensorActive) {
-        const rBubble = 14; const rTarget = 18; const maxOffset = 60; 
-        const rawX = (isNaN(state.angleY) || state.angleY === null) ? 0 : state.angleY;
-        const rawY = (isNaN(state.angleX) || state.angleX === null) ? 0 : state.angleX;
-        const clamp = (val) => Math.max(-20, Math.min(20, val));
-        const dx = (clamp(rawX) / 20) * maxOffset; const dy = (clamp(rawY) / 20) * maxOffset;
-        const dist = Math.hypot(dx, dy);
-        const isInside = (dist + rBubble) <= rTarget;
-        if (state.levelOK !== isInside && !state.isCapturing && !state.isSwitching) { state.levelOK = isInside; updateUI(); if(isInside) haptic('medium'); }
-        ctx.shadowBlur = 4; ctx.shadowColor = 'rgba(0,0,0,0.5)';
-        ctx.beginPath(); ctx.arc(cx, cy, rTarget, 0, Math.PI * 2); 
-        const color = (state.levelOK || state.isCapturing) ? '#30d158' : 'rgba(255,255,255,0.85)';
-        ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.stroke();
-        ctx.beginPath(); ctx.arc(cx + dx, cy + dy, rBubble, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill(); ctx.shadowBlur = 0;
-    } else {
-        ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.moveTo(cx-10, cy); ctx.lineTo(cx+10, cy); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(cx, cy-10); ctx.lineTo(cx, cy+10); ctx.stroke();
-    }
-    requestAnimationFrame(drawLoop);
-  }
-
-DOM.shutter.addEventListener('click', async () => {
-    if (state.isCapturing || state.isSwitching) return; 
-    
-    // Проверка уровня
-    if (state.sensorActive && !state.levelOK) { 
-        haptic('error'); 
-        showToast("Выровняйте телефон"); 
-        return; 
-    }
-    
-    try {
-        state.isCapturing = true; 
-        haptic('heavy');
-        DOM.shutter.style.transform = 'scale(0.8)'; 
-        DOM.shutter.style.opacity = '0.5';
-        
-        await new Promise(r => setTimeout(r, 50));
-        const vid = DOM.video;
-        
-        if (vid.readyState < 2 || vid.videoWidth === 0) throw new Error("Камера не готова");
-
-        // === ВАЖНОЕ ИСПРАВЛЕНИЕ: СЖАТИЕ ФОТО ===
-        const MAX_SIDE = 1024; // Ограничиваем размер до 1024px (этого достаточно для ИИ)
-        let w = vid.videoWidth;
-        let h = vid.videoHeight;
-        
-        // Считаем новые размеры, сохраняя пропорции
-        if (w > h) {
-          if (w > MAX_SIDE) { h *= MAX_SIDE / w; w = MAX_SIDE; }
-        } else {
-          if (h > MAX_SIDE) { w *= MAX_SIDE / h; h = MAX_SIDE; }
-        }
-
-        // Рисуем уменьшенную картинку на виртуальном холсте
-        const c = document.createElement('canvas'); 
-        c.width = w; 
-        c.height = h;
-        const ctx = c.getContext('2d');
-        ctx.drawImage(vid, 0, 0, w, h);
-        
-        // Конвертируем в Base64 с качеством 0.7 (сильно экономит место)
-        const blob = await new Promise(resolve => c.toBlob(resolve, 'image/jpeg', 0.7)); 
-        // === КОНЕЦ ИСПРАВЛЕНИЯ ===
-
-        if (!blob) throw new Error("Пустой кадр");
-        showPreview(blob);
-
-    } catch(err) {
-        console.error(err); 
-        haptic('error'); 
-        showToast("Ошибка: " + err.message);
-        state.isCapturing = false; 
-        updateUI();
-    } finally {
-        DOM.shutter.style.transform = ''; 
-        DOM.shutter.style.opacity = ''; 
-        state.isCapturing = false;
-    }
-  });
-
-  function showPreview(blob) {
-    if(!blob) return; state.photoBlob = blob;
-    DOM.finalImg.src = URL.createObjectURL(blob); DOM.preview.style.display = 'flex';
-  }
-  function retake() {
-    DOM.preview.style.display = 'none';
-    if(DOM.finalImg.src) URL.revokeObjectURL(DOM.finalImg.src);
-    DOM.finalImg.src = ''; state.photoBlob = null; DOM.commentInput.value = ''; 
-  }
-
-  // --- 🔥 ОТПРАВКА НА БЭК (ИСПРАВЛЕНО ДЛЯ CORS) ---
-  async function sendPhoto() {
-    const btn = DOM.btnSend;
-    if (btn.disabled) return; 
-    
-    // Закрываем превью
-    DOM.preview.style.display = 'none'; 
-    haptic('heavy');
-
-    try {
-        if (!state.photoBlob) throw new Error("Нет фото");
-        
-        // 1. Запускаем анимацию "Думаю..."
-        startProcessingUI('photo');
-        
-        // 2. Подготовка данных
-        const base64 = await API.blobToBase64(state.photoBlob);
-        const userText = DOM.commentInput.value;
-        
-        // 3. Реальный запрос к API (это займет 10-20 сек)
-        // В это время крутится анимация
-        const result = await API.send('scan', { image: base64, userText: userText });
-        
-        // 4. Если успех - показываем результат в Draft Sheet
-        stopProcessingUI(); // Останавливаем анимацию
-        
-        if (result.ok) {
-           openDraftSheet(result.data, result.scanId);
-        } else {
-           throw new Error(result.error || "Ошибка сервера");
-        }
-
-    } catch (e) {
-        stopProcessingUI();
-        console.error(e);
-        haptic('error');
-        alert("Ошибка: " + e.message);
-        // Возвращаем UI камеры
-        DOM.preview.style.display = 'flex'; 
-        btn.disabled = false;
-    }
-  }
-
-  function haptic(style) { 
-    if (!tg || !tg.HapticFeedback) return;
-    
-    // Разделяем типы вибрации согласно документации Telegram
-    if (['error', 'success', 'warning'].includes(style)) {
-      tg.HapticFeedback.notificationOccurred(style);
-    } else {
-      // light, medium, heavy, rigid, soft
-      tg.HapticFeedback.impactOccurred(style);
-    }
-  }
-
-  // === UI ЛОГИКА: АНИМАЦИЯ ПРОЦЕССА (Smart Routing) ===
-  let procInterval;
-  
-  function startProcessingUI(mode) {
-    const container = document.getElementById('procSteps');
-    const overlay = document.getElementById('procOverlay');
-    
-    // 1. Генерируем правильный список шагов в зависимости от режима
-    if (mode === 'text') {
-        // --- TEXT ROUTE ---
-        container.innerHTML = `
-            <div class="step pending" id="step-1"><div class="s-icon">🛡️</div><div class="s-lbl">Gatekeeper: Проверяю...</div></div>
-            <div class="step pending" id="step-2"><div class="s-icon">🧠</div><div class="s-lbl">TextParser: Ищу в базе...</div></div>
-            <div class="step pending" id="step-3"><div class="s-icon">📝</div><div class="s-lbl">Synthesizer: Готовлю ответ...</div></div>
-        `;
-    } else {
-        // --- PHOTO ROUTE (Default Plate Flow) ---
-        // Мы показываем полный путь "Тарелки", так как это самый красивый сценарий.
-        // Если это окажется Упаковка (Librarian), сервер ответит раньше, и мы просто закроем окно, что тоже ок.
-        container.innerHTML = `
-            <div class="step pending" id="step-1"><div class="s-icon">🛡️</div><div class="s-lbl">Gatekeeper: Проверяю...</div></div>
-            <div class="step pending" id="step-2"><div class="s-icon">🕵️</div><div class="s-lbl">Detective: Ищу ингредиенты...</div></div>
-            <div class="step pending" id="step-3"><div class="s-icon">📐</div><div class="s-lbl">Physicist: Определяю вес...</div></div>
-            <div class="step pending" id="step-4"><div class="s-icon">🍳</div><div class="s-lbl">Technologist: Анализирую...</div></div>
-            <div class="step pending" id="step-5"><div class="s-icon">📝</div><div class="s-lbl">Synthesizer: Готовлю ответ...</div></div>
-        `;
-    }
-
-    overlay.classList.add('active');
-    
-    // 2. Запускаем анимацию переключения шагов
-    let step = 1;
-    const maxSteps = mode === 'text' ? 3 : 5;
-    
-    updateStep(1, 'active');
-
-    procInterval = setInterval(() => {
-       updateStep(step, 'done');
-       step++;
-       if(step > maxSteps) step = maxSteps; 
-       updateStep(step, 'active');
-    }, 2000); // Чуть быстрее переключаем для динамики
-  }
-
-  function updateStep(num, status) {
-    const el = document.getElementById('step-'+num);
-    if(el) {
-      el.classList.remove('pending', 'active', 'done');
-      el.classList.add(status);
-    }
-  }
-
-  function stopProcessingUI() {
-    clearInterval(procInterval);
-    document.getElementById('procOverlay').classList.remove('active');
-  }
-
-  function cancelProcessing() {
-    stopProcessingUI();
-    retake();
-  }
-
-  // === UI ЛОГИКА: DRAFT SHEET (ВАЛИДАЦИЯ) ===
-  let currentDraftItems = []; // Здесь храним то, что редактирует юзер
-  let currentScanId = null;
-
-  function openDraftSheet(data, scanId) {
-    currentScanId = scanId;
-    // Если данных нет или пустой массив
-    if (!data || !data.items) {
-       alert("Ничего не найдено. Попробуйте снова.");
-       return;
-    }
-    
-    currentDraftItems = data.items; // Сохраняем в память
-    renderDraftList();
-    
-    document.getElementById('draftOverlay').classList.add('visible');
-    haptic('success');
-  }
-
-  function renderDraftList() {
-    const container = document.getElementById('draftList');
-    container.innerHTML = '';
-    
-    if (currentDraftItems.length === 0) {
-      container.innerHTML = '<div style="text-align:center; opacity:0.5; padding:20px">Список пуст</div>';
-      return;
-    }
-
-    currentDraftItems.forEach((item, index) => {
-      // Определяем иконку по типу (можно улучшить логику)
-      let icon = "🍽️";
-      if (item.cooking_method === 'Raw') icon = "🍎";
-      if (item.fat_modifier === 'High Oil') icon = "🍳";
-      
-      const div = document.createElement('div');
-      div.className = 'draft-item';
-      div.innerHTML = `
-        <div class="di-icon">${icon}</div>
-        <div class="di-inputs">
-          <input type="text" class="di-name" value="${item.name}" onchange="updateDraftItem(${index}, 'name', this.value)">
-          <div class="di-row">
-            <input type="number" class="di-weight" value="${item.weight_g || ''}" placeholder="0" onchange="updateDraftItem(${index}, 'weight_g', this.value)">
-            <div class="di-unit">г</div>
-          </div>
-        </div>
-        <div class="di-del" onclick="removeDraftItem(${index})">✕</div>
-      `;
-      container.appendChild(div);
-    });
-  }
-
-  // Обновление локального стейта при вводе
-  window.updateDraftItem = (index, field, value) => {
-    if (field === 'weight_g') value = parseInt(value) || 0;
-    currentDraftItems[index][field] = value;
-  };
-
-  window.removeDraftItem = (index) => {
-    currentDraftItems.splice(index, 1);
-    renderDraftList();
-  };
-
-  window.closeDraft = () => {
-    document.getElementById('draftOverlay').classList.remove('visible');
-    retake(); // Сбрасываем камеру
-  };
-
-  
-// === ФИНАЛ: СОЗДАНИЕ КАРТОЧКИ (100% Design Copy) ===
-// === 1. КОНФИГУРАЦИЯ ХРАНИЛИЩА ===
-  const STORAGE_KEY = 'ultima_diary_v1';
-
-  // === 2. ФИНАЛ: СОХРАНЕНИЕ И РЕНДЕР ===
-  window.confirmDraftToNutritionist = async () => {
-    const btn = document.getElementById('btnConfirmDraft');
-    btn.textContent = 'Сохранение...';
-    btn.disabled = true;
-    
-    try {
-      // 1. Расчет КБЖУ (Эмуляция)
-      const calculatedItems = currentDraftItems.map(item => {
-        const k = Math.round(item.weight_g * 1.2); 
-        return {
-           name: item.name,
-           w: item.weight_g,
-           k: k,
-           p: Math.round(item.weight_g * 0.15), 
-           f: Math.round(item.weight_g * 0.02),
-           c: Math.round(item.weight_g * 0.10) 
-        };
-      });
-
-      // 2. Формируем объект записи для истории
-      const now = new Date();
-      const mealEntry = {
-          id: Date.now(), // Уникальный ID
-          time: now.toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit'}),
-          items: calculatedItems
-      };
-
-      // 3. Сохраняем в память телефона
-      saveToStorage(mealEntry);
-
-      haptic('success');
-      document.getElementById('draftOverlay').classList.remove('visible');
-      
-      // 4. Добавляем карточку в ленту
-      addMealToTimeline(mealEntry);
-      
-      retake(); 
-
-    } catch (e) {
-      alert("Ошибка: " + e.message);
-    } finally {
-      btn.textContent = 'В дневник';
-      btn.disabled = false;
-    }
-  };
-
-  // === 3. ФУНКЦИЯ РЕНДЕРА (Принимает готовый объект) ===
-  function addMealToTimeline(mealEntry) {
-    const container = document.getElementById('mealTimeline');
-    if (!container) return;
-
-    // Генерируем строки продуктов
-    let rowsHTML = '';
-    mealEntry.items.forEach(item => {
-        rowsHTML += `
-        <div class="prod-item">
-            <div class="pi-name">${item.name}</div>
-            <div class="pi-val pi-w">${item.w}</div>
-            <div class="pi-val pi-k">${item.k}</div>
-            <div class="pi-val pi-p">${item.p}</div>
-            <div class="pi-val pi-f">${item.f}</div>
-            <div class="pi-val pi-c">${item.c}</div>
-        </div>`;
-    });
-
-    // Собираем карточку целиком
-    const cardHTML = `
-      <div class="meal-card" id="card-${mealEntry.id}">
-        <div class="col-headers">
-            <div class="mh-time">${mealEntry.time}</div>
-            <div class="ch-item">Вес</div>
-            <div class="ch-item">К</div>
-            <div class="ch-item">Б</div>
-            <div class="ch-item">Ж</div>
-            <div class="ch-item">У</div>
-        </div>
-        ${rowsHTML}
-      </div>
-    `;
-
-    // Вставляем В НАЧАЛО (новые сверху)
-    container.insertAdjacentHTML('afterbegin', cardHTML);
-  }
-
-  // === 4. ЛОГИКА ХРАНЕНИЯ (LocalStorage) ===
-  
-  function saveToStorage(mealEntry) {
-      try {
-          // Получаем старую историю или пустой массив
-          const raw = localStorage.getItem(STORAGE_KEY);
-          const history = raw ? JSON.parse(raw) : [];
-          
-          // Добавляем новую запись в конец массива данных
-          history.push(mealEntry);
-          
-          // Сохраняем обратно
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
-      } catch(e) {
-          console.error("Save error:", e);
-      }
-  }
-
-  function loadFromStorage() {
-      try {
-          const raw = localStorage.getItem(STORAGE_KEY);
-          if (!raw) return;
-          
-          const history = JSON.parse(raw);
-          
-          // Проходимся по истории и рисуем карточки
-          // Важно: history.forEach идет от старых к новым.
-          // addMealToTimeline делает 'afterbegin' (вставляет сверху).
-          // Значит, первый элемент массива окажется внизу, последний — вверху.
-          // Это правильно для ленты: самое свежее наверху.
-          history.forEach(meal => {
-              addMealToTimeline(meal);
-          });
-      } catch(e) {
-          console.error("Load error:", e);
-      }
-  }
-
-  // === 5. ЗАПУСК ПРИ СТАРТЕ ===
-  // Загружаем сохраненные карточки при обновлении страницы
-  loadFromStorage();
-
-
-// === INFINITE CALENDAR LOGIC (Exact Copy from v2.20) ===
-  let currentWeekStart = getStartOfWeek(new Date()); 
-  let selectedDate = new Date(); 
-  let isDragging = false; 
-  let startX = 0; 
-  let currentTranslate = 0;
-  
-  const area = document.getElementById('swipeArea'); 
-  const track = document.getElementById('calTrack'); 
-  const prevEl = document.getElementById('weekPrev'); 
-  const currEl = document.getElementById('weekCurr'); 
-  const nextEl = document.getElementById('weekNext');
-
-  function getStartOfWeek(date) { 
-    const d = new Date(date); 
-    const day = d.getDay(); 
-    const diff = d.getDate() - day + (day === 0 ? -6 : 1); 
-    return new Date(d.setDate(diff)); 
-  }
-
-  function initCalendar() { 
-    renderAllWeeks(); 
-    // Подписываемся на события мыши и тача для свайпа
-    area.onpointerdown = handleStart; 
-    area.onpointermove = handleMove; 
-    area.onpointerup = handleEnd; 
-    area.onpointercancel = handleEnd; 
-    area.onpointerleave = handleEnd; 
-  }
-
-  function renderWeekData(container, startDate) {
-    container.innerHTML = ''; 
-    const weekDays = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс']; 
-    const today = new Date();
-    
-    for(let i=0; i<7; i++) {
-      const d = new Date(startDate); 
-      d.setDate(d.getDate() + i); 
-      
-      const isToday = d.toDateString() === today.toDateString(); 
-      const isSelected = d.toDateString() === selectedDate.toDateString();
-      
-      const el = document.createElement('div'); 
-      el.className = `day-cell ${isSelected ? 'selected' : ''} ${isToday ? 'is-today' : ''}`; 
-      el.innerHTML = `<div class="dc-name">${weekDays[i]}</div><div class="dc-num">${d.getDate()}</div>`;
-      
-      el.onclick = (e) => { 
-        if(Math.abs(currentTranslate) > 5) return; // Защита от клика при свайпе
-        document.querySelectorAll('.day-cell').forEach(c => c.classList.remove('selected')); 
-        el.classList.add('selected'); 
-        selectedDate = new Date(d); 
-        if(window.haptic) window.haptic('selection'); 
-        renderAllWeeks(); 
-      }; 
-      container.appendChild(el);
-    }
-  }
-
-  function renderAllWeeks() { 
-    renderWeekData(currEl, currentWeekStart); 
-    
-    const dPrev = new Date(currentWeekStart); 
-    dPrev.setDate(dPrev.getDate() - 7); 
-    renderWeekData(prevEl, dPrev); 
-    
-    const dNext = new Date(currentWeekStart); 
-    dNext.setDate(dNext.getDate() + 7); 
-    renderWeekData(nextEl, dNext); 
-    
-    // Обновляем заголовок месяца (берем среду как середину недели)
-    const mid = new Date(currentWeekStart); 
-    mid.setDate(mid.getDate() + 3); 
-    document.getElementById('monthLabel').textContent = mid.toLocaleString('ru', { month: 'long', year: 'numeric' }); 
-  }
-
-  // === SWIPE LOGIC ===
-  function handleStart(e) { 
-    if (e.button !== 0) return; 
-    isDragging = true; 
-    startX = e.clientX; 
-    currentTranslate = 0; 
-    track.style.transition = 'none'; 
-    area.style.cursor = 'grabbing'; 
-  }
-
-  function handleMove(e) { 
-    if (!isDragging) return; 
-    currentTranslate = e.clientX - startX; 
-    // Сдвигаем трек вслед за пальцем
-    track.style.transform = `translateX(calc(-33.333333% + ${currentTranslate}px))`; 
-  }
-
-  function handleEnd(e) { 
-    if (!isDragging) return; 
-    isDragging = false; 
-    area.style.cursor = 'grab'; 
-    const threshold = 60; // Насколько сильно нужно свайпнуть
-    
-    track.style.transition = 'transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1)'; 
-    
-    if (currentTranslate > threshold) { 
-      // Свайп вправо -> Прошлая неделя
-      if(window.haptic) window.haptic('light'); 
-      track.style.transform = `translateX(0%)`; 
-      setTimeout(() => shiftWeeks(-1), 300); 
-    } else if (currentTranslate < -threshold) { 
-      // Свайп влево -> Следующая неделя
-      if(window.haptic) window.haptic('light'); 
-      track.style.transform = `translateX(-66.666666%)`; 
-      setTimeout(() => shiftWeeks(1), 300); 
-    } else { 
-      // Возврат на место
-      track.style.transform = `translateX(-33.333333%)`; 
-    } 
-  }
-
-  function shiftWeeks(direction) { 
-    currentWeekStart.setDate(currentWeekStart.getDate() + (direction * 7)); 
-    track.style.transition = 'none'; 
-    renderAllWeeks(); 
-    track.style.transform = `translateX(-33.333333%)`; 
-  }
-
-  // Запуск календаря
-  initCalendar();
-
-
-// === WIDGETS LOGIC ===
-  let currentMl = 1250; 
-  const targetMl = 2500; 
-
-  window.updateWater = function(delta) { 
-    if(window.haptic) window.haptic('light'); // Безопасный вызов хаптика
-    else if(tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
-
-    currentMl = Math.max(0, currentMl + delta); 
-    renderWater(); 
-  };
-
-  function renderWater() {
-    document.getElementById('lbl-fact').innerText = currentMl; 
-    document.getElementById('lbl-pct').innerText = Math.round((currentMl/targetMl)*100) + '%';
-    
-    const card = document.getElementById('waterCard'); 
-    if(currentMl > targetMl) card.classList.add('is-overload'); 
-    else card.classList.remove('is-overload');
-    
-    for(let i=1; i<=5; i++) { 
-      const el = document.getElementById('c'+i); 
-      const th = i*(targetMl/5); 
-      const prevTh = (i-1)*(targetMl/5); 
-      let pct = 0; 
-      if(currentMl >= th) pct=100; 
-      else if(currentMl > prevTh) pct = ((currentMl-prevTh)/(targetMl/5))*100; 
-      el.style.setProperty('--h', Math.min(100, pct)+'%'); 
-    }
-  }
-
-  // Dots Logic
-  const wTrack = document.getElementById('widgetTrack');
-  const dots = document.querySelectorAll('.dot');
-  if(wTrack) {
-    wTrack.addEventListener('scroll', () => { 
-      const idx = Math.round(wTrack.scrollLeft / wTrack.clientWidth); 
-      dots.forEach((d,i) => d.classList.toggle('active', i===idx)); 
-    });
-  }
-  
-  // Init
-  renderWater();
-
-// === ГЛОБАЛЬНОЕ ЗАКРЫТИЕ КЛАВИАТУРЫ ===
-  // Если кликнуть мимо поля ввода — клавиатура уедет
-  document.addEventListener('click', (e) => {
-    const active = document.activeElement;
-    
-    // Проверяем, находится ли фокус сейчас в поле ввода (INPUT или TEXTAREA)
-    const isInputFocused = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA');
-
-    // Если фокус в поле, а кликнули МЫ НЕ по этому полю
-    if (isInputFocused && e.target !== active) {
-      active.blur(); // Скрываем клавиатуру
-    }
-  });
-
+(function initTMA(){try{const t=window.Telegram?.WebApp;if(!t)return;t.ready();t.expand();try{t.setHeaderColor('#050505');if(t.setBackgroundColor)t.setBackgroundColor('#050505')}catch(e){}try{if(t.BackButton){t.BackButton.show();t.BackButton.offClick();t.BackButton.onClick(function(){window.location.href='router.html'})}}catch(e){}try{if(t.disableVerticalSwipes)t.disableVerticalSwipes()}catch(e){}}catch(e){}})();
+function isAdmin(){try{return 196047220===Number(window.Telegram?.WebApp?.initDataUnsafe?.user?.id)}catch(_){return!1}}
+(function initStableLayout(){const a=document.getElementById('appLayout'),f=document.getElementById('fxLayer');let h=window.innerHeight,w=window.innerWidth;if(f)f.style.height=`${h}px`;function r(){const v=window.visualViewport?window.visualViewport.height:window.innerHeight,cw=window.innerWidth,ch=window.innerHeight;if(a){a.style.height=`${v}px`;window.scrollTo(0,0)}if(Math.abs(cw-w)>50){h=ch;w=cw;if(f)f.style.height=`${h}px`}}if(window.visualViewport){window.visualViewport.addEventListener('resize',r);window.visualViewport.addEventListener('scroll',r)}window.addEventListener('resize',r);document.querySelectorAll('input,textarea').forEach(e=>{e.addEventListener('focus',()=>setTimeout(r,100));e.addEventListener('blur',()=>setTimeout(r,100))});r()})();
+const API_URL="https://script.google.com/macros/s/AKfycbx0fUaaCH-JwnG5R_3TFgU5FSibsEuhuS0ZZZfyxPNVPQ1ZpCfUIaa5aE8vjgqitac/exec";
+const tg=window.Telegram?.WebApp;if(tg){tg.ready();tg.expand();tg.setHeaderColor('#000000');if(tg.disableVerticalSwipes)tg.disableVerticalSwipes()}
+const API={blobToBase64:b=>new Promise(r=>{const a=new FileReader;a.onloadend=()=>r(a.result);a.readAsDataURL(b)}),send:async(a,p)=>{const b={action:a,user:tg?.initDataUnsafe?.user||{id:0,first_name:'Test'},initData:tg?.initData||'',...p},r=await fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(b)}),j=await r.json();if(!j.ok)throw new Error(j.error||'Error');return j}};
+const state={stream:null,track:null,levelOK:!1,angleX:0,angleY:0,photoBlob:null,isCapturing:!1,isSwitching:!1,devices:[],currentDevIdx:0,torchOn:!1,sensorActive:!1,uiMode:'menu'};
+const DOM={video:document.getElementById('video'),canvas:document.getElementById('uiCanvas'),ctx:document.getElementById('uiCanvas').getContext('2d'),shutter:document.getElementById('shutterBtn'),lvlDot:document.getElementById('lvlDot'),lvlText:document.getElementById('lvlText'),permReq:document.getElementById('permReq'),preview:document.getElementById('previewScreen'),finalImg:document.getElementById('finalPhoto'),btnSend:document.getElementById('btnSend'),commentInput:document.getElementById('commentInput'),btnTorch:document.getElementById('btnTorch'),btnSwitch:document.getElementById('btnSwitch'),toast:document.getElementById('camToast'),loader:document.getElementById('loader'),omniBar:document.getElementById('omniBar'),camUI:document.getElementById('camUI'),omniInput:document.querySelector('.omni-input'),icoCam:document.getElementById('icoCam'),icoSend:document.getElementById('icoSend'),btnStartCam:document.getElementById('btnStartCam'),btnClose:document.getElementById('btnClose')};
+
+DOM.omniInput.addEventListener('input',()=>{const h=DOM.omniInput.value.trim().length>0;DOM.omniInput.style.height='auto';DOM.omniInput.style.height=Math.min(DOM.omniInput.scrollHeight,80)+'px';if(h){DOM.btnStartCam.classList.add('mode-send');DOM.icoCam.classList.add('icon-hidden');DOM.icoSend.classList.remove('icon-hidden')}else{DOM.btnStartCam.classList.remove('mode-send');DOM.icoCam.classList.remove('icon-hidden');DOM.icoSend.classList.add('icon-hidden')}});
+DOM.btnStartCam.onclick=async()=>{DOM.omniInput.blur();const t=DOM.omniInput.value.trim();if(t.length>0){await sendTextOnly(t)}else{state.uiMode='camera';document.getElementById('headerGroup').style.transform='translateY(-100%)';document.getElementById('feedScroll').style.opacity='0';document.getElementById('feedScroll').classList.add('hidden');DOM.omniBar.classList.add('hidden');DOM.camUI.classList.remove('idle');DOM.camUI.style.pointerEvents='auto';if(tg?.HapticFeedback)tg.HapticFeedback.impactOccurred('light');await initCamera()}};
+async function sendTextOnly(t){const b=DOM.btnStartCam;b.style.opacity='0.5';haptic('medium');try{startProcessingUI('text');const r=await API.send('scan',{image:null,userText:t});stopProcessingUI();DOM.omniInput.value='';if(r.ok)openDraftSheet(r.data,r.scanId);else throw new Error(r.error)}catch(e){stopProcessingUI();alert(e.message)}finally{b.style.opacity='1'}}
+DOM.btnClose.onclick=()=>{DOM.omniInput.blur();if(DOM.commentInput)DOM.commentInput.blur();window.scrollTo(0,0);state.uiMode='menu';DOM.camUI.classList.add('idle');DOM.camUI.style.pointerEvents='none';DOM.omniBar.classList.remove('hidden');document.getElementById('headerGroup').style.transform='translateY(0)';document.getElementById('feedScroll').style.opacity='1';document.getElementById('feedScroll').classList.remove('hidden');stopStream();setTimeout(()=>{const a=document.getElementById('appLayout');if(a){a.style.height=window.innerHeight+'px';window.scrollTo(0,0)}},100)};
+
+let toastTimer;function showToast(m){DOM.toast.textContent=m;DOM.toast.classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>{DOM.toast.classList.remove('visible')},2000)}
+function stopStream(){if(state.stream){state.stream.getTracks().forEach(t=>t.stop());state.stream=null}state.track=null;state.torchOn=!1;updateTorchUI();DOM.video.srcObject=null;DOM.video.classList.remove('active')}
+async function startStream(id){if(state.stream)stopStream();const c={audio:!1,video:{deviceId:id?{exact:id}:undefined,facingMode:id?undefined:'environment',width:{ideal:1920},height:{ideal:2560}}};try{const s=await navigator.mediaDevices.getUserMedia(c);state.stream=s;state.track=s.getVideoTracks()[0];DOM.video.srcObject=s;DOM.video.classList.add('active');const set=state.track.getSettings();if(set.deviceId)localStorage.setItem('ultima_cam_id',set.deviceId);let l=state.track.label||"Cam";if(state.devices.length>1)showToast(l);const cap=state.track.getCapabilities();if(cap.focusMode?.includes('continuous'))try{await state.track.applyConstraints({advanced:[{focusMode:'continuous'}]})}catch(e){}}catch(e){if(id){localStorage.removeItem('ultima_cam_id');await startStream(null)}else alert(e.message)}}
+DOM.btnSwitch.onclick=async()=>{if(state.devices.length<2||state.isSwitching)return;state.isSwitching=!0;haptic('medium');DOM.loader.classList.remove('hidden');DOM.btnSwitch.classList.add('disabled');DOM.btnTorch.classList.add('disabled');DOM.shutter.classList.add('disabled');if(state.stream)state.stream.getTracks().forEach(t=>t.stop());await new Promise(r=>setTimeout(r,500));let n=state.currentDevIdx+1;if(n>=state.devices.length)n=0;state.currentDevIdx=n;await startStream(state.devices[n].deviceId);DOM.loader.classList.add('hidden');DOM.btnSwitch.classList.remove('disabled');DOM.btnTorch.classList.remove('disabled');DOM.shutter.classList.remove('disabled');state.isSwitching=!1};
+DOM.btnTorch.onclick=async()=>{if(!state.track)return;const c=state.track.getCapabilities();if(!c.torch){showToast("Нет вспышки");return}const n=!state.torchOn;try{await state.track.applyConstraints({advanced:[{torch:n}]});state.torchOn=n;updateTorchUI();haptic('light')}catch(e){}};
+function updateTorchUI(){DOM.btnTorch.style.backgroundColor=state.torchOn?'var(--acc-orange)':'';DOM.btnTorch.style.color=state.torchOn?'#000':'#fff'}
+function checkSensorPerms(){if(typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission==='function')DOM.permReq.classList.remove('hidden');else window.addEventListener('deviceorientation',handleOrientation)}
+async function requestSensors(){try{if(await DeviceOrientationEvent.requestPermission()==='granted')window.addEventListener('deviceorientation',handleOrientation)}catch(e){}DOM.permReq.classList.add('hidden')}
+function handleOrientation(e){let x=e.beta,y=e.gamma;if(x===null||y===null)return;state.sensorActive=!0;state.angleX=x;state.angleY=y}
+function updateUI(){if(state.uiMode==='menu'||state.isCapturing)return;if(!state.sensorActive){DOM.lvlDot.classList.remove('ok');DOM.lvlText.textContent="Камера";DOM.shutter.classList.add('active');return}if(state.levelOK){DOM.lvlDot.classList.add('ok');DOM.lvlText.textContent="Ровно";DOM.shutter.classList.add('active')}else{DOM.lvlDot.classList.remove('ok');DOM.lvlText.textContent="Выровняйте";DOM.shutter.classList.remove('active')}}
+function resizeCanvas(){const w=window.innerWidth,h=window.innerHeight;if(DOM.canvas.width!==w)DOM.canvas.width=w;if(DOM.canvas.height!==h)DOM.canvas.height=h}
+async function initCamera(){try{const i=localStorage.getItem('ultima_cam_id');await startStream(i);await updateDeviceList();resizeCanvas();window.addEventListener('resize',resizeCanvas);requestAnimationFrame(drawLoop);checkSensorPerms()}catch(e){}}
+async function updateDeviceList(){try{const d=await navigator.mediaDevices.enumerateDevices();state.devices=d.filter(v=>v.kind==='videoinput');DOM.btnSwitch.classList.toggle('hidden',state.devices.length<2)}catch(e){}}
+function drawLoop(){const ctx=DOM.ctx,w=DOM.canvas.width,h=DOM.canvas.height;ctx.clearRect(0,0,w,h);if(state.uiMode==='menu'){requestAnimationFrame(drawLoop);return}const cx=w/2,cy=h/2,cr=1.586,cw=w*0.22,ch=cw*cr,cx0=cx+80,cy0=cy-ch/2,r=8;ctx.beginPath();ctx.moveTo(cx0+r,cy0);ctx.lineTo(cx0+cw-r,cy0);ctx.quadraticCurveTo(cx0+cw,cy0,cx0+cw,cy0+r);ctx.lineTo(cx0+cw,cy0+ch-r);ctx.quadraticCurveTo(cx0+cw,cy0+ch,cx0+cw-r,cy0+ch);ctx.lineTo(cx0+r,cy0+ch);ctx.quadraticCurveTo(cx0,cy0+ch,cx0,cy0+ch-r);ctx.lineTo(cx0,cy0+r);ctx.quadraticCurveTo(cx0,cy0,cx0+r,cy0);ctx.fillStyle='rgba(255,255,255,0.2)';ctx.fill();ctx.save();ctx.translate(cx0+cw/2,cy0+ch/2);ctx.rotate(-Math.PI/2);ctx.fillStyle='#ffffff';ctx.textAlign='center';ctx.textBaseline='middle';ctx.font='bold 12px sans-serif';ctx.fillText("CREDIT CARD",0,-10);ctx.font='10px sans-serif';ctx.fillText("(опция)",0,10);ctx.restore();if(state.sensorActive){const rb=14,rt=18,mo=60,rx=state.angleY||0,ry=state.angleX||0,cl=v=>Math.max(-20,Math.min(20,v)),dx=(cl(rx)/20)*mo,dy=(cl(ry)/20)*mo,dist=Math.hypot(dx,dy),inS=(dist+rb)<=rt;if(state.levelOK!==inS&&!state.isCapturing){state.levelOK=inS;updateUI();if(inS)haptic('medium')}ctx.shadowBlur=4;ctx.shadowColor='rgba(0,0,0,0.5)';ctx.beginPath();ctx.arc(cx,cy,rt,0,Math.PI*2);const c=(state.levelOK||state.isCapturing)?'#30d158':'rgba(255,255,255,0.85)';ctx.strokeStyle=c;ctx.lineWidth=3;ctx.stroke();ctx.beginPath();ctx.arc(cx+dx,cy+dy,rb,0,Math.PI*2);ctx.fillStyle=c;ctx.fill();ctx.shadowBlur=0}else{ctx.strokeStyle='rgba(255,255,255,0.5)';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(cx-10,cy);ctx.lineTo(cx+10,cy);ctx.stroke();ctx.beginPath();ctx.moveTo(cx,cy-10);ctx.lineTo(cx,cy+10);ctx.stroke()}requestAnimationFrame(drawLoop)}
+
+DOM.shutter.addEventListener('click',async()=>{if(state.isCapturing||state.isSwitching)return;if(state.sensorActive&&!state.levelOK){haptic('error');showToast("Выровняйте");return}try{state.isCapturing=!0;haptic('heavy');DOM.shutter.style.transform='scale(0.8)';DOM.shutter.style.opacity='0.5';await new Promise(r=>setTimeout(r,50));const v=DOM.video;if(v.readyState<2)throw new Error("Wait");const MAX=1024;let w=v.videoWidth,h=v.videoHeight;if(w>h){if(w>MAX){h*=MAX/w;w=MAX}}else{if(h>MAX){w*=MAX/h;h=MAX}}const c=document.createElement('canvas');c.width=w;c.height=h;c.getContext('2d').drawImage(v,0,0,w,h);const b=await new Promise(r=>c.toBlob(r,'image/jpeg',0.7));if(!b)throw new Error("Empty");showPreview(b)}catch(e){haptic('error');state.isCapturing=!1;updateUI()}finally{DOM.shutter.style.transform='';DOM.shutter.style.opacity='';state.isCapturing=!1}});
+function showPreview(b){state.photoBlob=b;DOM.finalImg.src=URL.createObjectURL(b);DOM.preview.style.display='flex'}
+function retake(){DOM.preview.style.display='none';if(DOM.finalImg.src)URL.revokeObjectURL(DOM.finalImg.src);DOM.finalImg.src='';state.photoBlob=null;DOM.commentInput.value=''}
+async function sendPhoto(){const b=DOM.btnSend;if(b.disabled)return;DOM.preview.style.display='none';haptic('heavy');try{if(!state.photoBlob)throw new Error("No photo");startProcessingUI('photo');const d=await API.blobToBase64(state.photoBlob),t=DOM.commentInput.value,r=await API.send('scan',{image:d,userText:t});stopProcessingUI();if(r.ok)openDraftSheet(r.data,r.scanId);else throw new Error(r.error)}catch(e){stopProcessingUI();haptic('error');alert(e.message);DOM.preview.style.display='flex';b.disabled=!1}}
+function haptic(s){if(!tg||!tg.HapticFeedback)return;['error','success','warning'].includes(s)?tg.HapticFeedback.notificationOccurred(s):tg.HapticFeedback.impactOccurred(s)}
+let procInterval;function startProcessingUI(m){const c=document.getElementById('procSteps'),o=document.getElementById('procOverlay');if(m==='text')c.innerHTML=`<div class="step pending" id="step-1"><div class="s-icon">🛡️</div><div class="s-lbl">Check...</div></div><div class="step pending" id="step-2"><div class="s-icon">🧠</div><div class="s-lbl">Search...</div></div><div class="step pending" id="step-3"><div class="s-icon">📝</div><div class="s-lbl">Synth...</div></div>`;else c.innerHTML=`<div class="step pending" id="step-1"><div class="s-icon">🛡️</div><div class="s-lbl">Check...</div></div><div class="step pending" id="step-2"><div class="s-icon">🕵️</div><div class="s-lbl">Detect...</div></div><div class="step pending" id="step-3"><div class="s-icon">📐</div><div class="s-lbl">Calc...</div></div><div class="step pending" id="step-4"><div class="s-icon">🍳</div><div class="s-lbl">Analyze...</div></div><div class="step pending" id="step-5"><div class="s-icon">📝</div><div class="s-lbl">Synth...</div></div>`;o.classList.add('active');let s=1,max=m==='text'?3:5;updateStep(1,'active');procInterval=setInterval(()=>{updateStep(s,'done');s++;if(s>max)s=max;updateStep(s,'active')},2000)}
+function updateStep(n,s){const e=document.getElementById('step-'+n);if(e){e.classList.remove('pending','active','done');e.classList.add(s)}}
+function stopProcessingUI(){clearInterval(procInterval);document.getElementById('procOverlay').classList.remove('active')}
+function cancelProcessing(){stopProcessingUI();retake()}
+let currentDraftItems=[],currentScanId=null;function openDraftSheet(d,id){currentScanId=id;if(!d||!d.items){alert("Empty");return}currentDraftItems=d.items;renderDraftList();document.getElementById('draftOverlay').classList.add('visible');haptic('success')}
+function renderDraftList(){const c=document.getElementById('draftList');c.innerHTML='';if(currentDraftItems.length===0){c.innerHTML='Empty';return}currentDraftItems.forEach((i,x)=>{let ic="🍽️";const d=document.createElement('div');d.className='draft-item';d.innerHTML=`<div class="di-icon">${ic}</div><div class="di-inputs"><input type="text" class="di-name" value="${i.name}" onchange="updateDraftItem(${x},'name',this.value)"><div class="di-row"><input type="number" class="di-weight" value="${i.weight_g||''}" placeholder="0" onchange="updateDraftItem(${x},'weight_g',this.value)"><div class="di-unit">г</div></div></div><div class="di-del" onclick="removeDraftItem(${x})">✕</div>`;c.appendChild(d)})}
+window.updateDraftItem=(i,f,v)=>{if(f==='weight_g')v=parseInt(v)||0;currentDraftItems[i][f]=v};window.removeDraftItem=i=>{currentDraftItems.splice(i,1);renderDraftList()};window.closeDraft=()=>{document.getElementById('draftOverlay').classList.remove('visible');retake()};
+const STORAGE_KEY='ultima_diary_v1';window.confirmDraftToNutritionist=async()=>{const b=document.getElementById('btnConfirmDraft');b.textContent='Save...';b.disabled=!0;try{const c=currentDraftItems.map(i=>{const k=Math.round(i.weight_g*1.2);return{name:i.name,w:i.weight_g,k:k,p:Math.round(i.weight_g*0.15),f:Math.round(i.weight_g*0.02),c:Math.round(i.weight_g*0.10)}}),n=new Date(),e={id:Date.now(),time:n.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}),items:c};saveToStorage(e);haptic('success');document.getElementById('draftOverlay').classList.remove('visible');addMealToTimeline(e);retake()}catch(e){alert(e.message)}finally{b.textContent='В дневник';b.disabled=!1}};
+function addMealToTimeline(e){const c=document.getElementById('mealTimeline');if(!c)return;let r='';e.items.forEach(i=>{r+=`<div class="prod-item"><div class="pi-name">${i.name}</div><div class="pi-val pi-w">${i.w}</div><div class="pi-val pi-k">${i.k}</div><div class="pi-val pi-p">${i.p}</div><div class="pi-val pi-f">${i.f}</div><div class="pi-val pi-c">${i.c}</div></div>`});const h=`<div class="meal-card" id="card-${e.id}"><div class="col-headers"><div class="mh-time">${e.time}</div><div class="ch-item">Вес</div><div class="ch-item">К</div><div class="ch-item">Б</div><div class="ch-item">Ж</div><div class="ch-item">У</div></div>${r}</div>`;c.insertAdjacentHTML('afterbegin',h)}
+function saveToStorage(e){try{const r=localStorage.getItem(STORAGE_KEY),h=r?JSON.parse(r):[];h.push(e);localStorage.setItem(STORAGE_KEY,JSON.stringify(h))}catch(e){}}
+function loadFromStorage(){try{const r=localStorage.getItem(STORAGE_KEY);if(!r)return;JSON.parse(r).forEach(m=>addMealToTimeline(m))}catch(e){}}loadFromStorage();
+let cw=getStartOfWeek(new Date()),sd=new Date(),idr=!1,sx=0,ctr=0;const area=document.getElementById('swipeArea'),track=document.getElementById('calTrack'),pre=document.getElementById('weekPrev'),cur=document.getElementById('weekCurr'),nex=document.getElementById('weekNext');function getStartOfWeek(d){const x=new Date(d),y=x.getDay(),z=x.getDate()-y+(y===0?-6:1);return new Date(x.setDate(z))}function initCalendar(){renderAllWeeks();area.onpointerdown=hs;area.onpointermove=hm;area.onpointerup=he;area.onpointercancel=he;area.onpointerleave=he}function renderWeekData(c,s){c.innerHTML='';const w=['Пн','Вт','Ср','Чт','Пт','Сб','Вс'],t=new Date();for(let i=0;i<7;i++){const d=new Date(s);d.setDate(d.getDate()+i);const it=d.toDateString()===t.toDateString(),is=d.toDateString()===sd.toDateString(),e=document.createElement('div');e.className=`day-cell ${is?'selected':''} ${it?'is-today':''}`;e.innerHTML=`<div class="dc-name">${w[i]}</div><div class="dc-num">${d.getDate()}</div>`;e.onclick=()=>{if(Math.abs(ctr)>5)return;document.querySelectorAll('.day-cell').forEach(x=>x.classList.remove('selected'));e.classList.add('selected');sd=new Date(d);if(window.haptic)window.haptic('selection');renderAllWeeks()};c.appendChild(e)}}function renderAllWeeks(){renderWeekData(cur,cw);const p=new Date(cw);p.setDate(p.getDate()-7);renderWeekData(pre,p);const n=new Date(cw);n.setDate(n.getDate()+7);renderWeekData(nex,n);const m=new Date(cw);m.setDate(m.getDate()+3);document.getElementById('monthLabel').textContent=m.toLocaleString('ru',{month:'long',year:'numeric'})}function hs(e){if(e.button!==0)return;idr=!0;sx=e.clientX;ctr=0;track.style.transition='none';area.style.cursor='grabbing'}function hm(e){if(!idr)return;ctr=e.clientX-sx;track.style.transform=`translateX(calc(-33.333333% + ${ctr}px))`}function he(e){if(!idr)return;idr=!1;area.style.cursor='grab';track.style.transition='transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1)';if(ctr>60){track.style.transform=`translateX(0%)`;setTimeout(()=>sh(-1),300)}else if(ctr<-60){track.style.transform=`translateX(-66.666666%)`;setTimeout(()=>sh(1),300)}else{track.style.transform=`translateX(-33.333333%)`}}function sh(d){cw.setDate(cw.getDate()+(d*7));track.style.transition='none';renderAllWeeks();track.style.transform=`translateX(-33.333333%)`}initCalendar();
+let cMl=1250,tMl=2500;window.updateWater=d=>{if(window.haptic)window.haptic('light');cMl=Math.max(0,cMl+d);rW()};function rW(){document.getElementById('lbl-fact').innerText=cMl;document.getElementById('lbl-pct').innerText=Math.round((cMl/tMl)*100)+'%';const c=document.getElementById('waterCard');if(cMl>tMl)c.classList.add('is-overload');else c.classList.remove('is-overload');for(let i=1;i<=5;i++){const e=document.getElementById('c'+i),th=i*(tMl/5),p=(i-1)*(tMl/5);let v=0;if(cMl>=th)v=100;else if(cMl>p)v=((cMl-p)/(tMl/5))*100;e.style.setProperty('--h',Math.min(100,v)+'%')}}const wt=document.getElementById('widgetTrack'),ds=document.querySelectorAll('.dot');if(wt)wt.addEventListener('scroll',()=>{const i=Math.round(wt.scrollLeft/wt.clientWidth);ds.forEach((d,x)=>d.classList.toggle('active',x===i))});rW();
+document.addEventListener('click',e=>{const a=document.activeElement,isI=a&&(a.tagName==='INPUT'||a.tagName==='TEXTAREA');if(isI&&e.target!==a)a.blur()});
 </script>
 </body>
 </html>
