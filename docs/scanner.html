@@ -1459,50 +1459,71 @@ DOM.shutter.addEventListener('click', async () => {
 // === 1. КОНФИГУРАЦИЯ ХРАНИЛИЩА ===
   const STORAGE_KEY = 'ultima_diary_v1';
 
-  // === 2. ФИНАЛ: СОХРАНЕНИЕ И РЕНДЕР ===
+  // === 2. ФИНАЛ: ОТПРАВКА НА ПЕРЕСЧЕТ (REAL AI) + СОХРАНЕНИЕ ===
   window.confirmDraftToNutritionist = async () => {
     const btn = document.getElementById('btnConfirmDraft');
-    btn.textContent = 'Сохранение...';
+    const originalText = btn.textContent;
+    
+    // 1. Блокируем интерфейс и держим ФОКУС
+    btn.textContent = 'Считаю КБЖУ...';
     btn.disabled = true;
+    // Гарантируем, что фон размыт, пока идет запрос
+    document.getElementById('focusOverlay').classList.add('active'); 
     
     try {
-      // 1. Расчет КБЖУ (Эмуляция)
-      const calculatedItems = currentDraftItems.map(item => {
-        const k = Math.round(item.weight_g * 1.2); 
+      // 2. ОТПРАВЛЯЕМ ПРАВКИ НА СЕРВЕР
+      // currentDraftItems содержит именно то, что ты ввел (название и вес)
+      const result = await API.send('calculate', {
+          scanId: currentScanId, 
+          data: { items: currentDraftItems } 
+      });
+
+      // Проверяем, что сервер ответил корректно
+      if (!result.ok || !result.data || !result.data.items) {
+          throw new Error(result.error || "Сервер не вернул данные");
+      }
+
+      // 3. ПРИНИМАЕМ ТОЧНЫЕ ДАННЫЕ ОТ НУТРИЦИОЛОГА
+      const calculatedItems = result.data.items.map(item => {
         return {
            name: item.name,
-           w: item.weight_g,
-           k: k,
-           p: Math.round(item.weight_g * 0.15), 
-           f: Math.round(item.weight_g * 0.02),
-           c: Math.round(item.weight_g * 0.10) 
+           w: item.weight_g, // Вес, который подтвердил бот (равен твоему вводу)
+           // Берем КБЖУ, которые посчитал бот. Если вдруг пусто — ставим 0.
+           k: item.calories || item.macros?.k || 0,
+           p: item.protein  || item.macros?.p || 0,
+           f: item.fats     || item.macros?.f || 0,
+           c: item.carbs    || item.macros?.c || 0
         };
       });
 
-      // 2. Формируем объект записи для истории
+      // 4. ФОРМИРУЕМ ЗАПИСЬ ДЛЯ ЛЕНТЫ
       const now = new Date();
       const mealEntry = {
-          id: Date.now(), // Уникальный ID
+          id: Date.now(), 
           time: now.toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit'}),
           items: calculatedItems
       };
 
-      // 3. Сохраняем в память телефона
+      // 5. СОХРАНЯЕМ В ТЕЛЕФОН
       saveToStorage(mealEntry);
-
+      
       haptic('success');
+      
+      // 6. ЗАКРЫВАЕМ ОКНА И СНИМАЕМ БЛЮР
       document.getElementById('draftOverlay').classList.remove('visible');
-      document.getElementById('focusOverlay').classList.remove('active');
+      document.getElementById('focusOverlay').classList.remove('active'); // Только сейчас убираем шторку
       
-      // 4. Добавляем карточку в ленту
+      // Добавляем карточку в ленту и сбрасываем камеру
       addMealToTimeline(mealEntry);
-      
       retake(); 
 
     } catch (e) {
-      alert("Ошибка: " + e.message);
+      console.error(e);
+      haptic('error');
+      alert("Ошибка расчета: " + e.message);
+      // При ошибке НЕ закрываем окно и НЕ снимаем блюр, чтобы можно было повторить
     } finally {
-      btn.textContent = 'В дневник';
+      btn.textContent = originalText;
       btn.disabled = false;
     }
   };
