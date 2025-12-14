@@ -1508,7 +1508,9 @@ DOM.shutter.addEventListener('click', async () => {
 
       // 5. СОХРАНЯЕМ В ТЕЛЕФОН
       saveToStorage(mealEntry);
-      
+      API.send('save_meal', { meal_data: mealEntry })
+         .then(res => console.log("Еда сохранена в базу:", res))
+         .catch(err => console.error("Ошибка сохранения еды:", err));
       haptic('success');
       
       // 6. ЗАКРЫВАЕМ ОКНА И СНИМАЕМ БЛЮР
@@ -1770,16 +1772,29 @@ function renderWeekData(container, startDate) {
   initCalendar();
 
 
-// === WIDGETS LOGIC ===
-  let currentMl = 1250; 
+// === WIDGETS LOGIC (С СИНХРОНИЗАЦИЕЙ) ===
+  let currentMl = 0; // Начинаем с 0 (или можно загружать из localStorage)
   const targetMl = 2500; 
+  let waterSyncTimer = null; // Таймер для отложенной отправки
 
   window.updateWater = function(delta) { 
-    if(window.haptic) window.haptic('light'); // Безопасный вызов хаптика
+    // 1. Визуальный эффект
+    if(window.haptic) window.haptic('light');
     else if(tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
 
+    // 2. Локальная математика
     currentMl = Math.max(0, currentMl + delta); 
     renderWater(); 
+
+    // 3. СИНХРОНИЗАЦИЯ С СЕРВЕРОМ (Debounce 2 сек)
+    // Если пользователь быстро кликает, мы сбрасываем таймер
+    if (waterSyncTimer) clearTimeout(waterSyncTimer);
+
+    waterSyncTimer = setTimeout(() => {
+       console.log("Отправка воды на сервер:", currentMl);
+       // Отправляем ИТОГОВУЮ цифру, как договаривались для DailyStats
+       API.send('save_water', { amount: currentMl }).catch(err => console.error("Water sync error:", err));
+    }, 2000);
   };
 
   function renderWater() {
