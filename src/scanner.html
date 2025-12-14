@@ -730,43 +730,45 @@ function isAdmin() {
 }
 
 // === БЕЗУПРЕЧНЫЙ РЕСАЙЗ (VISUAL VIEWPORT + FIXED BACKGROUND) ===
+// === БЕЗУПРЕЧНЫЙ РЕСАЙЗ (FIXED) ===
 (function initStableLayout() {
   const app = document.getElementById('appLayout'); 
   const fxLayer = document.getElementById('fxLayer');
   
-  // Запоминаем исходные размеры при старте
+  // Базовые размеры
   let fixedHeight = window.innerHeight;
   let lastWidth = window.innerWidth;
 
-  // Сразу фиксируем фон, чтобы он был размером с весь экран
-  if (fxLayer) {
-      fxLayer.style.height = `${fixedHeight}px`;
-  }
+  if (fxLayer) fxLayer.style.height = `${fixedHeight}px`;
   
   function handleResize() {
-    // 1. Размеры для интерфейса (он должен сжиматься под клавиатуру)
+    // 1. Обновляем высоту интерфейса под Viewport (чтобы не было пустот)
     const vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
-    
-    // 2. Текущие размеры окна
     const currentW = window.innerWidth;
     const currentH = window.innerHeight;
 
-    // 3. Управляем интерфейсом (всегда подгоняем под видимую часть)
     if (app) {
         app.style.height = `${vh}px`;
-        // Принудительный скролл в начало, чтобы iOS не сдвигал body
-        window.scrollTo(0, 0);
+        
+        // --- ГЛАВНЫЙ ФИКС ПРЫЖКА ---
+        // Проверяем, активен ли ввод текста
+        const active = document.activeElement;
+        const isInput = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA');
+
+        // Если мы НЕ пишем текст — держим страницу наверху.
+        // Если пишем — НЕ трогаем скролл, пусть браузер сам подстроит клавиатуру.
+        if (!isInput) {
+             window.scrollTo(0, 0);
+        }
     }
 
-    // 4. Управляем ФОНОМ (ХИТРОСТЬ!)
-    // Если ширина изменилась (поворот экрана) — обновляем высоту фона.
-    // Если ширина НЕ изменилась (это клавиатура или адресная строка) — НЕ трогаем фон.
+    // 2. Фон меняем только если изменилась ширина (поворот экрана), 
+    // чтобы он не прыгал при открытии клавиатуры
     if (Math.abs(currentW - lastWidth) > 50) { 
-        fixedHeight = currentH; // Обновляем базу
+        fixedHeight = currentH; 
         lastWidth = currentW;
         if (fxLayer) fxLayer.style.height = `${fixedHeight}px`;
     }
-    // В противном случае фон остается старой высоты (fixedHeight) и орбы не прыгают.
   }
 
   // Слушатели
@@ -776,18 +778,9 @@ function isAdmin() {
   }
   window.addEventListener('resize', handleResize);
 
-  // Хак для полей ввода (чтобы точно пересчиталось при фокусе)
-  document.querySelectorAll('input, textarea').forEach(el => {
-      el.addEventListener('focus', () => setTimeout(handleResize, 100));
-      el.addEventListener('blur', () => setTimeout(handleResize, 100));
-  });
-
-  // Инициализация Telegram
+  // Telegram Specific
   const tg = window.Telegram?.WebApp;
   if(tg) {
-    tg.ready(); tg.expand();
-    tg.setHeaderColor('#000000');
-    if(tg.disableVerticalSwipes) tg.disableVerticalSwipes();
     tg.onEvent('viewportChanged', handleResize);
   }
 
@@ -967,37 +960,31 @@ function isAdmin() {
      }
   }
 
-    DOM.btnClose.onclick = () => {
-    // 1. ПРИНУДИТЕЛЬНО УБИРАЕМ КЛАВИАТУРУ
+ DOM.btnClose.onclick = () => {
+    // 1. Убираем фокус с инпутов (скрываем клавиатуру, если была)
     DOM.omniInput.blur();
     if(DOM.commentInput) DOM.commentInput.blur();
 
-    // 2. СБРАСЫВАЕМ СКРОЛЛ В НОЛЬ
-    window.scrollTo(0, 0);
-
-    // 3. Возвращаем интерфейс
+    // 2. Скрываем UI камеры и возвращаем меню
     state.uiMode = 'menu';
     DOM.camUI.classList.add('idle');
     DOM.camUI.style.pointerEvents = 'none';
     DOM.omniBar.classList.remove('hidden');
     
+    // Возвращаем календарь и виджеты
     const cal = document.getElementById('calendarBlock');
     if(cal) cal.style.transform = 'translateY(0)';
-    
     const dash = document.getElementById('dashboardLayer');
     if(dash) dash.classList.remove('hidden-mode');
 
     stopStream(); 
 
-    // 4. КОНТРОЛЬНЫЙ РЕСАЙЗ (Через 0.1с)
-    // Если клавиатура уезжала медленно, это вернет экран на место
+    // 3. МЯГКИЙ СБРОС (Через 50мс, чтобы интерфейс успел перерисоваться)
     setTimeout(() => {
+        window.scrollTo(0, 0);
         const app = document.getElementById('appLayout');
-        if (app) {
-             app.style.height = window.innerHeight + 'px';
-             window.scrollTo(0, 0);
-        }
-    }, 100);
+        if (app) app.style.height = window.innerHeight + 'px';
+    }, 50);
   };
 
   let toastTimer;
