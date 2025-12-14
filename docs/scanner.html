@@ -1772,29 +1772,50 @@ function renderWeekData(container, startDate) {
   initCalendar();
 
 
-// === WIDGETS LOGIC (С СИНХРОНИЗАЦИЕЙ) ===
-  let currentMl = 0; // Начинаем с 0 (или можно загружать из localStorage)
+// === WIDGETS LOGIC (С ПАМЯТЬЮ И СИНХРОНИЗАЦИЕЙ) ===
+  
+  // 1. Инициализация переменных
+  let currentMl = 0; 
   const targetMl = 2500; 
-  let waterSyncTimer = null; // Таймер для отложенной отправки
+  let waterSyncTimer = null; 
 
+  // 2. Функция загрузки из памяти телефона
+  function initWater() {
+    const todayKey = 'water_' + new Date().toDateString(); // Уникальный ключ дня
+    const saved = localStorage.getItem(todayKey);
+    
+    if (saved) {
+      currentMl = parseInt(saved, 10); // Восстанавливаем сохраненное
+    } else {
+      currentMl = 0; // Если новой даты нет в памяти — начинаем с нуля
+    }
+    renderWater(); // Рисуем
+  }
+
+  // 3. Главная функция обновления (вызывается кнопками + и -)
   window.updateWater = function(delta) { 
-    // 1. Визуальный эффект
+    // Эффект вибрации
     if(window.haptic) window.haptic('light');
     else if(tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
 
-    // 2. Локальная математика
+    // Математика
     currentMl = Math.max(0, currentMl + delta); 
+
+    // А) МГНОВЕННОЕ СОХРАНЕНИЕ В ПАМЯТЬ ТЕЛЕФОНА
+    const todayKey = 'water_' + new Date().toDateString();
+    localStorage.setItem(todayKey, currentMl);
+
+    // Б) Обновляем экран
     renderWater(); 
 
-    // 3. СИНХРОНИЗАЦИЯ С СЕРВЕРОМ (Debounce 2 сек)
-    // Если пользователь быстро кликает, мы сбрасываем таймер
+    // В) ОТЛОЖЕННАЯ ОТПРАВКА НА СЕРВЕР (Debounce)
     if (waterSyncTimer) clearTimeout(waterSyncTimer);
 
     waterSyncTimer = setTimeout(() => {
-       console.log("Отправка воды на сервер:", currentMl);
-       // Отправляем ИТОГОВУЮ цифру, как договаривались для DailyStats
-       API.send('save_water', { amount: currentMl }).catch(err => console.error("Water sync error:", err));
-    }, 2000);
+       console.log("Sync water to cloud:", currentMl);
+       API.send('save_water', { amount: currentMl })
+          .catch(err => console.error("Water sync error:", err));
+    }, 2000); // Ждем 2 секунды тишины перед отправкой
   };
 
   function renderWater() {
@@ -1816,7 +1837,7 @@ function renderWeekData(container, startDate) {
     }
   }
 
-  // Dots Logic
+  // Логика точек карусели
   const wTrack = document.getElementById('widgetTrack');
   const dots = document.querySelectorAll('.dot');
   if(wTrack) {
@@ -1826,8 +1847,8 @@ function renderWeekData(container, startDate) {
     });
   }
   
-  // Init
-  renderWater();
+  // ЗАПУСК ПРИ СТАРТЕ (Важно!)
+  initWater();
 
 // === ГЛОБАЛЬНОЕ ЗАКРЫТИЕ КЛАВИАТУРЫ ===
   // Если кликнуть мимо поля ввода — клавиатура уедет
