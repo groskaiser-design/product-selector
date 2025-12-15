@@ -1791,17 +1791,15 @@ DOM.shutter.addEventListener('click', async () => {
       } catch(e) {}
   }
 
-// === ПРЕВРАЩАЕМ СПИСОК С СЕРВЕРА В КАРТОЧКИ ===
+
+  // === ПРЕВРАЩАЕМ СПИСОК С СЕРВЕРА В КАРТОЧКИ И СОХРАНЯЕМ ===
   function renderServerItemsToTimeline(serverItems) {
       const container = document.getElementById('mealTimeline');
       if (!container) return;
       
-      // 1. Очищаем текущую (локальную) ленту, чтобы нарисовать точную с сервера
       container.innerHTML = '';
-
-      // 2. Группируем продукты по времени (t)
-      // Сервер дает: [{t:"13:30", n:"Банан"}, {t:"13:30", n:"Кофе"}, {t:"18:00", n:"Стейк"}]
-      // Мы делаем: { "13:30": [Банан, Кофе], "18:00": [Стейк] }
+      
+      // 1. Группируем продукты по времени
       const groups = {};
       serverItems.forEach(item => {
           const time = item.t || '00:00';
@@ -1809,30 +1807,53 @@ DOM.shutter.addEventListener('click', async () => {
           groups[time].push(item);
       });
 
-      // 3. Сортируем время от нового к старому (ужин сверху)
       const sortedTimes = Object.keys(groups).sort().reverse();
+      const mealsToSave = []; // Сюда соберем готовые объекты для памяти
 
-      // 4. Создаем карточки
+      // 2. Создаем карточки
       sortedTimes.forEach(time => {
           const itemsInGroup = groups[time];
           
-          // Превращаем формат сервера (короткие n, w, m) в формат фронта (name, w, items)
           const mappedItems = itemsInGroup.map(i => ({
               name: i.n,
               w: i.w,
               k: i.m.k, p: i.m.p, f: i.m.f, c: i.m.c
           }));
 
-          // Создаем виртуальный объект приема пищи
           const syntheticMeal = {
-              id: 'srv_' + time + '_' + Math.random(), // Временный ID
+              id: Date.now() + Math.random(), // Генерируем ID
+              date: CurrentViewDate.toDateString(), // Привязываем к дате
               time: time,
               items: mappedItems
           };
-
-          // Рисуем карточку
+          
+          mealsToSave.push(syntheticMeal);
           addMealToTimeline(syntheticMeal);
       });
+
+      // 3. 🔥 ВАЖНО: Сохраняем полученное в память телефона (localStorage)
+      updateStorageWithServerData(mealsToSave);
+  }
+
+  // Помощник для безопасного обновления памяти
+  function updateStorageWithServerData(newMealsForDay) {
+      try {
+          const raw = localStorage.getItem(STORAGE_KEY);
+          let history = raw ? JSON.parse(raw) : [];
+          const targetDateStr = CurrentViewDate.toDateString();
+
+          // Удаляем старые записи за этот день (чтобы не дублировать)
+          history = history.filter(m => {
+              const mDate = m.date || new Date(m.id).toDateString();
+              return mDate !== targetDateStr;
+          });
+
+          // Добавляем свежие записи с сервера
+          history = history.concat(newMealsForDay);
+          
+          // Сохраняем обратно
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+      } catch(e) { console.error("Save fail", e); }
   }
 
   // === 5. КАЛЕНДАРЬ (СВЯЗКА ВСЕГО) ===
