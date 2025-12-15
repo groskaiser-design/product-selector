@@ -1564,20 +1564,26 @@ DOM.shutter.addEventListener('click', async () => {
      }
   }
 
+  
   // Синхронизация с сервером (Фоновая)
   async function syncStatsFromServer(dateObj) {
     const dateKey = dateObj.toDateString();
     try {
-      // Запрашиваем данные у Google Sheets
       const res = await API.send('get_day_stats', { dateStr: dateObj.toISOString() });
       
       if (res.ok && res.data) {
-         // Обновляем кэш данными с сервера (они точнее)
+         // 1. Сохраняем и обновляем ЦИФРЫ (Виджеты)
          StatsCache[dateKey] = res.data;
          saveStatsCache();
          
          if (CurrentViewDate.toDateString() === dateKey) {
-            renderWidgets(); // Обновляем картинку
+            renderWidgets();
+            
+            // 2. 🔥 НОВОЕ: Если пришли продукты — обновляем ЛЕНТУ
+            // Если массив items есть и он не пустой — перерисовываем ленту данными сервера
+            if (res.data.items && res.data.items.length > 0) {
+                renderServerItemsToTimeline(res.data.items);
+            }
          }
       }
     } catch (e) {
@@ -1785,6 +1791,49 @@ DOM.shutter.addEventListener('click', async () => {
       } catch(e) {}
   }
 
+// === ПРЕВРАЩАЕМ СПИСОК С СЕРВЕРА В КАРТОЧКИ ===
+  function renderServerItemsToTimeline(serverItems) {
+      const container = document.getElementById('mealTimeline');
+      if (!container) return;
+      
+      // 1. Очищаем текущую (локальную) ленту, чтобы нарисовать точную с сервера
+      container.innerHTML = '';
+
+      // 2. Группируем продукты по времени (t)
+      // Сервер дает: [{t:"13:30", n:"Банан"}, {t:"13:30", n:"Кофе"}, {t:"18:00", n:"Стейк"}]
+      // Мы делаем: { "13:30": [Банан, Кофе], "18:00": [Стейк] }
+      const groups = {};
+      serverItems.forEach(item => {
+          const time = item.t || '00:00';
+          if (!groups[time]) groups[time] = [];
+          groups[time].push(item);
+      });
+
+      // 3. Сортируем время от нового к старому (ужин сверху)
+      const sortedTimes = Object.keys(groups).sort().reverse();
+
+      // 4. Создаем карточки
+      sortedTimes.forEach(time => {
+          const itemsInGroup = groups[time];
+          
+          // Превращаем формат сервера (короткие n, w, m) в формат фронта (name, w, items)
+          const mappedItems = itemsInGroup.map(i => ({
+              name: i.n,
+              w: i.w,
+              k: i.m.k, p: i.m.p, f: i.m.f, c: i.m.c
+          }));
+
+          // Создаем виртуальный объект приема пищи
+          const syntheticMeal = {
+              id: 'srv_' + time + '_' + Math.random(), // Временный ID
+              time: time,
+              items: mappedItems
+          };
+
+          // Рисуем карточку
+          addMealToTimeline(syntheticMeal);
+      });
+  }
 
   // === 5. КАЛЕНДАРЬ (СВЯЗКА ВСЕГО) ===
   let currentWeekStart = getStartOfWeek(new Date()); 
