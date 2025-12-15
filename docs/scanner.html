@@ -570,6 +570,36 @@ html, body {
   background: rgba(255, 255, 255, 0.25);
 }
 
+/* Инпут внутри попапа CSV */
+#csvInputOverlay .omni-input {
+  background: rgba(255,255,255,0.05);
+  border-radius: 12px;
+  padding: 0 12px;
+  border: 1px solid rgba(255,255,255,0.1);
+  color: #fff;
+}
+#csvInputOverlay .omni-input:focus {
+  border-color: var(--acc-blue);
+  background: rgba(255,255,255,0.1);
+}
+
+/* Режим ReadOnly для списка */
+.draft-item.readonly .di-name,
+.draft-item.readonly .di-weight {
+  pointer-events: none; /* Запрет кликов */
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-muted); 
+}
+/* Вес оставляем белым, чтобы читался */
+.draft-item.readonly .di-weight {
+    color: #fff; 
+    font-weight: 700;
+}
+/* Имя тоже белым */
+.draft-item.readonly .di-name {
+    color: #fff;
+}
 
 </style>
 </head>
@@ -737,8 +767,8 @@ html, body {
     
     <div class="focus-overlay" id="focusOverlay"></div>
     <div class="omni-bar" id="omniBar">
-        <div class="omni-icon-btn">
-          <div class="gh-icon" style="-webkit-mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/add.svg'); mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/add.svg');"></div>
+        <div class="omni-icon-btn" onclick="toggleCsvOverlay(true)">
+          <div class="gh-icon" style="-webkit-mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/clip.svg'); mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/clip.svg');"></div>
         </div>
       <div class="input-wrap">
         <textarea class="omni-input" rows="1" placeholder="Яблоко 200г, кофе..."></textarea>
@@ -811,6 +841,28 @@ html, body {
       </div>
     </div>
   </div>
+
+
+  <div id="csvInputOverlay" class="perm-overlay hidden">
+  <div style="font-size:48px; margin-bottom:10px">📎</div>
+  <h2 style="margin:0">Импорт данных</h2>
+  <p style="color:var(--text-muted); max-width: 280px; margin-top: 8px;">
+    Вставьте ссылку на CSV файл
+  </p>
+  
+  <div class="input-wrap" style="width: 100%; max-width: 300px; margin: 20px 0;">
+    <input id="csvLinkInput" type="url" class="omni-input" 
+           placeholder="https://..." 
+           autocapitalize="off" autocomplete="off" autocorrect="off"
+           style="text-align: center; height: 44px;">
+  </div>
+
+  <div style="display: flex; gap: 12px; width: 100%; max-width: 300px;">
+    <button class="perm-btn" style="background: rgba(255,255,255,0.1); flex:1;" onclick="toggleCsvOverlay(false)">Отмена</button>
+    <button class="perm-btn" style="flex:1;" onclick="submitCsvLink()">Загрузить</button>
+  </div>
+</div>
+
 
 <script>
 /* ============================================================
@@ -1464,7 +1516,15 @@ DOM.shutter.addEventListener('click', async () => {
             <div class="step pending" id="step-2"><div class="s-icon">🧠</div><div class="s-lbl">TextParser: Ищу в базе...</div></div>
             <div class="step pending" id="step-3"><div class="s-icon">📝</div><div class="s-lbl">Synthesizer: Готовлю ответ...</div></div>
         `;
-    } else {
+      } else if (mode === 'csv') {
+        // НОВОЕ
+        container.innerHTML = `
+        <div class="step pending" id="step-1"><div class="s-icon">🔗</div><div class="s-lbl">Connect: Скачиваю файл...</div></div>
+        <div class="step pending" id="step-2"><div class="s-icon">📂</div><div class="s-lbl">Parser: Читаю таблицу...</div></div>
+        <div class="step pending" id="step-3"><div class="s-icon">💎</div><div class="s-lbl">Import: Подготовка данных...</div></div>
+      `;
+
+      } else {
         // --- PHOTO ROUTE (Default Plate Flow) ---
         // Мы показываем полный путь "Тарелки", так как это самый красивый сценарий.
         // Если это окажется Упаковка (Librarian), сервер ответит раньше, и мы просто закроем окно, что тоже ок.
@@ -1514,56 +1574,75 @@ DOM.shutter.addEventListener('click', async () => {
   // === UI ЛОГИКА: DRAFT SHEET (ВАЛИДАЦИЯ) ===
   let currentDraftItems = []; // Здесь храним то, что редактирует юзер
   let currentScanId = null;
+  let isReadOnlyMode = false;
 
-  function openDraftSheet(data, scanId) {
-    currentScanId = scanId;
-    // Если данных нет или пустой массив
-    if (!data || !data.items) {
-       alert("Ничего не найдено. Попробуйте снова.");
-       return;
-    }
-    
-    currentDraftItems = data.items; // Сохраняем в память
-    renderDraftList();
-    
-    document.getElementById('draftOverlay').classList.add('visible');
-    haptic('success');
-    document.getElementById('focusOverlay').classList.add('active');
+  function openDraftSheet(data, scanId, readOnly = false) {
+  currentScanId = scanId;
+  isReadOnlyMode = !!readOnly; // Принудительно приводим к boolean
+
+  if (!data || !data.items || data.items.length === 0) {
+     alert("Список пуст. Проверьте данные.");
+     return;
   }
+  
+  currentDraftItems = data.items;
+  renderDraftList();
+  
+  const title = document.querySelector('.ds-title');
+  const sub = document.querySelector('.ds-subtitle');
+  const btn = document.getElementById('btnConfirmDraft');
+
+  // Меняем тексты в зависимости от режима
+  if (isReadOnlyMode) {
+     title.innerText = "Импорт FatSecret";
+     sub.innerText = "Редактирование запрещено. Удалите лишнее.";
+     btn.innerText = "Сохранить";
+  } else {
+     title.innerText = "Проверьте данные";
+     sub.innerText = "Если необходимо, внесите правки";
+     btn.innerText = "В дневник";
+  }
+  
+  document.getElementById('draftOverlay').classList.add('visible');
+  haptic('success');
+  document.getElementById('focusOverlay').classList.add('active');
+}
 
   function renderDraftList() {
-    const container = document.getElementById('draftList');
-    container.innerHTML = '';
-    
-    if (currentDraftItems.length === 0) {
-      container.innerHTML = '<div style="text-align:center; opacity:0.5; padding:20px">Список пуст</div>';
-      return;
-    }
-
-    currentDraftItems.forEach((item, index) => {
-      // Определяем иконку по типу (можно улучшить логику)
-      let icon = "🍽️";
-      if (item.cooking_method === 'Raw') icon = "🍎";
-      if (item.fat_modifier === 'High Oil') icon = "🍳";
-      
-      const div = document.createElement('div');
-      div.className = 'draft-item';
-      div.innerHTML = `
-        <div class="di-icon">${icon}</div>
-        <div class="di-inputs">
-          <input type="text" class="di-name" value="${item.name}" onchange="updateDraftItem(${index}, 'name', this.value)">
-          <div class="di-row">
-            <input type="number" class="di-weight" value="${item.weight_g || ''}" placeholder="0" onchange="updateDraftItem(${index}, 'weight_g', this.value)">
-            <div class="di-unit">г</div>
-          </div>
-        </div>
-        <div class="di-del" onclick="removeDraftItem(${index})">
-        <div class="gh-icon" style="-webkit-mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/trash.svg'); mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/trash.svg');"></div>
-        </div>
-      `;
-      container.appendChild(div);
-    });
+  const container = document.getElementById('draftList');
+  container.innerHTML = '';
+  
+  if (currentDraftItems.length === 0) {
+    container.innerHTML = '<div style="text-align:center; opacity:0.5; padding:20px">Список пуст</div>';
+    return;
   }
+
+  currentDraftItems.forEach((item, index) => {
+    const div = document.createElement('div');
+    // Добавляем класс, если режим ReadOnly
+    div.className = `draft-item ${isReadOnlyMode ? 'readonly' : ''}`;
+    
+    // Блокируем инпуты атрибутом
+    const attr = isReadOnlyMode ? 'readonly' : '';
+    
+    div.innerHTML = `
+      <div class="di-icon">${isReadOnlyMode ? '📊' : '🍽️'}</div>
+      <div class="di-inputs">
+        <input type="text" class="di-name" value="${item.name}" ${attr}
+               onchange="updateDraftItem(${index}, 'name', this.value)">
+        <div class="di-row">
+          <input type="number" class="di-weight" value="${item.weight_g || ''}" placeholder="0" ${attr}
+                 onchange="updateDraftItem(${index}, 'weight_g', this.value)">
+          <div class="di-unit">г</div>
+        </div>
+      </div>
+      <div class="di-del" onclick="removeDraftItem(${index})">
+        <div class="gh-icon" style="-webkit-mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/trash.svg'); mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/trash.svg');"></div>
+      </div>
+    `;
+    container.appendChild(div);
+  });
+}
 
   // Обновление локального стейта при вводе
   window.updateDraftItem = (index, field, value) => {
@@ -1762,41 +1841,64 @@ DOM.shutter.addEventListener('click', async () => {
   window.confirmDraftToNutritionist = async () => {
     const btn = document.getElementById('btnConfirmDraft');
     const originalText = btn.textContent;
-    btn.textContent = 'Считаю...';
+    btn.textContent = 'Сохраняю...';
     btn.disabled = true;
-    document.getElementById('focusOverlay').classList.add('active');
 
     try {
-      // 1. Расчет через AI
-      const resCalc = await API.send('calculate', { scanId: currentScanId, data: { items: currentDraftItems } });
-      if (!resCalc.ok) throw new Error(resCalc.error);
+      let finalItems = [];
 
-     
-      // 2. Сборка объекта еды с УНИКАЛЬНЫМИ ID
-      const items = resCalc.data.items.map(i => ({
-         id: Date.now() + '_' + Math.random().toString(36).substr(2, 9), // 🔥 Генерируем ID
-         name: i.name, 
-         w: i.weight_g,
-         k: i.calories||i.macros?.k||0, p: i.protein||i.macros?.p||0, 
-         f: i.fats||i.macros?.f||0, c: i.carbs||i.macros?.c||0
-      }));
-      
+      // ВЕТВЛЕНИЕ:
+      if (isReadOnlyMode) {
+          // 1. ВЕТКА CSV (Без AI)
+          // Мы доверяем данным, но страхуем типы через Number()
+          finalItems = currentDraftItems.map(i => ({
+             id: Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+             name: i.name,
+             w: Number(i.weight_g) || 0,
+             // Проверяем разные варианты ключей, которые может прислать бэк
+             k: Number(i.k || i.calories || i.macros?.k) || 0, 
+             p: Number(i.p || i.protein || i.macros?.p) || 0, 
+             f: Number(i.f || i.fat || i.fats || i.macros?.f) || 0, 
+             c: Number(i.c || i.carbohydrate || i.carbs || i.macros?.c) || 0
+          }));
+
+      } else {
+          // 2. ВЕТКА СТАНДАРТНАЯ (Нужен расчет AI)
+           const resCalc = await API.send('calculate', { 
+               scanId: currentScanId, 
+               data: { items: currentDraftItems } 
+           });
+           
+           if (!resCalc.ok) throw new Error(resCalc.error);
+           
+           finalItems = resCalc.data.items.map(i => ({
+             id: Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+             name: i.name, 
+             w: Number(i.weight_g) || 0,
+             k: Number(i.calories||i.macros?.k) || 0, 
+             p: Number(i.protein||i.macros?.p) || 0, 
+             f: Number(i.fats||i.macros?.f) || 0, 
+             c: Number(i.carbs||i.macros?.c) || 0
+          }));
+      }
+
+      // ОБЩАЯ ЛОГИКА СОХРАНЕНИЯ
       const mealEntry = {
           id: Date.now(),
           date: new Date().toDateString(),
           time: new Date().toLocaleTimeString('ru-RU', {hour:'2-digit',minute:'2-digit'}),
-          items: items
+          items: finalItems
       };
 
-      // 3. Сохранение в ленту
       saveToStorage(mealEntry);
       
-      // 4. Обновление виджетов (СЕГОДНЯШНИХ)
+      // Обновляем виджеты (здесь Number() спасает от глюков конкатенации)
       let sum = { k:0, p:0, f:0, c:0 };
-      items.forEach(i => { sum.k+=i.k; sum.p+=i.p; sum.f+=i.f; sum.c+=i.c; });
+      finalItems.forEach(i => { 
+          sum.k+=i.k; sum.p+=i.p; sum.f+=i.f; sum.c+=i.c; 
+      });
       updateLocalStats(new Date(), 'food', sum); 
       
-      // 5. Отправка в БД
       API.send('save_meal', { meal_data: mealEntry }).catch(console.error);
       
       haptic('success');
@@ -1808,9 +1910,8 @@ DOM.shutter.addEventListener('click', async () => {
     } finally {
       btn.textContent = originalText;
       btn.disabled = false;
-      document.getElementById('focusOverlay').classList.remove('active');
     }
-  };
+};
 
 
   // === 4. ЛЕНТА ИСТОРИИ (TIMELINE) ===
@@ -2188,6 +2289,48 @@ DOM.shutter.addEventListener('click', async () => {
           
       } catch(e) { console.error(e); }
   }
+
+// Открыть/закрыть окно
+function toggleCsvOverlay(show) {
+  const el = document.getElementById('csvInputOverlay');
+  const inp = document.getElementById('csvLinkInput');
+  
+  if (show) {
+    el.classList.remove('hidden');
+    // Небольшая задержка для корректной работы клавиатуры на iOS
+    setTimeout(() => inp.focus(), 150);
+  } else {
+    el.classList.add('hidden');
+    inp.blur();
+    inp.value = ''; 
+  }
+}
+
+// Отправка ссылки
+async function submitCsvLink() {
+  const url = document.getElementById('csvLinkInput').value.trim();
+  if (!url) return showToast("Укажите ссылку");
+  
+  toggleCsvOverlay(false);
+  startProcessingUI('csv'); // Запуск анимации
+
+  try {
+    // Ждем от сервера { items: [...] } с уже готовыми КБЖУ
+    const result = await API.send('parse_csv', { url: url });
+    
+    stopProcessingUI();
+
+    if (result.ok) {
+      // Открываем драфт в режиме ReadOnly (true)
+      openDraftSheet(result.data, null, true); 
+    } else {
+      throw new Error(result.error || "Не удалось прочитать файл");
+    }
+  } catch (e) {
+    stopProcessingUI();
+    alert("Ошибка: " + e.message);
+  }
+}
 
 </script>
 </body>
