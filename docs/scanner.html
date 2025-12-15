@@ -512,6 +512,31 @@ html, body {
   -ms-overflow-style: none;
 }
 
+/* === STYLES FOR EDIT MODE === */
+.mh-header-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.edit-btn {
+  width: 24px; height: 24px;
+  display: flex; align-items: center; justify-content: center;
+  opacity: 0.4; cursor: pointer;
+}
+.edit-btn:active { opacity: 1; transform: scale(0.9); }
+
+/* Иконка корзины в шторке (Красная) */
+.di-del.is-trash {
+  background: rgba(255, 69, 58, 0.15);
+  border-radius: 8px;
+  width: 32px; height: 32px;
+}
+.di-del.is-trash .gh-icon {
+  background-color: var(--acc-red);
+  width: 18px; height: 18px;
+}
+
+
 </style>
 </head>
 <body>
@@ -1710,9 +1735,12 @@ DOM.shutter.addEventListener('click', async () => {
       const resCalc = await API.send('calculate', { scanId: currentScanId, data: { items: currentDraftItems } });
       if (!resCalc.ok) throw new Error(resCalc.error);
 
-      // 2. Сборка объекта еды
+     
+      // 2. Сборка объекта еды с УНИКАЛЬНЫМИ ID
       const items = resCalc.data.items.map(i => ({
-         name: i.name, w: i.weight_g,
+         id: Date.now() + '_' + Math.random().toString(36).substr(2, 9), // 🔥 Генерируем ID
+         name: i.name, 
+         w: i.weight_g,
          k: i.calories||i.macros?.k||0, p: i.protein||i.macros?.p||0, 
          f: i.fats||i.macros?.f||0, c: i.carbs||i.macros?.c||0
       }));
@@ -1753,6 +1781,7 @@ DOM.shutter.addEventListener('click', async () => {
   function addMealToTimeline(mealEntry) {
     const container = document.getElementById('mealTimeline');
     if (!container) return;
+    
     let rowsHTML = '';
     mealEntry.items.forEach(item => {
         rowsHTML += `
@@ -1765,10 +1794,20 @@ DOM.shutter.addEventListener('click', async () => {
             <div class="pi-val pi-c">${item.c}</div>
         </div>`;
     });
+
+    // 🔥 ДОБАВЛЕН КАРАНДАШ В ЗАГОЛОВОК
+    // Мы сохраняем JSON всего приема пищи в атрибут, чтобы открыть его при клике
+    const safeData = encodeURIComponent(JSON.stringify(mealEntry));
+    
     const cardHTML = `
       <div class="meal-card" id="card-${mealEntry.id}">
         <div class="col-headers">
-            <div class="mh-time">${mealEntry.time}</div>
+            <div class="mh-header-row">
+               <div class="mh-time">${mealEntry.time}</div>
+               <div class="edit-btn" onclick="openEditMeal('${safeData}')">
+                 <div class="gh-icon" style="-webkit-mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/pencil.svg'); mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/pencil.svg');"></div>
+               </div>
+            </div>
             <div class="ch-item">Вес</div>
             <div class="ch-item">К</div>
             <div class="ch-item">Б</div>
@@ -1830,7 +1869,9 @@ DOM.shutter.addEventListener('click', async () => {
       sortedTimes.forEach(time => {
           const itemsInGroup = groups[time];
           
+          // Превращаем формат сервера в формат фронта, СОХРАНЯЯ ID
           const mappedItems = itemsInGroup.map(i => ({
+              id: i.id || ('legacy_' + Math.random()), // Если ID нет (старые записи), создаем временный
               name: i.n,
               w: i.w,
               k: i.m.k, p: i.m.p, f: i.m.f, c: i.m.c
@@ -1987,6 +2028,130 @@ DOM.shutter.addEventListener('click', async () => {
     const isInput = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA');
     if (isInput && e.target !== active) active.blur();
   });
+
+// === ЛОГИКА РЕДАКТИРОВАНИЯ И УДАЛЕНИЯ ===
+  
+  let editingMeal = null; // Текущий редактируемый прием пищи
+
+  // 1. Открытие шторки редактирования
+  window.openEditMeal = (encodedData) => {
+      try {
+          const meal = JSON.parse(decodeURIComponent(encodedData));
+          editingMeal = meal;
+          
+          // Используем ту же шторку Draft, но меняем заголовки
+          document.querySelector('.ds-title').innerText = "Редактирование";
+          document.querySelector('.ds-subtitle').innerText = `Прием пищи в ${meal.time}`;
+          
+          // Скрываем кнопку "В дневник", показываем только "Готово"
+          document.getElementById('btnConfirmDraft').classList.add('hidden');
+          const cancelBtn = document.querySelector('.ds-btn.sec');
+          cancelBtn.innerText = "Готово";
+          cancelBtn.onclick = closeDraft; // Просто закрыть
+
+          renderEditList(meal.items);
+          
+          document.getElementById('draftOverlay').classList.add('visible');
+          document.getElementById('focusOverlay').classList.add('active');
+          haptic('selection');
+      } catch(e) { console.error(e); }
+  };
+
+  // 2. Рендер списка с КОРЗИНОЙ
+  function renderEditList(items) {
+      const container = document.getElementById('draftList');
+      container.innerHTML = '';
+      
+      items.forEach(item => {
+          const div = document.createElement('div');
+          div.className = 'draft-item';
+          // Блокируем инпуты (read-only), показываем только удаление
+          div.innerHTML = `
+            <div class="di-icon">🍽️</div>
+            <div class="di-inputs">
+              <div class="di-name" style="opacity:0.8">${item.name}</div>
+              <div class="di-row">
+                <span style="color:#fff; font-weight:700; margin-left:4px">${item.w} г</span>
+              </div>
+            </div>
+            <div class="di-del is-trash" onclick="deleteItem('${item.id}')">
+               <div class="gh-icon" style="-webkit-mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/trash.svg'); mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/trash.svg');"></div>
+            </div>
+          `;
+          container.appendChild(div);
+      });
+  }
+
+  // 3. УДАЛЕНИЕ (ОСНОВНАЯ ЛОГИКА)
+  window.deleteItem = (itemId) => {
+      if (!editingMeal) return;
+      
+      // А) Находим продукт, чтобы вычесть его цифры
+      const itemIndex = editingMeal.items.findIndex(i => i.id === itemId);
+      if (itemIndex === -1) return;
+      const item = editingMeal.items[itemIndex];
+
+      haptic('warning');
+
+      // Б) Вычитаем из виджетов (Мгновенно)
+      // Внимание: передаем отрицательные значения!
+      updateLocalStats(CurrentViewDate, 'food', {
+          k: -item.k, p: -item.p, f: -item.f, c: -item.c
+      });
+
+      // В) Удаляем из массива в памяти
+      editingMeal.items.splice(itemIndex, 1);
+      
+      // Г) Обновляем UI шторки
+      if (editingMeal.items.length === 0) {
+          closeDraft(); // Если пусто, закрываем
+      } else {
+          renderEditList(editingMeal.items); // Перерисовываем список
+      }
+
+      // Д) Обновляем localStorage и Ленту
+      // Нам нужно найти этот прием пищи в истории и обновить его
+      updateStorageAfterDelete(editingMeal);
+
+      // Е) 🔥 ОТПРАВЛЯЕМ ЗАПРОС НА БЭКЕНД
+      API.send('delete_item', { 
+          dateStr: CurrentViewDate.toISOString(),
+          itemId: itemId
+      }).catch(console.error);
+  };
+
+  function updateStorageAfterDelete(updatedMeal) {
+      try {
+          const raw = localStorage.getItem(STORAGE_KEY);
+          let history = raw ? JSON.parse(raw) : [];
+          
+          // Если в приеме пищи не осталось продуктов - удаляем его целиком
+          if (updatedMeal.items.length === 0) {
+              history = history.filter(m => {
+                  // Сравниваем по времени и дате, так как ID у нас синтетические в ленте
+                  const sameDay = (m.date || new Date(m.id).toDateString()) === updatedMeal.date;
+                  const sameTime = m.time === updatedMeal.time;
+                  return !(sameDay && sameTime);
+              });
+          } else {
+              // Иначе обновляем состав продуктов
+              history = history.map(m => {
+                  const sameDay = (m.date || new Date(m.id).toDateString()) === updatedMeal.date;
+                  const sameTime = m.time === updatedMeal.time;
+                  if (sameDay && sameTime) {
+                      return updatedMeal; // Заменяем на обновленный
+                  }
+                  return m;
+              });
+          }
+          
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+          
+          // Перерисовываем ленту целиком
+          loadFromStorage(CurrentViewDate);
+          
+      } catch(e) { console.error(e); }
+  }
 
 </script>
 </body>
