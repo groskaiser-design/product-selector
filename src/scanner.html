@@ -571,30 +571,84 @@ html, body {
 }
 
 /* === PATCH: LOCKED ITEMS (FATSECRET IMPORT) === */
-.di-name:disabled, .di-weight:disabled {
+/* === COMPACT DRAFT ITEM (ONE LINE) === */
+.draft-item {
+  display: flex; 
+  align-items: center; /* Центрируем по вертикали */
+  gap: 10px;
+  background: rgba(255,255,255,0.06);
+  padding: 0 12px; /* Уменьшили отступы */
+  height: 48px;    /* Фиксированная высота строки */
+  border-radius: 14px;
+  margin-bottom: 8px;
+}
+
+/* Иконка */
+.di-icon {
+  font-size: 18px;
+  flex-shrink: 0; /* Не сжимать */
+}
+
+/* Название (Занимает всё место, обрезается) */
+.di-name {
+  flex: 1; /* Растягиваем */
+  min-width: 0; /* ВАЖНО для работы ellipsis внутри flex */
   background: transparent !important;
-  border-color: transparent !important;
-  color: rgba(255, 255, 255, 0.9);
-  opacity: 1; /* Чтобы текст был четким */
-  pointer-events: none; /* Запрещаем клики */
-  padding-left: 0;
-  font-weight: 700; /* Делаем жирнее, раз это факт */
+  border: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  color: #fff;
+  font-size: 15px; /* Обычный шрифт */
+  font-weight: 400; /* Не жирный */
+  
+  /* Обрезка текста троеточием */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-/* Иконка замка перед именем */
-.lock-indicator {
-  font-size: 12px;
-  margin-right: 6px;
-  opacity: 0.6;
+/* Блок справа (Вес + Ед + Удалить) */
+.di-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
-/* Изменяем цвет веса для заблокированных */
-.di-weight:disabled {
-  color: var(--acc-green); /* Зеленый цвет показывает, что вес точный */
+/* Поле веса (маленькое, без рамок) */
+.di-weight {
+  width: 44px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid rgba(255,255,255,0.2);
+  border-radius: 0;
+  color: var(--acc-green);
+  font-weight: 600;
   text-align: right;
-  width: auto; /* Автоширина */
-  padding-right: 4px;
+  padding: 2px 0;
+  font-size: 14px;
 }
+.di-weight:focus { border-color: #0a84ff; }
+.di-weight:disabled { 
+  border: none; 
+  color: rgba(255,255,255,0.6); 
+  padding-right: 2px;
+}
+
+/* Единица измерения */
+.di-unit {
+  font-size: 12px;
+  color: rgba(255,255,255,0.4);
+  width: 18px; /* Фикс ширина чтобы ровно стояло */
+}
+
+/* Корзина */
+.di-del {
+  width: 32px; height: 32px;
+  margin-left: 4px;
+  opacity: 0.5;
+}
+.di-del:active { opacity: 1; transform: scale(0.9); }
 
 </style>
 </head>
@@ -1566,50 +1620,49 @@ DOM.shutter.addEventListener('click', async () => {
     document.getElementById('focusOverlay').classList.add('active');
   }
 
-function renderDraftList() {
+  function renderDraftList() {
     const container = document.getElementById('draftList');
     container.innerHTML = '';
     
     if (currentDraftItems.length === 0) {
-      container.innerHTML = '<div style="text-align:center; opacity:0.5; padding:20px">Список пуст</div>';
+      container.innerHTML = '<div style="text-align:center; opacity:0.5; padding:20px; font-size:13px">Список пуст</div>';
       return;
     }
 
     currentDraftItems.forEach((item, index) => {
-      // 1. Проверяем блокировку (придет с бэкенда)
       const isLocked = !!item.locked; 
       const disabledAttr = isLocked ? 'disabled' : '';
       
-      // 2. Подбираем иконку
+      // Иконки
       let icon = "🍽️";
       if (item.cooking_method === 'Raw') icon = "🍎";
-      if (item.fat_modifier === 'High Oil') icon = "🍳";
-      if (isLocked) icon = "📄"; // Иконка для импорта
+      if (isLocked) icon = "📄"; 
 
-      // 3. Индикатор замка
-      const lockHtml = isLocked ? '<span class="lock-indicator">🔒</span>' : '';
-      
+      // Единица измерения (шт/г)
+      let unitLabel = 'г';
+      if (isLocked && item.weight_g < 10) unitLabel = 'шт';
+
       const div = document.createElement('div');
       div.className = 'draft-item';
       
+      // Убрали 🔒 из блока .di-right
       div.innerHTML = `
         <div class="di-icon">${icon}</div>
-        <div class="di-inputs">
-          <div style="display:flex; align-items:center">
-             ${lockHtml}
-             <input type="text" class="di-name" value="${item.name}" 
-                    ${disabledAttr} 
-                    onchange="updateDraftItem(${index}, 'name', this.value)">
-          </div>
-          <div class="di-row">
-            <input type="number" class="di-weight" value="${item.weight_g || ''}" placeholder="0" 
-                   ${disabledAttr} 
-                   onchange="updateDraftItem(${index}, 'weight_g', this.value)">
-            <div class="di-unit">г</div>
-          </div>
-        </div>
-        <div class="di-del" onclick="removeDraftItem(${index})">
-        <div class="gh-icon" style="-webkit-mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/trash.svg'); mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/trash.svg');"></div>
+        
+        <input type="text" class="di-name" value="${item.name}" 
+               ${disabledAttr} placeholder="Продукт"
+               onchange="updateDraftItem(${index}, 'name', this.value)">
+
+        <div class="di-right">
+           <input type="number" class="di-weight" value="${item.weight_g || ''}" placeholder="0" 
+                  ${disabledAttr} 
+                  onchange="updateDraftItem(${index}, 'weight_g', this.value)">
+           
+           <div class="di-unit">${unitLabel}</div>
+
+           <div class="di-del ${item.id ? 'is-trash' : ''}" onclick="${item.id ? `deleteItem('${item.id}')` : `removeDraftItem(${index})`}">
+             <div class="gh-icon" style="-webkit-mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/trash.svg'); mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/trash.svg');"></div>
+           </div>
         </div>
       `;
       container.appendChild(div);
