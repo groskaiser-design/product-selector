@@ -1094,30 +1094,36 @@ function isAdmin() {
     }
   };
 
-// 3. Функция отправки чистого текста (С ФИКСОМ ИКОНКИ)
-  async function sendTextOnly(text) {
+// 3. Функция отправки текста ИЛИ ссылки (CSV Import)
+async function sendTextOnly(text) {
      const btn = DOM.btnStartCam;
      btn.style.opacity = '0.5';
      haptic('medium');
      document.getElementById('focusOverlay').classList.add('active');
+     
      try {
-       startProcessingUI('text');
+       // 1. ДЕТЕКЦИЯ: Проверяем, ссылка ли это на CSV FatSecret
+       const isFatSecretCsv = text.includes('fatsecret.com/export') && text.includes('.csv');
        
+       // 2. Запускаем соответствующую анимацию
+       // Если это CSV — режим 'import', если просто текст — 'text'
+       startProcessingUI(isFatSecretCsv ? 'import' : 'text');
+       
+       // 3. Отправляем на ТОТ ЖЕ endpoint 'scan'. Бэкенд сам разберется.
        const result = await API.send('scan', { image: null, userText: text });
        
        stopProcessingUI();
        
-       // === НАЧАЛО ФИКСА: СБРОС ПОЛЯ И ИКОНКИ ===
-       DOM.omniInput.value = ''; // Чистим текст
-       DOM.omniInput.style.height = 'auto'; // Сбрасываем высоту поля
+       // === СБРОС ПОЛЯ И ИКОНКИ ===
+       DOM.omniInput.value = ''; 
+       DOM.omniInput.style.height = 'auto'; 
        
-       // Принудительно возвращаем иконку камеры
        DOM.btnStartCam.classList.remove('mode-send'); 
        DOM.icoCam.classList.remove('icon-hidden');
        DOM.icoSend.classList.add('icon-hidden');
-       // === КОНЕЦ ФИКСА ===
        
        if (result.ok) {
+         // Открываем драфт с полученными данными (из CSV или из Текста)
          openDraftSheet(result.data, result.scanId);
        } else {
          throw new Error(result.error);
@@ -1128,7 +1134,7 @@ function isAdmin() {
      } finally {
        btn.style.opacity = '1';
      }
-  }
+}
 
  DOM.btnClose.onclick = () => {
     // 1. Убираем фокус с инпутов (скрываем клавиатуру, если была)
@@ -1455,9 +1461,22 @@ DOM.shutter.addEventListener('click', async () => {
   function startProcessingUI(mode) {
     const container = document.getElementById('procSteps');
     const overlay = document.getElementById('procOverlay');
+    const title = document.querySelector('.proc-title'); 
     
-    // 1. Генерируем правильный список шагов в зависимости от режима
-    if (mode === 'text') {
+    // Сброс заголовка по умолчанию
+    if (title) title.innerText = "Думаю";
+
+    // 1. Генерируем правильный список шагов
+    if (mode === 'import') {
+        // --- 📊 CSV IMPORT ROUTE ---
+        if (title) title.innerText = "Импорт"; 
+        container.innerHTML = `
+            <div class="step pending" id="step-1"><div class="s-icon">🌐</div><div class="s-lbl">Connect: Скачиваю файл...</div></div>
+            <div class="step pending" id="step-2"><div class="s-icon">📄</div><div class="s-lbl">Parser: Разбираю CSV...</div></div>
+            <div class="step pending" id="step-3"><div class="s-icon">✨</div><div class="s-lbl">Converter: Создаю записи...</div></div>
+        `;
+    } 
+    else if (mode === 'text') {
         // --- TEXT ROUTE ---
         container.innerHTML = `
             <div class="step pending" id="step-1"><div class="s-icon">🛡️</div><div class="s-lbl">Gatekeeper: Проверяю...</div></div>
@@ -1465,9 +1484,7 @@ DOM.shutter.addEventListener('click', async () => {
             <div class="step pending" id="step-3"><div class="s-icon">📝</div><div class="s-lbl">Synthesizer: Готовлю ответ...</div></div>
         `;
     } else {
-        // --- PHOTO ROUTE (Default Plate Flow) ---
-        // Мы показываем полный путь "Тарелки", так как это самый красивый сценарий.
-        // Если это окажется Упаковка (Librarian), сервер ответит раньше, и мы просто закроем окно, что тоже ок.
+        // --- PHOTO ROUTE (Default) ---
         container.innerHTML = `
             <div class="step pending" id="step-1"><div class="s-icon">🛡️</div><div class="s-lbl">Gatekeeper: Проверяю...</div></div>
             <div class="step pending" id="step-2"><div class="s-icon">🕵️</div><div class="s-lbl">Detective: Ищу ингредиенты...</div></div>
@@ -1481,7 +1498,7 @@ DOM.shutter.addEventListener('click', async () => {
     
     // 2. Запускаем анимацию переключения шагов
     let step = 1;
-    const maxSteps = mode === 'text' ? 3 : 5;
+    const maxSteps = container.children.length; 
     
     updateStep(1, 'active');
 
@@ -1490,7 +1507,7 @@ DOM.shutter.addEventListener('click', async () => {
        step++;
        if(step > maxSteps) step = maxSteps; 
        updateStep(step, 'active');
-    }, 2000); // Чуть быстрее переключаем для динамики
+    }, 1500); 
   }
 
   function updateStep(num, status) {
@@ -1762,19 +1779,21 @@ DOM.shutter.addEventListener('click', async () => {
   window.confirmDraftToNutritionist = async () => {
     const btn = document.getElementById('btnConfirmDraft');
     const originalText = btn.textContent;
-    btn.textContent = 'Считаю...';
+    
+    // 1. Блокируем кнопку, чтобы не нажать дважды
+    btn.textContent = 'Сохраняю...';
     btn.disabled = true;
     document.getElementById('focusOverlay').classList.add('active');
 
     try {
-      // 1. Расчет через AI
+      // --- ЭТАП 1: РАСЧЕТ МАКРОСОВ (Если еще не посчитано) ---
+      // Если это CSV, макросы уже есть, но API 'calculate' их просто вернет. Это безопасно.
       const resCalc = await API.send('calculate', { scanId: currentScanId, data: { items: currentDraftItems } });
       if (!resCalc.ok) throw new Error(resCalc.error);
 
-     
       // 2. Сборка объекта еды с УНИКАЛЬНЫМИ ID
       const items = resCalc.data.items.map(i => ({
-         id: Date.now() + '_' + Math.random().toString(36).substr(2, 9), // 🔥 Генерируем ID
+         id: Date.now() + '_' + Math.random().toString(36).substr(2, 9), 
          name: i.name, 
          w: i.weight_g,
          k: i.calories||i.macros?.k||0, p: i.protein||i.macros?.p||0, 
@@ -1788,7 +1807,14 @@ DOM.shutter.addEventListener('click', async () => {
           items: items
       };
 
-      // 3. Сохранение в ленту
+      // --- ЭТАП 2: ОТПРАВКА В БД (САМОЕ ВАЖНОЕ) ---
+      // 🔥 КРИТИЧЕСКАЯ ПРАВКА: Ждем ответа сервера перед закрытием!
+      const saveRes = await API.send('save_meal', { meal_data: mealEntry });
+      if (!saveRes.ok) throw new Error(saveRes.error || "Ошибка сохранения на сервере");
+
+      // Если мы здесь — значит сервер точно сохранил данные.
+      
+      // 3. Сохранение в ленту (Локально)
       saveToStorage(mealEntry);
       
       // 4. Обновление виджетов (СЕГОДНЯШНИХ)
@@ -1796,19 +1822,21 @@ DOM.shutter.addEventListener('click', async () => {
       items.forEach(i => { sum.k+=i.k; sum.p+=i.p; sum.f+=i.f; sum.c+=i.c; });
       updateLocalStats(new Date(), 'food', sum); 
       
-      // 5. Отправка в БД
-      API.send('save_meal', { meal_data: mealEntry }).catch(console.error);
-      
       haptic('success');
-      closeDraft();
+      closeDraft(); // Закрываем только сейчас
       addMealToTimeline(mealEntry);
 
     } catch (e) {
-      alert("Ошибка: " + e.message);
+      console.error(e);
+      haptic('error');
+      alert("Не удалось сохранить: " + e.message + "\nПопробуйте еще раз.");
+      // Шторка остается открытой, кнопку разблокируем ниже
     } finally {
       btn.textContent = originalText;
       btn.disabled = false;
-      document.getElementById('focusOverlay').classList.remove('active');
+      // FocusOverlay убирается внутри closeDraft(), если успех. 
+      // Если ошибка — убираем его вручную, чтобы вернуть интерфейс
+      if(btn.disabled === false) document.getElementById('focusOverlay').classList.remove('active');
     }
   };
 
