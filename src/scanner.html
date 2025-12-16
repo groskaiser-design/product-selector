@@ -737,9 +737,11 @@ html, body {
     
     <div class="focus-overlay" id="focusOverlay"></div>
     <div class="omni-bar" id="omniBar">
-        <div class="omni-icon-btn">
-          <div class="gh-icon" style="-webkit-mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/add.svg'); mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/add.svg');"></div>
-        </div>
+
+      <div class="omni-icon-btn" onclick="openLinkImporter()">
+        <div class="gh-icon" style="-webkit-mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/add.svg'); mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/add.svg');"></div>
+      </div>
+
       <div class="input-wrap">
         <textarea class="omni-input" rows="1" placeholder="Яблоко 200г, кофе..."></textarea>
       </div>
@@ -808,6 +810,24 @@ html, body {
       <div class="ds-actions">
         <button class="ds-btn sec" onclick="closeDraft()">Отмена</button>
         <button class="ds-btn prim" id="btnConfirmDraft" onclick="confirmDraftToNutritionist()">В дневник</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="processing-overlay" id="linkOverlay">
+    <div class="proc-card">
+      <div class="proc-title" style="margin-bottom:10px">Импорт FatSecret</div>
+      <p style="color:rgba(255,255,255,0.5); font-size:13px; text-align:center; margin-bottom:15px">
+        Вставьте прямую ссылку на CSV файл
+      </p>
+      
+      <div class="input-wrap" style="width:100%; margin-bottom:20px; background:rgba(0,0,0,0.3)">
+        <input type="text" id="fsLinkInput" class="omni-input" placeholder="https://..." style="height:40px; text-align:center">
+      </div>
+
+      <div class="ds-actions" style="width:100%; margin-top:0">
+        <button class="ds-btn sec" onclick="closeLinkImporter()">Отмена</button>
+        <button class="ds-btn prim" onclick="processLink()">Загрузить</button>
       </div>
     </div>
   </div>
@@ -998,6 +1018,7 @@ function isAdmin() {
   };
 
   const DOM = {
+
     video: document.getElementById('video'),
     canvas: document.getElementById('uiCanvas'),
     ctx: document.getElementById('uiCanvas').getContext('2d'),
@@ -1024,6 +1045,109 @@ function isAdmin() {
     btnStartCam: document.getElementById('btnStartCam'),
     btnClose: document.getElementById('btnClose')
   };
+// === IMPORT LOGIC START ===
+  window.openLinkImporter = () => {
+    document.getElementById('linkOverlay').classList.add('active');
+    setTimeout(() => document.getElementById('fsLinkInput').focus(), 100);
+  };
+
+  window.closeLinkImporter = () => {
+    document.getElementById('linkOverlay').classList.remove('active');
+    document.getElementById('fsLinkInput').value = '';
+    document.getElementById('fsLinkInput').blur();
+  };
+
+  window.processLink = async () => {
+    const link = document.getElementById('fsLinkInput').value.trim();
+    if (!link) return;
+
+    closeLinkImporter();
+    startProcessingUI('text'); // Показываем анимацию "Думаю"
+
+    try {
+        // Простой fetch. Если будут проблемы с CORS, нужно будет решать через прокси.
+        // Пока предполагаем, что ссылка прямая.
+        const response = await fetch(link);
+        if (!response.ok) throw new Error("Ошибка загрузки файла");
+        const text = await response.text();
+        
+        const items = parseFatSecretCSV(text);
+        
+        stopProcessingUI();
+
+        if (items.length === 0) {
+            alert("Продукты не найдены. Проверьте формат CSV.");
+            return;
+        }
+
+        // Открываем шторку в режиме IMPORT
+        openDraftSheet({ items: items }, null, 'import');
+
+    } catch (e) {
+        stopProcessingUI();
+        alert("Ошибка: " + e.message);
+    }
+  };
+
+  function parseFatSecretCSV(csvText) {
+    const lines = csvText.split('\n');
+    const products = [];
+    
+    // Парсим пары строк: 1. Макросы, 2. Количество
+    for (let i = 0; i < lines.length - 1; i++) {
+        const line = parseCSVLine(lines[i]);     // Строка с макросами
+        const nextLine = parseCSVLine(lines[i+1]); // Строка с описанием порции
+
+        // Проверка: строка имеет много колонок (макросы) + след. строка имеет 1 колонку (описание)
+        // И проверка, что это не заголовок (калории должны быть числом)
+        if (line.length > 5 && nextLine.length === 1) {
+            const k = parseFloat(line[1].replace(',', '.'));
+            
+            if (!isNaN(k)) {
+                // Это продукт
+                let name = line[0].trim();
+                const desc = nextLine[0].trim();
+                const p = parseFloat((line[7]||'0').replace(',', '.')) || 0;
+                const f = parseFloat((line[2]||'0').replace(',', '.')) || 0;
+                const c = parseFloat((line[4]||'0').replace(',', '.')) || 0;
+
+                // Пытаемся вытащить вес в граммах из описания
+                let weight = 0;
+                const match = desc.match(/(\d+)\s*(г|g|мл|ml)/i);
+                if (match) {
+                    weight = parseInt(match[1]);
+                } else {
+                    // Если вес не понятен, добавляем описание в имя
+                    name += ` (${desc})`;
+                }
+
+                products.push({
+                    id: 'fs_' + Date.now() + '_' + i,
+                    name: name,
+                    weight_g: weight,
+                    // Готовые макросы
+                    macros: { k, p, f, c },
+                    isImport: true
+                });
+            }
+        }
+    }
+    return products;
+  }
+
+  // Вспомогательная функция для CSV (учет кавычек)
+  function parseCSVLine(text) {
+    if(!text) return [];
+    const re_value = /(?!\s*$)\s*(?:'([^']*)'|"(.*)"|([^,'"]*)|(?:\s*,\s*)*)/g;
+    const a = [];
+    text.replace(re_value, function(m0, m1, m2, m3) {
+        if (m1 !== undefined) a.push(m1.replace(/\\'/g, "'"));
+        else if (m2 !== undefined) a.push(m2.replace(/\\"/g, '"'));
+        else if (m3 !== undefined) a.push(m3);
+        return '';
+    });
+    return a;
+  }
 
   // === LOGIC ===
   // === OMNI BAR LOGIC (TEXT vs CAMERA) ===
@@ -1515,15 +1639,46 @@ DOM.shutter.addEventListener('click', async () => {
   let currentDraftItems = []; // Здесь храним то, что редактирует юзер
   let currentScanId = null;
 
-  function openDraftSheet(data, scanId) {
+  // === UPDATED DRAFT FUNCTIONS ===
+  window.currentDraftMode = 'review'; // Глобальная переменная режима
+
+  function openDraftSheet(data, scanId, mode = 'review') {
     currentScanId = scanId;
-    // Если данных нет или пустой массив
+    window.currentDraftMode = mode; // 'review', 'edit', 'import'
+    
     if (!data || !data.items) {
-       alert("Ничего не найдено. Попробуйте снова.");
+       alert("Ничего не найдено.");
        return;
     }
     
-    currentDraftItems = data.items; // Сохраняем в память
+    currentDraftItems = data.items;
+    
+    // Настройка заголовков под режим
+    const titleEl = document.querySelector('.ds-title');
+    const subEl = document.querySelector('.ds-subtitle');
+    const btnConfirm = document.getElementById('btnConfirmDraft');
+    const btnCancel = document.querySelector('.ds-btn.sec');
+
+    btnConfirm.classList.remove('hidden'); // Показываем кнопку по умолчанию
+    btnCancel.innerText = "Отмена";
+    btnCancel.onclick = closeDraft;
+
+    if (mode === 'import') {
+        titleEl.innerText = "Импорт из FatSecret";
+        subEl.innerText = "Редактирование запрещено. Удалите лишнее.";
+        btnConfirm.innerText = "Добавить в дневник";
+    } else if (mode === 'edit') {
+        titleEl.innerText = "Редактирование";
+        subEl.innerText = "Измените состав приема пищи";
+        btnConfirm.classList.add('hidden'); // Скрываем кнопку сохранения
+        btnCancel.innerText = "Готово";
+    } else {
+        // Default review mode
+        titleEl.innerText = "Проверьте данные";
+        subEl.innerText = "Внесите правки перед записью";
+        btnConfirm.innerText = "В дневник";
+    }
+
     renderDraftList();
     
     document.getElementById('draftOverlay').classList.add('visible');
@@ -1535,52 +1690,51 @@ DOM.shutter.addEventListener('click', async () => {
     const container = document.getElementById('draftList');
     container.innerHTML = '';
     
+    // Если режим Import или Edit(корзина), блокируем инпуты
+    const isImport = (window.currentDraftMode === 'import');
+    const isEditMode = (window.currentDraftMode === 'edit');
+    
+    // Блокируем ввод при Импорте и при Редактировании (старый функционал редактирования был read-only)
+    const shouldDisable = isImport || isEditMode;
+    const disabledAttr = shouldDisable ? 'disabled style="opacity:0.8; pointer-events:none; border:none; background:transparent"' : '';
+
     if (currentDraftItems.length === 0) {
       container.innerHTML = '<div style="text-align:center; opacity:0.5; padding:20px">Список пуст</div>';
       return;
     }
 
     currentDraftItems.forEach((item, index) => {
-      // Определяем иконку по типу (можно улучшить логику)
       let icon = "🍽️";
-      if (item.cooking_method === 'Raw') icon = "🍎";
-      if (item.fat_modifier === 'High Oil') icon = "🍳";
+      if (item.isImport) icon = "📥";
       
       const div = document.createElement('div');
       div.className = 'draft-item';
+      
+      // Кнопка удаления: если EditMode - особый стиль (trash), иначе обычный крестик
+      let delClass = 'di-del';
+      let delIcon = 'trash.svg'; 
+      if (isEditMode) { 
+          delClass = 'di-del is-trash';
+      }
+
       div.innerHTML = `
         <div class="di-icon">${icon}</div>
         <div class="di-inputs">
-          <input type="text" class="di-name" value="${item.name}" onchange="updateDraftItem(${index}, 'name', this.value)">
+          <input type="text" class="di-name" value="${item.name}" 
+                 onchange="updateDraftItem(${index}, 'name', this.value)" ${disabledAttr}>
           <div class="di-row">
-            <input type="number" class="di-weight" value="${item.weight_g || ''}" placeholder="0" onchange="updateDraftItem(${index}, 'weight_g', this.value)">
+            <input type="number" class="di-weight" value="${item.weight_g || ''}" placeholder="0" 
+                   onchange="updateDraftItem(${index}, 'weight_g', this.value)" ${disabledAttr}>
             <div class="di-unit">г</div>
           </div>
         </div>
-        <div class="di-del" onclick="removeDraftItem(${index})">
-        <div class="gh-icon" style="-webkit-mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/trash.svg'); mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/trash.svg');"></div>
+        <div class="${delClass}" onclick="${isEditMode ? `deleteItem('${item.id}')` : `removeDraftItem(${index})`}">
+           <div class="gh-icon" style="-webkit-mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/${delIcon}'); mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/${delIcon}');"></div>
         </div>
       `;
       container.appendChild(div);
     });
   }
-
-  // Обновление локального стейта при вводе
-  window.updateDraftItem = (index, field, value) => {
-    if (field === 'weight_g') value = parseInt(value) || 0;
-    currentDraftItems[index][field] = value;
-  };
-
-  window.removeDraftItem = (index) => {
-    currentDraftItems.splice(index, 1);
-    renderDraftList();
-  };
-
-  window.closeDraft = () => {
-    document.getElementById('draftOverlay').classList.remove('visible');
-    document.getElementById('focusOverlay').classList.remove('active');
-    retake(); // Сбрасываем камеру
-  };
 
   
 // === 1. КОНФИГУРАЦИЯ И СТЕЙТ (МОЗГ) ===
@@ -1759,44 +1913,57 @@ DOM.shutter.addEventListener('click', async () => {
   };
 
   // --- СОХРАНЕНИЕ ЕДЫ (Save Meal) ---
+  // === UPDATED SAVE FUNCTION ===
   window.confirmDraftToNutritionist = async () => {
     const btn = document.getElementById('btnConfirmDraft');
     const originalText = btn.textContent;
-    btn.textContent = 'Считаю...';
+    btn.textContent = 'Сохраняю...';
     btn.disabled = true;
-    document.getElementById('focusOverlay').classList.add('active');
 
     try {
-      // 1. Расчет через AI
-      const resCalc = await API.send('calculate', { scanId: currentScanId, data: { items: currentDraftItems } });
-      if (!resCalc.ok) throw new Error(resCalc.error);
+      // 1. Проверяем, это импорт или обычный скан
+      const isImport = window.currentDraftMode === 'import';
+      let itemsToSave = [];
 
-     
-      // 2. Сборка объекта еды с УНИКАЛЬНЫМИ ID
-      const items = resCalc.data.items.map(i => ({
-         id: Date.now() + '_' + Math.random().toString(36).substr(2, 9), // 🔥 Генерируем ID
-         name: i.name, 
-         w: i.weight_g,
-         k: i.calories||i.macros?.k||0, p: i.protein||i.macros?.p||0, 
-         f: i.fats||i.macros?.f||0, c: i.carbs||i.macros?.c||0
-      }));
+      if (isImport) {
+         // --- ПУТЬ ИМПОРТА (БЕЗ AI) ---
+         // Просто берем данные из драфта, так как макросы уже там
+         itemsToSave = currentDraftItems.map(i => ({
+             id: Date.now() + '_' + Math.random().toString(36).substr(2, 5),
+             name: i.name,
+             w: i.weight_g,
+             k: i.macros.k, p: i.macros.p, f: i.macros.f, c: i.macros.c
+         }));
+
+      } else {
+         // --- ПУТЬ ОБЫЧНЫЙ (AI РАСЧЕТ) ---
+         // Отправляем на сервер для пересчета веса и макросов
+         const resCalc = await API.send('calculate', { scanId: currentScanId, data: { items: currentDraftItems } });
+         if (!resCalc.ok) throw new Error(resCalc.error);
+         
+         itemsToSave = resCalc.data.items.map(i => ({
+             id: Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+             name: i.name,
+             w: i.weight_g,
+             k: i.calories||0, p: i.protein||0, f: i.fats||0, c: i.carbs||0
+         }));
+      }
       
+      // 2. Формируем прием пищи
       const mealEntry = {
           id: Date.now(),
           date: new Date().toDateString(),
           time: new Date().toLocaleTimeString('ru-RU', {hour:'2-digit',minute:'2-digit'}),
-          items: items
+          items: itemsToSave
       };
 
-      // 3. Сохранение в ленту
+      // 3. Сохранение и UI
       saveToStorage(mealEntry);
       
-      // 4. Обновление виджетов (СЕГОДНЯШНИХ)
       let sum = { k:0, p:0, f:0, c:0 };
-      items.forEach(i => { sum.k+=i.k; sum.p+=i.p; sum.f+=i.f; sum.c+=i.c; });
+      itemsToSave.forEach(i => { sum.k+=i.k; sum.p+=i.p; sum.f+=i.f; sum.c+=i.c; });
       updateLocalStats(new Date(), 'food', sum); 
       
-      // 5. Отправка в БД
       API.send('save_meal', { meal_data: mealEntry }).catch(console.error);
       
       haptic('success');
@@ -1808,7 +1975,6 @@ DOM.shutter.addEventListener('click', async () => {
     } finally {
       btn.textContent = originalText;
       btn.disabled = false;
-      document.getElementById('focusOverlay').classList.remove('active');
     }
   };
 
