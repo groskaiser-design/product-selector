@@ -570,87 +570,6 @@ html, body {
   background: rgba(255, 255, 255, 0.25);
 }
 
-/* === PATCH: LOCKED ITEMS (FATSECRET IMPORT) === */
-/* === COMPACT DRAFT ITEM (ONE LINE) === */
-.draft-item {
-  display: flex; 
-  align-items: center; /* Центрируем по вертикали */
-  gap: 10px;
-  background: rgba(255,255,255,0.06);
-  padding: 0 12px; /* Уменьшили отступы */
-  height: 48px;    /* Фиксированная высота строки */
-  border-radius: 14px;
-  margin-bottom: 8px;
-}
-
-/* Иконка */
-.di-icon {
-  font-size: 18px;
-  flex-shrink: 0; /* Не сжимать */
-}
-
-/* Название (Занимает всё место, обрезается) */
-.di-name {
-  flex: 1; /* Растягиваем */
-  min-width: 0; /* ВАЖНО для работы ellipsis внутри flex */
-  background: transparent !important;
-  border: none !important;
-  padding: 0 !important;
-  margin: 0 !important;
-  color: #fff;
-  font-size: 15px; /* Обычный шрифт */
-  font-weight: 400; /* Не жирный */
-  
-  /* Обрезка текста троеточием */
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Блок справа (Вес + Ед + Удалить) */
-.di-right {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-}
-
-/* Поле веса (маленькое, без рамок) */
-.di-weight {
-  width: 44px;
-  background: transparent;
-  border: none;
-  border-bottom: 1px solid rgba(255,255,255,0.2);
-  border-radius: 0;
-  color: var(--acc-green);
-  
-  font-weight: 400 !important; /* <--- БЫЛО 600. СТАЛО ТОНКО И АККУРАТНО */
-  
-  text-align: right;
-  padding: 2px 0;
-  font-size: 14px;
-}
-.di-weight:focus { border-color: #0a84ff; }
-.di-weight:disabled { 
-  border: none; 
-  color: rgba(255,255,255,0.6); 
-  padding-right: 2px;
-}
-
-/* Единица измерения */
-.di-unit {
-  font-size: 12px;
-  color: rgba(255,255,255,0.4);
-  width: 18px; /* Фикс ширина чтобы ровно стояло */
-}
-
-/* Корзина */
-.di-del {
-  width: 32px; height: 32px;
-  margin-left: 4px;
-  opacity: 0.5;
-}
-.di-del:active { opacity: 1; transform: scale(0.9); }
 
 </style>
 </head>
@@ -1176,30 +1095,27 @@ function isAdmin() {
   };
 
 // 3. Функция отправки чистого текста (С ФИКСОМ ИКОНКИ)
-  // 3. Функция отправки (С детектором FatSecret)
   async function sendTextOnly(text) {
      const btn = DOM.btnStartCam;
      btn.style.opacity = '0.5';
      haptic('medium');
      document.getElementById('focusOverlay').classList.add('active');
-     
      try {
-       // Детекция типа контента для правильной анимации
-       const isFatSecret = text.includes('fatsecret.com') && text.includes('.csv');
-       const uiMode = isFatSecret ? 'import' : 'text';
-
-       startProcessingUI(uiMode);
+       startProcessingUI('text');
        
        const result = await API.send('scan', { image: null, userText: text });
        
        stopProcessingUI();
        
-       // Сброс UI
-       DOM.omniInput.value = ''; 
-       DOM.omniInput.style.height = 'auto'; 
+       // === НАЧАЛО ФИКСА: СБРОС ПОЛЯ И ИКОНКИ ===
+       DOM.omniInput.value = ''; // Чистим текст
+       DOM.omniInput.style.height = 'auto'; // Сбрасываем высоту поля
+       
+       // Принудительно возвращаем иконку камеры
        DOM.btnStartCam.classList.remove('mode-send'); 
        DOM.icoCam.classList.remove('icon-hidden');
        DOM.icoSend.classList.add('icon-hidden');
+       // === КОНЕЦ ФИКСА ===
        
        if (result.ok) {
          openDraftSheet(result.data, result.scanId);
@@ -1540,15 +1456,8 @@ DOM.shutter.addEventListener('click', async () => {
     const container = document.getElementById('procSteps');
     const overlay = document.getElementById('procOverlay');
     
- // Генерируем шаги
-    if (mode === 'import') {
-        // --- FATSECRET ROUTE ---
-        container.innerHTML = `
-            <div class="step pending" id="step-1"><div class="s-icon">🌐</div><div class="s-lbl">Загрузка CSV...</div></div>
-            <div class="step pending" id="step-2"><div class="s-icon">⚙️</div><div class="s-lbl">Парсинг данных...</div></div>
-            <div class="step pending" id="step-3"><div class="s-icon">✅</div><div class="s-lbl">Подготовка...</div></div>
-        `;
-    } else if (mode === 'text') {
+    // 1. Генерируем правильный список шагов в зависимости от режима
+    if (mode === 'text') {
         // --- TEXT ROUTE ---
         container.innerHTML = `
             <div class="step pending" id="step-1"><div class="s-icon">🛡️</div><div class="s-lbl">Gatekeeper: Проверяю...</div></div>
@@ -1627,44 +1536,29 @@ DOM.shutter.addEventListener('click', async () => {
     container.innerHTML = '';
     
     if (currentDraftItems.length === 0) {
-      container.innerHTML = '<div style="text-align:center; opacity:0.5; padding:20px; font-size:13px">Список пуст</div>';
+      container.innerHTML = '<div style="text-align:center; opacity:0.5; padding:20px">Список пуст</div>';
       return;
     }
 
     currentDraftItems.forEach((item, index) => {
-      const isLocked = !!item.locked; 
-      const disabledAttr = isLocked ? 'disabled' : '';
-      
-      // Иконки
+      // Определяем иконку по типу (можно улучшить логику)
       let icon = "🍽️";
       if (item.cooking_method === 'Raw') icon = "🍎";
-      if (isLocked) icon = "📄"; 
-
-      // Единица измерения (шт/г)
-      let unitLabel = 'г';
-      if (isLocked && item.weight_g < 10) unitLabel = 'шт';
-
+      if (item.fat_modifier === 'High Oil') icon = "🍳";
+      
       const div = document.createElement('div');
       div.className = 'draft-item';
-      
-      // Убрали 🔒 из блока .di-right
       div.innerHTML = `
         <div class="di-icon">${icon}</div>
-        
-        <input type="text" class="di-name" value="${item.name}" 
-               ${disabledAttr} placeholder="Продукт"
-               onchange="updateDraftItem(${index}, 'name', this.value)">
-
-        <div class="di-right">
-           <input type="number" class="di-weight" value="${item.weight_g || ''}" placeholder="0" 
-                  ${disabledAttr} 
-                  onchange="updateDraftItem(${index}, 'weight_g', this.value)">
-           
-           <div class="di-unit">${unitLabel}</div>
-
-           <div class="di-del ${item.id ? 'is-trash' : ''}" onclick="${item.id ? `deleteItem('${item.id}')` : `removeDraftItem(${index})`}">
-             <div class="gh-icon" style="-webkit-mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/trash.svg'); mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/trash.svg');"></div>
-           </div>
+        <div class="di-inputs">
+          <input type="text" class="di-name" value="${item.name}" onchange="updateDraftItem(${index}, 'name', this.value)">
+          <div class="di-row">
+            <input type="number" class="di-weight" value="${item.weight_g || ''}" placeholder="0" onchange="updateDraftItem(${index}, 'weight_g', this.value)">
+            <div class="di-unit">г</div>
+          </div>
+        </div>
+        <div class="di-del" onclick="removeDraftItem(${index})">
+        <div class="gh-icon" style="-webkit-mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/trash.svg'); mask-image: url('https://cdn.jsdelivr.net/gh/groskaiser-design/icons@main/trash.svg');"></div>
         </div>
       `;
       container.appendChild(div);
