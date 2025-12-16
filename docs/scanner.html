@@ -1136,32 +1136,48 @@ async function sendTextOnly(text) {
      }
 }
 
- DOM.btnClose.onclick = () => {
-    // 1. Убираем фокус с инпутов (скрываем клавиатуру, если была)
+ // === НОВАЯ ФУНКЦИЯ: ПОЛНЫЙ ВЫХОД ИЗ РЕЖИМА КАМЕРЫ ===
+  function exitCameraMode() {
+    // 1. Убираем фокус и клавиатуру
     DOM.omniInput.blur();
     if(DOM.commentInput) DOM.commentInput.blur();
 
-    // 2. Скрываем UI камеры и возвращаем меню
+    // 2. Скрываем UI камеры
     state.uiMode = 'menu';
     DOM.camUI.classList.add('idle');
     DOM.camUI.style.pointerEvents = 'none';
     DOM.omniBar.classList.remove('hidden');
     
-    // Возвращаем календарь и виджеты
+    // 3. Возвращаем календарь и дашборд
     const cal = document.getElementById('calendarBlock');
     if(cal) cal.style.transform = 'translateY(0)';
     const dash = document.getElementById('dashboardLayer');
     if(dash) dash.classList.remove('hidden-mode');
 
+    // 4. ОСТАНАВЛИВАЕМ ВСЁ
     stopStream(); 
+    
+    // 5. Чистим превью и данные
+    DOM.preview.style.display = 'none';
+    if(DOM.finalImg.src) URL.revokeObjectURL(DOM.finalImg.src);
+    DOM.finalImg.src = ''; 
+    state.photoBlob = null; 
+    DOM.commentInput.value = '';
 
-    // 3. МЯГКИЙ СБРОС (Через 50мс, чтобы интерфейс успел перерисоваться)
+    // 6. Закрываем шторки, если они открыты
+    document.getElementById('draftOverlay').classList.remove('visible');
+    document.getElementById('focusOverlay').classList.remove('active');
+
+    // 7. Фикс скролла (iOS)
     setTimeout(() => {
         window.scrollTo(0, 0);
         const app = document.getElementById('appLayout');
         if (app) app.style.height = window.innerHeight + 'px';
     }, 50);
-  };
+  }
+
+  // Назначаем эту функцию на крестик
+  DOM.btnClose.onclick = exitCameraMode;
 
   let toastTimer;
   function showToast(msg) {
@@ -1395,36 +1411,41 @@ DOM.shutter.addEventListener('click', async () => {
     DOM.finalImg.src = URL.createObjectURL(blob); DOM.preview.style.display = 'flex';
   }
   function retake() {
+    // Скрываем превью
     DOM.preview.style.display = 'none';
+    
+    // Чистим память
     if(DOM.finalImg.src) URL.revokeObjectURL(DOM.finalImg.src);
-    DOM.finalImg.src = ''; state.photoBlob = null; DOM.commentInput.value = ''; 
+    DOM.finalImg.src = ''; 
+    state.photoBlob = null; 
+    DOM.commentInput.value = ''; 
+    
+    // 🔥 ВАЖНО: Перезапускаем камеру, так как мы её выключали при отправке
+    initCamera();
   }
 
-  // --- 🔥 ОТПРАВКА НА БЭК (ИСПРАВЛЕНО ДЛЯ CORS) ---
+  // --- ОТПРАВКА НА БЭК (С ВЫКЛЮЧЕНИЕМ КАМЕРЫ) ---
   async function sendPhoto() {
     const btn = DOM.btnSend;
     if (btn.disabled) return; 
     
-    // Закрываем превью
-    DOM.preview.style.display = 'none'; 
+    // 1. ОСТАНАВЛИВАЕМ КАМЕРУ (Экономим ресурсы пока "Думаем")
+    stopStream();
+    
+    // Не скрываем DOM.preview, чтобы пользователь видел свое фото на фоне
     haptic('heavy');
 
     try {
         if (!state.photoBlob) throw new Error("Нет фото");
         
-        // 1. Запускаем анимацию "Думаю..."
         startProcessingUI('photo');
         
-        // 2. Подготовка данных
         const base64 = await API.blobToBase64(state.photoBlob);
         const userText = DOM.commentInput.value;
         
-        // 3. Реальный запрос к API (это займет 10-20 сек)
-        // В это время крутится анимация
         const result = await API.send('scan', { image: base64, userText: userText });
         
-        // 4. Если успех - показываем результат в Draft Sheet
-        stopProcessingUI(); // Останавливаем анимацию
+        stopProcessingUI(); 
         
         if (result.ok) {
            openDraftSheet(result.data, result.scanId);
@@ -1437,8 +1458,10 @@ DOM.shutter.addEventListener('click', async () => {
         console.error(e);
         haptic('error');
         alert("Ошибка: " + e.message);
-        // Возвращаем UI камеры
-        DOM.preview.style.display = 'flex'; 
+        
+        // В случае ошибки кнопка снова активна, фото висит на экране.
+        // Камера выключена. Пользователь может нажать "Переснять" (запустит камеру)
+        // или "Готово" еще раз (повторит отправку).
         btn.disabled = false;
     }
   }
@@ -1776,26 +1799,23 @@ DOM.shutter.addEventListener('click', async () => {
   };
 
   // --- СОХРАНЕНИЕ ЕДЫ (Save Meal) ---
-  window.confirmDraftToNutritionist = async () => {
+window.confirmDraftToNutritionist = async () => {
     const btn = document.getElementById('btnConfirmDraft');
     const originalText = btn.textContent;
     
-    // 1. Блокируем кнопку, чтобы не нажать дважды
     btn.textContent = 'Сохраняю...';
     btn.disabled = true;
     document.getElementById('focusOverlay').classList.add('active');
 
     try {
-      // --- ЭТАП 1: РАСЧЕТ МАКРОСОВ (Если еще не посчитано) ---
-      // Если это CSV, макросы уже есть, но API 'calculate' их просто вернет. Это безопасно.
+      // 1. Расчет (если нужно)
       const resCalc = await API.send('calculate', { scanId: currentScanId, data: { items: currentDraftItems } });
       if (!resCalc.ok) throw new Error(resCalc.error);
 
-      // 2. Сборка объекта еды с УНИКАЛЬНЫМИ ID
+      // 2. Формируем данные
       const items = resCalc.data.items.map(i => ({
          id: Date.now() + '_' + Math.random().toString(36).substr(2, 9), 
-         name: i.name, 
-         w: i.weight_g,
+         name: i.name, w: i.weight_g,
          k: i.calories||i.macros?.k||0, p: i.protein||i.macros?.p||0, 
          f: i.fats||i.macros?.f||0, c: i.carbs||i.macros?.c||0
       }));
@@ -1807,36 +1827,36 @@ DOM.shutter.addEventListener('click', async () => {
           items: items
       };
 
-      // --- ЭТАП 2: ОТПРАВКА В БД (САМОЕ ВАЖНОЕ) ---
-      // 🔥 КРИТИЧЕСКАЯ ПРАВКА: Ждем ответа сервера перед закрытием!
+      // 3. Отправка в БД (Ждем ответа!)
       const saveRes = await API.send('save_meal', { meal_data: mealEntry });
-      if (!saveRes.ok) throw new Error(saveRes.error || "Ошибка сохранения на сервере");
+      if (!saveRes.ok) throw new Error(saveRes.error || "Ошибка сохранения");
 
-      // Если мы здесь — значит сервер точно сохранил данные.
-      
-      // 3. Сохранение в ленту (Локально)
+      // 4. Локальное сохранение и обновление виджетов
       saveToStorage(mealEntry);
-      
-      // 4. Обновление виджетов (СЕГОДНЯШНИХ)
       let sum = { k:0, p:0, f:0, c:0 };
       items.forEach(i => { sum.k+=i.k; sum.p+=i.p; sum.f+=i.f; sum.c+=i.c; });
       updateLocalStats(new Date(), 'food', sum); 
       
       haptic('success');
-      closeDraft(); // Закрываем только сейчас
+      
+      // 🔥 ФИНАЛ: Полностью выходим из режима камеры в меню
+      exitCameraMode(); 
+      
+      // Добавляем карточку в ленту
       addMealToTimeline(mealEntry);
 
     } catch (e) {
       console.error(e);
       haptic('error');
-      alert("Не удалось сохранить: " + e.message + "\nПопробуйте еще раз.");
-      // Шторка остается открытой, кнопку разблокируем ниже
+      alert("Не удалось сохранить: " + e.message);
     } finally {
       btn.textContent = originalText;
       btn.disabled = false;
-      // FocusOverlay убирается внутри closeDraft(), если успех. 
-      // Если ошибка — убираем его вручную, чтобы вернуть интерфейс
-      if(btn.disabled === false) document.getElementById('focusOverlay').classList.remove('active');
+      // Если была ошибка и мы остались в меню драфта - убираем оверлей фокуса вручную
+      // (Если успех - exitCameraMode сам всё почистит)
+      if(state.uiMode !== 'menu') {
+          // Оставляем оверлей активным, так как драфт еще открыт
+      }
     }
   };
 
