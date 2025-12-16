@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+    <title>Macros: The Human Operating System</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', '-apple-system', 'system-ui', 'sans-serif'] },
+                    colors: {
+                        core: '#050505',
+                        glass: 'rgba(28, 28, 30, 0.65)',
+                        'acc-blue': '#0a84ff',
+                        'acc-green': '#30d158',
+                        'acc-orange': '#ff9f0a',
+                        'acc-purple': '#bf5af2',
+                        'acc-red': '#ff453a',
+                    },
+                    backgroundImage: {
+                        'gradient-radial': 'radial-gradient(var(--tw-gradient-stops))',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* === CORE STYLES === */
+        :root {
+            --bg-core: #050505;
+            --glass-border: rgba(255, 255, 255, 0.08);
+            --glass-highlight: rgba(255, 255, 255, 0.15);
+        }
+
+        body {
+            background-color: var(--bg-core);
+            color: #ffffff;
+            overflow-x: hidden;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        /* === ATMOSPHERE === */
+        .fx-layer { position: fixed; inset: 0; z-index: -1; pointer-events: none; overflow: hidden; }
+        .noise { 
+            position: fixed; inset: 0; opacity: 0.04; 
+            background: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); 
+            z-index: 0;
+        }
+        .orb { position: absolute; border-radius: 50%; filter: blur(80px); opacity: 0.5; will-change: transform; mix-blend-mode: screen; }
+        .orb-1 { width: 80vw; height: 80vw; background: radial-gradient(circle, rgba(10,132,255,0.6) 0%, transparent 70%); top: -20%; left: -20%; animation: float 20s infinite ease-in-out; }
+        .orb-2 { width: 60vw; height: 60vw; background: radial-gradient(circle, rgba(191,90,242,0.5) 0%, transparent 70%); bottom: -10%; right: -20%; animation: floatReverse 25s infinite ease-in-out; }
+
+        @keyframes float { 0%, 100% { transform: translate(0, 0); } 50% { transform: translate(30px, 50px); } }
+        @keyframes floatReverse { 0%, 100% { transform: translate(0, 0); } 50% { transform: translate(-30px, -50px); } }
+
+        /* === UI COMPONENTS === */
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.03);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid var(--glass-border);
+            border-top: 1px solid var(--glass-highlight);
+            box-shadow: 0 20px 40px -10px rgba(0,0,0,0.5);
+        }
+
+        /* Typography */
+        .hero-title {
+            background: linear-gradient(180deg, #FFFFFF 0%, rgba(255,255,255,0.5) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: -0.04em;
+            line-height: 0.95;
+        }
+        
+        .eyebrow {
+            font-size: 11px; font-weight: 800; letter-spacing: 0.2em; text-transform: uppercase;
+        }
+
+        /* === ANIMATIONS === */
+        .reveal { opacity: 0; transform: translateY(40px) scale(0.95); transition: all 1s cubic-bezier(0.16, 1, 0.3, 1); }
+        .reveal.active { opacity: 1; transform: translateY(0) scale(1); }
+        .delay-100 { transition-delay: 100ms; }
+        .delay-200 { transition-delay: 200ms; }
+        .delay-300 { transition-delay: 300ms; }
+
+        /* === WIDGETS CSS === */
+        /* SCANNER UI */
+        .scan-frame { position: relative; width: 100%; height: 100%; border-radius: 20px; overflow: hidden; border: 1px solid rgba(255,255,255,0.1); }
+        .scan-line { position: absolute; top: 0; left: 0; right: 0; height: 2px; background: #30d158; box-shadow: 0 0 15px #30d158; animation: scanMove 3s infinite ease-in-out; z-index: 10; }
+        @keyframes scanMove { 0%, 100% { transform: translateY(20%); opacity: 0; } 50% { transform: translateY(300px); opacity: 1; } }
+        
+        .scan-tag { 
+            position: absolute; padding: 6px 10px; background: rgba(0,0,0,0.6); backdrop-filter: blur(10px); 
+            border: 1px solid rgba(48, 209, 88, 0.3); border-radius: 8px; color: #fff; font-size: 11px; font-weight: 600;
+            display: flex; gap: 6px; align-items: center; opacity: 0; animation: tagPop 3s infinite; z-index: 20;
+        }
+        .scan-tag.t1 { top: 30%; left: 20%; animation-delay: 1s; }
+        .scan-tag.t2 { top: 60%; right: 20%; animation-delay: 1.5s; }
+        @keyframes tagPop { 0%, 90%, 100% { opacity: 0; transform: scale(0.9); } 20%, 80% { opacity: 1; transform: scale(1); } }
+
+        /* Deconstruction Animation */
+        .deconstruct-layer {
+            position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+            background: linear-gradient(45deg, transparent 40%, rgba(48, 209, 88, 0.1) 45%, rgba(48, 209, 88, 0.3) 50%, rgba(48, 209, 88, 0.1) 55%, transparent 60%);
+            background-size: 200% 200%;
+            animation: deconstruct 3s infinite linear;
+            mix-blend-mode: overlay;
+        }
+        @keyframes deconstruct { 0% { background-position: 100% 100%; } 100% { background-position: 0% 0%; } }
+
+
+        /* BREATH ANIMATION */
+        .breath-ring {
+            width: 120px; height: 120px; border-radius: 50%;
+            background: radial-gradient(circle, rgba(10,132,255,0.8) 0%, transparent 70%);
+            position: relative;
+            animation: breathe 5s infinite ease-in-out;
+        }
+        .breath-ring::after {
+            content: ''; position: absolute; inset: -20px; border-radius: 50%;
+            border: 1px solid rgba(10,132,255,0.3); opacity: 0.5;
+            animation: ripple 5s infinite ease-out;
+        }
+        @keyframes breathe { 0%, 100% { transform: scale(0.8); opacity: 0.6; } 50% { transform: scale(1.2); opacity: 1; } }
+        @keyframes ripple { 0% { transform: scale(0.8); opacity: 0.8; } 100% { transform: scale(2); opacity: 0; } }
+
+        /* BLUEPRINT GRID */
+        .blueprint-grid {
+            background-image: linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px);
+            background-size: 20px 20px;
+            mask-image: radial-gradient(circle, black 40%, transparent 80%);
+        }
+
+        /* ACCURACY CHART - ПРАВИЛЬНЫЙ */
+        .accuracy-chart {
+            width: 160px; height: 160px; position: relative;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .accuracy-chart svg { 
+            width: 100%; height: 100%; transform: rotate(-90deg); 
+        }
+        .accuracy-chart circle { 
+            fill: none; 
+            stroke-width: 12; 
+            stroke-linecap: round; 
+            cx: 80; cy: 80; r: 70;
+        }
+        .accuracy-chart .bg { 
+            stroke: rgba(255,255,255,0.1); 
+        }
+        .accuracy-chart .progress { 
+            stroke: var(--acc-green); 
+            stroke-dasharray: 440; /* 2 * PI * 70 ≈ 440 */
+            stroke-dashoffset: 440; 
+            transition: stroke-dashoffset 1.5s ease-out;
+        }
+        
+        .accuracy-chart.animate .progress {
+            stroke-dashoffset: 10; /* 440 - (440 * 0.998) ≈ 0.8, оставим чуть места */
+        }
+
+        .accuracy-chart .value {
+            position: absolute; inset: 0; 
+            display: flex; flex-direction: column; 
+            align-items: center; justify-content: center;
+            color: white;
+        }
+
+        /* VITRUVIAN TOGGLE */
+        .vitruvian-toggle {
+            display: flex; background: rgba(255,255,255,0.1); border-radius: 20px; padding: 4px;
+        }
+        .vitruvian-toggle button {
+            flex: 1; padding: 10px 16px; border-radius: 16px; font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.6); transition: all 0.3s;
+        }
+        .vitruvian-toggle button.active {
+            background: var(--acc-purple); color: white; box-shadow: 0 2px 10px rgba(191,90,242,0.3);
+        }
+
+    </style>
+</head>
+<body class="antialiased">
+
+    <div class="fx-layer">
+        <div class="orb orb-1"></div>
+        <div class="orb orb-2"></div>
+        <div class="noise"></div>
+    </div>
+
+    <!-- === HERO === -->
+    <section class="min-h-screen relative flex flex-col justify-center px-6 pt-12 pb-32">
+        <div class="max-w-md mx-auto w-full relative z-10 text-center">
+            
+            <div class="reveal active delay-100">
+                <div class="eyebrow text-acc-blue mb-6 border border-acc-blue/20 bg-acc-blue/10 inline-block px-3 py-1 rounded-full">
+                    The Human Operating System
+                </div>
+                <h1 class="hero-title text-5xl md:text-6xl font-black mb-6 uppercase">
+                    Твоё тело <br>
+                    <span class="text-white/40">это данные</span>
+                </h1>
+                <p class="text-white/60 text-lg leading-relaxed font-light">
+                    Первая экосистема, которая измеряет, рассчитывает и управляет вашим метаболизмом с клинической точностью.
+                </p>
+            </div>
+            
+        </div>
+    </section>
+
+    <!-- === PHILOSOPHY === -->
+    <section class="py-24 px-6 relative">
+        <div class="max-w-lg mx-auto w-full">
+            <div class="reveal">
+                <div class="eyebrow text-acc-blue mb-4">Precision Nutrition</div>
+                <h2 class="text-3xl font-bold mb-6 leading-tight uppercase">Нельзя управлять тем,<br><span class="text-white/40">что нельзя измерить.</span></h2>
+                <p class="text-white/70 mb-8 leading-relaxed">
+                    Большинство трекеров гадают. Macros считает. Мы используем методологию клинического уровня, строящую модель вашего метаболизма на основе 20+ параметров.
+                </p>
+            </div>
+
+            <!-- Glass Card: Parameters -->
+            <div class="glass-panel rounded-[28px] p-6 reveal delay-100 space-y-6">
+                <div class="flex gap-4 items-start">
+                    <div class="w-10 h-10 rounded-xl bg-acc-blue/10 flex items-center justify-center text-xl shrink-0">🔥</div>
+                    <div>
+                        <h3 class="font-bold text-white text-sm mb-1">PAL & NEAT</h3>
+                        <p class="text-xs text-white/50 leading-relaxed">Мы учитываем не просто тренировки, а вашу внетренировочную активность (Non-Exercise Activity Thermogenesis).</p>
+                    </div>
+                </div>
+                <div class="w-full h-[1px] bg-white/5"></div>
+                <div class="flex gap-4 items-start">
+                    <div class="w-10 h-10 rounded-xl bg-acc-green/10 flex items-center justify-center text-xl shrink-0">🧬</div>
+                    <div>
+                        <h3 class="font-bold text-white text-sm mb-1">Глубокая персонализация</h3>
+                        <p class="text-xs text-white/50 leading-relaxed">Расчет нормы белка адаптируется под интенсивность ваших нагрузок (MET) и фазы восстановления.</p>
+                    </div>
+                </div>
+                <div class="w-full h-[1px] bg-white/5"></div>
+                <div class="flex gap-4 items-start">
+                    <div class="w-10 h-10 rounded-xl bg-acc-purple/10 flex items-center justify-center text-xl shrink-0">🩺</div>
+                    <div>
+                        <h3 class="font-bold text-white text-sm mb-1">Медицинский контекст</h3>
+                        <p class="text-xs text-white/50 leading-relaxed">Алгоритм автоматически адаптирует нутриенты под состояние здоровья.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- === RATION (NEW CHART) === -->
+    <section class="py-24 px-6 border-t border-white/5 bg-white/[0.02]">
+        <div class="max-w-lg mx-auto w-full text-center reveal" id="chart-section">
+            <h2 class="text-3xl font-bold mb-6 uppercase">Вам не нужны диеты. <br><span class="text-acc-green">Вам нужна математика.</span></h2>
+            <p class="text-white/60 mb-12 leading-relaxed">
+                Вы выбираете продукты. Система строит недельный план питания с точностью до грамма. Zero waste — вы покупаете ровно столько, сколько нужно.
+            </p>
+            
+            <!-- Metric Big Number -> Animated Chart -->
+            <div class="inline-flex flex-col items-center justify-center mb-10 relative">
+                <!-- Glowing Backdrop -->
+                <div class="absolute inset-0 bg-acc-green/10 blur-3xl rounded-full"></div>
+                
+                <div class="glass-panel p-8 rounded-[40px] relative z-10 flex flex-col items-center">
+                    <div class="accuracy-chart mb-2">
+                        <svg viewBox="0 0 160 160">
+                            <!-- Background Circle -->
+                            <circle class="bg" />
+                            <!-- Foreground Circle (Animated) -->
+                            <circle class="progress" />
+                        </svg>
+                        <div class="value">
+                            <div class="flex items-baseline">
+                                <span class="text-5xl font-black tracking-tighter">99.8</span>
+                                <span class="text-2xl font-bold text-acc-green ml-1">%</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="text-xs uppercase tracking-[0.2em] text-acc-green font-bold mt-2">Точность попадания</div>
+                </div>
+            </div>
+
+            <p class="text-lg font-medium text-white/90 italic max-w-sm mx-auto">"Мы убрали вопрос 'Что мне сегодня поесть?'. Просто откройте приложение и следуйте плану."</p>
+        </div>
+    </section>
+
+    <!-- === TECHNOLOGIES (CAMERA) === -->
+    <section class="py-24 px-6 overflow-hidden">
+        <div class="max-w-lg mx-auto w-full">
+            <div class="reveal mb-12">
+                <div class="eyebrow text-acc-orange mb-4">Visual Intelligence</div>
+                <h2 class="text-3xl font-bold mb-6 uppercase">Нейросеть вместо <br><span class="text-white/40">ручного ввода.</span></h2>
+                <p class="text-white/60 mb-6">Ручной подсчет — это архаизм. Наведите камеру. Система агентов Macros FoodCam деконструирует вашу еду:</p>
+            </div>
+
+            <!-- MOCKUP: CAMERA -->
+            <div class="relative w-full aspect-[4/5] bg-black rounded-[32px] border border-white/10 shadow-2xl reveal delay-100 overflow-hidden group">
+                <!-- Blurred fake image background -->
+                <div class="absolute inset-0 bg-gray-900">
+                    <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-32 h-32 bg-orange-500/30 rounded-full blur-xl"></div>
+                    <div class="absolute bottom-1/4 right-1/4 w-24 h-24 bg-green-500/20 rounded-full blur-xl"></div>
+                </div>
+
+                <!-- Deconstruction Effect -->
+                <div class="deconstruct-layer"></div>
+
+                <!-- HUD -->
+                <div class="absolute inset-4 border border-white/20 rounded-xl z-10 pointer-events-none">
+                    <div class="absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 border-white"></div>
+                    <div class="absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 border-white"></div>
+                    <div class="absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 border-white"></div>
+                    <div class="absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 border-white"></div>
+                </div>
+
+                <!-- Animated Scan Line & Tags (Russian) -->
+                <div class="scan-line"></div>
+                <div class="scan-tag t1 bg-black/80"><span class="w-2 h-2 rounded-full bg-acc-green"></span>Авокадо-тост</div>
+                <div class="scan-tag t2 bg-black/80"><span class="w-2 h-2 rounded-full bg-acc-orange"></span>Яйцо (L)</div>
+
+                <!-- Interface Overlay -->
+                <div class="absolute bottom-0 inset-x-0 p-6 bg-gradient-to-t from-black to-transparent z-20 flex flex-col items-center pointer-events-none">
+                    <div class="w-16 h-16 rounded-full border-4 border-white/20 flex items-center justify-center mb-4">
+                        <div class="w-12 h-12 bg-white rounded-full"></div>
+                    </div>
+                    <div class="text-[10px] text-white/50 uppercase tracking-widest">Сканирование...</div>
+                </div>
+            </div>
+
+            <!-- Agents List -->
+            <div class="mt-12 space-y-4 reveal delay-200">
+                <div class="glass-panel p-4 rounded-xl flex items-center gap-4">
+                    <span class="text-xs font-bold text-white uppercase w-20 shrink-0">Gatekeeper</span>
+                    <span class="text-xs text-white/50">Отсекает фон и несъедобные объекты.</span>
+                </div>
+                <div class="glass-panel p-4 rounded-xl flex items-center gap-4">
+                    <span class="text-xs font-bold text-white uppercase w-20 shrink-0">Physicist</span>
+                    <span class="text-xs text-white/50">Строит 3D-карту для определения веса.</span>
+                </div>
+                <div class="glass-panel p-4 rounded-xl flex items-center gap-4">
+                    <span class="text-xs font-bold text-white uppercase w-20 shrink-0">Synthesizer</span>
+                    <span class="text-xs text-white/50">Раскладывает блюдо на молекулы (БЖУ).</span>
+                </div>
+                <p class="text-xs text-white/30 italic pl-2 border-l border-white/20 mt-4">
+                    Альтернатива: Просто напишите «творог и яблоко» или вставьте ссылку на FatSecret.
+                </p>
+            </div>
+        </div>
+    </section>
+
+    <!-- === BODY ARCHITECTURE (VITRUVIAN) === -->
+    <section class="py-24 px-6 relative" id="vitruvian-section">
+        <div class="max-w-lg mx-auto w-full reveal">
+            <div class="eyebrow text-acc-purple mb-4">Genetic Potential</div>
+            <h2 class="text-3xl font-bold mb-6 uppercase">Ваша генетика — <br><span class="text-white/40">это чертеж.</span></h2>
+            <p class="text-white font-medium mb-4">МЫ ПОМОЖЕМ ПОСТРОИТЬ ИДЕАЛЬНОЕ ТЕЛО.</p>
+            <p class="text-white/60 mb-8">
+                Мы рассчитываем ваш натуральный генетический потенциал (FFMI) и строим индивидуальную модель пропорций.
+            </p>
+
+            <!-- Toggle -->
+            <div class="glass-panel rounded-2xl flex mb-8 w-full max-w-sm mx-auto vitruvian-toggle">
+                <button class="active" data-type="man">Мужчина (V-Shape)</button>
+                <button data-type="woman">Женщина (X-Shape)</button>
+            </div>
+
+            <!-- Abstract Body Visual (Vitruvian) -->
+            <div class="glass-panel rounded-[32px] aspect-square relative flex items-center justify-center overflow-hidden mb-8">
+                <div class="absolute inset-0 blueprint-grid opacity-30"></div>
+                
+                <!-- Man (V-Shape) -->
+                <svg id="vitruvian-man" class="absolute inset-0 w-full h-full p-8 transition-all duration-500 ease-in-out opacity-100 scale-100 drop-shadow-[0_0_15px_rgba(191,90,242,0.5)]" viewBox="0 0 200 300" fill="none">
+                    <!-- Circle & Square -->
+                    <circle cx="100" cy="150" r="90" stroke="rgba(255,255,255,0.2)" stroke-width="1" stroke-dasharray="4 4"/>
+                    <rect x="30" y="40" width="140" height="220" stroke="rgba(255,255,255,0.2)" stroke-width="1" stroke-dasharray="4 4"/>
+                    <!-- Body V-Shape -->
+                    <path d="M100 60 L150 100 L130 200 L100 240 L70 200 L50 100 Z" stroke="white" stroke-width="1.5" fill="rgba(191,90,242,0.1)"/>
+                    <line x1="100" y1="60" x2="100" y2="240" stroke="rgba(255,255,255,0.3)" stroke-width="1"/>
+                    <!-- Highlights (Shoulders/Back) -->
+                    <path d="M60 100 L140 100" stroke="#bf5af2" stroke-width="3" stroke-linecap="round" class="animate-pulse"/>
+                     <!-- Data Points -->
+                    <circle cx="100" cy="60" r="3" fill="#bf5af2"/>
+                    <circle cx="150" cy="100" r="3" fill="#bf5af2"/>
+                    <circle cx="50" cy="100" r="3" fill="#bf5af2"/>
+                    <text x="160" y="90" fill="#bf5af2" font-size="10" font-family="monospace">DELTS</text>
+                </svg>
+
+                <!-- Woman (X-Shape) -->
+                <svg id="vitruvian-woman" class="absolute inset-0 w-full h-full p-8 transition-all duration-500 ease-in-out opacity-0 scale-95 drop-shadow-[0_0_15px_rgba(255,90,142,0.5)]" viewBox="0 0 200 300" fill="none">
+                    <!-- Circle & Square -->
+                    <circle cx="100" cy="150" r="90" stroke="rgba(255,255,255,0.2)" stroke-width="1" stroke-dasharray="4 4"/>
+                    <rect x="30" y="40" width="140" height="220" stroke="rgba(255,255,255,0.2)" stroke-width="1" stroke-dasharray="4 4"/>
+                    <!-- Body X-Shape -->
+                    <path d="M100 70 L140 110 L120 160 L140 210 L100 250 L60 210 L80 160 L60 110 Z" stroke="white" stroke-width="1.5" fill="rgba(255,90,142,0.1)"/>
+                    <line x1="100" y1="70" x2="100" y2="250" stroke="rgba(255,255,255,0.3)" stroke-width="1"/>
+                     <!-- Highlights (Hips/Waist) -->
+                     <path d="M80 160 L120 160" stroke="#ff5a8e" stroke-width="3" stroke-linecap="round" class="animate-pulse"/>
+                     <path d="M60 210 L140 210" stroke="#ff5a8e" stroke-width="3" stroke-linecap="round" class="animate-pulse" style="animation-delay: 0.5s;"/>
+                    <!-- Data Points -->
+                    <circle cx="100" cy="70" r="3" fill="#ff5a8e"/>
+                    <circle cx="140" cy="110" r="3" fill="#ff5a8e"/>
+                    <circle cx="60" cy="110" r="3" fill="#ff5a8e"/>
+                    <circle cx="140" cy="210" r="3" fill="#ff5a8e"/>
+                    <circle cx="60" cy="210" r="3" fill="#ff5a8e"/>
+                     <text x="150" y="200" fill="#ff5a8e" font-size="10" font-family="monospace">GLUTES</text>
+                </svg>
+
+            </div>
+
+            <div class="grid grid-cols-2 gap-4">
+                <div class="p-4 bg-white/5 rounded-2xl border border-white/5">
+                    <div class="text-xs text-white/50 mb-1">Анализ</div>
+                    <div id="vitruvian-shape-label" class="font-bold text-sm text-acc-purple transition-colors">V-Shape Модель</div>
+                </div>
+                <div class="p-4 bg-white/5 rounded-2xl border border-white/5">
+                    <div class="text-xs text-white/50 mb-1">Контроль</div>
+                    <div class="font-bold text-sm">Plan / Fact</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- === SYNC === -->
+    <section class="py-24 px-6 border-t border-white/5 bg-white/[0.02]">
+        <div class="max-w-lg mx-auto w-full reveal">
+            <div class="eyebrow text-white/40 mb-4">The Infinite Loop</div>
+            <h2 class="text-3xl font-bold mb-6 uppercase">Связь на уровне <br><span class="text-white/40">данных.</span></h2>
+            
+            <div class="space-y-4">
+                <div class="glass-panel p-5 rounded-2xl">
+                    <h4 class="font-bold text-white mb-1 flex items-center gap-2"><span class="text-acc-blue">●</span> Авто-телеметрия</h4>
+                    <p class="text-xs text-white/50">Соблюдение КБЖУ, замеры тела и тренировки синхронизируются мгновенно.</p>
+                </div>
+                <div class="glass-panel p-5 rounded-2xl">
+                    <h4 class="font-bold text-white mb-1 flex items-center gap-2"><span class="text-acc-green">●</span> Общий календарь</h4>
+                    <p class="text-xs text-white/50">Тренер меняет время тренировки — вы получаете уведомление. Вы отменяете — тренер видит.</p>
+                </div>
+            </div>
+            
+            <p class="mt-8 text-sm text-white/60 text-center font-medium">
+                Вы занимаетесь телом. Система занимается коммуникацией.
+            </p>
+        </div>
+    </section>
+
+    <!-- === STATE (BREATH) === -->
+    <section class="py-24 px-6">
+        <div class="max-w-lg mx-auto w-full reveal">
+            <div class="eyebrow text-acc-blue mb-4">Neuro-Regulation</div>
+            <h2 class="text-3xl font-bold mb-6 uppercase">Переключатель <br><span class="text-white/40">стресса.</span></h2>
+            <p class="text-white/60 mb-10">
+                Восстановление — это часть уравнения. Модуль Macros Breath использует протоколы нейробиологов Stanford Huberman Lab.
+            </p>
+
+            <!-- Breath Widget -->
+            <div class="glass-panel rounded-[32px] p-8 flex flex-col items-center justify-center mb-10 relative overflow-hidden">
+                <div class="absolute inset-0 bg-gradient-to-b from-acc-blue/10 to-transparent opacity-20"></div>
+                <div class="breath-ring mb-8"></div>
+                <div class="text-2xl font-light tracking-[0.2em] text-white uppercase">Breathe</div>
+                <div class="flex gap-2 mt-8">
+                    <span class="w-2 h-2 rounded-full bg-acc-blue animate-pulse"></span>
+                    <span class="w-2 h-2 rounded-full bg-white/20"></span>
+                    <span class="w-2 h-2 rounded-full bg-white/20"></span>
+                </div>
+            </div>
+
+            <div class="space-y-4">
+                <div class="flex justify-between items-center border-b border-white/10 pb-3">
+                    <span class="font-bold text-acc-blue">Focus</span>
+                    <span class="text-xs text-white/50 text-right">Квадратное дыхание<br>для потока</span>
+                </div>
+                <div class="flex justify-between items-center border-b border-white/10 pb-3">
+                    <span class="font-bold text-acc-orange">Sleep</span>
+                    <span class="text-xs text-white/50 text-right">Протокол 4-7-8<br>для торможения коры</span>
+                </div>
+                <div class="flex justify-between items-center pb-3">
+                    <span class="font-bold text-acc-green">Anti-Stress</span>
+                    <span class="text-xs text-white/50 text-right">Физиологический вздох<br>снижение кортизола</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- === FOOTER === -->
+    <footer class="py-24 px-6 text-center border-t border-white/10 relative overflow-hidden bg-white/[0.02]">
+        <div class="max-w-lg mx-auto w-full relative z-10 reveal">
+            <h2 class="text-2xl font-bold mb-4 leading-tight">Macros — это не приложение для фитнеса.</h2>
+            <p class="text-xl text-white/50 font-light mb-12">Это операционная система для вашего тела.</p>
+            
+            <button class="w-full py-5 rounded-2xl bg-white text-black font-bold text-lg uppercase tracking-wider hover:scale-[1.02] active:scale-[0.98] transition-transform shadow-[0_0_30px_rgba(255,255,255,0.3)]">
+                Get Access
+            </button>
+            
+            <div class="mt-12 text-[10px] text-white/20 uppercase tracking-[0.2em] space-x-4">
+                <span>Privacy</span>
+                <span>Terms</span>
+                <span>2025</span>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        // Scroll Reveal logic
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('active');
+                    
+                    // Trigger Chart Animation if visible
+                    if (entry.target.id === 'chart-section') {
+                        document.querySelector('.accuracy-chart').classList.add('animate');
+                    }
+                }
+            });
+        }, { threshold: 0.1 });
+
+        document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+
+        // Vitruvian Toggle Logic
+        const vitruvianSection = document.getElementById('vitruvian-section');
+        const btns = vitruvianSection.querySelectorAll('.vitruvian-toggle button');
+        const manSvg = document.getElementById('vitruvian-man');
+        const womanSvg = document.getElementById('vitruvian-woman');
+        const shapeLabel = document.getElementById('vitruvian-shape-label');
+
+        btns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                btns.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                const type = btn.dataset.type;
+
+                if (type === 'man') {
+                    manSvg.style.opacity = '1';
+                    manSvg.style.transform = 'scale(1)';
+                    womanSvg.style.opacity = '0';
+                    womanSvg.style.transform = 'scale(0.95)';
+                    shapeLabel.textContent = 'V-Shape Модель';
+                    shapeLabel.classList.remove('text-[#ff5a8e]');
+                    shapeLabel.classList.add('text-acc-purple');
+                } else {
+                    womanSvg.style.opacity = '1';
+                    womanSvg.style.transform = 'scale(1)';
+                    manSvg.style.opacity = '0';
+                    manSvg.style.transform = 'scale(0.95)';
+                    shapeLabel.textContent = 'X-Shape Модель';
+                    shapeLabel.classList.remove('text-acc-purple');
+                    shapeLabel.classList.add('text-[#ff5a8e]');
+                }
+            });
+        });
+    </script>
+</body>
+</html>
