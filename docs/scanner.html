@@ -570,6 +570,31 @@ html, body {
   background: rgba(255, 255, 255, 0.25);
 }
 
+/* === PATCH: LOCKED ITEMS (FATSECRET IMPORT) === */
+.di-name:disabled, .di-weight:disabled {
+  background: transparent !important;
+  border-color: transparent !important;
+  color: rgba(255, 255, 255, 0.9);
+  opacity: 1; /* Чтобы текст был четким */
+  pointer-events: none; /* Запрещаем клики */
+  padding-left: 0;
+  font-weight: 700; /* Делаем жирнее, раз это факт */
+}
+
+/* Иконка замка перед именем */
+.lock-indicator {
+  font-size: 12px;
+  margin-right: 6px;
+  opacity: 0.6;
+}
+
+/* Изменяем цвет веса для заблокированных */
+.di-weight:disabled {
+  color: var(--acc-green); /* Зеленый цвет показывает, что вес точный */
+  text-align: right;
+  width: auto; /* Автоширина */
+  padding-right: 4px;
+}
 
 </style>
 </head>
@@ -1095,27 +1120,30 @@ function isAdmin() {
   };
 
 // 3. Функция отправки чистого текста (С ФИКСОМ ИКОНКИ)
+  // 3. Функция отправки (С детектором FatSecret)
   async function sendTextOnly(text) {
      const btn = DOM.btnStartCam;
      btn.style.opacity = '0.5';
      haptic('medium');
      document.getElementById('focusOverlay').classList.add('active');
+     
      try {
-       startProcessingUI('text');
+       // Детекция типа контента для правильной анимации
+       const isFatSecret = text.includes('fatsecret.com') && text.includes('.csv');
+       const uiMode = isFatSecret ? 'import' : 'text';
+
+       startProcessingUI(uiMode);
        
        const result = await API.send('scan', { image: null, userText: text });
        
        stopProcessingUI();
        
-       // === НАЧАЛО ФИКСА: СБРОС ПОЛЯ И ИКОНКИ ===
-       DOM.omniInput.value = ''; // Чистим текст
-       DOM.omniInput.style.height = 'auto'; // Сбрасываем высоту поля
-       
-       // Принудительно возвращаем иконку камеры
+       // Сброс UI
+       DOM.omniInput.value = ''; 
+       DOM.omniInput.style.height = 'auto'; 
        DOM.btnStartCam.classList.remove('mode-send'); 
        DOM.icoCam.classList.remove('icon-hidden');
        DOM.icoSend.classList.add('icon-hidden');
-       // === КОНЕЦ ФИКСА ===
        
        if (result.ok) {
          openDraftSheet(result.data, result.scanId);
@@ -1456,8 +1484,15 @@ DOM.shutter.addEventListener('click', async () => {
     const container = document.getElementById('procSteps');
     const overlay = document.getElementById('procOverlay');
     
-    // 1. Генерируем правильный список шагов в зависимости от режима
-    if (mode === 'text') {
+ // Генерируем шаги
+    if (mode === 'import') {
+        // --- FATSECRET ROUTE ---
+        container.innerHTML = `
+            <div class="step pending" id="step-1"><div class="s-icon">🌐</div><div class="s-lbl">Загрузка CSV...</div></div>
+            <div class="step pending" id="step-2"><div class="s-icon">⚙️</div><div class="s-lbl">Парсинг данных...</div></div>
+            <div class="step pending" id="step-3"><div class="s-icon">✅</div><div class="s-lbl">Подготовка...</div></div>
+        `;
+    } else if (mode === 'text') {
         // --- TEXT ROUTE ---
         container.innerHTML = `
             <div class="step pending" id="step-1"><div class="s-icon">🛡️</div><div class="s-lbl">Gatekeeper: Проверяю...</div></div>
@@ -1531,7 +1566,7 @@ DOM.shutter.addEventListener('click', async () => {
     document.getElementById('focusOverlay').classList.add('active');
   }
 
-  function renderDraftList() {
+function renderDraftList() {
     const container = document.getElementById('draftList');
     container.innerHTML = '';
     
@@ -1541,19 +1576,35 @@ DOM.shutter.addEventListener('click', async () => {
     }
 
     currentDraftItems.forEach((item, index) => {
-      // Определяем иконку по типу (можно улучшить логику)
+      // 1. Проверяем блокировку (придет с бэкенда)
+      const isLocked = !!item.locked; 
+      const disabledAttr = isLocked ? 'disabled' : '';
+      
+      // 2. Подбираем иконку
       let icon = "🍽️";
       if (item.cooking_method === 'Raw') icon = "🍎";
       if (item.fat_modifier === 'High Oil') icon = "🍳";
+      if (isLocked) icon = "📄"; // Иконка для импорта
+
+      // 3. Индикатор замка
+      const lockHtml = isLocked ? '<span class="lock-indicator">🔒</span>' : '';
       
       const div = document.createElement('div');
       div.className = 'draft-item';
+      
       div.innerHTML = `
         <div class="di-icon">${icon}</div>
         <div class="di-inputs">
-          <input type="text" class="di-name" value="${item.name}" onchange="updateDraftItem(${index}, 'name', this.value)">
+          <div style="display:flex; align-items:center">
+             ${lockHtml}
+             <input type="text" class="di-name" value="${item.name}" 
+                    ${disabledAttr} 
+                    onchange="updateDraftItem(${index}, 'name', this.value)">
+          </div>
           <div class="di-row">
-            <input type="number" class="di-weight" value="${item.weight_g || ''}" placeholder="0" onchange="updateDraftItem(${index}, 'weight_g', this.value)">
+            <input type="number" class="di-weight" value="${item.weight_g || ''}" placeholder="0" 
+                   ${disabledAttr} 
+                   onchange="updateDraftItem(${index}, 'weight_g', this.value)">
             <div class="di-unit">г</div>
           </div>
         </div>
