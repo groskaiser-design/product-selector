@@ -174,21 +174,38 @@
             background: var(--acc-purple); color: white; box-shadow: 0 2px 10px rgba(191,90,242,0.3);
         }
 
-        /* === BREATH VISUALIZER STYLES (COPIED EXACTLY) === */
+        /* === BREATH VISUALIZER STYLES (STRICT COORDINATES) === */
+        
+        /* 1. Жесткий контейнер-обертка, чтобы центрировать масштабируемую область */
+        .breath-wrapper {
+            width: 100%;
+            height: 360px; /* Высота карточки */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            position: relative;
+        }
+
+        /* 2. Область визуализации с ФИКСИРОВАННЫМИ размерами как в оригинале */
         .visualizer-container {
             position: relative; 
-            width: 300px; /* FIXED WIDTH IS CRITICAL */
-            height: 340px; /* FIXED HEIGHT IS CRITICAL */
-            display: flex; justify-content: center; align-items: center;
-            margin: 0 auto;
+            width: 300px; 
+            height: 340px;
+            flex-shrink: 0; /* Запрещаем сжиматься */
+            display: flex; 
+            justify-content: center; 
+            align-items: center;
+            /* Если экран меньше 300px, используем scale */
             transform-origin: center center;
         }
         
-        /* Scale down on very small screens to fit */
-        @media (max-width: 340px) {
+        /* Адаптивность через scale, а не резиновую ширину */
+        @media (max-width: 360px) {
             .visualizer-container { transform: scale(0.85); }
         }
 
+        /* Unified Track Style */
         .unified-track-style {
             opacity: 0; transition: opacity 0.3s; pointer-events: none;
             border: 2px solid rgba(255,255,255,0.15);
@@ -210,6 +227,7 @@
             border: none !important; box-shadow: none !important; border-radius: 0;
         }
 
+        /* SVG Paths */
         .track-shape { position: absolute; inset: 0; opacity: 0; transition: opacity 0.5s ease; pointer-events: none; overflow: visible; }
         
         .shape-path-unified { 
@@ -221,18 +239,32 @@
         .photon-dot { 
             position: absolute; width: 18px; height: 18px; border-radius: 50%; 
             background: #fff; 
+            /* Start at 0,0 relative to container */
             top: 0; left: 0; 
-            margin-top: -9px; margin-left: -9px; /* Centering offset */
+            /* Offset to center the dot itself */
+            margin-top: -9px; margin-left: -9px; 
             will-change: transform, box-shadow; 
             -webkit-transform: translate3d(0,0,0);
             z-index: 10;
+            /* Transition is managed by JS */
         }
         
         .breath-status {
+            position: absolute; top: 30px; left: 0; right: 0;
+            text-align: center;
             font-size: 14px; font-weight: 700; letter-spacing: 0.2em; text-transform: uppercase;
             text-shadow: 0 0 10px currentColor; opacity: 0; transition: opacity 0.3s;
+            z-index: 20;
         }
         .breath-status.visible { opacity: 1; }
+        
+        .breath-title-lbl {
+            position: absolute; bottom: 30px; left: 0; right: 0;
+            text-align: center;
+            font-size: 12px; font-weight: 500; letter-spacing: 0.1em; 
+            opacity: 0.5;
+            z-index: 20;
+        }
 
         /* Interactive Buttons */
         .breath-btn { cursor: pointer; transition: all 0.2s; }
@@ -560,7 +592,7 @@
             </p>
 
             <!-- INTERACTIVE BREATH WIDGET -->
-            <div class="glass-panel rounded-[32px] p-8 flex flex-col items-center justify-center mb-10 relative overflow-hidden min-h-[360px]">
+            <div class="glass-panel rounded-[32px] p-8 flex flex-col items-center justify-center mb-10 relative overflow-hidden min-h-[360px] breath-wrapper">
                 <div class="absolute inset-0 bg-gradient-to-b from-acc-blue/5 to-transparent opacity-20 transition-colors duration-700" id="breath-bg"></div>
                 
                 <!-- Status Label -->
@@ -609,7 +641,7 @@
                     <div class="photon-dot" id="photon"></div>
                 </div>
 
-                <div class="text-sm tracking-[0.2em] text-white/40 uppercase mt-8" id="breath-title"></div>
+                <div class="breath-title-lbl" id="breath-title"></div>
             </div>
 
             <!-- CONTROLS LIST -->
@@ -789,41 +821,44 @@
             const btn = document.getElementById('btn-' + key);
             if(btn) btn.classList.add('active');
 
-            // Reset Logic
-            // Reset Photon style to remove transitions instantly
+            // Reset Logic (TELEPORT)
             el.photon.style.transition = 'none';
             el.photon.style.webkitTransition = 'none';
 
-            // Wait small tick to ensure transition is cleared
+            // FORCE Set Initial Position IMMEDIATELY
+            if(activeConfig.visual === 'box') {
+                // Bottom Left of Box (Start of Inhale up)
+                el.photon.style.transform = 'translate(20px, 300px)';
+                el.photon.style.boxShadow = getGlowStyle(0);
+                el.trackBox.style.opacity = '1';
+            } else if(activeConfig.visual === 'triangle') {
+                // Bottom Left of Triangle (Start of Inhale up)
+                el.photon.style.transform = 'translate(40px, 280px)';
+                el.photon.style.boxShadow = getGlowStyle(0);
+                el.trackTri.style.opacity = '1';
+            } else {
+                // Bottom of Line
+                el.photon.style.transform = 'translate(150px, 320px)';
+                el.photon.style.boxShadow = getGlowStyle(0);
+                el.trackLin.style.opacity = '1';
+            }
+            
+            // Force Reflow to apply position without transition
+            void el.photon.offsetWidth; 
+
+            // Start Animation Loop
             setTimeout(() => {
                 isBreathing = true;
-                
-                // Initial Positions (from original file)
-                if(activeConfig.visual === 'box') {
-                    el.trackBox.style.opacity = '1';
-                    // Box Start: 20, 300
-                    el.photon.style.transform = 'translate(20px, 300px)';
-                    el.photon.style.boxShadow = getGlowStyle(0);
-                    runBoxCycle();
-                } else if(activeConfig.visual === 'triangle') {
-                    el.trackTri.style.opacity = '1';
-                    // Tri Start: 40, 280
-                    el.photon.style.transform = 'translate(40px, 280px)';
-                    el.photon.style.boxShadow = getGlowStyle(0);
-                    runTriangleCycle();
-                } else {
-                    el.trackLin.style.opacity = '1';
-                    // Linear Start: 150, 320
-                    el.photon.style.transform = 'translate(150px, 320px)';
-                    el.photon.style.boxShadow = getGlowStyle(0);
-                    runStressCycle();
-                }
+                if(activeConfig.visual === 'box') runBoxCycle();
+                else if(activeConfig.visual === 'triangle') runTriangleCycle();
+                else runStressCycle();
             }, 50);
         }
 
-        // --- ANIMATION CYCLES (EXACT COPY) ---
+        // --- ANIMATION CYCLES (EXACT COORDINATES) ---
 
         async function runTriangleCycle() {
+            // Path: 40,280 (BL) -> 150,40 (Top) -> 260,280 (BR) -> 40,280 (BL)
             const P_TOP = {x: 150, y: 40};  
             const P_BR  = {x: 260, y: 280}; 
             const P_BL  = {x: 40,  y: 280}; 
@@ -831,20 +866,21 @@
             
             while(isBreathing && activeConfig.visual === 'triangle') {
                 setStatus('ВДОХ'); 
-                await movePhotonTo(P_TOP, inhale, 3); 
+                await movePhotonTo(P_TOP, inhale, 3); // Up to Top
                 if(!isBreathing) break;
 
                 setStatus('ЗАДЕРЖКА'); 
-                await movePhotonTo(P_BR, hold, 3); 
+                await movePhotonTo(P_BR, hold, 3); // Down to BR
                 if(!isBreathing) break;
 
                 setStatus('ВЫДОХ'); 
-                await movePhotonTo(P_BL, exhale, 0); 
+                await movePhotonTo(P_BL, exhale, 0); // Left to BL (Start)
                 if(!isBreathing) break;
             }
         }
 
         async function runBoxCycle() {
+            // Path: 20,300 (BL) -> 20,40 (TL) -> 280,40 (TR) -> 280,300 (BR) -> 20,300 (BL)
             const P_TL = {x: 20, y: 40};  
             const P_TR = {x: 280, y: 40}; 
             const P_BR = {x: 280, y: 300};
@@ -853,19 +889,19 @@
 
             while(isBreathing && activeConfig.visual === 'box') {
                 setStatus('ВДОХ'); 
-                await movePhotonTo(P_TL, inhale, 3);
+                await movePhotonTo(P_TL, inhale, 3); // Up
                 if(!isBreathing) break;
 
                 setStatus('ПАУЗА'); 
-                await movePhotonTo(P_TR, hold, 3);
+                await movePhotonTo(P_TR, hold, 3); // Right
                 if(!isBreathing) break;
 
                 setStatus('ВЫДОХ'); 
-                await movePhotonTo(P_BR, exhale, 0);
+                await movePhotonTo(P_BR, exhale, 0); // Down
                 if(!isBreathing) break;
 
                 setStatus('ПАУЗА'); 
-                await movePhotonTo(P_BL, hold, 0);
+                await movePhotonTo(P_BL, hold, 0); // Left (Back to Start)
                 if(!isBreathing) break;
             }
         }
