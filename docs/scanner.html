@@ -2213,35 +2213,39 @@ window.confirmDraftToNutritionist = async () => {
   window.deleteItem = (itemId) => {
       if (!editingMeal) return;
       
-      // ИСПОЛЬЗУЕМ == ВМЕСТО === (чтобы "55" было равно 55)
+      // Ищем индекс (используем == для надежности, вдруг id строка vs число)
       const itemIndex = editingMeal.items.findIndex(i => i.id == itemId);
       
       if (itemIndex === -1) return;
       const item = editingMeal.items[itemIndex];
 
       haptic('warning');
+      lastUserAction = Date.now(); // Блокируем входящую синхронизацию на 15 сек
 
-      // Обновляем статистику
+      // 1. Сначала обновляем кружочки (КБЖУ) наверху
       updateLocalStats(CurrentViewDate, 'food', {
           k: -item.k, p: -item.p, f: -item.f, c: -item.c
       });
 
-      // Удаляем из массива
+      // 2. Удаляем продукт из временного массива
       editingMeal.items.splice(itemIndex, 1);
       
-      // Если удалили всё — закрываем окно, иначе обновляем список
-      if (editingMeal.items.length === 0) {
-          closeDraft(); 
-      } else {
-          renderEditList(editingMeal.items); 
-      }
-
-      // Сохраняем и отправляем
+      // 3. 🔥 САМОЕ ВАЖНОЕ: Сначала сохраняем в память телефона и обновляем ленту!
+      // Делаем это ДО того, как закроем окно и обнулим переменную editingMeal
       updateStorageAfterDelete(editingMeal);
+
+      // 4. Отправляем команду на сервер (фоном)
       API.send('delete_item', { 
           dateStr: CurrentViewDate.toISOString(),
           itemId: itemId
       }).catch(console.error);
+
+      // 5. И только теперь решаем визуальную часть шторки
+      if (editingMeal.items.length === 0) {
+          closeDraft(); // Закрываем, если пусто
+      } else {
+          renderEditList(editingMeal.items); // Или обновляем список
+      }
   };
 
   function updateStorageAfterDelete(updatedMeal) {
@@ -2249,32 +2253,26 @@ window.confirmDraftToNutritionist = async () => {
           const raw = localStorage.getItem(STORAGE_KEY);
           let history = raw ? JSON.parse(raw) : [];
           
-          // Если в приеме пищи не осталось продуктов - удаляем его целиком
-          if (updatedMeal.items.length === 0) {
-              history = history.filter(m => {
-                  // Сравниваем по времени и дате, так как ID у нас синтетические в ленте
-                  const sameDay = (m.date || new Date(m.id).toDateString()) === updatedMeal.date;
-                  const sameTime = m.time === updatedMeal.time;
-                  return !(sameDay && sameTime);
-              });
-          } else {
-              // Иначе обновляем состав продуктов
-              history = history.map(m => {
-                  const sameDay = (m.date || new Date(m.id).toDateString()) === updatedMeal.date;
-                  const sameTime = m.time === updatedMeal.time;
-                  if (sameDay && sameTime) {
-                      return updatedMeal; // Заменяем на обновленный
-                  }
-                  return m;
-              });
+          // Ищем карточку приема пищи по её уникальному ID
+          const targetIndex = history.findIndex(m => m.id == updatedMeal.id);
+
+          if (targetIndex !== -1) {
+              // Если продуктов внутри не осталось — сносим весь прием пищи
+              if (updatedMeal.items.length === 0) {
+                  history.splice(targetIndex, 1);
+              } else {
+                  // Иначе обновляем состав продуктов
+                  history[targetIndex] = updatedMeal;
+              }
+              
+              // Записываем в память
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+              
+              // 🔥 МГНОВЕННАЯ ПЕРЕРИСОВКА ЛЕНТЫ
+              // Эта команда удалит карточку с экрана прямо сейчас
+              loadFromStorage(CurrentViewDate);
           }
-          
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
-          
-          // Перерисовываем ленту целиком
-          loadFromStorage(CurrentViewDate);
-          
-      } catch(e) { console.error(e); }
+      } catch(e) { console.error("Save fail", e); }
   }
 
 </script>
